@@ -1,0 +1,10 @@
+.git
+.gitignore
+data/
+*.db
+.secret_key
+.env
+*.md
+Dockerfile
+dockerRun.sh
+dist/

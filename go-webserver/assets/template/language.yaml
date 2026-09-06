@@ -1,0 +1,56 @@
+# Every piece of text the UI can show lives here, and nowhere else.
+#
+# Two rules make this useful rather than just indirection:
+#
+#   1. Translating or rewording the app is an edit to this file plus a
+#      restart. No HTML or JS changes, no rebuild.
+#   2. A key that is missing or empty ("") hides its element entirely. That
+#      is how you turn a label, a button, or a whole section off without
+#      touching the markup -- set it to "" and it disappears rather than
+#      rendering blank or showing a raw key name.
+#
+# This file is served to any visitor at /api/language, signed in or not, since
+# the signed-out page needs text too. Never put anything secret in it.
+
+app:
+  title: "{{PROJECT_NAME}}"
+  tagline: "Sign in with a one-time link."
+
+signed_out:
+  heading: "You are not signed in"
+  body: "There is no signup form here on purpose. Ask an admin for a one-time login link."
+  invalid_link: "That login link is invalid, expired, or has already been used. Ask for a new one."
+
+account:
+  heading: "Account"
+  display_name_label: "Display name"
+  display_name_placeholder: "Your name"
+  save_button: "Save"
+  saved_notice: "Saved."
+  logout_button: "Log out"
+
+admin:
+  heading: "Admin"
+  description: "Create an account by minting a login link. Send the link to the person; it works once."
+  new_name_label: "Name"
+  new_name_placeholder: "Their name"
+  new_role_label: "Role"
+  role_user: "user"
+  role_admin: "admin"
+  create_button: "Create login link"
+  link_notice: "Send this one-time link. It is shown once and cannot be recovered."
+  copy_button: "Copy"
+  copied_notice: "Copied."
+  table_name: "Name"
+  table_role: "Role"
+  table_status: "Status"
+  table_actions: "Actions"
+  status_active: "active"
+  status_disabled: "disabled"
+  reissue_button: "New link"
+  disable_button: "Disable"
+  enable_button: "Enable"
+
+errors:
+  generic: "Something went wrong. Please try again."
+  network: "Could not reach the server."

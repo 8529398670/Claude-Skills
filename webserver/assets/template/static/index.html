@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{PROJECT_NAME}}</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header>
+    <h1>{{PROJECT_NAME}}</h1>
+    <div id="who-am-i"></div>
+  </header>
+
+  <main>
+    <section id="signed-out" hidden>
+      <p>You need a login link from an admin to get in -- there's no signup form here on purpose.</p>
+    </section>
+
+    <section id="signed-in" hidden>
+      <div class="card">
+        <h2>Account</h2>
+        <form id="rename-form">
+          <label for="display-name">Display name</label>
+          <input id="display-name" name="display_name" required maxlength="80" />
+          <button type="submit">Save</button>
+        </form>
+        <button id="logout-btn" class="secondary">Log out</button>
+      </div>
+
+      <div class="card" id="admin-panel" hidden>
+        <h2>Admin</h2>
+
+        <form id="create-user-form">
+          <label for="new-name">Name</label>
+          <input id="new-name" name="display_name" required maxlength="80" />
+          <label for="new-role">Role</label>
+          <select id="new-role" name="role">
+            <option value="user">user</option>
+            <option value="admin">admin</option>
+          </select>
+          <button type="submit">Create login</button>
+        </form>
+        <p id="new-login-link" class="login-link" hidden></p>
+
+        <table id="users-table">
+          <thead>
+            <tr><th>Name</th><th>Role</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

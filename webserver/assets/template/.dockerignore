@@ -1,0 +1,10 @@
+.git
+.gitignore
+data/
+*.db
+.secret_key
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.md
