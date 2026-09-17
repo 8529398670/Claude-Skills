@@ -1,0 +1,66 @@
+{
+  "skill_name": "interactive-explainer",
+  "evals": [
+    {
+      "id": 0,
+      "name": "sky-blue-eli5",
+      "prompt": "my 7 year old keeps asking me why the sky is blue and i keep giving her a bad answer. can you make me something interactive i can actually sit down and go through with her?",
+      "expected_output": "One HTML file at eli5 level. Tactile, obvious cause-and-effect widgets, no equations, analogies flagged as analogies. Level inferred from 'my 7 year old' without being asked.",
+      "files": [],
+      "assertions": [
+        "Produces exactly one self-contained HTML file that opens on its own with no server",
+        "Has at least 3 distinct interactive widgets, each tied to a different mechanism",
+        "Every slider has a live readout showing its current value with units",
+        "No control opens at its minimum, so the page is already showing something on load",
+        "Renders correctly in both light and dark mode",
+        "Has an explicit section naming its simplifications or where the model stops applying",
+        "At least one widget lets the reader push a parameter past where the model holds",
+        "Page renders with no JavaScript console errors",
+        "No fabricated numbers, citations, studies, or names",
+        "Written for a 7-year-old: no equations, concrete comparisons instead of numbers",
+        "Every analogy is flagged as an analogy and says where it breaks"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "pid-derivative-kick-expert",
+      "prompt": "i've been tuning PID loops for 6 years and I still think the way textbooks present derivative kick is misleading. build me something that actually shows what happens on a setpoint step with D on error vs D on measurement, and where the standard 'just filter it' advice falls over",
+      "expected_output": "One HTML file at expert level. No definition of what PID is, no motivation. Side-by-side comparison of the two D formulations, and a widget exploring where filtering fails. Level inferred from stated experience and the specificity of the ask.",
+      "files": [],
+      "assertions": [
+        "Produces exactly one self-contained HTML file that opens on its own with no server",
+        "Has at least 3 distinct interactive widgets, each tied to a different mechanism",
+        "Every slider has a live readout showing its current value with units",
+        "No control opens at its minimum, so the page is already showing something on load",
+        "Renders correctly in both light and dark mode",
+        "Has an explicit section naming its simplifications or where the model stops applying",
+        "At least one widget lets the reader push a parameter past where the model holds",
+        "Page renders with no JavaScript console errors",
+        "No fabricated numbers, citations, studies, or names",
+        "Written for a practitioner: does not define PID, setpoint, or what a derivative term is",
+        "Directly compares D-on-error against D-on-measurement on the same setpoint step",
+        "Shows a regime where derivative filtering stops rescuing the loop"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "gradient-descent-college",
+      "prompt": "im in 2nd year cs and gradient descent still feels like magic to me. i get the calculus, i just dont have any feel for why the learning rate matters so much or why it diverges. something i can play with would help",
+      "expected_output": "One HTML file at college level. Real equations typeset with KaTeX (auto-detected by the build script), a learning-rate widget that sweeps across the divergence threshold, assumptions stated.",
+      "files": [],
+      "assertions": [
+        "Produces exactly one self-contained HTML file that opens on its own with no server",
+        "Has at least 3 distinct interactive widgets, each tied to a different mechanism",
+        "Every slider has a live readout showing its current value with units",
+        "No control opens at its minimum, so the page is already showing something on load",
+        "Renders correctly in both light and dark mode",
+        "Has an explicit section naming its simplifications or where the model stops applying",
+        "At least one widget lets the reader push a parameter past where the model holds",
+        "Page renders with no JavaScript console errors",
+        "No fabricated numbers, citations, studies, or names",
+        "Written at undergraduate level: real equations, typeset rather than ASCII or images",
+        "A learning-rate control sweeps across the divergence threshold so the reader sees it break"
+      ]
+    }
+  ]
+}

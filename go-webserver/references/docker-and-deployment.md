@@ -152,21 +152,24 @@ docker exec -it <container-name> /app/server manage reissue-login -user-id 1
 
 ## Operating the container
 
-**bolt allows one writer process at a time**, and the running server holds it.
-So `docker exec ... manage` against a live container does not work -- it
-blocks and times out after 5s. This is not a bug to work around; it is what
-keeps two processes from corrupting the file.
+**bolt allows one process to open the database**, and the running server holds
+it. `docker exec ... manage` still works, because the server listens on
+`control.sock` inside the data directory and the CLI goes through it rather
+than opening the file:
 
-Day-to-day account management therefore belongs in the admin panel, which goes
-through the running server and needs no downtime.
+```bash
+docker exec -it <name> /app/server manage list-users
+docker exec -it <name> /app/server manage reissue-login -user-id 1
+```
 
-The CLI is the recovery path, for when nobody can get in. Stop the container
-and run a one-off against the same data directory:
+Day-to-day account management still belongs in the admin panel; the CLI is the
+recovery path for when nobody can get in.
+
+If the container is stopped, or it was started with `CONTROL_SOCKET=false`,
+run a one-off against the same data directory instead:
 
 ```bash
 docker stop <name>
-docker run --rm -v "$(pwd)/data:/app/data" -e "SECRET_KEY=$(cat .secret_key)" \
-  <image> manage list-users
 docker run --rm -v "$(pwd)/data:/app/data" -e "SECRET_KEY=$(cat .secret_key)" \
   <image> manage reissue-login -user-id 1
 docker start <name>
@@ -174,6 +177,10 @@ docker start <name>
 
 `SECRET_KEY` has to be passed and has to match, or the stored records cannot
 be decrypted.
+
+The socket lives inside the mounted data directory, so it is covered by the
+volume's permissions and never crosses the container boundary. Nothing about
+it is published to the network, and it needs no port.
 
 ## Portable binaries (build.sh)
 

@@ -54,9 +54,15 @@ Say so rather than scaffolding the wrong thing:
 - A need for real self-service signup, OAuth/SSO, or password login. This
   template's whole point is avoiding those. If the user wants one, say so
   and adapt deliberately rather than quietly shipping magic links anyway.
-- Something that needs relational queries, joins, or concurrent writers
-  across processes. bolt is a single-writer embedded key/value store; a
-  reporting-heavy app wants SQLite or Postgres instead.
+- Something that needs relational queries or joins. bolt is a key/value
+  store with no query language; a reporting-heavy app wants SQLite or
+  Postgres instead.
+- Something that needs several processes writing the database directly.
+  bolt hands its file to exactly one process. The template's answer is the
+  control socket (`server/control/`): the server owns the database and
+  everything else asks it over a unix socket. That covers a CLI, a cron job,
+  or a sidecar. It does not cover multiple *servers* sharing one database --
+  that genuinely needs SQLite or Postgres.
 
 ## Step 1: Confirm the basics
 
@@ -102,6 +108,7 @@ not ask for.
   server/
     config/config.go          # every env-tunable setting, in one place
     db/db.go                  # bolt open + buckets + encrypt-on-write helpers
+    control/                  # unix socket so other processes reach the db
     encryption/encryption.go  # the ONLY place that touches crypto primitives
     models/                   # user.go, session.go, login_token.go -- no ORM
     security/security.go      # cookies, current user, RequireLogin/RequireAdmin, CSRF
@@ -173,6 +180,16 @@ but stay consistent with the patterns already there:
   `go:embed` line -- putting it under `static/` is simpler.
 - **New admin CLI commands** go in `server/manage/manage.go`, which both the
   `manage` subcommand and `cmd/manage` dispatch to, so they cannot drift.
+  Add the operation to the `backend` interface there and implement it twice --
+  once on `controlBackend` (a call to `server/control`) and once on
+  `directBackend` (a call into `server/models`). The compiler enforces that
+  both exist, which is what stops the two routes from behaving differently.
+- **New work for another process** -- a cron job, an importer, a sidecar --
+  gets an endpoint in `server/control/control.go` and a method in
+  `client.go`, never a second process opening the bolt file. One process
+  holds the database and the secret key; that is the whole security argument
+  for the socket, and it stops holding the moment something else opens the
+  file directly.
 
 ## Step 4: Run it and verify the login flow
 
@@ -203,8 +220,10 @@ actually doing it:
 dropped over plain http, so login appears to succeed and then does
 nothing. That symptom is almost always this setting.
 
-Note bolt is single-writer -- stop the server before running `manage`
-against the same data directory, or it will block and time out.
+`manage` works whether or not the server is running: with the server up it
+sends the command over the control socket, and with it stopped it opens the
+database directly. It prints which route it took on stderr. If a command
+fails with a lock timeout, the server was started with `CONTROL_SOCKET=false`.
 
 If the user wants the single-file build, verify that too rather than assuming
 it works: `./build.sh` for their platform, then run the binary from an empty
@@ -276,7 +295,7 @@ Read these when the task goes past "scaffold and build features":
 - `references/architecture.md` -- the auth model, why credentials are
   shaped `<id>.<secret>`, which crypto is used where and why, the static
   caching policy, the `language.yaml` contract, and the known limits
-  (single-writer bolt, per-process rate limiting, at-rest key loss). Read
+  (one process per bolt file, per-process rate limiting, at-rest key loss). Read
   before changing the template's structure rather than building on it.
 - `references/docker-and-deployment.md` -- what each Dockerfile and
   `dockerRun.sh` choice is protecting against, TLS/reverse-proxy

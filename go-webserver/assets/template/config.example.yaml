@@ -23,6 +23,7 @@
 # session_ttl_seconds       SESSION_TTL_SECONDS
 # login_token_ttl_seconds   LOGIN_TOKEN_TTL_SECONDS
 # encrypt_at_rest           ENCRYPT_AT_REST
+# control_socket            CONTROL_SOCKET
 # rate_limit_max            RATE_LIMIT_MAX
 # rate_limit_window_seconds RATE_LIMIT_WINDOW_SECONDS
 # body_limit_bytes          BODY_LIMIT_BYTES
@@ -58,3 +59,14 @@ encrypt_at_rest: true
 # Setting it here puts a secret in a file you might commit; prefer the
 # SECRET_KEY environment variable if you need to supply it explicitly.
 # secret_key: ""
+
+# Let other processes reach the database through the running server, over a
+# unix socket in the app directory (control.sock, mode 0600). This is what
+# makes `manage` work while the server is up -- bolt allows only one process
+# to open the database, so without it every admin command needs the server
+# stopped first.
+#
+# Turning it off is a deliberate choice, not a hardening win: the socket is
+# reachable only by something that can already read secret.key and app.db
+# sitting beside it.
+#control_socket: true

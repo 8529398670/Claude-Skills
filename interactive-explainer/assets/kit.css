@@ -1,0 +1,288 @@
+/* kit.css -- the design system every explainer document shares.
+ *
+ * scripts/build.py splices this into <head> before the document's own <style>,
+ * so anything here can be overridden by the document
+ * on an equal-specificity rule. That is deliberate: the kit sets the floor,
+ * the document decorates. Keep every selector here at single-class specificity
+ * or lower, and never use !important -- with one exception, the
+ * prefers-reduced-motion block at the end, which must be able to overrule a
+ * document that ignores it.
+ *
+ * Why this exists: every document used to re-derive its own palette, dark mode
+ * and scaffolding from the brief, so each topic arrived as its own unrelated
+ * design system -- and each one was paid for in output tokens. Now that work is
+ * done once, here, and a fix to this file reaches every document rebuilt after.
+ */
+
+:root {
+  color-scheme: light;
+
+  --kit-bg:        #ffffff;
+  --kit-surface:   #f6f7f9;
+  --kit-raised:    #ffffff;
+  --kit-border:    #e0e3e8;
+  --kit-text:      #16181d;
+  --kit-muted:     #5c6270;
+  --kit-faint:     #878d9a;
+
+  --kit-accent:         #1a62d8;
+  --kit-accent-text:    #ffffff;
+  --kit-accent-soft:    #e8f0fd;
+  --kit-accent-border:  #b6d0f7;
+
+  --kit-warn:        #8a5a00;
+  --kit-warn-soft:   #fdf4e3;
+  --kit-warn-border: #edd9a8;
+
+  --kit-math:        #6d28d9;
+
+  --kit-space-1: 0.25rem;
+  --kit-space-2: 0.5rem;
+  --kit-space-3: 0.75rem;
+  --kit-space-4: 1rem;
+  --kit-space-5: 1.5rem;
+  --kit-space-6: 2rem;
+  --kit-space-7: 3rem;
+
+  --kit-radius:   10px;
+  --kit-radius-sm: 6px;
+
+  --kit-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --kit-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --kit-measure: 68ch;
+  --kit-control: 44px;
+}
+
+/* Light is the default, whatever the reader's system is set to: these documents
+ * get printed, projected and screenshotted, and a page that changes colour
+ * depending on who opens it is a page you cannot hand to anyone. The dark
+ * palette is kept but opted into explicitly, by putting data-theme="dark"
+ * on the root element. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --kit-bg:        #101216;
+  --kit-surface:   #181b21;
+  --kit-raised:    #1d212a;
+  --kit-border:    #2c313c;
+  --kit-text:      #e8eaee;
+  --kit-muted:     #a2a9b8;
+  --kit-faint:     #767d8c;
+
+  --kit-accent:         #6aa3f5;
+  --kit-accent-text:    #0b1220;
+  --kit-accent-soft:    #16233a;
+  --kit-accent-border:  #2f4a77;
+
+  --kit-warn:        #e8bc6a;
+  --kit-warn-soft:   #2a2315;
+  --kit-warn-border: #4a3d1f;
+
+  --kit-math:        #c4b5fd;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: var(--kit-space-5) var(--kit-space-4) var(--kit-space-7);
+  background: var(--kit-bg);
+  color: var(--kit-text);
+  font-family: var(--kit-font);
+  font-size: 1rem;
+  line-height: 1.65;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* One centred column. Widgets may opt out with .kit-wide. */
+body > * { max-width: var(--kit-measure); margin-inline: auto; }
+body > .kit-wide { max-width: 1100px; }
+
+h1, h2, h3 { line-height: 1.25; text-wrap: balance; margin: var(--kit-space-6) 0 var(--kit-space-3); }
+h1 { font-size: clamp(1.6rem, 1.2rem + 1.8vw, 2.25rem); margin-top: 0; letter-spacing: -0.015em; }
+h2 { font-size: clamp(1.25rem, 1.05rem + 0.9vw, 1.5rem); letter-spacing: -0.01em; }
+h3 { font-size: 1.075rem; }
+
+p, ul, ol { margin: 0 0 var(--kit-space-4); }
+a { color: var(--kit-accent); }
+strong { font-weight: 650; }
+small, .kit-small { font-size: 0.875rem; }
+.kit-muted { color: var(--kit-muted); }
+
+/* The one-sentence answer under the title. */
+.kit-lede { font-size: 1.15rem; line-height: 1.55; color: var(--kit-text); margin-bottom: var(--kit-space-6); }
+
+code, kbd { font-family: var(--kit-mono); font-size: 0.9em; }
+code { background: var(--kit-surface); padding: 0.1em 0.35em; border-radius: var(--kit-radius-sm); }
+pre { overflow-x: auto; background: var(--kit-surface); padding: var(--kit-space-3); border-radius: var(--kit-radius); }
+pre code { background: none; padding: 0; }
+
+/* Wide content scrolls inside itself; the page never scrolls sideways. */
+.kit-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: var(--kit-space-2) var(--kit-space-3); border-bottom: 1px solid var(--kit-border); }
+th { font-weight: 600; color: var(--kit-muted); font-size: 0.875rem; }
+
+svg { max-width: 100%; height: auto; display: block; }
+canvas { max-width: 100%; display: block; }
+
+/* ---- widgets ---- */
+
+.widget {
+  background: var(--kit-raised);
+  border: 1px solid var(--kit-border);
+  border-radius: var(--kit-radius);
+  padding: var(--kit-space-4);
+  margin: var(--kit-space-5) auto;
+}
+
+.widget > h3, .widget > .widget-title {
+  margin: 0 0 var(--kit-space-3);
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+}
+
+.widget-stage { margin: var(--kit-space-3) 0; min-width: 0; }
+
+.control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--kit-space-2) var(--kit-space-3);
+  margin: var(--kit-space-3) 0;
+}
+.control-row > label { flex: 0 0 auto; color: var(--kit-muted); font-size: 0.9rem; }
+.control-row > input[type="range"] { flex: 1 1 12rem; min-width: 8rem; }
+
+.readout {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ---- native controls, sized for thumbs ---- */
+
+button, select, input[type="text"], input[type="number"] {
+  min-height: var(--kit-control);
+  font: inherit;
+  color: var(--kit-text);
+  background: var(--kit-surface);
+  border: 1px solid var(--kit-border);
+  border-radius: var(--kit-radius-sm);
+  padding: 0 var(--kit-space-3);
+}
+button { cursor: pointer; font-weight: 550; }
+button:hover { border-color: var(--kit-accent-border); }
+button.primary { background: var(--kit-accent); color: var(--kit-accent-text); border-color: var(--kit-accent); }
+
+input[type="checkbox"], input[type="radio"] { width: 1.15rem; height: 1.15rem; accent-color: var(--kit-accent); }
+label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
+  display: inline-flex; align-items: center; gap: var(--kit-space-2);
+  min-height: var(--kit-control); cursor: pointer;
+}
+
+input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  height: var(--kit-control);
+  background: none;
+  accent-color: var(--kit-accent);
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 5px; border-radius: 3px; background: var(--kit-border);
+}
+input[type="range"]::-moz-range-track {
+  height: 5px; border-radius: 3px; background: var(--kit-border);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 22px; height: 22px; margin-top: -8.5px;
+  border-radius: 50%; background: var(--kit-accent);
+  border: 2px solid var(--kit-raised);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--kit-accent); border: 2px solid var(--kit-raised);
+}
+
+:where(button, select, input, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--kit-accent);
+  outline-offset: 2px;
+}
+
+/* ---- teaching callouts ---- */
+
+.try, .notice {
+  margin: var(--kit-space-3) 0 0;
+  padding: var(--kit-space-3);
+  border-radius: var(--kit-radius-sm);
+  font-size: 0.925rem;
+  line-height: 1.55;
+}
+.try {
+  background: var(--kit-accent-soft);
+  border: 1px solid var(--kit-accent-border);
+}
+.notice {
+  background: var(--kit-surface);
+  border: 1px solid var(--kit-border);
+}
+.try::before, .notice::before {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: var(--kit-space-1);
+}
+.try::before    { content: "Try this"; color: var(--kit-accent); }
+.notice::before { content: "Notice";   color: var(--kit-muted); }
+
+.breaks, .recap {
+  border-top: 1px solid var(--kit-border);
+  margin-top: var(--kit-space-7);
+  padding-top: var(--kit-space-4);
+}
+.breaks { background: none; }
+
+/* A widget that threw during init. Kit.widget swaps this in so one broken
+ * widget is a visible, honest gap rather than a blank page. */
+.kit-failed {
+  background: var(--kit-warn-soft);
+  border: 1px solid var(--kit-warn-border);
+  color: var(--kit-warn);
+  border-radius: var(--kit-radius-sm);
+  padding: var(--kit-space-3);
+  font-size: 0.9rem;
+}
+
+/* ---- maths ---- */
+
+/* Display maths is the one thing that reliably breaks the no-horizontal-scroll
+ * rule on a 360px screen: a wide equation cannot reflow. Let the equation
+ * scroll inside its own box instead of widening the page. */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--kit-space-1) 0;
+}
+.katex { font-size: 1.05em; }
+
+/* Opt-in with <meta name="math-color" content="accent">, which the build script
+ * turns into a data-math attribute on the root. Maths gets --kit-math rather
+ * than --kit-accent
+ * on purpose: the accent colour means "you can operate this", and an equation
+ * wearing it reads as a control the reader cannot find a way to click. */
+:root[data-math="accent"] .katex { color: var(--kit-math); }
+
+@media (max-width: 420px) {
+  body { padding-inline: var(--kit-space-3); }
+  .widget { padding: var(--kit-space-3); }
+  .katex { font-size: 1em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

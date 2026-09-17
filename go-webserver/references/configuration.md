@@ -21,6 +21,7 @@ adding a setting or writing a file anywhere.
 ~/.config/<app-slug>/
   app.db           the bolt database
   secret.key       generated on first run, mode 0600
+  control.sock     unix socket, mode 0600, only while the server is running
   storage/         application files (uploads, exports, generated artifacts)
   config.yaml      optional; see config.example.yaml in the project root
   language.yaml    optional; overrides the embedded UI text
@@ -48,6 +49,37 @@ server is running, because it opens no database:
 ```bash
 ./myapp manage paths
 ```
+
+That also reports whether a server is currently running, which decides how
+every other `manage` command reaches the data:
+
+```
+control        /home/you/.config/myapp/control.sock  (server running)
+```
+
+## Reaching the database from another process
+
+bolt allows exactly one process to open its file, so a second process cannot
+read or write the database directly while the server holds it. The running
+server listens on `control.sock` in the app directory, and `manage` uses it
+automatically:
+
+```bash
+./myapp manage reissue-login -user-id 1   # works with the server running
+```
+
+With the server stopped, the same command opens the database itself. Either
+way it prints which route it took on stderr. `CONTROL_SOCKET=false` disables
+the socket, which returns the pre-socket behaviour: `manage` then requires the
+server to be stopped.
+
+Anything else that needs the data -- a cron job, an importer, a sidecar --
+should go through `server/control` rather than opening the bolt file, so that
+one process keeps holding the secret key. See `architecture.md`.
+
+A unix socket path is capped by the kernel (104 bytes on macOS, 108 on Linux).
+A deep `APP_DIR` will exceed it; the server checks this at startup and says so
+plainly rather than passing the kernel's bare "invalid argument" along.
 
 ## Why one directory, and why ~/.config
 

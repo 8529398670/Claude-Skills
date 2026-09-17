@@ -26,6 +26,7 @@ import (
 	assets "{{MODULE_PATH}}/server/assets"
 	bootstrap "{{MODULE_PATH}}/server/bootstrap"
 	config "{{MODULE_PATH}}/server/config"
+	control "{{MODULE_PATH}}/server/control"
 	db "{{MODULE_PATH}}/server/db"
 	language "{{MODULE_PATH}}/server/language"
 	manage "{{MODULE_PATH}}/server/manage"
@@ -94,6 +95,15 @@ func run() ( err error ) {
 
 	if err = bootstrap.EnsureFirstAdmin( store , cfg , "Admin" ); err != nil { return }
 
+	// The control socket is what lets `manage` run against a live server.
+	// bolt hands the database to exactly one process, so without it every
+	// admin command would need the server stopped first. It is started after
+	// the database opens, which means the socket existing is itself proof
+	// that a live process holds the lock.
+	control_server , err := control.Listen( store , cfg )
+	if err != nil { return }
+	defer control_server.Close()
+
 	guard := security.New( store , cfg )
 	handlers := routes.New( store , cfg , guard , lang , static_server )
 
@@ -142,6 +152,10 @@ func run() ( err error ) {
 	go func() {
 		<-shutdown
 		log.Println( "[shutdown] draining connections..." )
+		// Close the control socket first: it is the door other processes
+		// come through, and letting a manage command start against a
+		// database that is about to close would fail confusingly.
+		control_server.Close()
 		app.ShutdownWithTimeout( 10 * time.Second )
 	}()
 
@@ -149,6 +163,7 @@ func run() ( err error ) {
 	log.Printf( "[state]  %s" , cfg.AppDir )
 	log.Printf( "[secret] %s" , cfg.SecretKeySource )
 	log.Printf( "[assets] %s" , bundle.Source )
+	log.Printf( "[control] %s" , control_server.Path() )
 	err = app.Listen( cfg.ListenAddress() , fiber.ListenConfig{ DisableStartupMessage: true } )
 	return
 }

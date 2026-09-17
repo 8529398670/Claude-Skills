@@ -273,14 +273,74 @@ link would strand anyone who lost their session on a machine with no Go
 toolchain and no container runtime. `myapp manage reissue-login` is what makes
 "one file that just runs" actually self-sufficient.
 
+## The control socket
+
+bolt hands its file to exactly one process. That is a real constraint, and the
+template's answer is to lean on it rather than work around it: the server owns
+the database, and every other process asks the server to act on its behalf
+over a unix socket in the app directory.
+
+    ~/.config/myapp/control.sock     mode 0600, created by the running server
+
+`manage` takes whichever route is available -- the socket when a server is
+running, the database file when one is not -- so the same command works on a
+live deployment and on a fresh install with nothing started yet. It prints
+which route it used on stderr.
+
+### Why there is no token on the socket
+
+There is deliberately no password, token, or handshake. The socket lives in
+the app directory, which is mode 0700, next to `secret.key` and `app.db`. Any
+process that can open the socket can already read the key and the database
+directly, so a credential would guard nothing while adding one more secret to
+store and rotate. The filesystem permission *is* the authentication.
+
+This is also the reason the socket must never be moved somewhere
+world-readable and is never bound to a TCP address. The argument depends
+entirely on the socket being exactly as hard to reach as the database file
+sitting beside it. A network listener would need a real credential, a second
+copy of the auth checks, and an audit story -- which is the cost the socket
+exists to avoid.
+
+### What this buys, in security terms
+
+One process holds the secret key. One process applies the model layer's rules.
+Disabling an account revokes its sessions the same way whether the change came
+from the admin UI, the CLI, or a cron job, because all three run the same code
+in the same process. The alternative -- a second process opening the database
+directly -- means a second copy of the key in memory, a second implementation
+to keep in step, and no single place to audit.
+
+### Adding an operation
+
+Add the endpoint in `server/control/control.go` and the matching method in
+`client.go`. If a CLI command needs it, add it to the `backend` interface in
+`server/manage/manage.go`; the compiler then requires both the socket
+implementation and the direct-database one, which is what stops the two routes
+from drifting apart.
+
+### Limits worth knowing
+
+A unix socket path is capped by the kernel at 104 bytes on macOS and the BSDs,
+108 on Linux. A deep `APP_DIR` overflows it, and the kernel's own error is a
+bare "invalid argument", so `control.Listen` checks the length first and fails
+with a message naming the limit and the fix. On Windows the socket works
+(AF_UNIX is supported) but the 0600 chmod is a no-op and the directory ACL is
+what protects it.
+
 ## Known limits
 
 State these to the user rather than letting them be discovered in production:
 
-- **bolt is single-writer across processes.** One container, one `manage`
-  command at a time. Running `manage` against a live server's data directory
-  blocks and times out. This is why `Open` sets a 5s timeout rather than
-  hanging forever.
+- **One process per bolt file.** bolt takes an exclusive lock, so a second
+  process cannot open the database while the server holds it. The control
+  socket (below) is how everything else reaches the data; without it, or with
+  `CONTROL_SOCKET=false`, `manage` needs the server stopped. This is why
+  `Open` sets a 5s timeout rather than hanging forever.
+- **The control socket is a local door, not a remote one.** It is a unix
+  socket, so it does not cross machines. Two servers on two hosts sharing one
+  database is still not possible and is the point at which this template's
+  storage choice has been outgrown.
 - **Rate limiting is per-process, in memory.** Correct for the single
   container `dockerRun.sh` builds. With multiple replicas each holds its own
   counters, so the effective limit multiplies -- move to a shared

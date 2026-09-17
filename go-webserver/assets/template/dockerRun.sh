@@ -141,15 +141,17 @@ Then open https://your-host/login/<the-link> to sign in. Day to day, mint
 further logins from the admin panel in the running app -- that goes through
 the server and needs no downtime.
 
-The CLI is for when you cannot get in at all. bolt allows a single writer, so
-the running server holds the database open and "docker exec ... manage" will
-just time out. Stop the container and run a one-off instead:
+The CLI is for when you cannot get in at all. It works against the running
+container -- the server listens on a control socket inside the data directory,
+so the CLI never has to open the database itself:
 
-  docker stop $CONTAINER_NAME
+  docker exec -it $CONTAINER_NAME /app/server manage reissue-login -user-id 1
+
+If the container is stopped, run a one-off against the same data directory:
+
   docker run --rm -v "${APP_DIR_HOST}:/app/data" \\
     -e "APP_DIR=/app/data" -e "SECRET_KEY=\$( cat .secret_key )" \\
     $IMAGE_NAME manage reissue-login -user-id 1
-  docker start $CONTAINER_NAME
 
 SECRET_KEY must be passed, and must match, or the stored records cannot be
 decrypted.
