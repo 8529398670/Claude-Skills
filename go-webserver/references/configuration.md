@@ -121,6 +121,21 @@ project root. `config.example.yaml` ships in the project root as documentation
 and lists every key with its environment equivalent; copy it into the app
 directory to use it.
 
+### Two settings worth knowing about before you need them
+
+`API_KEYS` (default true) decides whether this server believes an
+`Authorization: Bearer` header at all. Turning it off is a real off switch,
+not just hiding the UI: existing keys stop authenticating and the endpoints
+that mint them return 404. The rows survive, so turning it back on restores
+them. Set it to false for an app with no programmatic callers -- a surface
+that is open and unused is worth closing.
+
+`API_KEY_TTL_SECONDS` (default 90 days) is the lifetime a new key gets when
+the request does not ask for one. A key that never expires is available and
+sometimes right -- a CI job nobody will remember to re-key -- but it has to be
+requested deliberately (`expires_in_days: 0`, or `manage create-key -days 0`)
+rather than being what you get by leaving a field blank.
+
 ## The secret key
 
 `SECRET_KEY` encrypts session cookie payloads and, with `ENCRYPT_AT_REST` on

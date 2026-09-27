@@ -97,6 +97,24 @@ type Config struct {
 	SessionTTL    time.Duration
 	LoginTokenTTL time.Duration
 
+	// APIKeysEnabled decides whether the Authorization: Bearer header is
+	// believed at all, and whether the endpoints that mint keys exist. It is
+	// on by default because a non-browser caller is something nearly every
+	// app grows, and it is a single switch because an app that has no
+	// programmatic callers is better off with that surface closed than with
+	// it open and unused.
+	//
+	// Turning it off stops existing keys from authenticating too -- the rows
+	// stay, so switching it back on restores them.
+	APIKeysEnabled bool
+
+	// APIKeyTTL is how long a new key lasts when the request does not say.
+	// A key can be minted with no expiry at all, but that has to be asked
+	// for explicitly (expires_in_days: 0, or `manage create-key -days 0`);
+	// the default is bounded so that a forgotten key eventually stops being
+	// a live credential.
+	APIKeyTTL time.Duration
+
 	// SecretKey encrypts session cookie payloads and, when EncryptAtRest is
 	// on, every value written to bolt. Losing it means losing the database
 	// contents. See resolveSecretKey for where it comes from.
@@ -358,6 +376,9 @@ func Load() ( cfg *Config , err error ) {
 
 		SessionTTL:    r.seconds( "SESSION_TTL_SECONDS" , "session_ttl_seconds" , 14*24*time.Hour ),
 		LoginTokenTTL: r.seconds( "LOGIN_TOKEN_TTL_SECONDS" , "login_token_ttl_seconds" , 30*time.Minute ),
+
+		APIKeysEnabled: r.boolean( "API_KEYS" , "api_keys" , true ),
+		APIKeyTTL:      r.seconds( "API_KEY_TTL_SECONDS" , "api_key_ttl_seconds" , 90*24*time.Hour ),
 
 		EncryptAtRest: r.boolean( "ENCRYPT_AT_REST" , "encrypt_at_rest" , true ),
 

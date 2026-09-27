@@ -1,6 +1,6 @@
 ---
 name: go-webserver
-description: Scaffold a new security-hardened Go + Fiber v3 web server with bolt (bbolt) storage, link-based login (no signup, no passwords), always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + dockerRun.sh with no docker-compose, a build.sh that cross-compiles single-file portable binaries with the whole frontend embedded, and one state directory convention (~/.config/APP/) holding the database, config, and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Go -- trigger on "build me a Go webserver", "new Fiber app", "golang backend with logins", "scaffold a Go web project with Docker", "I need a small internal tool in Go", or any Go web project that needs auth and static file serving rather than a bare HTTP handler. Also trigger when someone wants a Go web app shipped as one self-contained executable with no Docker and no runtime dependencies -- "single binary web app", "embed the frontend with go:embed", "cross-compile for linux and windows", "one file I can just hand someone", "where should the app keep its database and config". Also use it when asked to add a login system, an admin panel, bolt storage, or Docker packaging to a Go web project that has none. This is the Go counterpart to the Python `webserver` skill -- pick this one whenever Go, golang, or Fiber is mentioned, and that one for Python/Starlette.
+description: Scaffold a new security-hardened Go + Fiber v3 web server with bolt (bbolt) storage, link-based login (no signup, no passwords), always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + dockerRun.sh with no docker-compose, a build.sh that cross-compiles single-file portable binaries with the whole frontend embedded, and one state directory convention (~/.config/APP/) holding the database, config, and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Go -- trigger on "build me a Go webserver", "new Fiber app", "golang backend with logins", "scaffold a Go web project with Docker", "I need a small internal tool in Go", or any Go web project that needs auth and static file serving rather than a bare HTTP handler. Also trigger when someone wants a Go web app shipped as one self-contained executable with no Docker and no runtime dependencies -- "single binary web app", "embed the frontend with go:embed", "cross-compile for linux and windows", "one file I can just hand someone", "where should the app keep its database and config". Also use it when asked to add a login system, an admin panel, API keys or programmatic/machine access, bolt storage, or Docker packaging to a Go web project that has none -- trigger on "let a script call my Go API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my Fiber app", or "service account for CI". This is the Go counterpart to the Python `webserver` skill -- pick this one whenever Go, golang, or Fiber is mentioned, and that one for Python/Starlette.
 ---
 
 # Go webserver scaffolder
@@ -17,6 +17,11 @@ project.
   random one-time login link and prints it to its own logs. Visiting it
   logs you in as admin and sets a secure cookie. Admins mint more links
   for more people. That is the entire account system.
+- **Every account can mint API keys, at its own permission level.** A key
+  carries the same admin/user role a person does -- one permission model, not
+  two -- sent as `Authorization: Bearer <key>`. A key can never outrank the
+  account that owns it, and it cannot mint another key. That is what lets a
+  cron job, a CI pipeline, or a sidecar call the app.
 - **The server stays thin.** Business logic and rendering belong in
   `static/js/`. The Go side is auth, storage, and file serving. Resist
   adding server-side templating.
@@ -54,6 +59,11 @@ Say so rather than scaffolding the wrong thing:
 - A need for real self-service signup, OAuth/SSO, or password login. This
   template's whole point is avoiding those. If the user wants one, say so
   and adapt deliberately rather than quietly shipping magic links anyway.
+  The same goes for machine access: the built-in API keys are bearer
+  credentials tied to an account, not OAuth client credentials, JWTs, or
+  per-endpoint scopes. If someone needs third-party apps to authorise against
+  their app, that is a different system -- say so rather than stretching
+  these.
 - Something that needs relational queries or joins. bolt is a key/value
   store with no query language; a reporting-heavy app wants SQLite or
   Postgres instead.
@@ -110,12 +120,14 @@ not ask for.
     db/db.go                  # bolt open + buckets + encrypt-on-write helpers
     control/                  # unix socket so other processes reach the db
     encryption/encryption.go  # the ONLY place that touches crypto primitives
-    models/                   # user.go, session.go, login_token.go -- no ORM
-    security/security.go      # cookies, current user, RequireLogin/RequireAdmin, CSRF
+    models/                   # user.go, session.go, login_token.go, api_key.go
+    security/security.go      # sessions + API keys resolved to one Actor,
+                              #   RequireLogin/RequireAdmin/RequireSession, CSRF
     static/static.go          # gzip-always-fresh text, long-cached images
     language/language.go      # loads language.yaml, serves it as JSON
     middleware/middleware.go  # CSP + security headers, rate limit, recover
-    routes/                   # routes.go (the URL map) + one file per group
+    routes/                   # routes.go (the URL map) + one file per group,
+                              #   including api_keys.go
     bootstrap/bootstrap.go    # first-run admin + login link printing
     assets/assets.go          # picks disk assets when present, embedded otherwise
     config/config.go          # app dir resolution + env > config.yaml > default
@@ -124,7 +136,7 @@ not ask for.
   static/
     index.html                # placeholder account + admin UI, fully data-i18n'd
     css/style.css             # mobile-first, light default
-    js/dom.js, i18n.js, api.js, app.js
+    js/dom.js, i18n.js, api.js, app.js, keys.js
     vendor/                   # self-hosted third-party libs (see its README)
   scripts/vendor.sh           # downloads a library into static/vendor/
   Dockerfile, dockerBuild.sh, dockerRun.sh, .dockerignore, .gitignore
@@ -153,6 +165,19 @@ but stay consistent with the patterns already there:
   Only gate something on admin if the user specifically asks. If a feature
   needs to list other people, use the existing `GET /api/team` rather than
   the admin-only user list.
+- **API keys need no per-feature work.** A key authenticates as its owner at
+  its own role, so a route registered behind `RequireLogin` is reachable by
+  any key and one behind `RequireAdmin` only by an admin-scoped key. Read
+  permission through `security.ActorFrom( c )` (`actor.Role`,
+  `actor.IsAdmin()`) rather than `user.Role`, which is the account's role and
+  ignores a key that deliberately carries less. Add
+  `Guard.RequireSession` to a route only when it must be browser-only, the
+  way key management is.
+- **Group middleware is mounted on a path prefix,** not on the routes written
+  under it: `app.Group( "/api" , mw )` puts `mw` in front of every later route
+  starting with `/api`, including `/api/admin/...`. Give a group that should
+  not do that its own prefix -- that is why the key routes live under
+  `/api/keys` and `/api/admin/keys`.
 - **New data** gets a bucket constant in `server/db/db.go` (added to
   `bucketNames` so it is created at startup) and a new file in
   `server/models/` with plain functions, matching `user.go`. Go through
@@ -216,6 +241,22 @@ actually doing it:
 - visiting the first link a second time fails (single-use),
 - a POST without a `csrf_token` is rejected with 403.
 
+Then exercise the API keys, because the interesting property is the ceiling
+and it is the kind of thing that silently stops holding:
+
+```bash
+# in the UI: create one "user" key and one "admin" key, then
+curl -H "Authorization: Bearer <admin key>" localhost:8080/api/admin/users   # 200
+curl -H "Authorization: Bearer <user key>"  localhost:8080/api/admin/users   # 403
+curl -H "Authorization: Bearer <user key>"  localhost:8080/api/me            # role: user
+```
+
+The third line is the one worth reading: an admin who mints a user-scoped key
+gets `"role":"user"` back, because the effective role is the lower of the two.
+Also confirm a non-admin is refused when asking for an admin key, that a key
+cannot mint a key (403, session required), and that revoking a key kills it on
+the next request. `manage list-keys` works from a shell either way.
+
 `SECURE_COOKIES=false` matters locally: a `Secure` cookie is silently
 dropped over plain http, so login appears to succeed and then does
 nothing. That symptom is almost always this setting.
@@ -275,6 +316,8 @@ self-sufficient:
 ```bash
 ./myapp manage list-users
 ./myapp manage reissue-login -user-id 1
+./myapp manage create-key -user-id 1 -name "CI" -role admin -days 90
+./myapp manage list-keys
 ./myapp version
 ```
 
@@ -292,9 +335,11 @@ expectations, and `SECRET_KEY` handling for both paths.
 
 Read these when the task goes past "scaffold and build features":
 
-- `references/architecture.md` -- the auth model, why credentials are
-  shaped `<id>.<secret>`, which crypto is used where and why, the static
-  caching policy, the `language.yaml` contract, and the known limits
+- `references/architecture.md` -- the auth model, how API keys mirror the
+  admin/user roles and why a key can neither outrank its owner nor mint
+  another key, why credentials are shaped `<id>.<secret>`, which crypto is
+  used where and why, the static caching policy, the `language.yaml`
+  contract, and the known limits
   (one process per bolt file, per-process rate limiting, at-rest key loss). Read
   before changing the template's structure rather than building on it.
 - `references/docker-and-deployment.md` -- what each Dockerfile and

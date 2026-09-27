@@ -57,4 +57,15 @@ const Api = {
   createUser( name , role )    { return this.post( "/api/admin/users" , { display_name: name , role: role } ); },
   reissueLogin( userId )       { return this.post( "/api/admin/users/" + userId + "/reissue-login" ); },
   setDisabled( userId , flag ) { return this.post( "/api/admin/users/" + userId + "/disabled" , { disabled: flag } ); },
+
+  // API keys. createKey's expiresInDays is passed through as-is including null,
+  // because the server reads absent as "use the default" and 0 as "never
+  // expires" -- collapsing them here would lose the distinction.
+  listKeys()                   { return this.request( "/api/keys" ); },
+  createKey( name , role , expiresInDays ) {
+    return this.post( "/api/keys" , { name: name , role: role , expires_in_days: expiresInDays } );
+  },
+  revokeKey( keyId )           { return this.post( "/api/keys/" + encodeURIComponent( keyId ) + "/revoke" ); },
+  listAllKeys()                { return this.request( "/api/admin/keys" ); },
+  revokeAnyKey( keyId )        { return this.post( "/api/admin/keys/" + encodeURIComponent( keyId ) + "/revoke" ); },
 };

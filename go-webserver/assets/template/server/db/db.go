@@ -28,10 +28,11 @@ const (
 	BucketUsers       = "users"
 	BucketSessions    = "sessions"
 	BucketLoginTokens = "login_tokens"
+	BucketAPIKeys     = "api_keys"
 	BucketMeta        = "meta"
 )
 
-var bucketNames = []string{ BucketUsers , BucketSessions , BucketLoginTokens , BucketMeta }
+var bucketNames = []string{ BucketUsers , BucketSessions , BucketLoginTokens , BucketAPIKeys , BucketMeta }
 
 type Store struct {
 	bolt          *bolt.DB

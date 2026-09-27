@@ -165,6 +165,21 @@ docker exec -it <name> /app/server manage reissue-login -user-id 1
 Day-to-day account management still belongs in the admin panel; the CLI is the
 recovery path for when nobody can get in.
 
+API keys go through the same door, which is what lets a deploy script hand a
+CI system a credential without anyone signing in first:
+
+```bash
+docker exec -it <name> /app/server manage create-key -user-id 1 -name "CI" -days 90
+docker exec -it <name> /app/server manage list-keys
+docker exec -it <name> /app/server manage revoke-key -key-id <id>
+```
+
+The key is printed once and is not recoverable -- capture it where the script
+needs it, or revoke and mint another. `list-keys` is the standing answer to
+"what has programmatic access to this deployment", and worth reading before
+assuming the answer is nothing. Set `API_KEYS=false` on the container to close
+that surface entirely.
+
 If the container is stopped, or it was started with `CONTROL_SOCKET=false`,
 run a one-off against the same data directory instead:
 

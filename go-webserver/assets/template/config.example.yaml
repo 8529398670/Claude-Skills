@@ -22,6 +22,8 @@
 # cookie_name               COOKIE_NAME
 # session_ttl_seconds       SESSION_TTL_SECONDS
 # login_token_ttl_seconds   LOGIN_TOKEN_TTL_SECONDS
+# api_keys                  API_KEYS
+# api_key_ttl_seconds       API_KEY_TTL_SECONDS
 # encrypt_at_rest           ENCRYPT_AT_REST
 # control_socket            CONTROL_SOCKET
 # rate_limit_max            RATE_LIMIT_MAX
@@ -49,6 +51,21 @@ login_token_ttl_seconds: 1800    # 30 minutes
 
 rate_limit_max: 120
 rate_limit_window_seconds: 60
+
+# API keys let a script, a cron job, or another service call the API the way a
+# signed-in person does. A key carries a role from the same set users have, so
+# an admin-scoped key can do what an admin can, and it can never outrank the
+# account that owns it.
+#
+# Setting this to false closes that surface completely: the Authorization
+# header stops being believed, existing keys stop working (the rows survive, so
+# switching it back on restores them), and the endpoints that mint keys 404.
+#api_keys: true
+
+# Default lifetime for a new key, when the request does not say. A key can be
+# minted with no expiry at all, but that has to be asked for on purpose
+# (expires_in_days: 0, or `manage create-key -days 0`).
+api_key_ttl_seconds: 7776000     # 90 days
 
 # Encrypts every value written to the database. Losing the key makes the data
 # permanently unreadable, so back up secret.key alongside app.db.

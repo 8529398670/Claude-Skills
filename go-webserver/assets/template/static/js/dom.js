@@ -49,6 +49,25 @@ const Dom = {
     return node;
   },
 
+  // Copy an element's text, with a selection fallback. The fallback is not
+  // optional politeness: navigator.clipboard needs a secure context, so every
+  // plain-http://localhost run lands there, and a copy button that silently
+  // does nothing is worse than no button. Used for both login links and API
+  // keys, which are exactly the strings nobody wants to retype by hand.
+  async copy( source , notice ) {
+    const value = source ? source.textContent : "";
+    try {
+      await navigator.clipboard.writeText( value );
+      this.flash( notice );
+    } catch ( error ) {
+      const range = document.createRange();
+      range.selectNodeContents( source );
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange( range );
+    }
+  },
+
   // Briefly reveal a confirmation ("Saved.", "Copied.") without leaving it on
   // screen forever.
   flash( element , milliseconds ) {

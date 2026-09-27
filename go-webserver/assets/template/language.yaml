@@ -51,6 +51,39 @@ admin:
   disable_button: "Disable"
   enable_button: "Enable"
 
+api_keys:
+  heading: "API keys"
+  description: "For scripts, cron jobs, and other services. A key does exactly what your account can do -- send it as an Authorization: Bearer header. It is shown once."
+  name_label: "What is it for"
+  name_placeholder: "deploy bot"
+  role_label: "Permission"
+  role_user: "user"
+  role_admin: "admin (can manage accounts)"
+  days_label: "Expires in (days)"
+  days_placeholder: "leave blank for the default, 0 for never"
+  create_button: "Create key"
+  secret_notice: "Copy this now. It is shown once and cannot be recovered -- if you lose it, revoke the key and create another."
+  copy_button: "Copy"
+  copied_notice: "Copied."
+  table_name: "Name"
+  table_role: "Permission"
+  table_status: "Status"
+  table_last_used: "Last used"
+  table_expires: "Expires"
+  table_actions: "Actions"
+  status_active: "active"
+  status_revoked: "revoked"
+  status_expired: "expired"
+  never: "never"
+  revoke_button: "Revoke"
+  # Empty this string to stop asking for confirmation before revoking.
+  revoke_confirm: "Revoke this key? Anything using it stops working immediately."
+
+admin_keys:
+  heading: "All API keys"
+  description: "Every key in this app and who owns it. Revoke one to cut off whatever is using it, right away."
+  table_owner: "Owner"
+
 errors:
   generic: "Something went wrong. Please try again."
   network: "Could not reach the server."

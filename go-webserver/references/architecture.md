@@ -6,6 +6,7 @@ when you are changing the template itself rather than building features on it.
 ## Contents
 
 - [Auth model: links instead of passwords](#auth-model-links-instead-of-passwords)
+- [API keys: the same roles, for callers that are not browsers](#api-keys-the-same-roles-for-callers-that-are-not-browsers)
 - [Why credentials are shaped `<id>.<secret>`](#why-credentials-are-shaped-idsecret)
 - [Which crypto is used where, and why](#which-crypto-is-used-where-and-why)
 - [At-rest encryption and the SECRET_KEY tradeoff](#at-rest-encryption-and-the-secret_key-tradeoff)
@@ -32,6 +33,12 @@ the design. Identity is proven exactly two ways:
    cookie holds an opaque reference, never the user id or role. Revoking a
    session is deleting a row -- no denylist, no token to outlive its welcome.
 
+A third way exists for callers that are not people: an **API key** in an
+`Authorization: Bearer` header, carrying a role from the same set users have.
+It is a separate section below, because the interesting parts are the ceiling
+(a key never outranks its owner) and the two rules that follow from a
+credential not being ambient.
+
 "Forgot password" does not exist as a concept. It is replaced by "an admin
 mints a new link" (or `manage reissue-login` from a shell). That is a real
 trade: less code, no password storage, no reset-flow attack surface, at the
@@ -44,6 +51,110 @@ logs. Anyone who can read those logs already controls the deployment, so this
 grants nothing new, and it means a fresh deploy is usable without a separate
 setup step. It only fires when no enabled admin exists, so restarts do not
 keep minting admins.
+
+## API keys: the same roles, for callers that are not browsers
+
+Sessions cover people with browsers. Everything else -- a cron job, a CI
+pipeline, a monitoring script, a sidecar service -- authenticates with an API
+key sent as a header:
+
+```
+Authorization: Bearer <id>.<secret>
+```
+
+The design rule is that **there is one permission model, not two**. A key
+carries a role from the same set users do, so an admin-scoped key can do
+exactly what an admin can do in the UI, and a user-scoped key exactly what a
+non-admin can. There is no separate scope language to invent, document, and
+keep in step with the role checks as the app grows.
+
+`server/security` resolves both doors into one `Actor`, so a route handler
+never knows which was used. It reads `actor.Role` and gets an answer that is
+already correct.
+
+### A key can never outrank its owner
+
+The role on a key is a *request*, and it is bounded twice:
+
+- **When it is minted.** `models.IssueAPIKey` loads the owner and refuses to
+  create an admin-scoped key for a non-admin account. Every path goes through
+  it -- the HTTP API, the control socket, the CLI -- so none of them can
+  forget the rule.
+- **On every request.** `models.NarrowRole` recomputes the effective role as
+  the lower of the account's and the key's.
+
+The second check is not redundant. It is what makes demotion work: if an admin
+mints an admin key and later becomes an ordinary user, the stored row still
+says admin and every request that key makes is treated as a user. `/api/me`
+reports the effective role as `role` and the account's as `account_role`, for
+the same reason -- a client should not believe it has permission the server
+will refuse to act on.
+
+### Why a key request skips the CSRF check
+
+CSRF exists because a cookie is *ambient*: the browser attaches it to requests
+some other site caused. Nothing attaches an `Authorization` header on its own,
+so a forged cross-site request carries no key and there is nothing to forge
+with. Requiring a token would mean every script had to fetch one first, for no
+gain.
+
+The cookie is resolved before the header for exactly this reason. Either order
+is safe, but this one keeps the rule unambiguous: a request that arrives with
+ambient browser credentials is always held to the token check, and cannot opt
+out of it by also carrying a key.
+
+### Why a key cannot mint a key
+
+`Guard.RequireSession` gates the endpoints that create and revoke keys, so
+managing keys needs a browser session even with a correctly scoped admin key.
+
+This is containment, not privilege. A key is a bearer credential that lives in
+a config file or a CI secret. If a leaked key could mint more keys, revoking
+it would not end the compromise -- the key it minted while nobody was looking
+survives. Requiring a session means every key in the list is one a person
+created, and revoking a key actually revokes it.
+
+Drop `RequireSession` from those groups if an app genuinely needs to provision
+keys programmatically. Do it knowingly, and write it down in that app's docs.
+
+### The rest of the model
+
+- **Same `<id>.<secret>` shape and the same sha256 hash as a session**, for
+  the same reasons -- see the next two sections. This runs on every request
+  against a 256-bit random secret, so bcrypt would be a latency tax buying
+  nothing.
+- **Shown once.** Only the hash is stored. A lost key is revoked and replaced,
+  never recovered.
+- **Expiry is bounded by default** (`API_KEY_TTL_SECONDS`, 90 days) so a
+  forgotten key stops being a live credential. A key with no expiry is
+  available but has to be asked for: `expires_in_days: 0`, or
+  `manage create-key -days 0`.
+- **`last_used_at` is written at most once every 15 minutes.** "Is anything
+  still using this" is the question you ask before revoking, so it is worth
+  recording -- but bolt has a single writer, and a write per authenticated
+  request would put every other handler behind it.
+- **A disabled account's keys stop working** immediately, because the owner is
+  re-checked on every request. Unlike sessions they are not destroyed:
+  re-enabling the account restores them. A session is a browser artifact and
+  costs nothing to recreate; tearing down every integration's credential
+  because someone was disabled for an afternoon is a footgun with no security
+  gain, given the check already refuses the request.
+- **25 live keys per account** (`models.APIKeyMaxPerUser`). Any signed-in user
+  can mint keys, so the bucket needs a bound; revoking one frees a slot.
+- **`API_KEYS=false` closes the whole surface.** The header stops being
+  believed, existing keys stop authenticating, and the management endpoints
+  404. The rows survive, so turning it back on restores them.
+
+### Where the code is
+
+| Concern | File |
+|---|---|
+| The record, the ceiling, expiry, the per-user cap | `server/models/api_key.go` |
+| Header parsing, the `Actor`, `RequireSession`, CSRF exemption | `server/security/security.go` |
+| Endpoints for minting, listing, revoking | `server/routes/api_keys.go` |
+| Admin CLI (`list-keys`, `create-key`, `revoke-key`) | `server/manage/manage.go` |
+| The same operations for other processes | `server/control/control.go` |
+| The screen | `static/js/keys.js` |
 
 ## Why credentials are shaped `<id>.<secret>`
 
@@ -80,7 +191,7 @@ this app handle secrets" a one-file question.
 | `crypto/rand` | Every credential, key, and nonce |
 | `bcrypt` | Hashing one-time login secrets |
 | `chacha20poly1305` (XChaCha) | Session cookie payloads, values at rest |
-| `sha256` + `crypto/subtle` | Session secret lookup, constant-time compare |
+| `sha256` + `crypto/subtle` | Session and API key secret lookup, constant-time compare |
 | `nacl/secretbox` | Available for authenticated blobs; unused by the base template |
 | `curve25519` | Available for key exchange; unused by the base template |
 | `kyber-k2so` | Available for post-quantum KEM; unused by the base template |
@@ -151,6 +262,12 @@ If a feature needs to reference other users, use `GET /api/team`. It is
 available to any signed-in user and returns only id and display name --
 deliberately omitting the role and disabled status that the admin endpoint
 exposes.
+
+API keys inherit this for free, which is the point of giving them the same
+roles rather than their own scopes: a feature added under "any signed-in
+user" is reachable by any key, and one gated on admin is reachable only by an
+admin-scoped key held by an admin. There is nothing extra to declare per
+feature.
 
 ## Why auth is middleware, not a helper call
 
@@ -285,7 +402,9 @@ over a unix socket in the app directory.
 `manage` takes whichever route is available -- the socket when a server is
 running, the database file when one is not -- so the same command works on a
 live deployment and on a fresh install with nothing started yet. It prints
-which route it used on stderr.
+which route it used on stderr. Accounts and API keys both go through it, which
+is what lets a deploy script mint a key for a CI system before anyone has
+signed in.
 
 ### Why there is no token on the socket
 
@@ -347,6 +466,16 @@ State these to the user rather than letting them be discovered in production:
   `limiter.Config.Storage` at that point rather than assuming it still holds.
 - **Losing the secret key loses the data** when at-rest encryption is on. Back
   it up with the database, never instead of it.
+- **An API key is a bearer credential.** Anything holding it is that account,
+  at that key's role, until the key is revoked or expires -- there is no
+  second factor and no origin binding. That is what a key is for, but it means
+  the admin key listing is a real answer to "what could get in right now", and
+  worth looking at rather than assuming.
+- **Rate limiting counts by IP, not by key.** A key called from many hosts is
+  not throttled as one caller, and several keys behind one NAT share a budget.
+  The limiter runs before the request is authenticated, which is what keeps an
+  unauthenticated flood cheap to refuse; keying it on the actor would mean
+  doing the database lookup first.
 - **No TLS.** The app expects a reverse proxy in front. See
   `docker-and-deployment.md`.
 - **`language.yaml` is public.** It is served to anyone at `/api/language`,

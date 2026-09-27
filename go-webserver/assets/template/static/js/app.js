@@ -60,6 +60,10 @@ const App = {
     Dom.get( "rename-form" ).addEventListener( "submit" , this.onRename.bind( this ) );
     Dom.get( "logout-button" ).addEventListener( "click" , this.onLogout.bind( this ) );
 
+    // Each screen owns its own file and its own init(). This is the one line
+    // that knows the API keys screen exists.
+    await Keys.init( me );
+
     if ( me.role !== "admin" ) return;
 
     Dom.show( Dom.get( "admin-panel" ) , true );
@@ -113,19 +117,7 @@ const App = {
   },
 
   async onCopyLink() {
-    const value = Dom.get( "login-link-value" ).textContent;
-    try {
-      await navigator.clipboard.writeText( value );
-      Dom.flash( Dom.get( "copied-notice" ) );
-    } catch ( error ) {
-      // clipboard access needs a secure context, so plain-http local runs
-      // land here. Selecting the text is a serviceable fallback.
-      const range = document.createRange();
-      range.selectNodeContents( Dom.get( "login-link-value" ) );
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange( range );
-    }
+    await Dom.copy( Dom.get( "login-link-value" ) , Dom.get( "copied-notice" ) );
   },
 
   async refreshUsers() {

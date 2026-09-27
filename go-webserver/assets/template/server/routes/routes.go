@@ -2,9 +2,10 @@
 // which is the only place that knows the full URL map.
 //
 // The API here stays deliberately small: it covers logging in, managing who
-// can log in, and reading the UI's text. Everything else an app does belongs
-// in a new file in this package (server side) and in static/js/ (browser
-// side) -- see references/architecture.md for where the line sits and why.
+// can log in, issuing the API keys that let non-browser callers in, and
+// reading the UI's text. Everything else an app does belongs in a new file in
+// this package (server side) and in static/js/ (browser side) -- see
+// references/architecture.md for where the line sits and why.
 package routes
 
 import (
@@ -58,6 +59,21 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	account.Post( "/logout" , handlers.Logout )
 	account.Get( "/team" , handlers.ListTeam )
 
+	// API keys: any signed-in user manages their own.
+	//
+	// Note the group prefix. A group's middleware is mounted on a path
+	// *prefix*, not on the routes written under it, so it applies to every
+	// route registered after it whose path starts with that prefix. Mounting
+	// these two on "/api" would put RequireSession in front of /api/admin/users
+	// as well, and an admin-scoped API key would then be refused there. That is
+	// also why the prefix is exactly "/api/keys": a future "/api/keysets" would
+	// pick up this middleware by sharing the string, so keep new routes off
+	// these prefixes unless they want these rules.
+	keys := app.Group( "/api/keys" , handlers.RequireAPIKeys , handlers.Guard.RequireLogin , handlers.Guard.RequireSession )
+	keys.Get( "" , handlers.ListMyAPIKeys )
+	keys.Post( "" , handlers.CreateMyAPIKey )
+	keys.Post( "/:key_id/revoke" , handlers.RevokeMyAPIKey )
+
 	// Admin only: deciding who gets in. Note this is the *only* thing admin
 	// rights gate in the base template -- see architecture.md on defaulting
 	// new features to "any signed-in user".
@@ -66,6 +82,13 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	admin.Post( "/users" , handlers.CreateUser )
 	admin.Post( "/users/:user_id/reissue-login" , handlers.ReissueLogin )
 	admin.Post( "/users/:user_id/disabled" , handlers.SetUserDisabled )
+
+	// Admin view of every key in the app -- "who has standing access" -- and
+	// the ability to revoke someone else's. Its own prefix for the same reason
+	// as above: mounted on "/api/admin" it would gate the account routes too.
+	admin_keys := app.Group( "/api/admin/keys" , handlers.RequireAPIKeys , handlers.Guard.RequireAdmin , handlers.Guard.RequireSession )
+	admin_keys.Get( "" , handlers.ListAllAPIKeys )
+	admin_keys.Post( "/:key_id/revoke" , handlers.RevokeAnyAPIKey )
 
 	// Catch-all static serving. Must be registered last -- it matches every
 	// remaining path, so anything added after this line never runs.

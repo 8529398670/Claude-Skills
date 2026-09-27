@@ -100,11 +100,16 @@ Plain scripts, loaded in dependency order, each adding one global:
 | `i18n.js` | Loads and applies `language.yaml`. |
 | `api.js` | Every call to the server. Attaches cookies and the CSRF token. |
 | `app.js` | The account + admin screen. |
+| `keys.js` | The API keys screen. An example of the rule below. |
 
 **Give each new screen its own file with its own `init()`**, included from
 that page's HTML. Do not keep appending to `app.js` -- the whole layout exists
 to avoid a monolith, and the frontend is the easiest place to accidentally
 build one.
+
+`keys.js` is the worked example: it owns its own card, its own tables, and its
+own refresh, and `app.js` knows it exists in exactly one line
+(`await Keys.init( me )`). Copy that shape rather than the alternative.
 
 Anything talking to the server goes through `api.js`. `Api.post` attaches the
 CSRF token automatically, so a new endpoint cannot forget it.
