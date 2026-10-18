@@ -9,7 +9,7 @@ when you are changing the template itself rather than building features on it.
 - [API keys: the same roles, for callers that are not browsers](#api-keys-the-same-roles-for-callers-that-are-not-browsers)
 - [Why credentials are shaped `<id>.<secret>`](#why-credentials-are-shaped-idsecret)
 - [Which crypto is used where, and why](#which-crypto-is-used-where-and-why)
-- [At-rest encryption and the SECRET_KEY tradeoff](#at-rest-encryption-and-the-secret_key-tradeoff)
+- [At-rest encryption and the secret key tradeoff](#at-rest-encryption-and-the-secret-key-tradeoff)
 - [Default permission level for new features](#default-permission-level-for-new-features)
 - [Why auth is middleware, not a helper call](#why-auth-is-middleware-not-a-helper-call)
 - [CSRF](#csrf)
@@ -141,7 +141,7 @@ keys programmatically. Do it knowingly, and write it down in that app's docs.
   gain, given the check already refuses the request.
 - **25 live keys per account** (`models.APIKeyMaxPerUser`). Any signed-in user
   can mint keys, so the bucket needs a bound; revoking one frees a slot.
-- **`API_KEYS=false` closes the whole surface.** The header stops being
+- **`auth.api_keys: false` closes the whole surface.** The header stops being
   believed, existing keys stop authenticating, and the management endpoints
   404. The rows survive, so turning it back on restores them.
 
@@ -217,34 +217,34 @@ lookup is. It means the cookie is opaque to anyone reading a browser profile
 or a proxy log, and that a tampered cookie fails to decrypt before it ever
 reaches the lookup.
 
-## At-rest encryption and the SECRET_KEY tradeoff
+## At-rest encryption and the secret key tradeoff
 
-With `ENCRYPT_AT_REST=true` (the default), every value written to bolt is
-XChaCha-encrypted with `SECRET_KEY`. `server/db/db.go` does this in
-`encode`/`decode`, so models never think about it and no future model can
-forget to.
+With `server.encrypt_at_rest: true` (the default), every value written to
+bolt is XChaCha-encrypted with `server.secret_key` from `config.yaml`.
+`server/db/db.go` does this in `encode`/`decode`, so models never think about
+it and no future model can forget to.
 
 **The cost is real and worth stating plainly to the user: lose the key and the
 database is unreadable.** There is no recovery.
 
-Where the key comes from depends on how the app is run, and the two cases
-trade differently -- `configuration.md` covers this in full, but the short
-version:
+The key always lives in `config.yaml`, but where that file sits relative to
+the database depends on how the app is run, and the two cases trade
+differently -- `configuration.md` covers this in full, but the short version:
 
-- **Container**: `dockerRun.sh` passes `SECRET_KEY` from `.secret_key` on the
-  host, so the key stays outside the mounted volume and a leaked `./data`
-  backup is not enough to read it.
-- **Portable binary**: there is nobody to set an environment variable, so a
-  key is generated once into `secret.key` inside the app directory. That is
-  what lets a single file just run -- at the cost that at-rest encryption then
-  protects a database file that leaks *on its own*, not someone who takes the
-  whole directory.
+- **Container**: `config.yaml` stays in the project directory and is mounted
+  read-only, separately from the data volume, so a leaked `./data` backup is
+  not enough to read it.
+- **Portable binary**: on first run it writes `config.yaml`, key included,
+  into `~/.config/<slug>/` beside `app.db`. That is what lets a single file
+  just run -- at the cost that at-rest encryption then protects a database
+  file that leaks *on its own*, not someone who takes the whole directory.
 
-`config.Load` refuses to start with a malformed key rather than continuing,
-because the alternative failure mode only shows up on the next restart, when
-every record has already become unreadable.
+`config.Load` refuses to start with a missing or malformed key rather than
+continuing or generating a new one, because the alternative failure mode only
+shows up on the next restart, when every record has already become
+unreadable.
 
-Turn it off (`ENCRYPT_AT_REST=false`) when operational simplicity beats
+Turn it off (`server.encrypt_at_rest: false`) when operational simplicity beats
 at-rest confidentiality -- the data is not sensitive, or disk encryption
 already covers it.
 
@@ -336,14 +336,15 @@ exactly the staleness this avoids.
 
 ## Where state lives
 
-Everything the app persists -- database, secret key, uploaded files, an
-optional `config.yaml` -- lives in one directory, `~/.config/<slug>/` by
-default and `/app/data` in a container. Settings resolve as environment
-variable, then `config.yaml`, then default.
+Everything the app persists -- database and uploaded files -- lives in one
+directory, `~/.config/<slug>/` by default and `/app/data` in a container.
+Everything it can be told -- server, Docker, and build settings, plus the
+secret key -- lives in one `config.yaml`, and nothing reads environment
+variables.
 
 That convention has its own reference: see `configuration.md`. Read it before
 adding a setting or writing a file anywhere, because the two rules it exists
-to protect (one backup unit, one place that reads the environment) are easy to
+to protect (one backup unit, one file that holds every setting) are easy to
 break by accident.
 
 ## Where assets come from: disk or embedded
@@ -409,7 +410,8 @@ signed in.
 ### Why there is no token on the socket
 
 There is deliberately no password, token, or handshake. The socket lives in
-the app directory, which is mode 0700, next to `secret.key` and `app.db`. Any
+the app directory, which is mode 0700, next to `app.db`, and only the user
+that owns `config.yaml` (mode 0600, holding the key) can reach it. Any
 process that can open the socket can already read the key and the database
 directly, so a credential would guard nothing while adding one more secret to
 store and rotate. The filesystem permission *is* the authentication.
@@ -441,7 +443,7 @@ from drifting apart.
 ### Limits worth knowing
 
 A unix socket path is capped by the kernel at 104 bytes on macOS and the BSDs,
-108 on Linux. A deep `APP_DIR` overflows it, and the kernel's own error is a
+108 on Linux. A deep `server.app_dir` overflows it, and the kernel's own error is a
 bare "invalid argument", so `control.Listen` checks the length first and fails
 with a message naming the limit and the fix. On Windows the socket works
 (AF_UNIX is supported) but the 0600 chmod is a no-op and the directory ACL is
@@ -454,7 +456,7 @@ State these to the user rather than letting them be discovered in production:
 - **One process per bolt file.** bolt takes an exclusive lock, so a second
   process cannot open the database while the server holds it. The control
   socket (below) is how everything else reaches the data; without it, or with
-  `CONTROL_SOCKET=false`, `manage` needs the server stopped. This is why
+  `server.control_socket: false`, `manage` needs the server stopped. This is why
   `Open` sets a 5s timeout rather than hanging forever.
 - **The control socket is a local door, not a remote one.** It is a unix
   socket, so it does not cross machines. Two servers on two hosts sharing one
@@ -464,8 +466,9 @@ State these to the user rather than letting them be discovered in production:
   container `dockerRun.sh` builds. With multiple replicas each holds its own
   counters, so the effective limit multiplies -- move to a shared
   `limiter.Config.Storage` at that point rather than assuming it still holds.
-- **Losing the secret key loses the data** when at-rest encryption is on. Back
-  it up with the database, never instead of it.
+- **Losing the secret key loses the data** when at-rest encryption is on. It
+  is in `config.yaml`; back that file up with the database, never instead of
+  it.
 - **An API key is a bearer credential.** Anything holding it is that account,
   at that key's role, until the key is revoked or expires -- there is no
   second factor and no origin binding. That is what a key is for, but it means

@@ -20,7 +20,7 @@ COPY . .
 # -trimpath keeps build-machine paths out of the binary; -s -w drop the debug
 # symbol tables, which shrinks it and removes a little detail from anyone
 # poking at a compromised container.
-# Version metadata, passed by dockerBuild.sh so that
+# Version metadata, passed by scripts/docker.sh so that
 # `docker exec <name> /app/server version` is as informative as a portable
 # binary built by build.sh.
 ARG VERSION=dev
@@ -30,8 +30,12 @@ ARG BUILD_DATE=unknown
 # One binary. The frontend is compiled into it by go:embed (see embed.go),
 # and account administration is the "manage" subcommand -- so the image needs
 # no static directory, no language.yaml, and no second executable.
-ENV CGO_ENABLED=0 GOOS=linux
-RUN go build -trimpath \
+#
+# -tags container pins the image's fixed layout into the binary
+# (server/config/layout_container.go): config at /app/config.yaml, state in
+# /app/data. That is what replaces setting them through ENV, and it is why
+# `docker exec <name> /app/server manage ...` needs nothing extra.
+RUN CGO_ENABLED=0 GOOS=linux go build -tags container -trimpath \
       -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
       -o /out/server .
 
@@ -40,27 +44,30 @@ FROM alpine:3.24 AS runtime
 
 # ca-certificates is the only package added: without it any outbound HTTPS
 # this app grows later fails with an opaque certificate error.
+#
+# The uid/gid are fixed at 10001 rather than left to Alpine's system range.
+# dockerRun.sh grants this user the host's data directory and this group read
+# access to config.yaml; a number in the low hundreds is likely to belong to a
+# real account on a Linux host, and that account would get the same access.
 RUN apk add --no-cache ca-certificates \
- && addgroup -S app \
- && adduser -S -G app -h /app -s /sbin/nologin app
+ && addgroup -S -g 10001 app \
+ && adduser -S -u 10001 -G app -h /app -s /sbin/nologin app
 
 WORKDIR /app
 
 COPY --from=builder /out/server ./
 
-# APP_DIR is set explicitly because the default (~/.config/<app>) is meant for
-# a binary run by a person on a workstation. A container has no meaningful
-# home directory, and the whole point here is that state lives in a mounted
-# volume -- so /app/data it is. The database, app storage, and an optional
-# config.yaml all land inside it.
+# There is no ENV here and no config.yaml in the image (.dockerignore keeps
+# it out -- it holds the secret key, and an image layer is forever).
+# dockerRun.sh mounts the project's config.yaml at /app/config.yaml at run
+# time, so one image serves any deployment and a config change needs a
+# restart, not a rebuild.
 #
-# STATIC_DIR is deliberately left at its default (./static relative to
-# WORKDIR), which does not exist in this image, so the embedded frontend is
-# used. Mounting over either path overrides it -- that is the supported way to
-# run the shipped UI with different wording:
+# server.static_dir (./static, beside config.yaml) does not exist in this
+# image, so the embedded frontend is used. Mounting over it, or putting a
+# language.yaml in the data directory, is the supported way to run the shipped
+# UI with different wording:
 #   -v ./language.yaml:/app/data/language.yaml:ro
-ENV APP_DIR=/app/data \
-    PORT=8080
 
 # Only the data directory is writable, and only by the app user. Everything
 # else stays owned by root and read-only to the process -- so even a bug that
@@ -77,11 +84,15 @@ RUN mkdir -p /app/data && chown app:app /app/data
 # mount without that step fails with "permission denied" on app.db.
 
 USER app
-EXPOSE 8080
 
-# Hits the trivial health endpoint rather than a real page, so a slow database
-# query can never get a healthy container killed.
+# No EXPOSE: the port is server.port in config.yaml, and dockerRun.sh
+# publishes it from there. A hardcoded EXPOSE would be stale documentation
+# the first time someone changed it.
+#
+# `/app/server health` reads the same config.yaml for the port and asks
+# /api/health, which touches nothing -- so a slow database query can never get
+# a healthy container killed.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -q -O- http://127.0.0.1:8080/api/health >/dev/null 2>&1 || exit 1
+    CMD ["/app/server", "health"]
 
 ENTRYPOINT ["/app/server"]

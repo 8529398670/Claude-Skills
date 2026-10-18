@@ -15,8 +15,9 @@
 // # Why there is no token on this socket
 //
 // There is deliberately no password, token, or handshake here. The socket
-// lives in AppDir, which is mode 0700, next to secret.key and app.db. Any
-// process that can open the socket can already read the key and the database
+// lives in AppDir, which is mode 0700, next to app.db, and only the user that
+// owns config.yaml (mode 0600, holding the key) can reach it. Any process
+// that can open the socket can already read the key and the database
 // directly, so a credential would guard nothing while adding one more secret
 // to store and rotate. The filesystem permission is the authentication.
 //
@@ -55,7 +56,7 @@ const maxRequestBytes = 64 * 1024
 //
 // This is worth checking by hand because the failure is otherwise a bare
 // "bind: invalid argument" from the kernel, which names neither the limit nor
-// the path that broke it. A deep APP_DIR is all it takes.
+// the path that broke it. A deep server.app_dir is all it takes.
 const maxSocketPathLength = 103
 
 // Server is the control listener. It is created after the database is open,
@@ -81,7 +82,7 @@ func Listen( store *db.Store , cfg *config.Config ) ( server *Server , err error
 	if len( cfg.ControlSocketPath ) > maxSocketPathLength {
 		err = fmt.Errorf(
 			"control socket path is %d characters, past the %d the kernel allows: %s\n"+
-				"Set APP_DIR to a shorter path, or set CONTROL_SOCKET=false to run without the socket -- manage will then need the server stopped." ,
+				"Set server.app_dir in config.yaml to a shorter path, or server.control_socket: false to run without the socket -- manage will then need the server stopped." ,
 			len( cfg.ControlSocketPath ) , maxSocketPathLength , cfg.ControlSocketPath )
 		return
 	}
@@ -349,7 +350,7 @@ func ( server *Server ) handleListAPIKeys( w http.ResponseWriter , r *http.Reque
 // cannot mint an admin key for a non-admin account.
 func ( server *Server ) handleCreateAPIKey( w http.ResponseWriter , r *http.Request ) {
 	if server.cfg.APIKeysEnabled == false {
-		writeError( w , http.StatusForbidden , "api keys are disabled on this server (API_KEYS=false)" )
+		writeError( w , http.StatusForbidden , "api keys are disabled on this server (auth.api_keys: false)" )
 		return
 	}
 

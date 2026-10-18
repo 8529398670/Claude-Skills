@@ -2,7 +2,8 @@
 """Copy the bundled Go project template into a target directory and stamp the
 project name and module path into it.
 
-This is only the mechanical part of scaffolding -- copy plus find/replace. It
+This is only the mechanical part of scaffolding -- copy plus find/replace, and
+writing the project's config.yaml with a freshly generated secret key. It
 deliberately does not run `go mod tidy`, build anything, start a server, or
 create any users, so nothing touches the network or the outside world until
 the person running it decides to.
@@ -16,7 +17,9 @@ ever be imported by something else.
 """
 from __future__ import annotations
 
+import os
 import re
+import secrets
 import shutil
 import sys
 from pathlib import Path
@@ -54,6 +57,32 @@ def stamp(path: Path, replacements: dict[str, str]) -> None:
         text = text.replace(token, value)
     if text != original:
         path.write_text(text, encoding="utf-8")
+
+
+# The one line in defaults.yaml that config.yaml must differ on. Mirrors
+# NewFileContent in server/config/config.go, which does the same thing for
+# `config init` and for a binary's first run.
+SECRET_KEY_LINE = re.compile(r'^(\s*secret_key:\s*)""', re.MULTILINE)
+
+
+def write_config(target_dir: Path) -> Path:
+    """Write <target>/config.yaml: the stamped defaults plus a fresh key.
+
+    config.yaml is the project's one configuration file -- server, Docker,
+    and build -- and it holds the secret key, so it is created at 0600 and is
+    already in the template's .gitignore and .dockerignore.
+    """
+    defaults = (target_dir / "server" / "config" / "defaults.yaml").read_text(encoding="utf-8")
+    content, count = SECRET_KEY_LINE.subn(
+        lambda match: f'{match.group(1)}"{secrets.token_hex(32)}"', defaults
+    )
+    if count != 1:
+        raise SystemExit(f"defaults.yaml must contain exactly one `secret_key: \"\"` line, found {count}")
+    config_path = target_dir / "config.yaml"
+    descriptor = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    return config_path
 
 
 def main() -> None:
@@ -95,13 +124,21 @@ def main() -> None:
         if path.is_file():
             stamp(path, replacements)
 
-    for script in (target_dir / "dockerRun.sh", target_dir / "scripts" / "vendor.sh"):
+    for script in (
+        target_dir / "dockerRun.sh",
+        target_dir / "dockerBuild.sh",
+        target_dir / "build.sh",
+        target_dir / "scripts" / "vendor.sh",
+    ):
         if script.exists():
             script.chmod(0o755)
+
+    config_path = write_config(target_dir)
 
     print(f"Scaffolded '{project_name}' into {target_dir}")
     print(f"  module {module_path}")
     print(f"  docker image/container name: {slugify(project_name)}")
+    print(f"  config: {config_path} (mode 0600, fresh secret key, gitignored)")
     print("")
     print("Next:")
     print(f"  cd {target_dir}")

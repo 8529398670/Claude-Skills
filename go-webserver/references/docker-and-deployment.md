@@ -1,11 +1,27 @@
 # Docker & deployment reference
 
-## Two scripts
+## Two scripts, one config file
 
-`dockerBuild.sh` builds the image; `dockerRun.sh` calls it and then runs the
-container. They are split so building and running are separately runnable --
-CI can build without starting anything, and a restart-only redeploy need not
-rebuild. The common case is still one command: `./dockerRun.sh`.
+`dockerBuild.sh` builds the image; `dockerRun.sh` builds through the same
+function (`scripts/docker.sh`) and then runs the container. They are split so
+building and running are separately runnable -- CI can build without
+starting anything. The common case is still one command: `./dockerRun.sh`.
+
+Every value either script uses comes from `config.yaml`: the `docker:`
+section (image and container names, `bind_address`, `host_port`, `data_dir`,
+`restart`, `memory`, `cpus`, `pids_limit`, `tmpfs_size`) and `server.port` for
+the container side of the published port. Neither reads an environment
+variable, and the container is started with no `-e` flags -- it reads the
+same `config.yaml`, mounted read-only.
+
+The scripts do not parse YAML themselves. `build_image` builds the image,
+then runs *its* binary (`config shell docker`) in a throwaway container with
+no network, a read-only root, and no capabilities, and `eval`s the
+single-quoted assignments it prints. So the deploy gets the server's own
+defaults and strict validation, and needs nothing on the host but Docker. The
+image name lives in `config.yaml` too, which is why it is applied with
+`docker tag` after the build rather than passed to it. An extra tag is a
+positional argument: `./dockerBuild.sh v1.2.3`.
 
 Both stamp version metadata into the binary the same way `build.sh` does, so
 `docker exec <name> /app/server version` is as informative as a portable
@@ -28,12 +44,18 @@ reconsider -- not before.
   the builder stage. The shipped image contains a single static binary and
   nothing else -- the frontend is compiled into it by `go:embed`, and account
   administration is the `manage` subcommand rather than a second executable.
-- **No `static/` or `language.yaml` in the image.** `STATIC_DIR` and
-  `LANGUAGE_FILE` keep their defaults (`/app/static`, `/app/language.yaml`),
-  neither of which exists, so the embedded copies are used. Mounting either
-  path overrides it -- which is the supported way to run the shipped UI with
-  different wording:
-  `-v ./language.yaml:/app/language.yaml:ro`.
+- **No `static/`, `language.yaml`, or `config.yaml` in the image.**
+  `server.static_dir` (`./static` beside the config, so `/app/static`) does
+  not exist, so the embedded frontend is used; a `language.yaml` in the data
+  directory overrides the embedded wording. `config.yaml` is kept out by
+  `.dockerignore` because it holds the secret key and an image layer is
+  forever -- it is mounted at run time instead, so one image serves any
+  deployment and a config change needs a restart, not a rebuild.
+- **No `ENV`, no `EXPOSE`.** `-tags container` pins the image's fixed
+  layout into the binary instead (config at `/app/config.yaml`, state in
+  `/app/data`, listen on `0.0.0.0`; see `configuration.md`). The port is
+  `server.port`, so a hardcoded `EXPOSE` would be stale the first time it
+  changed.
 - **`CGO_ENABLED=0`.** A statically linked binary with no libc dependency,
   which is what keeps the runtime image small and sidesteps musl-vs-glibc
   surprises entirely.
@@ -44,14 +66,20 @@ reconsider -- not before.
   before the source, so editing Go code does not re-download modules.
   `go.sum` ships with the template, so the first build is reproducible and
   does not silently resolve to newer versions.
-- **Non-root user.** `app` is created with `/sbin/nologin`, and `USER app`
-  drops root before the entrypoint runs.
+- **Non-root user with a fixed uid/gid of 10001.** `app` is created with
+  `/sbin/nologin`, and `USER app` drops root before the entrypoint runs. The
+  number is fixed and high on purpose: `dockerRun.sh` grants this uid the
+  host's data directory and this gid read access to `config.yaml`, and a
+  low system uid is likely to belong to a real account on a Linux host, which
+  would get the same access.
 - **Only `/app/data` is writable, and only by `app`.** Everything else stays
   root-owned and read-only to the process, so code execution inside the
   container still cannot rewrite the binary or the frontend.
-- **Healthcheck hits `/api/health`,** which touches nothing. A healthcheck
-  that queried the database would let a slow query get a working container
-  killed and restarted -- turning a small problem into an outage.
+- **Healthcheck is `/app/server health`,** which reads `server.port` from the
+  mounted config and asks `/api/health`, an endpoint that touches nothing. A
+  healthcheck that queried the database would let a slow query get a working
+  container killed and restarted -- turning a small problem into an outage.
+  Doing it in the binary also means the runtime image needs no HTTP client.
 
 The Go version in `go.mod` and the builder image tag must stay in step.
 Dependencies here require Go 1.26; bumping one without the other produces a
@@ -59,51 +87,67 @@ confusing toolchain error at build time.
 
 ## dockerRun.sh choices
 
-- **Publishes to `127.0.0.1` only.** This app does **not** terminate TLS. Put
-  nginx, Caddy, or Traefik in front and let it hold the certificate.
-- **`SECURE_COOKIES` stays `true`** whenever a proxy is serving HTTPS. Set it
-  to `false` *only* for a plain-`http://localhost` run. Getting this wrong is
-  the single most common cause of "login does nothing": a `Secure` cookie is
-  silently dropped over plain http, so the redirect succeeds and the session
-  never sticks.
-- **`TRUST_PROXY=true`** makes Fiber believe `X-Forwarded-For`, so the rate
-  limiter sees real client IPs rather than the proxy's. Only correct when a
-  proxy you control really is in front -- otherwise clients forge their own IP
-  and walk straight past the limiter.
+- **Stops on first run for review.** A fresh clone has no `config.yaml` (it
+  is gitignored), so the first `./dockerRun.sh` writes one from the image's
+  defaults with a new key and exits, naming the settings that depend on what
+  sits in front of this. Starting on unreviewed defaults would mean guessing
+  at `secure_cookies` and `trust_proxy`.
+- **Publishes to `docker.bind_address`, `127.0.0.1` by default.** This app
+  does **not** terminate TLS. Put nginx, Caddy, or Traefik in front and let it
+  hold the certificate.
+- **`server.secure_cookies` stays `true`** whenever a proxy is serving HTTPS.
+  Set it to `false` *only* for a plain-`http://localhost` run. Getting this
+  wrong is the single most common cause of "login does nothing": a `Secure`
+  cookie is silently dropped over plain http, so the redirect succeeds and
+  the session never sticks.
+- **`server.trust_proxy: true`** makes Fiber believe `X-Forwarded-For`, so the
+  rate limiter sees real client IPs rather than the proxy's. It defaults to
+  `false` because it is only correct when a proxy you control really is in
+  front -- otherwise clients forge their own IP and walk straight past the
+  limiter. Behind a proxy, turn it on: until you do, every client looks like
+  the proxy and they share one rate limit. `dockerRun.sh` reminds you while
+  it is off.
+- **`config.yaml` is mounted read-only, separately from the data
+  directory,** so the secret key is never inside `docker.data_dir`. The
+  script makes the file readable by the container's group (0640, you stay the
+  owner) and tests that it worked, the same way it handles the data
+  directory below.
 - **`--read-only`** plus a `noexec,nosuid` tmpfs for `/tmp`: the container
   cannot write to its own filesystem. This is what turns the Dockerfile's
   ownership choices into an actual guarantee.
 - **`--cap-drop ALL`** and **`--security-opt no-new-privileges:true`**: no
   Linux capabilities, and no process inside can gain more rights than it
   started with, even via a setuid binary.
-- **`--pids-limit 128`, `--memory 256m`, `--cpus 1`**: blast-radius limits, so
-  a runaway loop degrades one container instead of the host. Raise these
-  deliberately for real load rather than discovering them under traffic.
+- **`docker.pids_limit`, `docker.memory`, `docker.cpus`** (128, 256m, 1):
+  blast-radius limits, so a runaway loop degrades one container instead of
+  the host. Raise these deliberately for real load rather than discovering
+  them under traffic.
 
-## APP_DIR in containers
+## Paths inside the container
 
-`APP_DIR=/app/data` is set explicitly in the Dockerfile and by `dockerRun.sh`,
-overriding the `~/.config/<slug>` default that applies outside a container. A
-container has no meaningful home directory, and the point of the mount is that
-state lives on the host.
+The binary in the image is built with `-tags container`, which pins the app
+directory to `/app/data` and the config file to `/app/config.yaml`,
+overriding `server.app_dir` and the `~/.config/<slug>` default that apply
+outside a container. A container has no meaningful home directory, and the
+point of the mounts is that state lives on the host.
 
-Everything the app persists is therefore in that one mounted directory --
-database, `storage/`, and an optional `config.yaml`. The exception is
-`SECRET_KEY`, which `dockerRun.sh` passes from `.secret_key` on the host so
-the key stays *outside* the volume. See `configuration.md` for why that
+Everything the app persists is therefore in the mounted data directory --
+database and `storage/`. The exception is the secret key, which lives in
+`config.yaml` in the project directory and is mounted separately, so the key
+stays *outside* the data volume. See `configuration.md` for why that
 distinction is worth keeping.
 
 ## The data directory and container ownership
 
-`dockerRun.sh` bind-mounts `./data` so the database stays visible on the host
-for backups. A bind mount ignores the image's ownership, though, so the script
+`dockerRun.sh` bind-mounts `docker.data_dir` (`./data`) so the database stays
+visible on the host for backups. A bind mount ignores the image's ownership, though, so the script
 makes sure the container's unprivileged user can actually write there before
 starting anything.
 
 It has to, because the two platforms disagree:
 
 - **Linux**: the host directory's ownership is real. The container user (uid
-  100 in this image) needs to be granted it, so the chown matters.
+  10001 in this image) needs to be granted it, so the chown matters.
 - **macOS** (Docker Desktop, colima): the file-sharing layer ignores guest
   ownership -- any uid can write, and the chown fails harmlessly.
 
@@ -112,18 +156,20 @@ actually tested. If the test fails the script stops with the exact `chown`
 command to run, rather than starting a container that crash-loops on
 "permission denied" -- which looks like a bug in the app and is not.
 
-## SECRET_KEY
+## The secret key
 
-`dockerRun.sh` generates `.secret_key` once (mode 600) on the host and reuses
-it on every run. It must stay stable:
+`server.secret_key` is generated once, when `config.yaml` is created
+(`scaffold.py`, `config init`, or the first `./dockerRun.sh` on a fresh
+clone), and read from there on every run. It must stay stable:
 
 - It encrypts session cookie payloads -- rotating it logs everyone out.
-- With `ENCRYPT_AT_REST=true` (default) it encrypts every value in the
-  database -- **rotating or losing it makes the data permanently unreadable.**
+- With `server.encrypt_at_rest: true` (default) it encrypts every value in
+  the database -- **rotating or losing it makes the data permanently
+  unreadable.**
 
-So `.secret_key` is as important as `data/` for backups. Back up both together
-or neither is useful. If the user is setting up backups, say this explicitly;
-it is the kind of thing discovered at the worst possible time.
+So `config.yaml` is as important as `data/` for backups. Back up both
+together or neither is useful. If the user is setting up backups, say this
+explicitly; it is the kind of thing discovered at the worst possible time.
 
 To rotate deliberately, export the data first, change the key, re-import.
 There is no in-place re-encryption in the template.
@@ -177,21 +223,22 @@ docker exec -it <name> /app/server manage revoke-key -key-id <id>
 The key is printed once and is not recoverable -- capture it where the script
 needs it, or revoke and mint another. `list-keys` is the standing answer to
 "what has programmatic access to this deployment", and worth reading before
-assuming the answer is nothing. Set `API_KEYS=false` on the container to close
-that surface entirely.
+assuming the answer is nothing. Set `auth.api_keys: false` in `config.yaml`
+and restart to close that surface entirely.
 
-If the container is stopped, or it was started with `CONTROL_SOCKET=false`,
-run a one-off against the same data directory instead:
+If the container is stopped, or it was started with
+`server.control_socket: false`, run a one-off with the same two mounts:
 
 ```bash
 docker stop <name>
-docker run --rm -v "$(pwd)/data:/app/data" -e "SECRET_KEY=$(cat .secret_key)" \
+docker run --rm -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/config.yaml:/app/config.yaml:ro" \
   <image> manage reissue-login -user-id 1
 docker start <name>
 ```
 
-`SECRET_KEY` has to be passed and has to match, or the stored records cannot
-be decrypted.
+The `config.yaml` mount is what carries the secret key; without it the
+stored records cannot be decrypted.
 
 The socket lives inside the mounted data directory, so it is covered by the
 volume's permissions and never crosses the container boundary. Nothing about
@@ -212,10 +259,15 @@ Three choices make that work: `CGO_ENABLED=0` (static linking, so there is no
 libc version to match), `go:embed` (the frontend is inside the binary), and
 bolt (the database is one file the binary creates on first run).
 
+The binary name, output directory, and default target list are the
+`build:` section of `config.yaml`, read through `go run . config shell build`
+(targets on the command line replace the list for one run).
+
 `build.sh` also stamps version, commit, and build date via `-ldflags -X`, so
 `./myapp version` can identify a binary once a few copies are in circulation.
-It honours `SOURCE_DATE_EPOCH` and passes `-trimpath`, so builds are
-reproducible.
+The build date is the last commit's timestamp rather than "now", and
+`-trimpath` keeps checkout paths out, so building the same commit twice gives
+the same bytes.
 
 **When to use which.** Docker is where the sandboxing lives -- read-only
 filesystem, dropped capabilities, pid and memory limits, restart policy. A
@@ -227,11 +279,12 @@ host on the assumption that it is equally protected.
 
 Two things to pass on with any binary you hand over:
 
-- **`SECRET_KEY` must be the same on every run.** It encrypts session cookies
-  and, with `ENCRYPT_AT_REST` on, the database. There is no `dockerRun.sh`
-  generating and persisting it here, so whoever runs the binary owns that.
-- **`SECURE_COOKIES` must be true anywhere real.** Only `false` for plain
-  `http://localhost`.
+- **Its `config.yaml` is the key.** On first run the binary writes
+  `~/.config/<slug>/config.yaml` with a fresh `server.secret_key`, which
+  encrypts session cookies and, with `server.encrypt_at_rest` on, the
+  database. Whoever runs the binary owns backing that file up with the data.
+- **`server.secure_cookies` must be true anywhere real.** Only `false` for
+  plain `http://localhost`.
 
 Distributing an executable is a trust decision for whoever receives it, which
 is why `build.sh` writes `SHA256SUMS` -- give them a way to check what they
@@ -239,8 +292,8 @@ got is what you built.
 
 ## Backups
 
-The entire state is the `data/` directory plus `.secret_key`, and you need
-both -- `app.db` without the key is unreadable. bolt is a single file, so a
+The entire state is the `data/` directory plus `config.yaml`, and you need
+both -- `app.db` without the key in `config.yaml` is unreadable. bolt is a single file, so a
 copy taken while the server is stopped is complete and consistent; copying
 from under a running server can catch a write in progress. Use `docker stop`,
 copy, `docker start`.
@@ -250,14 +303,12 @@ lives inside the app directory instead.
 
 ## Tuning
 
-Every knob is resolved in `server/config/config.go` as environment variable,
-then `config.yaml`, then default: `SESSION_TTL_SECONDS`,
-`LOGIN_TOKEN_TTL_SECONDS`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW_SECONDS`,
-`BODY_LIMIT_BYTES`, `ENCRYPT_AT_REST`, `TRUST_PROXY`, and the rest --
-`config.example.yaml` lists all of them.
+Every knob is a key in `config.yaml` -- session and login-token lifetimes,
+rate limits, body size, at-rest encryption, proxy trust, and the container's
+own resource limits. `server/config/defaults.yaml` documents all of them with
+their defaults.
 
-In a container, prefer `-e` flags in `dockerRun.sh` over editing defaults into
-`config.go`, so the same image stays reusable across environments. A
-`config.yaml` dropped into the mounted app directory also works and survives
-image rebuilds, which suits settings that belong to a particular deployment
-rather than to a particular run. See `configuration.md`.
+Edit the project's `config.yaml` and re-run `./dockerRun.sh` (or just
+`docker restart <name>` for a `server:` or `auth:` change, since the file is
+mounted rather than baked in). The image stays the same across environments;
+each deployment's `config.yaml` is what differs. See `configuration.md`.

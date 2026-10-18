@@ -17,42 +17,47 @@
 # handing a colleague a working copy, an internal box with no container
 # runtime, a Raspberry Pi, a USB stick.
 #
-# Usage:
-#   ./build.sh                  build every target below
+# The binary name, the output directory, and the target list are the build:
+# section of config.yaml. Targets given on the command line replace the list
+# for one run:
+#
+#   ./build.sh                  build every target in build.targets
 #   ./build.sh linux/amd64      build one
 #   ./build.sh darwin/arm64 linux/arm64
 set -euo pipefail
 cd "$( dirname "${BASH_SOURCE[0]}" )"
 
-BINARY_NAME="{{PROJECT_SLUG}}"
-OUTPUT_DIR="dist"
+# config.yaml is read through the app itself rather than parsed here, so this
+# script gets the same defaults and validation as the server -- and Go is
+# already required to build. With no config.yaml yet (a fresh clone), the
+# defaults from server/config/defaults.yaml apply.
+#
+# Assigned before it is eval'd so that a config error stops the script:
+# `eval "$( failing )"` would quietly eval nothing and carry on.
+BUILD_CONFIG="$( go run . config shell -file ./config.yaml build )"
+eval "$BUILD_CONFIG"
 
-# Add or remove freely. linux/arm is 32-bit (Raspberry Pi OS 32-bit and
-# similar); linux/arm64 covers modern Pis, AWS Graviton, and Apple Silicon VMs.
-ALL_TARGETS=(
-  "darwin/amd64"
-  "darwin/arm64"
-  "linux/amd64"
-  "linux/arm64"
-  "linux/arm"
-  "windows/amd64"
-  "windows/arm64"
-)
+BINARY_NAME="$build_binary_name"
+OUTPUT_DIR="$build_output_dir"
 
 if [ $# -gt 0 ]; then
   TARGETS=( "$@" )
 else
-  TARGETS=( "${ALL_TARGETS[@]}" )
+  read -r -a TARGETS <<< "$build_targets"
 fi
 
 # Version metadata, stamped into the binary and readable later with
 # `./{{PROJECT_SLUG}} version`. Being able to ask a binary what it is beats
 # guessing from a filename once a few copies are in circulation.
-VERSION="${VERSION:-$( git describe --tags --always --dirty 2>/dev/null || echo "dev" )}"
+VERSION="$( git describe --tags --always --dirty 2>/dev/null || echo "dev" )"
 COMMIT="$( git rev-parse --short HEAD 2>/dev/null || echo "unknown" )"
-# Honour SOURCE_DATE_EPOCH so a build can be byte-for-byte reproducible.
-BUILD_DATE="$( date -u -r "${SOURCE_DATE_EPOCH:-$( date +%s )}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-  || date -u +%Y-%m-%dT%H:%M:%SZ )"
+# The commit's own timestamp rather than "now", so building the same commit
+# twice produces the same bytes. Outside a git checkout there is no commit to
+# anchor to, and the current time is the honest answer. (`date -r` is BSD and
+# macOS; `date -d @` is GNU.)
+BUILD_EPOCH="$( git log -1 --format=%ct 2>/dev/null || date +%s )"
+BUILD_DATE="$( date -u -r "$BUILD_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+  || date -u -d "@$BUILD_EPOCH" +%Y-%m-%dT%H:%M:%SZ )"
 
 # -s -w drop the symbol and DWARF tables (smaller, less detail for anyone
 # poking at a deployed binary). -trimpath keeps build-machine paths out of it,
@@ -110,27 +115,28 @@ To run one:
 
   ./${OUTPUT_DIR}/${BINARY_NAME}_${VERSION}_\$(go env GOOS)_\$(go env GOARCH)
 
-That is the whole command. No environment variables are required and no files
-need to sit beside it -- the frontend is compiled in, and on first run it
-creates its own state directory:
+That is the whole command. No files need to sit beside it -- the frontend is
+compiled in. Its one config file is ./config.yaml if there is one in the
+directory it is started from, else ~/.config/{{PROJECT_SLUG}}/config.yaml,
+which it creates on first run along with the rest of its state:
 
-  ~/.config/${BINARY_NAME}/          (or \$XDG_CONFIG_HOME/${BINARY_NAME}/)
+  ~/.config/{{PROJECT_SLUG}}/
+    config.yaml     every setting, plus the secret key (mode 0600)
     app.db          the database
-    secret.key      generated once, mode 0600
     storage/        application files
-    config.yaml     optional; see config.example.yaml
 
-Point it somewhere else with APP_DIR=/srv/${BINARY_NAME}. Ask a built binary
-where it is looking with:
+server.app_dir in that config.yaml moves the state somewhere else. Ask a
+built binary where it is looking with:
 
   ./${BINARY_NAME} manage paths
 
 Two things to pass on with any binary you hand someone:
 
-  * Back up that whole directory. secret.key encrypts the database, so
-    app.db without it is unreadable -- and either one alone is useless.
-  * SECURE_COOKIES must be true anywhere real, behind an HTTPS proxy. It
-    defaults to true; set it false only for local http://localhost, or the
+  * Back up config.yaml together with app.db. Its secret_key encrypts the
+    database, so app.db without it is unreadable -- and either one alone is
+    useless.
+  * server.secure_cookies must be true anywhere real, behind an HTTPS proxy.
+    It defaults to true; set it false only for local http://localhost, or the
     browser will drop the session cookie and login will look like it silently
     does nothing.
 
@@ -140,7 +146,8 @@ The binary is also the admin CLI:
   ./${BINARY_NAME} manage reissue-login -user-id 1
   ./${BINARY_NAME} version
 
-If ./static or a language.yaml in the app directory exist, those are used
-instead of the embedded copies -- which is what makes editing the frontend
-during development work, and lets an operator reword the UI without a rebuild.
+If a static/ directory sits beside config.yaml, or a language.yaml in the app
+directory, those are used instead of the embedded copies -- which is what makes
+editing the frontend during development work, and lets an operator reword the
+UI without a rebuild.
 NOTE

@@ -9,6 +9,8 @@
 //
 //	{{PROJECT_SLUG}}                     run the server
 //	{{PROJECT_SLUG}} manage list-users   account administration
+//	{{PROJECT_SLUG}} config check        create, check, or read config.yaml
+//	{{PROJECT_SLUG}} health              the container's healthcheck
 //	{{PROJECT_SLUG}} version             build information
 package main
 
@@ -28,6 +30,7 @@ import (
 	config "{{MODULE_PATH}}/server/config"
 	control "{{MODULE_PATH}}/server/control"
 	db "{{MODULE_PATH}}/server/db"
+	healthcheck "{{MODULE_PATH}}/server/healthcheck"
 	language "{{MODULE_PATH}}/server/language"
 	manage "{{MODULE_PATH}}/server/manage"
 	middleware "{{MODULE_PATH}}/server/middleware"
@@ -56,13 +59,27 @@ func main() {
 				os.Exit( 1 )
 			}
 			return
+		case "config":
+			if err := config.RunCommand( os.Args[ 2: ] ); err != nil {
+				fmt.Fprintf( os.Stderr , "error: %v\n" , err )
+				os.Exit( 1 )
+			}
+			return
+		case "health":
+			if err := healthcheck.Run(); err != nil {
+				fmt.Fprintf( os.Stderr , "unhealthy: %v\n" , err )
+				os.Exit( 1 )
+			}
+			return
 		case "version" , "-version" , "--version":
 			fmt.Printf( "{{PROJECT_NAME}} %s (commit %s, built %s, %s/%s, %s)\n" ,
 				version , commit , buildDate , runtime.GOOS , runtime.GOARCH , runtime.Version() )
 			return
 		case "-h" , "--help" , "help":
-			fmt.Printf( "{{PROJECT_NAME}} %s\n\nUsage:\n  {{PROJECT_SLUG}}                 run the web server\n  {{PROJECT_SLUG}} manage <cmd>    account administration\n  {{PROJECT_SLUG}} version         build information\n\n" , version )
+			fmt.Printf( "{{PROJECT_NAME}} %s\n\nUsage:\n  {{PROJECT_SLUG}}                 run the web server\n  {{PROJECT_SLUG}} manage <cmd>    account administration\n  {{PROJECT_SLUG}} config <cmd>    create, check, or read config.yaml\n  {{PROJECT_SLUG}} health          exit 0 if the local server answers\n  {{PROJECT_SLUG}} version         build information\n\n" , version )
 			manage.Usage()
+			fmt.Println( "" )
+			config.CommandUsage()
 			return
 		}
 	}
@@ -160,8 +177,15 @@ func run() ( err error ) {
 	}()
 
 	log.Printf( "[start] %s %s listening on %s (secure cookies: %v)" , cfg.ProjectName , version , cfg.ListenAddress() , cfg.SecureCookies )
+	if cfg.ConfigCreated {
+		log.Printf( "[config] %s (created, with a new secret key -- back it up)" , cfg.ConfigFile )
+	} else {
+		log.Printf( "[config] %s" , cfg.ConfigFile )
+	}
+	if cfg.ConfigWarning != "" {
+		log.Printf( "[config] warning: %s" , cfg.ConfigWarning )
+	}
 	log.Printf( "[state]  %s" , cfg.AppDir )
-	log.Printf( "[secret] %s" , cfg.SecretKeySource )
 	log.Printf( "[assets] %s" , bundle.Source )
 	log.Printf( "[control] %s" , control_server.Path() )
 	err = app.Listen( cfg.ListenAddress() , fiber.ListenConfig{ DisableStartupMessage: true } )

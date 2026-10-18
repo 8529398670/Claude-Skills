@@ -91,7 +91,7 @@ func ( store *Store ) decode( raw []byte , out any ) ( err error ) {
 	if store.encryptAtRest {
 		plain , err = encryption.ChaChaDecryptBytes( store.secretKey , raw )
 		if err != nil {
-			err = fmt.Errorf( "could not decrypt a stored record -- is SECRET_KEY the same one it was written with?: %w" , err )
+			err = fmt.Errorf( "could not decrypt a stored record -- is server.secret_key in config.yaml the same one it was written with?: %w" , err )
 			return
 		}
 	}

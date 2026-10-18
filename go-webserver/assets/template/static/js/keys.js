@@ -13,7 +13,7 @@ const Keys = {
 
   async init( me ) {
     this.me = me;
-    // The server can switch the whole feature off (API_KEYS=false). When it
+    // The server can switch the whole feature off (auth.api_keys: false in config.yaml). When it
     // has, the endpoints are gone, so showing the panel would only produce a
     // form that 404s.
     if ( me.api_keys_enabled === false ) return;

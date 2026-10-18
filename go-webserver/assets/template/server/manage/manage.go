@@ -26,6 +26,7 @@ import (
 	flag "flag"
 	fmt "fmt"
 	os "os"
+	filepath "path/filepath"
 	time "time"
 
 	bootstrap "{{MODULE_PATH}}/server/bootstrap"
@@ -61,9 +62,9 @@ These work whether or not the server is running. With the server up the
 command is sent to it over the control socket in the app directory; with the
 server stopped the database is opened directly.
 
-Every command reads the same environment variables as the server
-(DATA_DIR, SECRET_KEY, ...). SECRET_KEY in particular must match, or
-the stored records cannot be decrypted.
+Every command reads the same config.yaml as the server (see "paths" for
+which one). Its server.secret_key in particular must be the one the data
+was written with, or the stored records cannot be decrypted.
 `
 
 // Usage prints the command list. Exported so an entry point can show it for
@@ -172,11 +173,11 @@ func connect( cfg *config.Config ) ( back backend , err error ) {
 		if cfg.ControlSocketEnabled {
 			err = fmt.Errorf(
 				"could not reach a running server on %s, and could not open the database directly: %w\n"+
-					"If the server is running, it was started with CONTROL_SOCKET=false; restart it with the socket enabled or stop it first." ,
+					"If the server is running, it was started with server.control_socket: false; restart it with the socket enabled or stop it first." ,
 				cfg.ControlSocketPath , open_err )
 			return
 		}
-		err = fmt.Errorf( "database error (CONTROL_SOCKET is disabled, so the server must be stopped): %w" , open_err )
+		err = fmt.Errorf( "database error (server.control_socket is false, so the server must be stopped): %w" , open_err )
 		return
 	}
 	back = &directBackend{ store: store , cfg: cfg }
@@ -380,7 +381,7 @@ func ( b *directBackend ) CreateAPIKey( user_id uint64 , name string , role stri
 	// Refuse rather than mint something that cannot be used: with the feature
 	// off the server ignores the Authorization header entirely.
 	if b.cfg.APIKeysEnabled == false {
-		err = fmt.Errorf( "api keys are disabled on this server (API_KEYS=false)" )
+		err = fmt.Errorf( "api keys are disabled on this server (auth.api_keys: false)" )
 		return
 	}
 
@@ -491,21 +492,16 @@ func existsNote( path string ) ( note string ) {
 // commandPaths answers "where did it put my data", which is otherwise a
 // question you can only settle by reading the source or the startup log.
 func commandPaths( cfg *config.Config ) ( err error ) {
+	fmt.Printf( "%-14s %s  (holds the secret key)\n" , "config" , cfg.ConfigFile )
 	fmt.Printf( "%-14s %s\n" , "app dir" , cfg.AppDir )
 	fmt.Printf( "%-14s %s\n" , "database" , cfg.DatabasePath )
 	fmt.Printf( "%-14s %s\n" , "storage" , cfg.StorageDir )
-	fmt.Printf( "%-14s %s%s\n" , "config" , cfg.ConfigFile , existsNote( cfg.ConfigFile ) )
-
-	// Report where the key actually came from, not just where a file would
-	// live. In a container the key arrives through the environment and no
-	// file exists -- printing the path alone would send someone hunting for
-	// a file that is deliberately not there.
-	fmt.Printf( "%-14s %s\n" , "secret key" , cfg.SecretKeySource )
+	fmt.Printf( "%-14s %s%s\n" , "language" , cfg.LanguageFile , existsNote( cfg.LanguageFile ) )
 
 	// Whether a server is live decides which route every other command
 	// takes, so report it here rather than making someone infer it.
 	if cfg.ControlSocketEnabled == false {
-		fmt.Printf( "%-14s %s\n" , "control" , "disabled (CONTROL_SOCKET=false)" )
+		fmt.Printf( "%-14s %s\n" , "control" , "disabled (server.control_socket: false)" )
 	} else if client , dial_err := control.Dial( cfg ); dial_err == nil {
 		client.Close()
 		fmt.Printf( "%-14s %s  (server running)\n" , "control" , cfg.ControlSocketPath )
@@ -513,13 +509,20 @@ func commandPaths( cfg *config.Config ) ( err error ) {
 		fmt.Printf( "%-14s %s  (no server running)\n" , "control" , cfg.ControlSocketPath )
 	}
 
+	if cfg.ConfigWarning != "" {
+		fmt.Printf( "%-14s %s\n" , "warning" , cfg.ConfigWarning )
+	}
+
+	// Whether the key sits inside the app dir decides what a backup has to
+	// cover, so say which case this is rather than leaving it to be worked
+	// out from the paths above.
 	fmt.Println( "" )
-	fmt.Println( "Override the app dir with APP_DIR=/some/path." )
-	if cfg.SecretKeyOnDisk {
-		fmt.Println( "Back up the app dir as a unit -- app.db is unreadable without secret.key." )
+	fmt.Println( "Change any of these in config.yaml (server.app_dir moves the app dir)." )
+	if filepath.Dir( cfg.ConfigFile ) == cfg.AppDir {
+		fmt.Println( "Back up the app dir as a unit -- app.db is unreadable without the key in config.yaml." )
 	} else {
-		fmt.Println( "The key is supplied externally and is NOT in the app dir." )
-		fmt.Println( "Back up the app dir AND whatever holds that key; either alone is useless." )
+		fmt.Println( "config.yaml is NOT in the app dir. Back up both; app.db is unreadable without" )
+		fmt.Println( "the key in config.yaml, and either one alone is useless." )
 	}
 	return
 }

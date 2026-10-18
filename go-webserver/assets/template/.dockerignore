@@ -2,8 +2,7 @@
 .gitignore
 data/
 *.db
-.secret_key
-.env
+config.yaml
 *.md
 Dockerfile
 dockerRun.sh
