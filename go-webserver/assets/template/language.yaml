@@ -21,6 +21,13 @@ signed_out:
   body: "There is no signup form here on purpose. Ask an admin for a one-time login link."
   invalid_link: "That login link is invalid, expired, or has already been used. Ask for a new one."
 
+login_confirm:
+  heading: "Sign in"
+  body: "This is a one-time login link. It stops working once you use it."
+  # {name} is replaced with the account currently signed in.
+  switch_warning: "You are signed in as {name}. Continuing signs you out of that account and into the one this link is for."
+  button: "Sign in"
+
 account:
   heading: "Account"
   display_name_label: "Display name"
@@ -38,7 +45,7 @@ admin:
   role_user: "user"
   role_admin: "admin"
   create_button: "Create login link"
-  link_notice: "Send this one-time link. It is shown once and cannot be recovered."
+  link_notice: "Send this one-time link. It is shown once and cannot be recovered, and any earlier unused link for this person has stopped working."
   copy_button: "Copy"
   copied_notice: "Copied."
   table_name: "Name"
@@ -48,6 +55,9 @@ admin:
   status_active: "active"
   status_disabled: "disabled"
   reissue_button: "New link"
+  revoke_button: "Revoke access"
+  # {name} is replaced with the account's display name.
+  revoke_confirm: "End every session, unused login link and API key that {name} has? The account stays enabled; send them a new link to let them back in."
   disable_button: "Disable"
   enable_button: "Enable"
 

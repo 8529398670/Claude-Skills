@@ -24,7 +24,8 @@ var embeddedLanguage []byte
 
 // embeddedStatic re-roots the embedded tree at ./static, so a request for
 // "css/style.css" does not have to know it lives at "static/css/style.css"
-// inside the binary. This makes it interchangeable with os.DirFS("./static").
+// inside the binary. This makes it interchangeable with the os.Root
+// filesystem server/assets opens for ./static on disk.
 func embeddedStatic() ( fsys fs.FS , err error ) {
 	fsys , err = fs.Sub( embeddedStaticRoot , "static" )
 	return

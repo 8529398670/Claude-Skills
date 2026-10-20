@@ -27,7 +27,13 @@ app:
   name: "{{PROJECT_NAME}}"
 
 server:
-  host: 0.0.0.0
+  # 127.0.0.1 answers only this machine, which is what a development run and
+  # a server behind a reverse proxy on the same host both want. Use 0.0.0.0
+  # to listen on every interface -- and then put TLS in front, because login
+  # links, cookies, and API keys all cross the wire. Ignored inside the
+  # container, which always listens on 0.0.0.0 (what is reachable from
+  # outside is docker.bind_address).
+  host: 127.0.0.1
   port: 8080
 
   # Where the database, the control socket and app storage live. Empty means
@@ -53,10 +59,23 @@ server:
   cookie_name: session
 
   # Turn on when a reverse proxy you control is in front (the Docker setup
-  # assumes one). Then the rate limiter sees real client IPs instead of the
-  # proxy's. Left on with nothing in front, clients can forge X-Forwarded-For
-  # and walk past the limiter.
+  # assumes one), so the rate limiter sees each visitor's address instead of
+  # the proxy's. proxy_header is then believed only on connections from an
+  # address in trusted_proxies -- the address your proxy connects *from*, as
+  # this server sees it -- and read right to left, skipping trusted hops, so
+  # whatever a client wrote further left is ignored. trust_proxy without
+  # trusted_proxies is refused.
+  #
+  #   proxy on the same host, bare binary:  [127.0.0.1, "::1"]
+  #   proxy on the host, app in Docker:     [172.16.0.0/12] (the bridge
+  #                                         gateway; check with
+  #                                         `docker network inspect bridge`)
+  #
+  # This only holds if clients cannot reach this server except through the
+  # proxy. With a single-value header (X-Real-IP, CF-Connecting-IP) the proxy
+  # must also overwrite whatever the client sent rather than pass it on.
   trust_proxy: false
+  trusted_proxies: []
   proxy_header: X-Forwarded-For
 
   body_limit_bytes: 1048576        # 1 MiB

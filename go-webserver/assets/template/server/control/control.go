@@ -165,6 +165,7 @@ func ( server *Server ) routes() ( handler http.Handler ) {
 	mux.HandleFunc( "POST /v1/users" , server.handleCreateUser )
 	mux.HandleFunc( "POST /v1/users/{id}/login-token" , server.handleReissueLogin )
 	mux.HandleFunc( "POST /v1/users/{id}/disabled" , server.handleSetDisabled )
+	mux.HandleFunc( "POST /v1/users/{id}/revoke-access" , server.handleRevokeAccess )
 	mux.HandleFunc( "GET /v1/api-keys" , server.handleListAPIKeys )
 	mux.HandleFunc( "POST /v1/api-keys" , server.handleCreateAPIKey )
 	mux.HandleFunc( "POST /v1/api-keys/{id}/revoke" , server.handleRevokeAPIKey )
@@ -482,10 +483,11 @@ func ( server *Server ) handleReissueLogin( w http.ResponseWriter , r *http.Requ
 	writeJSON( w , http.StatusOK , userResponse( user , credential ) )
 }
 
-// handleSetDisabled revokes sessions on the same request that disables the
-// account, matching the admin route. Doing it here rather than leaving it to
-// the caller is what keeps "disabled" meaning "logged out now" no matter
-// which door the change came through.
+// handleSetDisabled goes through models.SetUserDisabled, which deletes the
+// account's sessions and unused login links in the same transaction as the
+// change. Keeping that in the model rather than in each caller is what keeps
+// "disabled" meaning "logged out now" no matter which door the change came
+// through.
 func ( server *Server ) handleSetDisabled( w http.ResponseWriter , r *http.Request ) {
 	user_id , ok := pathUserID( w , r )
 	if ok == false { return }
@@ -502,12 +504,6 @@ func ( server *Server ) handleSetDisabled( w http.ResponseWriter , r *http.Reque
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
 	}
-	if body.Disabled {
-		if err = models.DestroyAllSessionsForUser( server.store , user.ID ); err != nil {
-			writeError( w , http.StatusInternalServerError , err.Error() )
-			return
-		}
-	}
 
 	// Re-read rather than patching the copy in hand, so the response
 	// reflects what is actually stored.
@@ -517,4 +513,23 @@ func ( server *Server ) handleSetDisabled( w http.ResponseWriter , r *http.Reque
 		return
 	}
 	writeJSON( w , http.StatusOK , userResponse( user , "" ) )
+}
+
+// handleRevokeAccess is models.RevokeAllCredentials over the socket: every
+// session, unused login link, and live API key the account holds stops
+// working now. The account stays enabled.
+func ( server *Server ) handleRevokeAccess( w http.ResponseWriter , r *http.Request ) {
+	user_id , ok := pathUserID( w , r )
+	if ok == false { return }
+
+	if _ , err := models.GetUser( server.store , user_id ); err != nil {
+		writeError( w , http.StatusNotFound , fmt.Sprintf( "no user with id %d" , user_id ) )
+		return
+	}
+	revoked , err := models.RevokeAllCredentials( server.store , user_id )
+	if err != nil {
+		writeError( w , http.StatusInternalServerError , err.Error() )
+		return
+	}
+	writeJSON( w , http.StatusOK , revoked )
 }

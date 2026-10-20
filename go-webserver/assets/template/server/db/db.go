@@ -237,11 +237,83 @@ func ( store *Store ) DeleteWhere( bucket string , newItem func() any , match fu
 	return
 }
 
-// Update exposes a raw read/write transaction for the rare operation that has
-// to be atomic across several keys -- redeeming a login token is the one the
-// template ships with. Prefer Put/Get/Delete for everything else.
+// Update exposes a raw bolt read/write transaction. Prefer Write, which
+// gives the same atomicity with encoding and encryption handled for you.
 func ( store *Store ) Update( fn func( tx *bolt.Tx ) error ) ( err error ) {
 	err = store.bolt.Update( fn )
+	return
+}
+
+// Tx is one write transaction with the same record API as Store, for the
+// operations that have to be atomic across several records or buckets:
+// turning a login link into a session, disabling an account together with
+// every credential it holds, checking an API key quota and inserting the key.
+//
+// bolt allows a single writer at a time, so whatever runs inside Write sees
+// no other write interleave with it. That is the whole point -- and also the
+// cost: keep slow work (bcrypt, network calls) outside, because every other
+// writer waits for this one to finish.
+type Tx struct {
+	store *Store
+	tx    *bolt.Tx
+}
+
+func ( store *Store ) Write( fn func( tx *Tx ) error ) ( err error ) {
+	err = store.bolt.Update( func( raw *bolt.Tx ) ( tx_err error ) {
+		tx_err = fn( &Tx{ store: store , tx: raw } )
+		return
+	} )
+	return
+}
+
+func ( tx *Tx ) Get( bucket string , key []byte , out any ) ( err error ) {
+	value := tx.tx.Bucket( []byte( bucket ) ).Get( key )
+	if value == nil {
+		err = ErrNotFound
+		return
+	}
+	err = tx.store.decode( value , out )
+	return
+}
+
+func ( tx *Tx ) Put( bucket string , key []byte , value any ) ( err error ) {
+	encoded , err := tx.store.encode( value )
+	if err != nil { return }
+	err = tx.tx.Bucket( []byte( bucket ) ).Put( key , encoded )
+	return
+}
+
+func ( tx *Tx ) Delete( bucket string , key []byte ) ( err error ) {
+	err = tx.tx.Bucket( []byte( bucket ) ).Delete( key )
+	return
+}
+
+// ForEach is Store.ForEach inside this transaction.
+func ( tx *Tx ) ForEach( bucket string , newItem func() any , visit func( key []byte , item any ) bool ) ( err error ) {
+	cursor := tx.tx.Bucket( []byte( bucket ) ).Cursor()
+	for key , value := cursor.First(); key != nil; key , value = cursor.Next() {
+		item := newItem()
+		if err = tx.store.decode( value , item ); err != nil { return }
+		if visit( append( []byte( nil ) , key... ) , item ) == false { return }
+	}
+	return
+}
+
+// DeleteWhere is Store.DeleteWhere inside this transaction.
+func ( tx *Tx ) DeleteWhere( bucket string , newItem func() any , match func( key []byte , item any ) bool ) ( removed int , err error ) {
+	doomed := [][]byte{}
+	err = tx.ForEach( bucket , newItem , func( key []byte , item any ) bool {
+		if match( key , item ) {
+			doomed = append( doomed , key )
+		}
+		return true
+	} )
+	if err != nil { return }
+	target := tx.tx.Bucket( []byte( bucket ) )
+	for _ , key := range doomed {
+		if err = target.Delete( key ); err != nil { return }
+	}
+	removed = len( doomed )
 	return
 }
 

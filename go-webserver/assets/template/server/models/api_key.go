@@ -2,6 +2,7 @@ package models
 
 import (
 	errors "errors"
+	sort "sort"
 	strings "strings"
 	time "time"
 
@@ -57,6 +58,13 @@ const (
 	// grow the bucket without limit. 25 is far past what a person needs and
 	// low enough to stay a bound; revoking one frees a slot.
 	APIKeyMaxPerUser = 25
+
+	// apiKeyMaxRowsPerUser bounds the rows one account keeps, dead keys
+	// included. The live cap alone does not bound anything: mint, revoke,
+	// repeat, and the retained history grows by one row each time, and every
+	// listing and quota check decrypts all of it. When an account reaches
+	// this, issuing a key drops its oldest dead rows to make room.
+	apiKeyMaxRowsPerUser = 100
 
 	// apiKeyTouchInterval is how stale LastUsedAt is allowed to get.
 	//
@@ -149,28 +157,12 @@ func NarrowRole( account_role string , key_role string ) ( result string ) {
 // by a credential that dies silently at 3am. It has to be asked for
 // explicitly; the default comes from configuration.
 func IssueAPIKey( store *db.Store , user_id uint64 , name string , role string , ttl time.Duration ) ( credential string , key *APIKey , err error ) {
-	// Load the owner rather than taking the caller's word for the role. Every
-	// route into this function -- the HTTP API, the control socket, the CLI --
-	// then gets the same ceiling without each having to remember it.
-	owner , err := GetUser( store , user_id )
-	if err != nil { return }
-	if owner.Disabled() {
-		err = ErrAPIKeyDisabled
-		return
-	}
+	// The owner is loaded inside the transaction below rather than taking the
+	// caller's word for the role. Every route into this function -- the HTTP
+	// API, the control socket, the CLI -- then gets the same ceiling without
+	// each having to remember it.
 	if ValidRole( role ) == false {
 		role = RoleUser
-	}
-	if role == RoleAdmin && owner.IsAdmin() == false {
-		err = ErrAPIKeyRole
-		return
-	}
-
-	live , err := CountLiveAPIKeysForUser( store , user_id )
-	if err != nil { return }
-	if live >= APIKeyMaxPerUser {
-		err = ErrAPIKeyLimit
-		return
 	}
 
 	key_id := encryption.GenerateURLToken( 12 )
@@ -189,7 +181,58 @@ func IssueAPIKey( store *db.Store , user_id uint64 , name string , role string ,
 		key.ExpiresAt = &expires
 	}
 
-	if err = store.Put( db.BucketAPIKeys , []byte( key_id ) , key ); err != nil {
+	// The owner check, the quota check, and the insert share one transaction.
+	// Counted in one transaction and inserted in another, sixteen concurrent
+	// requests can all see 24 live keys and all insert, which is how a "max
+	// 25" turns into 40.
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		owner := &User{}
+		if tx_err = tx.Get( db.BucketUsers , encryption.Uint64ToBytes( user_id ) , owner ); tx_err != nil { return }
+		if owner.Disabled() {
+			tx_err = ErrAPIKeyDisabled
+			return
+		}
+		if role == RoleAdmin && owner.IsAdmin() == false {
+			tx_err = ErrAPIKeyRole
+			return
+		}
+
+		owned := []*APIKey{}
+		tx_err = tx.ForEach( db.BucketAPIKeys ,
+			func() any { return &APIKey{} } ,
+			func( key []byte , item any ) bool {
+				if stored := item.( *APIKey ); stored.UserID == user_id {
+					owned = append( owned , stored )
+				}
+				return true
+			} )
+		if tx_err != nil { return }
+
+		live := 0
+		dead := []*APIKey{}
+		for _ , stored := range owned {
+			if stored.Live() {
+				live += 1
+			} else {
+				dead = append( dead , stored )
+			}
+		}
+		if live >= APIKeyMaxPerUser {
+			tx_err = ErrAPIKeyLimit
+			return
+		}
+		// Oldest dead rows first. Live keys are capped well below the row
+		// limit, so there is always a dead row to drop when the limit is hit.
+		sort.Slice( dead , func( i int , j int ) bool { return dead[ i ].CreatedAt.Before( dead[ j ].CreatedAt ) } )
+		for excess := len( owned ) + 1 - apiKeyMaxRowsPerUser; excess > 0 && len( dead ) > 0; excess -= 1 {
+			if tx_err = tx.Delete( db.BucketAPIKeys , []byte( dead[ 0 ].ID ) ); tx_err != nil { return }
+			dead = dead[ 1: ]
+		}
+
+		tx_err = tx.Put( db.BucketAPIKeys , []byte( key_id ) , key )
+		return
+	} )
+	if err != nil {
 		key = nil
 		return
 	}

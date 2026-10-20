@@ -50,6 +50,13 @@ const Api = {
     }
   },
 
+  // The one POST with no CSRF token: there is no session yet to hold one.
+  // The server guards it by requiring this JSON body instead -- see the
+  // login route on the server side.
+  login( credential ) {
+    return this.request( "/api/login" , { method: "POST" , body: { credential: credential } } );
+  },
+
   rename( displayName )        { return this.post( "/api/account/rename" , { display_name: displayName } ); },
   logout()                     { return this.post( "/api/logout" ); },
   listTeam()                   { return this.request( "/api/team" ); },
@@ -57,6 +64,7 @@ const Api = {
   createUser( name , role )    { return this.post( "/api/admin/users" , { display_name: name , role: role } ); },
   reissueLogin( userId )       { return this.post( "/api/admin/users/" + userId + "/reissue-login" ); },
   setDisabled( userId , flag ) { return this.post( "/api/admin/users/" + userId + "/disabled" , { disabled: flag } ); },
+  revokeAccess( userId )       { return this.post( "/api/admin/users/" + userId + "/revoke-access" ); },
 
   // API keys. createKey's expiresInDays is passed through as-is including null,
   // because the server reads absent as "use the default" and 0 as "never

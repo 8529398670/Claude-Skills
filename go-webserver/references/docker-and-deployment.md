@@ -85,6 +85,18 @@ The Go version in `go.mod` and the builder image tag must stay in step.
 Dependencies here require Go 1.26; bumping one without the other produces a
 confusing toolchain error at build time.
 
+`go.mod` carries two version lines. `go 1.26.0` is the language version.
+`toolchain go1.26.9` names the oldest compiler with the standard-library
+security fixes the template was last checked against (`govulncheck ./...`
+reported nothing reachable with it). A local `go build` on an older 1.26
+fetches that toolchain on its own. The `golang` image sets `GOTOOLCHAIN=local`,
+so there the image itself must be at least that patch: rebuild with a fresh
+pull of `golang:1.26-alpine`, or pin `golang:1.26.9-alpine` if you prefer
+explicit bumps. Standard-library fixes ship in Go patch releases, not in
+`go.mod`'s `require` list, so re-run `govulncheck ./...` on both the toolchain
+and the dependencies before a release -- and scan the built image too, which
+`govulncheck` does not cover.
+
 ## dockerRun.sh choices
 
 - **Stops on first run for review.** A fresh clone has no `config.yaml` (it
@@ -92,21 +104,35 @@ confusing toolchain error at build time.
   defaults with a new key and exits, naming the settings that depend on what
   sits in front of this. Starting on unreviewed defaults would mean guessing
   at `secure_cookies` and `trust_proxy`.
+- **Checks that Docker can see the project at all.** Docker Desktop and
+  colima run the daemon in a VM that shares only some host paths (colima
+  shares your home directory). Mount anything outside those and Docker
+  silently mounts an empty directory from inside the VM: `config.yaml` arrives
+  as a directory, and the database would live in the VM where no host backup
+  ever finds it. The script checks that `config.yaml` arrives as a file and
+  that a probe written to the data directory appears on the host, and stops
+  with an explanation if not.
 - **Publishes to `docker.bind_address`, `127.0.0.1` by default.** This app
   does **not** terminate TLS. Put nginx, Caddy, or Traefik in front and let it
   hold the certificate.
 - **`server.secure_cookies` stays `true`** whenever a proxy is serving HTTPS.
   Set it to `false` *only* for a plain-`http://localhost` run. Getting this
   wrong is the single most common cause of "login does nothing": a `Secure`
-  cookie is silently dropped over plain http, so the redirect succeeds and
-  the session never sticks.
-- **`server.trust_proxy: true`** makes Fiber believe `X-Forwarded-For`, so the
-  rate limiter sees real client IPs rather than the proxy's. It defaults to
-  `false` because it is only correct when a proxy you control really is in
-  front -- otherwise clients forge their own IP and walk straight past the
-  limiter. Behind a proxy, turn it on: until you do, every client looks like
-  the proxy and they share one rate limit. `dockerRun.sh` reminds you while
-  it is off.
+  cookie is silently dropped over plain http, so the sign-in appears to
+  succeed and the session never sticks.
+- **`server.trust_proxy: true` plus `server.trusted_proxies`** make Fiber
+  believe `X-Forwarded-For`, so the rate limiter sees real client IPs rather
+  than the proxy's. The header is believed only on connections from an
+  address in `trusted_proxies`, read right to left skipping trusted hops, and
+  only once it parses as an IP. Both are required: Fiber with `TrustProxy` on
+  and no allowlist trusts no proxy at all (every visitor shares the proxy's
+  budget, and one noisy client blocks the rest), and the config check refuses
+  `trust_proxy: true` with an empty list. For the Docker setup the proxy
+  reaches the container from the bridge gateway, so `[172.16.0.0/12]` covers
+  the default bridge -- confirm with `docker network inspect bridge`. It
+  defaults to off because it is only correct when a proxy you control really
+  is in front and clients cannot reach the backend any other way.
+  `dockerRun.sh` reminds you while it is off.
 - **`config.yaml` is mounted read-only, separately from the data
   directory,** so the secret key is never inside `docker.data_dir`. The
   script makes the file readable by the container's group (0640, you stay the
@@ -140,21 +166,25 @@ distinction is worth keeping.
 ## The data directory and container ownership
 
 `dockerRun.sh` bind-mounts `docker.data_dir` (`./data`) so the database stays
-visible on the host for backups. A bind mount ignores the image's ownership, though, so the script
-makes sure the container's unprivileged user can actually write there before
-starting anything.
+visible on the host for backups. A bind mount ignores the image's ownership,
+though, so the script makes sure the container's unprivileged user can
+actually write there -- and read `config.yaml` -- before starting anything.
 
-It has to, because the two platforms disagree:
+It has to, because platforms disagree:
 
-- **Linux**: the host directory's ownership is real. The container user (uid
-  10001 in this image) needs to be granted it, so the chown matters.
-- **macOS** (Docker Desktop, colima): the file-sharing layer ignores guest
-  ownership -- any uid can write, and the chown fails harmlessly.
+- **Linux**: the host's ownership is real. The container user (uid 10001 in
+  this image) needs to be granted it, so the chown/chgrp the script attempts
+  matters.
+- **Docker Desktop on macOS**: the file-sharing layer usually ignores guest
+  ownership -- any uid can read and write -- and the chown fails harmlessly.
+- **colima with sshfs mounts**: host file modes are enforced *and* root in the
+  container cannot change them. A 0600 `config.yaml` is unreadable to uid
+  10001, and the script stops with the exact `sudo chgrp`/`sudo chown` to run.
 
-So the chown is attempted, its failure is tolerated, and a write is then
-actually tested. If the test fails the script stops with the exact `chown`
-command to run, rather than starting a container that crash-loops on
-"permission denied" -- which looks like a bug in the app and is not.
+So the changes are attempted, their failure is tolerated, and the result is
+then actually tested. If a test fails the script stops with the command to
+run, rather than starting a container that crash-loops on "permission
+denied" -- which looks like a bug in the app and is not.
 
 ## The secret key
 

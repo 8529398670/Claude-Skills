@@ -30,8 +30,12 @@ func splitCredential( raw string ) ( id string , secret string , ok bool ) {
 	return
 }
 
-func CreateSession( store *db.Store , user_id uint64 , ttl time.Duration ) ( credential string , session *Session , err error ) {
-	session_id := encryption.GenerateURLToken( 16 )
+// newSession builds a session without storing it. The only caller that
+// creates sessions is RedeemLoginToken, which stores it in the same
+// transaction that consumes the login link and checks the account is enabled
+// -- so there is deliberately no CreateSession that writes one on its own.
+func newSession( user_id uint64 , ttl time.Duration ) ( session_id string , credential string , session *Session ) {
+	session_id = encryption.GenerateURLToken( 16 )
 	secret := encryption.GenerateURLToken( 32 )
 	now := time.Now().UTC()
 	session = &Session{
@@ -40,11 +44,6 @@ func CreateSession( store *db.Store , user_id uint64 , ttl time.Duration ) ( cre
 		CSRFToken:  encryption.GenerateURLToken( 24 ),
 		CreatedAt:  now,
 		ExpiresAt:  now.Add( ttl ),
-	}
-	err = store.Put( db.BucketSessions , []byte( session_id ) , session )
-	if err != nil {
-		session = nil
-		return
 	}
 	credential = session_id + "." + secret
 	return
@@ -81,13 +80,14 @@ func DestroySession( store *db.Store , credential string ) ( err error ) {
 	return
 }
 
-// DestroyAllSessionsForUser is what makes disabling an account take effect
-// immediately instead of whenever the cookie happens to expire. It runs as a
-// single transaction on purpose: a scan that collects keys and then deletes
-// them one at a time would let a session created mid-sweep survive the
-// revocation it was meant to be caught by.
-func DestroyAllSessionsForUser( store *db.Store , user_id uint64 ) ( err error ) {
-	_ , err = store.DeleteWhere( db.BucketSessions ,
+// destroySessionsForUser deletes every session an account holds, inside the
+// caller's transaction. It is not exported because deleting sessions is only
+// ever half of a revocation: SetUserDisabled and RevokeAllCredentials run it
+// together with the account change in one transaction, so a login link
+// redeemed at the same moment either lands before (and its session is
+// deleted here) or after (and sees the change).
+func destroySessionsForUser( tx *db.Tx , user_id uint64 ) ( removed int , err error ) {
+	removed , err = tx.DeleteWhere( db.BucketSessions ,
 		func() any { return &Session{} } ,
 		func( key []byte , item any ) bool {
 			return item.( *Session ).UserID == user_id

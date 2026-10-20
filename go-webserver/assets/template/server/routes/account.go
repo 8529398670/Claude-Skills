@@ -51,7 +51,7 @@ func ( handlers *Handlers ) GetMe( c fiber.Ctx ) ( err error ) {
 
 func ( handlers *Handlers ) RenameAccount( c fiber.Ctx ) ( err error ) {
 	var body renameRequest
-	if c.Bind().Body( &body ) != nil {
+	if c.Bind().JSON( &body ) != nil {
 		err = badRequest( c , "malformed request body" )
 		return
 	}
@@ -76,15 +76,24 @@ func ( handlers *Handlers ) RenameAccount( c fiber.Ctx ) ( err error ) {
 // Logout deletes the session server-side as well as clearing the cookie, so
 // a copy of the cookie captured earlier is dead too.
 //
+// It is held to the CSRF token like every other state change. SameSite=Strict
+// already stops another site from sending the cookie here, but not a page on
+// a sibling subdomain, and being signed out by someone else's page is the
+// first step of tricking a person into signing in to the wrong account.
+//
 // Called with an API key it does nothing and says so by succeeding: there is
 // no session to destroy. A key is ended by revoking it, not by logging out.
 func ( handlers *Handlers ) Logout( c fiber.Ctx ) ( err error ) {
-	raw := c.Cookies( handlers.Config.CookieName )
-	if raw != "" {
-		if credential , decrypt_err := handlers.Guard.DecryptCookie( raw ); decrypt_err == nil {
-			models.DestroySession( handlers.Store , credential )
-		}
+	var body csrfOnlyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
 	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	handlers.destroyCookieSession( c )
 	handlers.Guard.ClearSessionCookie( c )
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return

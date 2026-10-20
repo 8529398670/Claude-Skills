@@ -1,6 +1,6 @@
 ---
 name: go-webserver
-description: Scaffold a new security-hardened Go + Fiber v3 web server with bolt (bbolt) storage, link-based login (no signup, no passwords), always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + dockerRun.sh with no docker-compose, a build.sh that cross-compiles single-file portable binaries with the whole frontend embedded, one config.yaml that configures the server, Docker, and the build (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Go -- trigger on "build me a Go webserver", "new Fiber app", "golang backend with logins", "scaffold a Go web project with Docker", "I need a small internal tool in Go", or any Go web project that needs auth and static file serving rather than a bare HTTP handler. Also trigger when someone wants a Go web app shipped as one self-contained executable with no Docker and no runtime dependencies -- "single binary web app", "embed the frontend with go:embed", "cross-compile for linux and windows", "one file I can just hand someone", "where should the app keep its database and config". Also use it when asked to add a login system, an admin panel, API keys or programmatic/machine access, bolt storage, or Docker packaging to a Go web project that has none -- trigger on "let a script call my Go API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my Fiber app", or "service account for CI". This is the Go counterpart to the Python `webserver` skill -- pick this one whenever Go, golang, or Fiber is mentioned, and that one for Python/Starlette.
+description: Scaffold a new security-hardened Go + Fiber v3 web server with bolt (bbolt) storage, link-based login (no signup, no passwords), always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + dockerRun.sh with no docker-compose, a build.sh that cross-compiles single-file portable binaries with the whole frontend embedded, one config.yaml that configures the server, Docker, and the build (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Go -- trigger on "build me a Go webserver", "new Fiber app", "golang backend with logins", "scaffold a Go web project with Docker", "I need a small internal tool in Go", or any Go web project that needs auth and static file serving rather than a bare HTTP handler. Also trigger when someone wants a Go web app shipped as one self-contained executable with no Docker and no runtime dependencies -- "single binary web app", "embed the frontend with go:embed", "cross-compile for linux and windows", "one file I can just hand someone", "where should the app keep its database and config". Also use it when asked to add a login system, an admin panel, API keys or programmatic/machine access, bolt storage, or Docker packaging to a Go web project that has none -- trigger on "let a script call my Go API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my Fiber app", or "service account for CI". This is the Go counterpart to the `python-webserver` skill -- pick this one whenever Go, golang, or Fiber is mentioned, and that one for Python/Starlette.
 ---
 
 # Go webserver scaffolder
@@ -14,14 +14,18 @@ user unless they raise one -- ask only about what is specific to *their*
 project.
 
 - **No passwords, no signup form.** On first boot the server mints a
-  random one-time login link and prints it to its own logs. Visiting it
-  logs you in as admin and sets a secure cookie. Admins mint more links
-  for more people. That is the entire account system.
+  random one-time login link and prints it to its own logs. Opening it
+  shows a sign-in page; confirming there logs you in as admin and sets a
+  secure cookie (opening alone spends nothing, so link previews cannot burn
+  it). Admins mint more links for more people. That is the entire account
+  system.
 - **Every account can mint API keys, at its own permission level.** A key
   carries the same admin/user role a person does -- one permission model, not
   two -- sent as `Authorization: Bearer <key>`. A key can never outrank the
-  account that owns it, and it cannot mint another key. That is what lets a
-  cron job, a CI pipeline, or a sidecar call the app.
+  account that owns it, and it cannot create credentials -- no minting keys,
+  creating accounts, or reissuing login links -- so revoking a leaked key
+  ends it. That is what lets a cron job, a CI pipeline, or a sidecar call the
+  app.
 - **The server stays thin.** Business logic and rendering belong in
   `static/js/`. The Go side is auth, storage, and file serving. Resist
   adding server-side templating.
@@ -184,7 +188,8 @@ but stay consistent with the patterns already there:
   `actor.IsAdmin()`) rather than `user.Role`, which is the account's role and
   ignores a key that deliberately carries less. Add
   `Guard.RequireSession` to a route only when it must be browser-only, the
-  way key management is.
+  way key management, account creation and login-link reissue are -- and to
+  any new route that creates a credential.
 - **Group middleware is mounted on a path prefix,** not on the routes written
   under it: `app.Group( "/api" , mw )` puts `mw` in front of every later route
   starting with `/api`, including `/api/admin/...`. Give a group that should
@@ -251,11 +256,13 @@ file.
 On a fresh database the server prints a one-time login link. Confirm, by
 actually doing it:
 
-- the printed `/login/<credential>` logs you in and sets a cookie,
+- opening the printed `/login/<credential>` shows a sign-in page, and
+  pressing the button logs you in and sets a cookie,
 - `/api/me` reports the admin account,
 - the admin panel creates a user and produces a working link for them,
-- visiting the first link a second time fails (single-use),
-- a POST without a `csrf_token` is rejected with 403.
+- using the first link a second time fails (single-use), and so does a link
+  replaced by "New link",
+- a POST without a `csrf_token` is rejected with 403 -- logout included.
 
 Then exercise the API keys, because the interesting property is the ceiling
 and it is the kind of thing that silently stops holding:
@@ -270,8 +277,10 @@ curl -H "Authorization: Bearer <user key>"  localhost:8080/api/me            # r
 The third line is the one worth reading: an admin who mints a user-scoped key
 gets `"role":"user"` back, because the effective role is the lower of the two.
 Also confirm a non-admin is refused when asking for an admin key, that a key
-cannot mint a key (403, session required), and that revoking a key kills it on
-the next request. `manage list-keys` works from a shell either way.
+cannot mint a key (403, session required), that an admin key gets 403 from
+`POST /api/admin/users` and `POST /api/admin/users/<id>/reissue-login` too
+(a login link would become a session that mints keys), and that revoking a
+key kills it on the next request. `manage list-keys` works from a shell either way.
 
 `server.secure_cookies: false` matters locally: a `Secure` cookie is
 silently dropped over plain http, so login appears to succeed and then does
@@ -307,8 +316,9 @@ Every flag on the `docker run` comes from the `docker:` section of
 port), and the container reads the same file mounted read-only at
 `/app/config.yaml`. On a fresh clone there is no `config.yaml` (it is
 gitignored), so the first `./dockerRun.sh` writes one with a new key and
-stops, asking for a review of `server.secure_cookies`, `server.trust_proxy`,
-and the published port before anything starts.
+stops, asking for a review of `server.secure_cookies`, `server.trust_proxy`
+(with `server.trusted_proxies`), and the published port before anything
+starts.
 
 This is where the real hardening lives: read-only root filesystem, all
 capabilities dropped, no-new-privileges, memory and pid limits, restart

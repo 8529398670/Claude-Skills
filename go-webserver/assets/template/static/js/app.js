@@ -34,6 +34,10 @@ const App = {
     this.currentUser = me.authenticated ? me : null;
     Dom.show( Dom.get( "main" ) , true );
 
+    if ( this.loginCredential() !== "" ) {
+      this.renderLoginConfirm( me );
+      return;
+    }
     if ( !me.authenticated ) {
       this.renderSignedOut();
       return;
@@ -43,13 +47,61 @@ const App = {
 
   renderSignedOut() {
     Dom.show( Dom.get( "signed-out" ) , true );
-    // The login route redirects here with ?login=invalid rather than
-    // explaining what was wrong with the link -- see routes/auth.go.
+    // A failed login lands here with ?login=invalid rather than explaining
+    // what was wrong with the link -- see routes/auth.go.
     const params = new URLSearchParams( window.location.search );
     if ( params.get( "login" ) === "invalid" ) {
       const banner = Dom.get( "invalid-link" );
       if ( I18n.get( "signed_out.invalid_link" ) !== "" ) Dom.show( banner , true );
     }
+  },
+
+  // A login link is /login/<credential>, and the server answers it with this
+  // page. Nothing has been redeemed at that point.
+  loginCredential() {
+    const prefix = "/login/";
+    const path = window.location.pathname;
+    if ( path.indexOf( prefix ) !== 0 ) return "";
+    try {
+      return decodeURIComponent( path.slice( prefix.length ) ).replace( /\/+$/ , "" );
+    } catch ( error ) {
+      return "";
+    }
+  },
+
+  // Opening a login link only shows this. The link is spent by the POST the
+  // button sends, so a chat app's link preview or a mail scanner fetching the
+  // URL cannot use it up, and someone already signed in is told they are
+  // about to switch accounts rather than being switched silently.
+  renderLoginConfirm( me ) {
+    Dom.show( Dom.get( "login-confirm" ) , true );
+    if ( me.authenticated ) {
+      const warning = I18n.get( "login_confirm.switch_warning" );
+      if ( warning !== "" ) {
+        const box = Dom.get( "login-switch-warning" );
+        Dom.text( box , warning.replace( "{name}" , me.display_name ) );
+        Dom.show( box , true );
+      }
+    }
+
+    const button = Dom.get( "login-confirm-button" );
+    button.addEventListener( "click" , async () => {
+      button.disabled = true;
+      try {
+        await Api.login( this.loginCredential() );
+        // replace, not assign: the link should not stay in the back button.
+        window.location.replace( "/" );
+      } catch ( error ) {
+        if ( error.status === 400 ) {
+          window.location.replace( "/?login=invalid" );
+          return;
+        }
+        // Anything else (rate limited, network) leaves the link unspent,
+        // so let them try again.
+        button.disabled = false;
+        this.showError( error.message );
+      }
+    } );
   },
 
   async renderSignedIn( me ) {
@@ -145,6 +197,23 @@ const App = {
         } },
       } );
 
+      // Revoking is for "someone else may have this account's credentials":
+      // it ends every session, unused login link, and API key, and leaves the
+      // account enabled. Not offered on your own row -- the server refuses
+      // that, since it would sign you out with no way back in.
+      const revokeButton = user.id === App.currentUser.id ? null : Dom.el( "button" , {
+        class: "secondary small",
+        text: I18n.get( "admin.revoke_button" ),
+        on: { click: async function () {
+          const question = I18n.get( "admin.revoke_confirm" ).replace( "{name}" , user.display_name );
+          if ( question !== "" && !window.confirm( question ) ) return;
+          try {
+            await Api.revokeAccess( user.id );
+            if ( App.currentUser.api_keys_enabled ) await Keys.refreshAll();
+          } catch ( error ) { App.showError( error.message ); }
+        } },
+      } );
+
       const toggleButton = Dom.el( "button" , {
         class: "secondary small",
         text: I18n.get( user.disabled ? "admin.enable_button" : "admin.disable_button" ),
@@ -163,7 +232,7 @@ const App = {
         Dom.el( "td" , { text: user.role } ),
         Dom.el( "td" , { text: I18n.get( statusKey ) } ),
         Dom.el( "td" , { children: [
-          Dom.el( "div" , { class: "row-actions" , children: [ reissueButton , toggleButton ] } ),
+          Dom.el( "div" , { class: "row-actions" , children: [ reissueButton , revokeButton , toggleButton ].filter( Boolean ) } ),
         ] } ),
       ] } ) );
     } );

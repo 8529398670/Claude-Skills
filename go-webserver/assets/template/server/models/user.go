@@ -91,10 +91,10 @@ func SaveUser( store *db.Store , user *User ) ( err error ) {
 }
 
 // RenameUser and SetUserDisabled both edit a record that already exists, so
-// they go through UpdateValue rather than GetUser followed by SaveUser. The
-// read and the write land in one transaction, which is what stops two
-// concurrent admin requests from each reading the old row and the slower one
-// silently discarding the other's change.
+// the read and the write land in one transaction rather than GetUser followed
+// by SaveUser. That is what stops two concurrent admin requests from each
+// reading the old row and the slower one silently discarding the other's
+// change.
 func RenameUser( store *db.Store , user_id uint64 , display_name string ) ( err error ) {
 	err = store.UpdateValue( db.BucketUsers , encryption.Uint64ToBytes( user_id ) ,
 		func() any { return &User{} } ,
@@ -105,19 +105,29 @@ func RenameUser( store *db.Store , user_id uint64 , display_name string ) ( err 
 	return
 }
 
+// SetUserDisabled disables or re-enables an account. Disabling also deletes
+// every session the account holds and every login link it has not used yet,
+// in the same transaction as the change itself: a session or a link that
+// survived would come back to life the moment the account was re-enabled.
+// API keys are deliberately left alone -- see LoadAPIKey -- and use
+// RevokeAllCredentials when they should die too.
 func SetUserDisabled( store *db.Store , user_id uint64 , disabled bool ) ( err error ) {
-	err = store.UpdateValue( db.BucketUsers , encryption.Uint64ToBytes( user_id ) ,
-		func() any { return &User{} } ,
-		func( item any ) ( mutate_err error ) {
-			user := item.( *User )
-			if disabled {
-				now := time.Now().UTC()
-				user.DisabledAt = &now
-			} else {
-				user.DisabledAt = nil
-			}
-			return
-		} )
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		key := encryption.Uint64ToBytes( user_id )
+		user := &User{}
+		if tx_err = tx.Get( db.BucketUsers , key , user ); tx_err != nil { return }
+		if disabled {
+			now := time.Now().UTC()
+			user.DisabledAt = &now
+		} else {
+			user.DisabledAt = nil
+		}
+		if tx_err = tx.Put( db.BucketUsers , key , user ); tx_err != nil { return }
+		if disabled == false { return }
+		if _ , tx_err = destroySessionsForUser( tx , user_id ); tx_err != nil { return }
+		_ , tx_err = deletePendingLoginTokens( tx , user_id )
+		return
+	} )
 	return
 }
 

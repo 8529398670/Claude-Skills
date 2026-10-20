@@ -28,6 +28,15 @@
       <p id="invalid-link" class="notice notice-warn" data-i18n="signed_out.invalid_link" hidden></p>
     </section>
 
+    <!-- What a login link opens. Nothing is redeemed until the button is
+         pressed -- see renderLoginConfirm in app.js. -->
+    <section id="login-confirm" class="card" hidden>
+      <h2 data-i18n="login_confirm.heading"></h2>
+      <p data-i18n="login_confirm.body"></p>
+      <p id="login-switch-warning" class="notice notice-warn" hidden></p>
+      <button id="login-confirm-button" data-i18n="login_confirm.button"></button>
+    </section>
+
     <section id="signed-in" hidden>
       <div class="card">
         <h2 data-i18n="account.heading"></h2>

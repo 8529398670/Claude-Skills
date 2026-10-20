@@ -12,6 +12,7 @@ import (
 	time "time"
 
 	config "{{MODULE_PATH}}/server/config"
+	models "{{MODULE_PATH}}/server/models"
 )
 
 // ErrNoServer means nothing is listening on the control socket, which is the
@@ -156,6 +157,11 @@ func ( client *Client ) ReissueLogin( user_id uint64 ) ( user UserResponse , err
 func ( client *Client ) SetDisabled( user_id uint64 , disabled bool ) ( user UserResponse , err error ) {
 	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/users/%d/disabled" , user_id ) ,
 		SetDisabledRequest{ Disabled: disabled } , &user )
+	return
+}
+
+func ( client *Client ) RevokeAccess( user_id uint64 ) ( revoked models.Revoked , err error ) {
+	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/users/%d/revoke-access" , user_id ) , nil , &revoked )
 	return
 }
 

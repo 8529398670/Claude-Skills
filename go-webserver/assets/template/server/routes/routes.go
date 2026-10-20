@@ -46,9 +46,12 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// Resolve the session once, before anything else looks at the request.
 	app.Use( handlers.Guard.LoadUser )
 
-	// Public: the login link itself, and the UI's text (needed to render the
-	// signed-out page at all).
-	app.Get( "/login/*" , handlers.RedeemLoginLink )
+	// Public: the login link's page and the call it makes, and the UI's text
+	// (needed to render the signed-out page at all). Opening a login link
+	// only shows a page; the link is spent by the POST that page sends when
+	// the person confirms. See auth.go.
+	app.Get( "/login/*" , handlers.ShowLoginPage )
+	app.Post( "/api/login" , handlers.RedeemLoginLink )
 	app.Get( "/api/language" , handlers.GetLanguage )
 	app.Get( "/api/health" , handlers.GetHealth )
 
@@ -77,11 +80,20 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// Admin only: deciding who gets in. Note this is the *only* thing admin
 	// rights gate in the base template -- see architecture.md on defaulting
 	// new features to "any signed-in user".
+	//
+	// The two routes that hand out a login link also require a browser
+	// session, attached per route rather than on a group prefix. A login link
+	// becomes a session, and a session can mint API keys -- so if an
+	// admin-scoped key could create accounts or reissue links, a leaked key
+	// could turn itself into a fresh session and a fresh key, and revoking
+	// the leaked one would not end the compromise. The rule is: an API key
+	// may use what an account can do, but it never creates credentials.
 	admin := app.Group( "/api/admin" , handlers.Guard.RequireAdmin )
 	admin.Get( "/users" , handlers.ListUsers )
-	admin.Post( "/users" , handlers.CreateUser )
-	admin.Post( "/users/:user_id/reissue-login" , handlers.ReissueLogin )
+	admin.Post( "/users" , handlers.Guard.RequireSession , handlers.CreateUser )
+	admin.Post( "/users/:user_id/reissue-login" , handlers.Guard.RequireSession , handlers.ReissueLogin )
 	admin.Post( "/users/:user_id/disabled" , handlers.SetUserDisabled )
+	admin.Post( "/users/:user_id/revoke-access" , handlers.RevokeAccess )
 
 	// Admin view of every key in the app -- "who has standing access" -- and
 	// the ability to revoke someone else's. Its own prefix for the same reason

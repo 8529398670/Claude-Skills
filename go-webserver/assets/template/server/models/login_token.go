@@ -4,8 +4,6 @@ import (
 	errors "errors"
 	time "time"
 
-	bolt "go.etcd.io/bbolt"
-
 	db "{{MODULE_PATH}}/server/db"
 	encryption "{{MODULE_PATH}}/server/encryption"
 )
@@ -14,7 +12,7 @@ var ErrLoginTokenInvalid = errors.New( "login token is invalid, expired, or alre
 
 // LoginToken is this project's entire replacement for a signup form and a
 // password reset flow. An admin (or the first-run bootstrap) mints one for a
-// specific user; visiting the link is the login.
+// specific user; redeeming the link is the login.
 //
 // Same "<id>.<secret>" shape as Session, but the secret is bcrypt-hashed
 // rather than sha256'd. bcrypt is affordable here precisely because it runs
@@ -29,11 +27,22 @@ type LoginToken struct {
 	UsedAt     *time.Time `json:"used_at,omitempty"`
 }
 
+func ( token *LoginToken ) Usable() ( result bool ) {
+	result = token.UsedAt == nil && time.Now().UTC().After( token.ExpiresAt ) == false
+	return
+}
+
 // IssueLoginToken returns the raw credential exactly once. It is never stored
 // and cannot be recovered -- if it is lost, mint another one.
+//
+// An account has at most one pending link. Issuing a new one deletes any
+// unused link the account already had, in the same transaction, so "send
+// them a new link" also kills the old one -- which is what you want when the
+// old one went to the wrong place, and costs nothing when it simply expired.
 func IssueLoginToken( store *db.Store , user_id uint64 , ttl time.Duration ) ( credential string , err error ) {
 	token_id := encryption.GenerateURLToken( 12 )
 	secret := encryption.GenerateURLToken( 24 )
+	// bcrypt outside the transaction, so the single writer is not held for it.
 	secret_hash , err := encryption.BcryptHash( secret )
 	if err != nil { return }
 
@@ -44,58 +53,87 @@ func IssueLoginToken( store *db.Store , user_id uint64 , ttl time.Duration ) ( c
 		CreatedAt:  now,
 		ExpiresAt:  now.Add( ttl ),
 	}
-	if err = store.Put( db.BucketLoginTokens , []byte( token_id ) , token ); err != nil { return }
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		if tx_err = tx.Get( db.BucketUsers , encryption.Uint64ToBytes( user_id ) , &User{} ); tx_err != nil { return }
+		if _ , tx_err = deletePendingLoginTokens( tx , user_id ); tx_err != nil { return }
+		tx_err = tx.Put( db.BucketLoginTokens , []byte( token_id ) , token )
+		return
+	} )
+	if err != nil { return }
 	credential = token_id + "." + secret
 	return
 }
 
-// RedeemLoginToken validates and consumes a token in one bolt write
-// transaction. Doing the check and the mark-as-used separately would leave a
-// window where two requests racing the same link both see it unused and both
-// get a session; bolt gives a single writer at a time, so doing both inside
-// Update closes that window for free.
-func RedeemLoginToken( store *db.Store , credential string ) ( user_id uint64 , err error ) {
+// RedeemLoginToken consumes a login link and creates the session it grants,
+// returning the session credential for the cookie.
+//
+// The bcrypt comparison runs before the write transaction, so bolt's single
+// writer is never held for the deliberately slow part -- otherwise anyone
+// holding a valid token id could stall every writer by submitting wrong
+// secrets. Everything that decides the outcome is then re-checked inside one
+// transaction: the token is still unused and unexpired, it is the same token
+// that was compared, and the account exists and is enabled. Marking the token
+// used and storing the session happen there too. So two requests racing the
+// same link cannot both get a session, and a link redeemed while the account
+// is being disabled either lands first (and SetUserDisabled deletes its
+// session) or lands second (and is refused).
+func RedeemLoginToken( store *db.Store , credential string , session_ttl time.Duration ) ( session_credential string , user_id uint64 , err error ) {
 	token_id , secret , ok := splitCredential( credential )
 	if ok == false {
 		err = ErrLoginTokenInvalid
 		return
 	}
 
-	err = store.Update( func( tx *bolt.Tx ) ( tx_err error ) {
-		bucket := tx.Bucket( []byte( db.BucketLoginTokens ) )
-		raw := bucket.Get( []byte( token_id ) )
-		if raw == nil {
+	found := &LoginToken{}
+	if store.Get( db.BucketLoginTokens , []byte( token_id ) , found ) != nil || found.Usable() == false {
+		err = ErrLoginTokenInvalid
+		return
+	}
+	if encryption.BcryptCompare( found.SecretHash , secret ) == false {
+		err = ErrLoginTokenInvalid
+		return
+	}
+
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		current := &LoginToken{}
+		if tx.Get( db.BucketLoginTokens , []byte( token_id ) , current ) != nil ||
+			current.Usable() == false ||
+			encryption.ConstantTimeEqual( current.SecretHash , found.SecretHash ) == false {
 			tx_err = ErrLoginTokenInvalid
 			return
 		}
-
-		token := &LoginToken{}
-		if decode_err := store.DecodeValue( raw , token ); decode_err != nil {
-			tx_err = decode_err
+		owner := &User{}
+		if tx.Get( db.BucketUsers , encryption.Uint64ToBytes( current.UserID ) , owner ) != nil || owner.Disabled() {
+			tx_err = ErrLoginTokenInvalid
 			return
 		}
 
 		now := time.Now().UTC()
-		if token.UsedAt != nil || now.After( token.ExpiresAt ) {
-			tx_err = ErrLoginTokenInvalid
-			return
-		}
-		if encryption.BcryptCompare( token.SecretHash , secret ) == false {
-			tx_err = ErrLoginTokenInvalid
-			return
-		}
+		current.UsedAt = &now
+		if tx_err = tx.Put( db.BucketLoginTokens , []byte( token_id ) , current ); tx_err != nil { return }
 
-		token.UsedAt = &now
-		encoded , encode_err := store.EncodeValue( token )
-		if encode_err != nil {
-			tx_err = encode_err
-			return
-		}
-		if tx_err = bucket.Put( []byte( token_id ) , encoded ); tx_err != nil { return }
+		session_id , new_credential , session := newSession( current.UserID , session_ttl )
+		if tx_err = tx.Put( db.BucketSessions , []byte( session_id ) , session ); tx_err != nil { return }
 
-		user_id = token.UserID
+		session_credential , user_id = new_credential , current.UserID
 		return
 	} )
+	if err != nil {
+		session_credential , user_id = "" , 0
+	}
+	return
+}
+
+// deletePendingLoginTokens removes every unused link an account holds,
+// inside the caller's transaction. Used ones are left for the purge loop, so
+// a second click on a spent link still fails as "already used".
+func deletePendingLoginTokens( tx *db.Tx , user_id uint64 ) ( removed int , err error ) {
+	removed , err = tx.DeleteWhere( db.BucketLoginTokens ,
+		func() any { return &LoginToken{} } ,
+		func( key []byte , item any ) bool {
+			token := item.( *LoginToken )
+			return token.UserID == user_id && token.UsedAt == nil
+		} )
 	return
 }
 

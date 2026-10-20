@@ -20,6 +20,8 @@ import (
 //
 // Minting and revoking require a browser session (the group in routes.go adds
 // Guard.RequireSession), so a leaked key cannot quietly mint its replacement.
+// The admin routes that hand out login links require one too, for the same
+// reason -- see Guard.RequireSession.
 
 type createAPIKeyRequest struct {
 	Name string `json:"name"`
@@ -95,14 +97,14 @@ func ( handlers *Handlers ) ListMyAPIKeys( c fiber.Ctx ) ( err error ) {
 
 // CreateMyAPIKey mints a key for the signed-in user and returns the credential
 // once. The default role is "user" even for an admin: an admin-scoped key can
-// create accounts and mint login links, so it should be asked for rather than
-// handed out by omission.
+// list and disable accounts and revoke anyone's access, so it should be asked
+// for rather than handed out by omission.
 //
 // The ceiling that a key cannot outrank its owner lives in
 // models.IssueAPIKey, not here, so the control socket and the CLI get it too.
 func ( handlers *Handlers ) CreateMyAPIKey( c fiber.Ctx ) ( err error ) {
 	var body createAPIKeyRequest
-	if c.Bind().Body( &body ) != nil {
+	if c.Bind().JSON( &body ) != nil {
 		err = badRequest( c , "malformed request body" )
 		return
 	}
@@ -161,7 +163,7 @@ func ( handlers *Handlers ) CreateMyAPIKey( c fiber.Ctx ) ( err error ) {
 // "forbidden", so the endpoint does not confirm which key ids exist.
 func ( handlers *Handlers ) RevokeMyAPIKey( c fiber.Ctx ) ( err error ) {
 	var body csrfOnlyRequest
-	if c.Bind().Body( &body ) != nil {
+	if c.Bind().JSON( &body ) != nil {
 		err = badRequest( c , "malformed request body" )
 		return
 	}
@@ -219,7 +221,7 @@ func ( handlers *Handlers ) ListAllAPIKeys( c fiber.Ctx ) ( err error ) {
 // contractor who has finished.
 func ( handlers *Handlers ) RevokeAnyAPIKey( c fiber.Ctx ) ( err error ) {
 	var body csrfOnlyRequest
-	if c.Bind().Body( &body ) != nil {
+	if c.Bind().JSON( &body ) != nil {
 		err = badRequest( c , "malformed request body" )
 		return
 	}

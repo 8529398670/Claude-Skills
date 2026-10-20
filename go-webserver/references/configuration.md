@@ -25,7 +25,7 @@ adding a setting or writing a file anywhere.
 app:     name
 server:  host, port, app_dir, static_dir, language_file, secret_key,
          encrypt_at_rest, secure_cookies, cookie_name, trust_proxy,
-         proxy_header, body_limit_bytes, rate_limit_max,
+         trusted_proxies, proxy_header, body_limit_bytes, rate_limit_max,
          rate_limit_window_seconds, control_socket
 auth:    session_ttl_seconds, login_token_ttl_seconds, api_keys,
          api_key_ttl_seconds

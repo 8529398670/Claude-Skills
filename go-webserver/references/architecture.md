@@ -27,8 +27,17 @@ the design. Identity is proven exactly two ways:
 1. **Redeeming a one-time login token** (`server/models/login_token.go`). An
    admin -- or the first-run bootstrap -- mints a high-entropy credential for
    a specific user. Only a bcrypt hash of its secret half is stored. It
-   expires, and redemption marks it used inside a single bolt write
-   transaction, so two requests racing the same link cannot both succeed.
+   expires, and an account has at most one pending link: issuing a new one
+   deletes the old. Opening `/login/<credential>` only serves the page; the
+   page POSTs the credential to `/api/login` when the person confirms, so a
+   chat app's link preview or a mail scanner cannot spend it, and someone
+   already signed in is told they are about to switch accounts. The bcrypt
+   comparison runs first, outside any transaction; then one bolt write
+   transaction re-checks the token, checks the account is enabled, marks the
+   token used, and stores the session. Two requests racing the same link
+   cannot both succeed, and a link redeemed while the account is being
+   disabled either lands first (and is swept up by the disable) or is
+   refused.
 2. **Presenting a valid session cookie** (`server/models/session.go`). The
    cookie holds an opaque reference, never the user id or role. Revoking a
    session is deleting a row -- no denylist, no token to outlive its welcome.
@@ -46,11 +55,27 @@ cost of needing an admin or shell access when someone loses their session. A
 project needing genuine self-service recovery -- email round trip, say -- has
 to add it; it is not part of the base model.
 
+Three operations look alike and are not:
+
+| | pending link | sessions | API keys |
+|---|---|---|---|
+| **Reissue login** (`New link`, `manage reissue-login`) | replaced | kept | kept |
+| **Disable** (`manage set-disabled`) | deleted | deleted | refused while disabled, restored on re-enable |
+| **Revoke access** (`manage revoke-access`, `POST /api/admin/users/:id/revoke-access`) | deleted | deleted | revoked |
+
+Reissuing is for a lost cookie. When someone else may hold an account's
+credentials, revoke access first, then reissue -- reissuing alone leaves a
+stolen session signed in. Disable and revoke both run as one transaction with
+the account change, so nothing issued concurrently survives them.
+
 The first-run bootstrap prints the initial admin link to the server's own
-logs. Anyone who can read those logs already controls the deployment, so this
-grants nothing new, and it means a fresh deploy is usable without a separate
-setup step. It only fires when no enabled admin exists, so restarts do not
-keep minting admins.
+logs, so a fresh deploy is usable without a separate setup step. Until that
+link is used, anyone who can read those logs can claim the first admin
+account -- and log access is often wider than deployment access (a log
+shipper, a shared dashboard, a support engineer). Use the link promptly, or
+keep the logs private until you have; it also expires after
+`auth.login_token_ttl_seconds`. It only fires when no enabled admin exists, so
+restarts do not keep minting admins.
 
 ## API keys: the same roles, for callers that are not browsers
 
@@ -103,19 +128,27 @@ is safe, but this one keeps the rule unambiguous: a request that arrives with
 ambient browser credentials is always held to the token check, and cannot opt
 out of it by also carrying a key.
 
-### Why a key cannot mint a key
+### Why a key cannot create credentials
 
-`Guard.RequireSession` gates the endpoints that create and revoke keys, so
-managing keys needs a browser session even with a correctly scoped admin key.
+`Guard.RequireSession` gates every endpoint that creates a credential:
+creating and revoking keys, creating an account, and reissuing a login link.
+Those need a browser session even with a correctly scoped admin key.
 
 This is containment, not privilege. A key is a bearer credential that lives in
-a config file or a CI secret. If a leaked key could mint more keys, revoking
-it would not end the compromise -- the key it minted while nobody was looking
-survives. Requiring a session means every key in the list is one a person
-created, and revoking a key actually revokes it.
+a config file or a CI secret. If a leaked key could create another credential,
+revoking it would not end the compromise -- what it created while nobody was
+looking survives. Gating only `/api/keys` is not enough: a login link becomes
+a session, and a session can mint keys, so an admin key that could reissue a
+link could turn itself into a fresh session and a fresh key. Requiring a
+session for all of them means every credential traces back to a person
+signing in, and revoking a key actually revokes it.
 
-Drop `RequireSession` from those groups if an app genuinely needs to provision
-keys programmatically. Do it knowingly, and write it down in that app's docs.
+What a leaked admin key can still do is everything else an admin can: list
+and disable accounts, revoke access. That is why admin keys must be asked for.
+
+Drop `RequireSession` from a route if an app genuinely needs to provision
+accounts or keys programmatically. Do it knowingly -- such a key can then mint
+its own successors -- and write it down in that app's docs.
 
 ### The rest of the model
 
@@ -140,7 +173,12 @@ keys programmatically. Do it knowingly, and write it down in that app's docs.
   because someone was disabled for an afternoon is a footgun with no security
   gain, given the check already refuses the request.
 - **25 live keys per account** (`models.APIKeyMaxPerUser`). Any signed-in user
-  can mint keys, so the bucket needs a bound; revoking one frees a slot.
+  can mint keys, so the bucket needs a bound; revoking one frees a slot. The
+  count and the insert share one transaction -- counted in one and inserted in
+  another, sixteen concurrent requests at 24 keys all pass the check. Dead
+  keys are kept 30 days for the listing, but at most 100 rows per account:
+  past that, minting a key drops the oldest dead ones, so mint-revoke churn
+  cannot grow the bucket (or the per-request scans over it) without bound.
 - **`auth.api_keys: false` closes the whole surface.** The header stops being
   believed, existing keys stop authenticating, and the management endpoints
   404. The rows survive, so turning it back on restores them.
@@ -215,7 +253,10 @@ Two deliberate differences from the reference implementation the API mirrors:
 Cookie encryption is not what makes a session unforgeable -- the database
 lookup is. It means the cookie is opaque to anyone reading a browser profile
 or a proxy log, and that a tampered cookie fails to decrypt before it ever
-reaches the lookup.
+reaches the lookup. It does **not** stop replay: a copied cookie is still a
+working bearer credential until the session ends. What ends it is logging
+out, the session expiring, the account being disabled, or revoke access --
+each deletes the server-side row the cookie points at.
 
 ## At-rest encryption and the secret key tradeoff
 
@@ -375,10 +416,21 @@ rewords the UI without rebuilding anything, while the frontend stays
 embedded. That is the supported way to translate or soften a deployment's copy
 without a Go toolchain.
 
-`os.DirFS` is used for the disk case rather than raw file paths, so both
-sources are the same `fs.FS` interface and `server/static` has exactly one
-code path. It also means `fs.ValidPath` refuses `..` elements for free,
-independently of the explicit check in the handler.
+The disk case opens `./static` with `os.OpenRoot` and serves `root.FS()`
+rather than raw file paths, so both sources are the same `fs.FS` interface and
+`server/static` has exactly one code path. `fs.ValidPath` refuses `..`
+elements for free, independently of the explicit check in the handler.
+
+It is `os.Root` and not `os.DirFS` on purpose. `os.DirFS` follows symlinks
+wherever they point -- its documentation says so -- so a link in `static/` to
+`../config.yaml` would serve the secret key to any visitor. An `os.Root`
+refuses to resolve anything, symlinks included, that lands outside the
+directory. Two consequences: a symlink that stays inside `static/` still
+works, and the root holds the directory open for the life of the process, so
+replacing `static/` wholesale (as opposed to the files in it) is only seen
+after a restart. Static content should still be writable only by whoever
+deploys the app -- the confinement is a backstop, not a licence to let
+untrusted users write there.
 
 ### The single binary is also the CLI
 
@@ -426,9 +478,9 @@ exists to avoid.
 ### What this buys, in security terms
 
 One process holds the secret key. One process applies the model layer's rules.
-Disabling an account revokes its sessions the same way whether the change came
-from the admin UI, the CLI, or a cron job, because all three run the same code
-in the same process. The alternative -- a second process opening the database
+Disabling an account revokes its sessions and pending login links the same way
+whether the change came from the admin UI, the CLI, or a cron job, because all
+three run the same code in the same process. The alternative -- a second process opening the database
 directly -- means a second copy of the key in memory, a second implementation
 to keep in step, and no single place to audit.
 
@@ -462,6 +514,12 @@ State these to the user rather than letting them be discovered in production:
   socket, so it does not cross machines. Two servers on two hosts sharing one
   database is still not possible and is the point at which this template's
   storage choice has been outgrown.
+- **HTTPS is not this server's job, and nothing works safely without it.**
+  Login links, session cookies, and API keys are all bearer credentials;
+  `secure_cookies` only tells the browser not to send the cookie over plain
+  http, it encrypts nothing. Keep the backend's plain-http port reachable only
+  by the TLS proxy (`server.host: 127.0.0.1`, `docker.bind_address:
+  127.0.0.1`).
 - **Rate limiting is per-process, in memory.** Correct for the single
   container `dockerRun.sh` builds. With multiple replicas each holds its own
   counters, so the effective limit multiplies -- move to a shared

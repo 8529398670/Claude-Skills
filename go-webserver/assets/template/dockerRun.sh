@@ -31,7 +31,8 @@ container, and the portable build. Review it before the first start, in
 particular:
 
   server.secure_cookies   true behind HTTPS; false only for plain http://localhost
-  server.trust_proxy      true once a reverse proxy you control is in front
+  server.trust_proxy      true once a reverse proxy you control is in front,
+  server.trusted_proxies  with the address it connects from (see config.yaml)
   docker.bind_address     127.0.0.1 keeps it reachable only from this host
   docker.host_port        the port published there
 
@@ -57,6 +58,27 @@ mkdir -p "$DATA_DIR"
 APP_UID="$( docker run --rm --entrypoint sh "$IMAGE_ID" -c 'id -u app' )"
 APP_GID="$( docker run --rm --entrypoint sh "$IMAGE_ID" -c 'id -g app' )"
 
+# Make sure Docker can see this project at all.
+#
+# Docker Desktop, colima, and friends run the daemon in a VM that shares only
+# some host paths with it (colima: your home directory). Mount a path outside
+# those and Docker quietly mounts an empty directory from inside the VM
+# instead: config.yaml shows up as a directory, and the database would land in
+# the VM where no backup of this host will ever find it. Checking that the
+# file arrives as a file catches that before anything starts.
+if ! docker run --rm -v "${CONFIG_FILE}:/config.yaml:ro" \
+     --entrypoint sh "$IMAGE_ID" -c 'test -f /config.yaml' >/dev/null 2>&1; then
+  echo "" >&2
+  echo "ERROR: Docker cannot see ${CONFIG_FILE}" >&2
+  echo "" >&2
+  echo "       The project is probably outside the paths your Docker VM shares" >&2
+  echo "       with this host (colima shares your home directory; Docker Desktop:" >&2
+  echo "       Settings > Resources > File sharing). Move the project under a" >&2
+  echo "       shared path, or share this one, and re-run." >&2
+  echo "" >&2
+  exit 1
+fi
+
 # Make sure that user can read config.yaml.
 #
 # The file is 0600 and owned by you, which the container user cannot read on
@@ -65,9 +87,11 @@ APP_GID="$( docker run --rm --entrypoint sh "$IMAGE_ID" -c 'id -g app' )"
 # uid/gid are fixed at 10001 so that group is very unlikely to belong to a real
 # account on the host.
 #
-# Best effort, because the right answer differs by platform: on macOS (Docker
-# Desktop, colima) the file-sharing layer ignores guest ownership and every uid
-# can already read it. So the result is tested rather than trusted.
+# Best effort, because the right answer differs by platform: Docker Desktop's
+# file sharing usually ignores guest ownership, so every uid can already read
+# it, while colima's sshfs mounts enforce the host's modes and root in the
+# container cannot change them -- there, the fix is the sudo line printed
+# below. So the result is tested rather than trusted.
 docker run --rm --user 0:0 -v "${CONFIG_FILE}:/config.yaml" \
   --entrypoint sh "$IMAGE_ID" -c "chgrp ${APP_GID} /config.yaml && chmod 640 /config.yaml" >/dev/null 2>&1 || true
 
@@ -94,7 +118,7 @@ docker run --rm --user 0:0 -v "${DATA_DIR}:/data" \
   --entrypoint sh "$IMAGE_ID" -c "chown -R ${APP_UID}:${APP_GID} /data" >/dev/null 2>&1 || true
 
 if ! docker run --rm --user "${APP_UID}:${APP_GID}" -v "${DATA_DIR}:/data" \
-     --entrypoint sh "$IMAGE_ID" -c 'touch /data/.probe && rm -f /data/.probe' >/dev/null 2>&1; then
+     --entrypoint sh "$IMAGE_ID" -c 'touch /data/.probe' >/dev/null 2>&1; then
   echo "" >&2
   echo "ERROR: the container runs as uid ${APP_UID}, which cannot write to" >&2
   echo "       ${DATA_DIR}" >&2
@@ -102,6 +126,24 @@ if ! docker run --rm --user "${APP_UID}:${APP_GID}" -v "${DATA_DIR}:/data" \
   echo "       Without this the container will crash-loop on 'permission denied'." >&2
   echo "       Grant it on the host and re-run:" >&2
   echo "         sudo chown -R ${APP_UID}:${APP_GID} \"${DATA_DIR}\"" >&2
+  echo "" >&2
+  exit 1
+fi
+
+# The probe the container just wrote must be visible here. If it is not, the
+# data directory is outside the paths the Docker VM shares (see above), and
+# the database would be written somewhere this host cannot back up.
+DATA_SHARED=false
+[ -f "${DATA_DIR}/.probe" ] && DATA_SHARED=true
+docker run --rm --user "${APP_UID}:${APP_GID}" -v "${DATA_DIR}:/data" \
+  --entrypoint sh "$IMAGE_ID" -c 'rm -f /data/.probe' >/dev/null 2>&1 || true
+if [ "$DATA_SHARED" != "true" ]; then
+  echo "" >&2
+  echo "ERROR: Docker cannot see ${DATA_DIR}" >&2
+  echo "" >&2
+  echo "       A file written there from inside the container did not appear on" >&2
+  echo "       this host, so the directory is outside the paths your Docker VM" >&2
+  echo "       shares. Point docker.data_dir under a shared path and re-run." >&2
   echo "" >&2
   exit 1
 fi
@@ -163,7 +205,8 @@ if [ "$server_secure_cookies" = "false" ]; then
 fi
 if [ "$server_trust_proxy" = "false" ]; then
   echo "Note: server.trust_proxy is false. Once a reverse proxy is in front, set it"
-  echo "      true, or the rate limiter sees every client as the proxy."
+  echo "      true and list the proxy's address in server.trusted_proxies, or the"
+  echo "      rate limiter sees every client as the proxy."
   echo ""
 fi
 

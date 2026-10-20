@@ -44,6 +44,7 @@ Usage:
   reissue-login   -user-id 3         fresh link for an existing user
   list-users                         id, name, role, status
   set-disabled    -user-id 3 -disabled=true
+  revoke-access   -user-id 3         end every session, login link and API key
   list-keys       [-user-id 3]       API keys, whose they are, when last used
   create-key      -user-id 3 -name "CI" [-role user] [-days 90]
   revoke-key      -key-id abc123     kill one API key now
@@ -85,6 +86,7 @@ type backend interface {
 	CreateUser( display_name string , role string ) ( user control.UserResponse , err error )
 	ReissueLogin( user_id uint64 ) ( user control.UserResponse , err error )
 	SetDisabled( user_id uint64 , disabled bool ) ( user control.UserResponse , err error )
+	RevokeAccess( user_id uint64 ) ( revoked models.Revoked , err error )
 	ListAPIKeys( user_id uint64 ) ( keys []control.APIKeyResponse , err error )
 	CreateAPIKey( user_id uint64 , name string , role string , expires_in_days *int ) ( key control.APIKeyResponse , err error )
 	RevokeAPIKey( key_id string ) ( key control.APIKeyResponse , err error )
@@ -138,6 +140,8 @@ func Run( arguments []string ) ( err error ) {
 		err = commandListUsers( back )
 	case "set-disabled":
 		err = commandSetDisabled( back , rest )
+	case "revoke-access":
+		err = commandRevokeAccess( back , rest )
 	case "list-keys":
 		err = commandListKeys( back , rest )
 	case "create-key":
@@ -217,6 +221,11 @@ func ( b *controlBackend ) ReissueLogin( user_id uint64 ) ( user control.UserRes
 
 func ( b *controlBackend ) SetDisabled( user_id uint64 , disabled bool ) ( user control.UserResponse , err error ) {
 	user , err = b.client.SetDisabled( user_id , disabled )
+	return
+}
+
+func ( b *controlBackend ) RevokeAccess( user_id uint64 ) ( revoked models.Revoked , err error ) {
+	revoked , err = b.client.RevokeAccess( user_id )
 	return
 }
 
@@ -313,16 +322,21 @@ func ( b *directBackend ) SetDisabled( user_id uint64 , disabled bool ) ( user c
 		err = fmt.Errorf( "no user with id %d" , user_id )
 		return
 	}
+	// Disabling deletes the account's sessions and unused login links in the
+	// same transaction -- see models.SetUserDisabled.
 	if err = models.SetUserDisabled( b.store , found.ID , disabled ); err != nil { return }
-	if disabled {
-		// Same reasoning as the admin endpoint and the control handler:
-		// revoking access should take effect now, not whenever the cookie
-		// happens to expire.
-		if err = models.DestroyAllSessionsForUser( b.store , found.ID ); err != nil { return }
-	}
 	refreshed , err := models.GetUser( b.store , found.ID )
 	if err != nil { return }
 	user = fromModel( refreshed , "" )
+	return
+}
+
+func ( b *directBackend ) RevokeAccess( user_id uint64 ) ( revoked models.Revoked , err error ) {
+	if _ , err = models.GetUser( b.store , user_id ); err != nil {
+		err = fmt.Errorf( "no user with id %d" , user_id )
+		return
+	}
+	revoked , err = models.RevokeAllCredentials( b.store , user_id )
 	return
 }
 
@@ -661,5 +675,21 @@ func commandSetDisabled( back backend , arguments []string ) ( err error ) {
 	user , err := back.SetDisabled( *user_id , *disabled )
 	if err != nil { return }
 	fmt.Printf( "user #%d (%s) disabled=%v\n" , user.ID , user.DisplayName , user.Disabled )
+	return
+}
+
+// commandRevokeAccess is the incident-response command: run it when an
+// account's credentials may be in someone else's hands. The account stays
+// enabled; follow it with reissue-login to let its owner back in.
+func commandRevokeAccess( back backend , arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "revoke-access" , flag.ExitOnError )
+	user_id := set.Uint64( "user-id" , 0 , "id of an existing user" )
+	set.Parse( arguments )
+
+	revoked , err := back.RevokeAccess( *user_id )
+	if err != nil { return }
+	fmt.Printf( "user #%d: ended %d sessions, deleted %d unused login links, revoked %d API keys\n" ,
+		*user_id , revoked.Sessions , revoked.LoginLinks , revoked.APIKeys )
+	fmt.Printf( "To let them back in: reissue-login -user-id %d\n" , *user_id )
 	return
 }

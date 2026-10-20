@@ -61,9 +61,20 @@ func Resolve( static_dir string , language_file string , embedded_static fs.FS ,
 			err = abs_err
 			return
 		}
-		// os.DirFS re-reads on every call, so the always-fresh serving
-		// behaviour survives -- and it refuses paths that escape the root.
-		bundle.Static = os.DirFS( absolute )
+		// os.Root, not os.DirFS. Both re-read on every call, so the
+		// always-fresh serving behaviour survives either way -- but os.DirFS
+		// follows symlinks wherever they point, so a link in static/ to
+		// ../config.yaml would hand the secret key to any visitor. A Root
+		// refuses to resolve anything, symlinks included, that lands outside
+		// the directory. It holds the directory open for the life of the
+		// process, so replacing static/ wholesale (rather than the files in
+		// it) needs a restart to be seen.
+		root , root_err := os.OpenRoot( absolute )
+		if root_err != nil {
+			err = fmt.Errorf( "could not open static directory %q: %w" , absolute , root_err )
+			return
+		}
+		bundle.Static = root.FS()
 		static_source = "disk " + absolute
 	}
 

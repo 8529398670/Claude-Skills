@@ -84,8 +84,9 @@ type ServerSection struct {
 	EncryptAtRest          bool   `yaml:"encrypt_at_rest"`
 	SecureCookies          bool   `yaml:"secure_cookies"`
 	CookieName             string `yaml:"cookie_name"`
-	TrustProxy             bool   `yaml:"trust_proxy"`
-	ProxyHeader            string `yaml:"proxy_header"`
+	TrustProxy             bool     `yaml:"trust_proxy"`
+	TrustedProxies         []string `yaml:"trusted_proxies"`
+	ProxyHeader            string   `yaml:"proxy_header"`
 	BodyLimitBytes         int    `yaml:"body_limit_bytes"`
 	RateLimitMax           int    `yaml:"rate_limit_max"`
 	RateLimitWindowSeconds int    `yaml:"rate_limit_window_seconds"`
@@ -213,11 +214,15 @@ type Config struct {
 	RateLimitWindow time.Duration
 	BodyLimit       int
 
-	// TrustProxy tells fiber to believe X-Forwarded-For. Only turn this on
-	// when something you control (nginx, Caddy) is actually in front, or
-	// clients can forge their own IP and walk straight past the rate limiter.
-	TrustProxy  bool
-	ProxyHeader string
+	// TrustProxy tells fiber to believe ProxyHeader -- but only on a
+	// connection whose peer address is in TrustedProxies. Fiber with
+	// TrustProxy on and no allowlist trusts nobody, so every visitor behind
+	// the proxy shares the proxy's one rate-limit budget; with the allowlist
+	// and nothing else, any client could still name its own IP. Both halves
+	// are required, and Validate refuses one without the other.
+	TrustProxy     bool
+	TrustedProxies []string
+	ProxyHeader    string
 }
 
 // layout is what the container image pins, regardless of config.yaml. See
@@ -395,6 +400,12 @@ func ( file *File ) Validate() ( err error ) {
 	check( server.Port >= 1 && server.Port <= 65535 , "server.port must be 1-65535, got %d" , server.Port )
 	check( strings.TrimSpace( server.CookieName ) != "" , "server.cookie_name must not be empty" )
 	check( strings.TrimSpace( server.ProxyHeader ) != "" , "server.proxy_header must not be empty" )
+	check( server.TrustProxy == false || len( server.TrustedProxies ) > 0 ,
+		"server.trust_proxy is true but server.trusted_proxies is empty -- list the address or CIDR range your reverse proxy connects from" )
+	for _ , entry := range server.TrustedProxies {
+		check( validProxyEntry( entry ) , "server.trusted_proxies entry %q must be an IP address or a CIDR range like 10.0.0.0/8" , entry )
+		check( entry != "0.0.0.0/0" && entry != "::/0" , "server.trusted_proxies entry %q trusts every address, which lets any client forge its own IP" , entry )
+	}
 	check( server.BodyLimitBytes > 0 , "server.body_limit_bytes must be positive" )
 	check( server.RateLimitMax > 0 , "server.rate_limit_max must be positive" )
 	check( server.RateLimitWindowSeconds > 0 , "server.rate_limit_window_seconds must be positive" )
@@ -427,6 +438,16 @@ func ( file *File ) Validate() ( err error ) {
 	if len( problems ) > 0 {
 		err = errors.New( strings.Join( problems , "; " ) )
 	}
+	return
+}
+
+func validProxyEntry( value string ) ( result bool ) {
+	if strings.Contains( value , "/" ) {
+		_ , _ , err := net.ParseCIDR( value )
+		result = err == nil
+		return
+	}
+	result = net.ParseIP( value ) != nil
 	return
 }
 
@@ -607,8 +628,9 @@ func Load() ( cfg *Config , err error ) {
 		RateLimitWindow: seconds( file.Server.RateLimitWindowSeconds ),
 		BodyLimit:       file.Server.BodyLimitBytes,
 
-		TrustProxy:  file.Server.TrustProxy,
-		ProxyHeader: file.Server.ProxyHeader,
+		TrustProxy:     file.Server.TrustProxy,
+		TrustedProxies: file.Server.TrustedProxies,
+		ProxyHeader:    file.Server.ProxyHeader,
 	}
 	return
 }

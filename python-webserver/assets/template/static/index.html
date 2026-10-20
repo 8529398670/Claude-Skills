@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title data-i18n="app.title">&nbsp;</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <!--
+    No text is hardcoded here. Every visible string carries a data-i18n key
+    that app/core/language.py loads from language.yaml at runtime, so the copy
+    can change (or be removed entirely) without editing this file.
+  -->
+  <header class="app-header">
+    <div>
+      <h1 data-i18n="app.title"></h1>
+      <p class="muted" data-i18n="app.tagline"></p>
+    </div>
+    <div id="who-am-i" class="who"></div>
+  </header>
+
+  <main hidden id="main">
+    <section id="signed-out" class="card" hidden>
+      <h2 data-i18n="signed_out.heading"></h2>
+      <p data-i18n="signed_out.body"></p>
+      <p id="invalid-link" class="notice notice-warn" data-i18n="signed_out.invalid_link" hidden></p>
+    </section>
+
+    <!-- What a login link opens. Nothing is redeemed until the button is
+         pressed -- see renderLoginConfirm in app.js. -->
+    <section id="login-confirm" class="card" hidden>
+      <h2 data-i18n="login_confirm.heading"></h2>
+      <p data-i18n="login_confirm.body"></p>
+      <p id="login-switch-warning" class="notice notice-warn" hidden></p>
+      <button id="login-confirm-button" data-i18n="login_confirm.button"></button>
+    </section>
+
+    <section id="signed-in" hidden>
+      <div class="card">
+        <h2 data-i18n="account.heading"></h2>
+        <form id="rename-form" autocomplete="off">
+          <div class="field">
+            <label for="display-name" data-i18n="account.display_name_label"></label>
+            <input id="display-name" name="display_name" maxlength="80" required
+                   data-i18n-attr="placeholder:account.display_name_placeholder" />
+          </div>
+          <button type="submit" data-i18n="account.save_button"></button>
+        </form>
+        <p id="rename-saved" class="notice notice-ok" data-i18n="account.saved_notice" hidden></p>
+        <button id="logout-button" class="secondary" data-i18n="account.logout_button"></button>
+      </div>
+
+      <!--
+        API keys: the non-browser way in, for every signed-in user. The role
+        select is revealed only for an admin (see keys.js) because a key can
+        never carry more permission than the account that owns it.
+      -->
+      <div class="card" id="api-keys-panel" hidden>
+        <h2 data-i18n="api_keys.heading"></h2>
+        <p class="muted" data-i18n="api_keys.description"></p>
+
+        <form id="create-key-form" autocomplete="off">
+          <div class="field">
+            <label for="key-name" data-i18n="api_keys.name_label"></label>
+            <input id="key-name" name="name" maxlength="80" required
+                   data-i18n-attr="placeholder:api_keys.name_placeholder" />
+          </div>
+          <div class="field" id="key-role-field" hidden>
+            <label for="key-role" data-i18n="api_keys.role_label"></label>
+            <select id="key-role" name="role">
+              <option value="user" data-i18n="api_keys.role_user"></option>
+              <option value="admin" data-i18n="api_keys.role_admin"></option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="key-days" data-i18n="api_keys.days_label"></label>
+            <input id="key-days" name="expires_in_days" type="number" min="0" max="3650" inputmode="numeric"
+                   data-i18n-attr="placeholder:api_keys.days_placeholder" />
+          </div>
+          <button type="submit" data-i18n="api_keys.create_button"></button>
+        </form>
+
+        <div id="key-secret-box" class="notice notice-link" hidden>
+          <p data-i18n="api_keys.secret_notice"></p>
+          <code id="key-secret-value"></code>
+          <button id="copy-key-button" class="secondary" data-i18n="api_keys.copy_button"></button>
+          <span id="key-copied-notice" class="muted" data-i18n="api_keys.copied_notice" hidden></span>
+        </div>
+
+        <div class="table-scroll">
+          <table id="keys-table">
+            <thead>
+              <tr>
+                <th data-i18n="api_keys.table_name"></th>
+                <th data-i18n="api_keys.table_role"></th>
+                <th data-i18n="api_keys.table_status"></th>
+                <th data-i18n="api_keys.table_last_used"></th>
+                <th data-i18n="api_keys.table_expires"></th>
+                <th data-i18n="api_keys.table_actions"></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" id="admin-panel" hidden>
+        <h2 data-i18n="admin.heading"></h2>
+        <p class="muted" data-i18n="admin.description"></p>
+
+        <form id="create-user-form" autocomplete="off">
+          <div class="field">
+            <label for="new-name" data-i18n="admin.new_name_label"></label>
+            <input id="new-name" name="display_name" maxlength="80" required
+                   data-i18n-attr="placeholder:admin.new_name_placeholder" />
+          </div>
+          <div class="field">
+            <label for="new-role" data-i18n="admin.new_role_label"></label>
+            <select id="new-role" name="role">
+              <option value="user" data-i18n="admin.role_user"></option>
+              <option value="admin" data-i18n="admin.role_admin"></option>
+            </select>
+          </div>
+          <button type="submit" data-i18n="admin.create_button"></button>
+        </form>
+
+        <div id="login-link-box" class="notice notice-link" hidden>
+          <p data-i18n="admin.link_notice"></p>
+          <code id="login-link-value"></code>
+          <button id="copy-link-button" class="secondary" data-i18n="admin.copy_button"></button>
+          <span id="copied-notice" class="muted" data-i18n="admin.copied_notice" hidden></span>
+        </div>
+
+        <div class="table-scroll">
+          <table id="users-table">
+            <thead>
+              <tr>
+                <th data-i18n="admin.table_name"></th>
+                <th data-i18n="admin.table_role"></th>
+                <th data-i18n="admin.table_status"></th>
+                <th data-i18n="admin.table_actions"></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Every key in the app, whoever owns it: the admin answer to "what
+           has standing access", and where a lost laptop's key gets killed. -->
+      <div class="card" id="admin-keys-panel" hidden>
+        <h2 data-i18n="admin_keys.heading"></h2>
+        <p class="muted" data-i18n="admin_keys.description"></p>
+
+        <div class="table-scroll">
+          <table id="admin-keys-table">
+            <thead>
+              <tr>
+                <th data-i18n="admin_keys.table_owner"></th>
+                <th data-i18n="api_keys.table_name"></th>
+                <th data-i18n="api_keys.table_role"></th>
+                <th data-i18n="api_keys.table_status"></th>
+                <th data-i18n="api_keys.table_last_used"></th>
+                <th data-i18n="api_keys.table_actions"></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <p id="error-banner" class="notice notice-error" hidden></p>
+  </main>
+
+  <!--
+    Plain scripts in dependency order. No bundler, no modules that need a
+    build step: each file adds one global and the browser runs them as-is.
+    Third-party libraries go in /vendor/ (downloaded once, served by us) so
+    the Content-Security-Policy can stay locked to 'self'.
+  -->
+  <script src="/js/dom.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/keys.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

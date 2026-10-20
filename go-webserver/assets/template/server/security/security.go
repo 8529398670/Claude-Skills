@@ -215,18 +215,25 @@ func ( guard *Guard ) RequireAdmin( c fiber.Ctx ) ( err error ) {
 }
 
 // RequireSession refuses a request that authenticated with an API key, even a
-// correctly scoped one. Exactly one group of routes uses it: the ones that
-// mint and revoke API keys.
+// correctly scoped one. It guards every route that creates a credential:
+// minting and revoking API keys, creating an account, and reissuing a login
+// link (see routes.go).
 //
 // The reasoning is containment rather than privilege. A key is a bearer
 // credential that lives in a config file or a CI secret; if a leaked key could
-// mint more keys, revoking it would not end the compromise, because the key it
-// minted while you were not looking survives. Requiring a browser session to
-// manage keys means the list of keys is always something a person created, and
-// revoking a key actually revokes it.
+// create another credential -- a key directly, or a login link that becomes a
+// session that mints a key -- revoking it would not end the compromise,
+// because what it created while you were not looking survives. Requiring a
+// browser session for all of these means every credential traces back to a
+// person signing in, and revoking a key actually revokes it.
 //
-// Drop this from the group if an app genuinely needs to provision keys
-// programmatically -- but do it knowingly, and say so in that app's docs.
+// What a leaked admin-scoped key can still do is everything else an admin
+// can: list and disable accounts, revoke access. That is why admin keys have
+// to be asked for, and why the admin key list exists.
+//
+// Drop this from a route if an app genuinely needs to provision accounts or
+// keys programmatically -- but do it knowingly: such a key can then mint its
+// own successors, and that app's docs should say so.
 func ( guard *Guard ) RequireSession( c fiber.Ctx ) ( err error ) {
 	actor := ActorFrom( c )
 	if actor == nil {

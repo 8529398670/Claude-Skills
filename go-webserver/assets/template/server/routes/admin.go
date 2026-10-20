@@ -50,7 +50,7 @@ func ( handlers *Handlers ) ListUsers( c fiber.Ctx ) ( err error ) {
 // worse than useless.
 func ( handlers *Handlers ) CreateUser( c fiber.Ctx ) ( err error ) {
 	var body createUserRequest
-	if c.Bind().Body( &body ) != nil {
+	if c.Bind().JSON( &body ) != nil {
 		err = badRequest( c , "malformed request body" )
 		return
 	}
@@ -88,10 +88,15 @@ func ( handlers *Handlers ) CreateUser( c fiber.Ctx ) ( err error ) {
 
 // ReissueLogin covers the only real failure mode of this auth model: someone
 // lost their cookie or their device, and there is no password reset to fall
-// back on. An admin mints a fresh link instead.
+// back on. An admin mints a fresh link instead. Any link the account had not
+// used yet stops working (see models.IssueLoginToken).
+//
+// It is not a reset: sessions the account already has stay signed in. When
+// the worry is that someone else holds the account's credentials, use
+// RevokeAccess first, then reissue.
 func ( handlers *Handlers ) ReissueLogin( c fiber.Ctx ) ( err error ) {
 	var body csrfOnlyRequest
-	if c.Bind().Body( &body ) != nil {
+	if c.Bind().JSON( &body ) != nil {
 		err = badRequest( c , "malformed request body" )
 		return
 	}
@@ -124,7 +129,7 @@ func ( handlers *Handlers ) ReissueLogin( c fiber.Ctx ) ( err error ) {
 
 func ( handlers *Handlers ) SetUserDisabled( c fiber.Ctx ) ( err error ) {
 	var body setDisabledRequest
-	if c.Bind().Body( &body ) != nil {
+	if c.Bind().JSON( &body ) != nil {
 		err = badRequest( c , "malformed request body" )
 		return
 	}
@@ -150,14 +155,53 @@ func ( handlers *Handlers ) SetUserDisabled( c fiber.Ctx ) ( err error ) {
 		return
 	}
 
+	// Disabling also deletes the account's sessions and unused login links,
+	// in the same transaction -- see models.SetUserDisabled.
 	if models.SetUserDisabled( handlers.Store , user_id , body.Disabled ) != nil {
 		err = serverError( c )
 		return
 	}
-	if body.Disabled {
-		// Revoke immediately rather than waiting for the cookie to expire.
-		models.DestroyAllSessionsForUser( handlers.Store , user_id )
-	}
 	err = c.JSON( fiber.Map{ "ok": true } )
+	return
+}
+
+// RevokeAccess is the response to "this account may be compromised": every
+// session, unused login link, and live API key it holds stops working at
+// once. The account itself stays enabled; reissue a login link to let its
+// owner back in. See models.RevokeAllCredentials for why this is separate
+// from both disabling and reissuing.
+func ( handlers *Handlers ) RevokeAccess( c fiber.Ctx ) ( err error ) {
+	var body csrfOnlyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+
+	user_id , parse_err := strconv.ParseUint( c.Params( "user_id" ) , 10 , 64 )
+	if parse_err != nil {
+		err = badRequest( c , "invalid user id" )
+		return
+	}
+	if _ , get_err := models.GetUser( handlers.Store , user_id ); get_err != nil {
+		err = notFound( c , "no such user" )
+		return
+	}
+	// Same guard rail as disabling: revoking your own access signs you out
+	// with no link to get back in.
+	if user_id == security.UserFrom( c ).ID {
+		err = badRequest( c , "you cannot revoke your own access" )
+		return
+	}
+
+	revoked , revoke_err := models.RevokeAllCredentials( handlers.Store , user_id )
+	if revoke_err != nil {
+		err = serverError( c )
+		return
+	}
+	err = c.JSON( fiber.Map{ "ok": true , "revoked": revoked } )
 	return
 }

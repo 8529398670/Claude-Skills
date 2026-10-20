@@ -49,11 +49,12 @@ func New( fsys fs.FS ) ( server *Server , err error ) {
 // hasDotDot spots a parent-directory segment in the raw request.
 //
 // fs.FS already refuses these -- fs.ValidPath rejects any path containing a
-// ".." element, so nothing can escape the root even without this check. It is
-// here so such a request answers 404 directly instead of falling through to
-// the index.html fallback, which is clearer to whoever reads the access log,
-// and so the intent is stated rather than left as a property of the standard
-// library.
+// ".." element. That stops a request *naming* a path outside the root; what
+// stops a symlink inside the root from *pointing* outside it is the os.Root
+// that server/assets opens for the disk case. This check is here so such a
+// request answers 404 directly instead of falling through to the index.html
+// fallback, which is clearer to whoever reads the access log, and so the
+// intent is stated rather than left as a property of the standard library.
 func hasDotDot( request_path string ) ( result bool ) {
 	normalised := strings.ReplaceAll( request_path , "\\" , "/" )
 	for _ , segment := range strings.Split( normalised , "/" ) {
@@ -131,6 +132,24 @@ func ( server *Server ) Handler( c fiber.Ctx ) ( err error ) {
 		return
 	}
 
+	err = server.sendText( c , name )
+	return
+}
+
+// ServeIndex answers with index.html whatever the path, for routes the
+// browser app handles itself (the login link's confirmation page).
+func ( server *Server ) ServeIndex( c fiber.Ctx ) ( err error ) {
+	if server.isFile( server.indexFile ) == false {
+		err = c.Status( fiber.StatusNotFound ).SendString( "Not found" )
+		return
+	}
+	err = server.sendText( c , server.indexFile )
+	return
+}
+
+// sendText is the always-fresh half of the serving rule: read on every
+// request, never cached, gzipped when the client accepts it.
+func ( server *Server ) sendText( c fiber.Ctx , name string ) ( err error ) {
 	body , read_err := fs.ReadFile( server.fsys , name )
 	if read_err != nil {
 		err = c.Status( fiber.StatusNotFound ).SendString( "Not found" )
