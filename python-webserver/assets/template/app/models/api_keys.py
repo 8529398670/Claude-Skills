@@ -34,8 +34,8 @@ from app.models.users import ROLE_ADMIN, ROLE_USER, User, get_user, valid_role
 
 # How many live keys one account can hold. Any signed-in user can mint keys,
 # so without a cap a single account can grow the bucket without limit. 25 is
-# far past what a person needs and low enough to stay a bound; revoking one
-# frees a slot.
+# far past what a person needs and low enough to stay a bound; revoking or
+# deleting one frees a slot.
 API_KEY_MAX_PER_USER = 25
 
 # How many rows one account keeps, dead keys included. The live cap alone
@@ -322,6 +322,21 @@ def revoke_api_key(store: Store, key_id: str) -> APIKey | None:
 
     record = store.update_value(BUCKET_API_KEYS, key_id, mutate)
     return None if record is None else APIKey.from_record(record)
+
+
+def delete_api_key(store: Store, key_id: str) -> bool:
+    """Remove a key's row outright; False if there is no such key.
+
+    Where revoke_api_key leaves a record that the key existed and when it
+    died, this leaves nothing: the key stops working immediately
+    (load_api_key finds no row) and drops out of every listing. That is the
+    owner's call to make about their own keys, and an admin's about anyone's
+    -- the routes decide who may ask."""
+    with store.transaction() as tx:
+        if tx.get(BUCKET_API_KEYS, key_id) is None:
+            return False
+        tx.delete(BUCKET_API_KEYS, key_id)
+    return True
 
 
 def purge_dead_api_keys(store: Store) -> int:

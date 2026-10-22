@@ -197,11 +197,17 @@ const App = {
         } },
       } );
 
+      // The server is the authority on all of these; the rules below only
+      // decide which buttons it would refuse, so they are not offered. Your
+      // own row and the owner's never get revoke, disable, or delete.
+      const isSelf = user.id === App.currentUser.id;
+      const isProtected = isSelf || user.owner;
+
       // Revoking is for "someone else may have this account's credentials":
       // it ends every session, unused login link, and API key, and leaves the
       // account enabled. Not offered on your own row -- the server refuses
       // that, since it would sign you out with no way back in.
-      const revokeButton = user.id === App.currentUser.id ? null : Dom.el( "button" , {
+      const revokeButton = isProtected ? null : Dom.el( "button" , {
         class: "secondary small",
         text: I18n.get( "admin.revoke_button" ),
         on: { click: async function () {
@@ -214,7 +220,7 @@ const App = {
         } },
       } );
 
-      const toggleButton = Dom.el( "button" , {
+      const toggleButton = isProtected ? null : Dom.el( "button" , {
         class: "secondary small",
         text: I18n.get( user.disabled ? "admin.enable_button" : "admin.disable_button" ),
         on: { click: async function () {
@@ -225,14 +231,34 @@ const App = {
         } },
       } );
 
+      // Deleting removes the account and everything it held, for good. Any
+      // admin may delete a user; only the owner may delete another admin.
+      const canDelete = !isProtected && ( user.role !== "admin" || App.currentUser.is_owner );
+      const deleteButton = !canDelete ? null : Dom.el( "button" , {
+        class: "secondary small",
+        text: I18n.get( "admin.delete_button" ),
+        on: { click: async function () {
+          const question = I18n.get( "admin.delete_confirm" ).replace( "{name}" , user.display_name );
+          if ( question !== "" && !window.confirm( question ) ) return;
+          try {
+            await Api.deleteUser( user.id );
+            await App.refreshUsers();
+            if ( App.currentUser.api_keys_enabled ) await Keys.refreshAll();
+          } catch ( error ) { App.showError( error.message ); }
+        } },
+      } );
+
+      const ownerLabel = I18n.get( "admin.owner_label" );
+      const roleText = user.owner && ownerLabel !== "" ? user.role + " (" + ownerLabel + ")" : user.role;
+
       // Built with createElement + textContent, never an HTML string: a
       // display name is user-controlled input.
       body.appendChild( Dom.el( "tr" , { children: [
         Dom.el( "td" , { text: user.display_name } ),
-        Dom.el( "td" , { text: user.role } ),
+        Dom.el( "td" , { text: roleText } ),
         Dom.el( "td" , { text: I18n.get( statusKey ) } ),
         Dom.el( "td" , { children: [
-          Dom.el( "div" , { class: "row-actions" , children: [ reissueButton , revokeButton , toggleButton ].filter( Boolean ) } ),
+          Dom.el( "div" , { class: "row-actions" , children: [ reissueButton , revokeButton , toggleButton , deleteButton ].filter( Boolean ) } ),
         ] } ),
       ] } ) );
     } );

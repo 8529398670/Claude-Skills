@@ -5,6 +5,7 @@ import (
 
 	fiber "github.com/gofiber/fiber/v3"
 
+	db "{{MODULE_PATH}}/server/db"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 )
@@ -14,11 +15,15 @@ import (
 // set users do, so there is one permission model rather than two -- see
 // server/models/api_key.go and references/architecture.md.
 //
-// Every signed-in user can mint their own keys. An admin can additionally see
-// and revoke everyone's, which is what makes "who has standing access to this
-// app" an answerable question.
+// Every signed-in user can mint their own keys, and revoke or delete them. An
+// admin can additionally see, revoke, and delete everyone's, which is what
+// makes "who has standing access to this app" an answerable question.
 //
-// Minting and revoking require a browser session (the group in routes.go adds
+// Revoking keeps the row, marked dead, so the listing still shows the key
+// existed and when it stopped working; the purge loop drops it later.
+// Deleting removes the row now. Either one stops the key immediately.
+//
+// Minting, revoking, and deleting require a browser session (the group in routes.go adds
 // Guard.RequireSession), so a leaked key cannot quietly mint its replacement.
 // The admin routes that hand out login links require one too, for the same
 // reason -- see Guard.RequireSession.
@@ -186,6 +191,46 @@ func ( handlers *Handlers ) RevokeMyAPIKey( c fiber.Ctx ) ( err error ) {
 	return
 }
 
+// DeleteMyAPIKey removes one of your own keys outright -- live or already
+// dead. Someone else's key is "no such api key", for the same reason as in
+// RevokeMyAPIKey.
+func ( handlers *Handlers ) DeleteMyAPIKey( c fiber.Ctx ) ( err error ) {
+	var body csrfOnlyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+
+	user := security.UserFrom( c )
+	key , get_err := models.GetAPIKey( handlers.Store , c.Params( "key_id" ) )
+	if get_err != nil || key.UserID != user.ID {
+		err = notFound( c , "no such api key" )
+		return
+	}
+	if delete_err := models.DeleteAPIKey( handlers.Store , key.ID ); delete_err != nil {
+		err = deleteKeyError( c , delete_err )
+		return
+	}
+	err = c.JSON( fiber.Map{ "ok": true } )
+	return
+}
+
+// deleteKeyError maps a DeleteAPIKey failure. A key that vanished between the
+// lookup and the delete -- deleted by its owner and an admin at once -- is
+// reported as missing, not as a server fault.
+func deleteKeyError( c fiber.Ctx , delete_err error ) ( err error ) {
+	if errors.Is( delete_err , db.ErrNotFound ) {
+		err = notFound( c , "no such api key" )
+		return
+	}
+	err = serverError( c )
+	return
+}
+
 // ListAllAPIKeys is the admin view: every key in the app, with whose it is.
 // This is the "who and what has standing access" question, and it is the
 // reason admins can see keys they did not create.
@@ -237,6 +282,27 @@ func ( handlers *Handlers ) RevokeAnyAPIKey( c fiber.Ctx ) ( err error ) {
 	}
 	if models.RevokeAPIKey( handlers.Store , key.ID ) != nil {
 		err = serverError( c )
+		return
+	}
+	err = c.JSON( fiber.Map{ "ok": true } )
+	return
+}
+
+// DeleteAnyAPIKey is RevokeAnyAPIKey without the record left behind: the key
+// stops working and disappears from every listing, its owner's included.
+func ( handlers *Handlers ) DeleteAnyAPIKey( c fiber.Ctx ) ( err error ) {
+	var body csrfOnlyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+
+	if delete_err := models.DeleteAPIKey( handlers.Store , c.Params( "key_id" ) ); delete_err != nil {
+		err = deleteKeyError( c , delete_err )
 		return
 	}
 	err = c.JSON( fiber.Map{ "ok": true } )

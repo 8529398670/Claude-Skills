@@ -56,7 +56,7 @@ const (
 	// APIKeyMaxPerUser bounds how many live keys one account can hold. Any
 	// signed-in user can mint keys, so without a cap a single account can
 	// grow the bucket without limit. 25 is far past what a person needs and
-	// low enough to stay a bound; revoking one frees a slot.
+	// low enough to stay a bound; revoking or deleting one frees a slot.
 	APIKeyMaxPerUser = 25
 
 	// apiKeyMaxRowsPerUser bounds the rows one account keeps, dead keys
@@ -150,7 +150,8 @@ func NarrowRole( account_role string , key_role string ) ( result string ) {
 }
 
 // IssueAPIKey returns the raw credential exactly once. It is never stored and
-// cannot be recovered -- if it is lost, revoke the key and mint another.
+// cannot be recovered -- if it is lost, revoke or delete the key and mint
+// another.
 //
 // ttl of zero means the key never expires. That is a deliberate option rather
 // than an oversight: a CI job nobody will remember to re-key is worse served
@@ -353,6 +354,23 @@ func RevokeAPIKey( store *db.Store , key_id string ) ( err error ) {
 			}
 			return
 		} )
+	return
+}
+
+// DeleteAPIKey removes a key's row outright. Where RevokeAPIKey leaves a
+// record that the key existed and when it died, this leaves nothing: the key
+// stops working immediately (LoadAPIKey finds no row) and drops out of every
+// listing. That is the owner's call to make about their own keys, and an
+// admin's about anyone's -- the routes decide who may ask.
+//
+// Get and delete share one transaction so a missing key is reported as
+// db.ErrNotFound rather than silently succeeding, which bolt's Delete would.
+func DeleteAPIKey( store *db.Store , key_id string ) ( err error ) {
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		if tx_err = tx.Get( db.BucketAPIKeys , []byte( key_id ) , &APIKey{} ); tx_err != nil { return }
+		tx_err = tx.Delete( db.BucketAPIKeys , []byte( key_id ) )
+		return
+	} )
 	return
 }
 

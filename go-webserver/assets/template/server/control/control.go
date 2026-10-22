@@ -166,9 +166,12 @@ func ( server *Server ) routes() ( handler http.Handler ) {
 	mux.HandleFunc( "POST /v1/users/{id}/login-token" , server.handleReissueLogin )
 	mux.HandleFunc( "POST /v1/users/{id}/disabled" , server.handleSetDisabled )
 	mux.HandleFunc( "POST /v1/users/{id}/revoke-access" , server.handleRevokeAccess )
+	mux.HandleFunc( "POST /v1/users/{id}/delete" , server.handleDeleteUser )
+	mux.HandleFunc( "POST /v1/owner" , server.handleTransferOwner )
 	mux.HandleFunc( "GET /v1/api-keys" , server.handleListAPIKeys )
 	mux.HandleFunc( "POST /v1/api-keys" , server.handleCreateAPIKey )
 	mux.HandleFunc( "POST /v1/api-keys/{id}/revoke" , server.handleRevokeAPIKey )
+	mux.HandleFunc( "POST /v1/api-keys/{id}/delete" , server.handleDeleteAPIKey )
 	handler = mux
 	return
 }
@@ -220,18 +223,41 @@ type UserResponse struct {
 	DisplayName string `json:"display_name"`
 	Role        string `json:"role"`
 	Disabled    bool   `json:"disabled"`
+	Owner       bool   `json:"owner"`
 	Credential  string `json:"credential,omitempty"`
 }
 
-func userResponse( user *models.User , credential string ) ( result UserResponse ) {
+func userResponse( user *models.User , owner_id uint64 , credential string ) ( result UserResponse ) {
 	result = UserResponse{
 		ID:          user.ID,
 		DisplayName: user.DisplayName,
 		Role:        user.Role,
 		Disabled:    user.Disabled(),
+		Owner:       user.ID == owner_id,
 		Credential:  credential,
 	}
 	return
+}
+
+// TransferOwnerRequest is the body of POST /v1/owner.
+type TransferOwnerRequest struct {
+	UserID uint64 `json:"user_id"`
+}
+
+// writeOwnedUser re-reads a user and the owner marker and answers with both,
+// so every response reflects what is actually stored.
+func ( server *Server ) writeOwnedUser( w http.ResponseWriter , user_id uint64 , credential string ) {
+	user , err := models.GetUser( server.store , user_id )
+	if err != nil {
+		writeError( w , http.StatusInternalServerError , err.Error() )
+		return
+	}
+	owner_id , err := models.OwnerID( server.store )
+	if err != nil {
+		writeError( w , http.StatusInternalServerError , err.Error() )
+		return
+	}
+	writeJSON( w , http.StatusOK , userResponse( user , owner_id , credential ) )
 }
 
 // CreateUserRequest is the body of POST /v1/users.
@@ -417,6 +443,31 @@ func ( server *Server ) handleRevokeAPIKey( w http.ResponseWriter , r *http.Requ
 	writeJSON( w , http.StatusOK , apiKeyResponse( key , names[ key.UserID ] , "" ) )
 }
 
+// handleDeleteAPIKey answers with the key as it was just before deletion, so
+// the CLI can say what it removed.
+func ( server *Server ) handleDeleteAPIKey( w http.ResponseWriter , r *http.Request ) {
+	key_id := r.PathValue( "id" )
+	key , err := models.GetAPIKey( server.store , key_id )
+	if err != nil {
+		writeError( w , http.StatusNotFound , fmt.Sprintf( "no api key with id %s" , key_id ) )
+		return
+	}
+	names , err := server.displayNames()
+	if err != nil {
+		writeError( w , http.StatusInternalServerError , err.Error() )
+		return
+	}
+	if err = models.DeleteAPIKey( server.store , key.ID ); err != nil {
+		if errors.Is( err , db.ErrNotFound ) {
+			writeError( w , http.StatusNotFound , fmt.Sprintf( "no api key with id %s" , key_id ) )
+			return
+		}
+		writeError( w , http.StatusInternalServerError , err.Error() )
+		return
+	}
+	writeJSON( w , http.StatusOK , apiKeyResponse( key , names[ key.UserID ] , "" ) )
+}
+
 func ( server *Server ) handleHealth( w http.ResponseWriter , r *http.Request ) {
 	writeJSON( w , http.StatusOK , HealthResponse{
 		ProjectName: server.cfg.ProjectName,
@@ -430,9 +481,14 @@ func ( server *Server ) handleListUsers( w http.ResponseWriter , r *http.Request
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
 	}
+	owner_id , err := models.OwnerID( server.store )
+	if err != nil {
+		writeError( w , http.StatusInternalServerError , err.Error() )
+		return
+	}
 	out := []UserResponse{}
 	for _ , user := range users {
-		out = append( out , userResponse( user , "" ) )
+		out = append( out , userResponse( user , owner_id , "" ) )
 	}
 	writeJSON( w , http.StatusOK , out )
 }
@@ -463,7 +519,7 @@ func ( server *Server ) handleCreateUser( w http.ResponseWriter , r *http.Reques
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
 	}
-	writeJSON( w , http.StatusOK , userResponse( user , credential ) )
+	server.writeOwnedUser( w , user.ID , credential )
 }
 
 func ( server *Server ) handleReissueLogin( w http.ResponseWriter , r *http.Request ) {
@@ -480,7 +536,7 @@ func ( server *Server ) handleReissueLogin( w http.ResponseWriter , r *http.Requ
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
 	}
-	writeJSON( w , http.StatusOK , userResponse( user , credential ) )
+	server.writeOwnedUser( w , user.ID , credential )
 }
 
 // handleSetDisabled goes through models.SetUserDisabled, which deletes the
@@ -501,23 +557,25 @@ func ( server *Server ) handleSetDisabled( w http.ResponseWriter , r *http.Reque
 		return
 	}
 	if err = models.SetUserDisabled( server.store , user.ID , body.Disabled ); err != nil {
+		if errors.Is( err , models.ErrOwnerProtected ) {
+			writeError( w , http.StatusForbidden , err.Error() )
+			return
+		}
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
 	}
 
 	// Re-read rather than patching the copy in hand, so the response
 	// reflects what is actually stored.
-	user , err = models.GetUser( server.store , user.ID )
-	if err != nil {
-		writeError( w , http.StatusInternalServerError , err.Error() )
-		return
-	}
-	writeJSON( w , http.StatusOK , userResponse( user , "" ) )
+	server.writeOwnedUser( w , user.ID , "" )
 }
 
 // handleRevokeAccess is models.RevokeAllCredentials over the socket: every
 // session, unused login link, and live API key the account holds stops
 // working now. The account stays enabled.
+//
+// Unlike the web route, this one may cut off the owner: when it is the
+// owner's own credentials that leaked, the operator is who cleans up.
 func ( server *Server ) handleRevokeAccess( w http.ResponseWriter , r *http.Request ) {
 	user_id , ok := pathUserID( w , r )
 	if ok == false { return }
@@ -526,10 +584,49 @@ func ( server *Server ) handleRevokeAccess( w http.ResponseWriter , r *http.Requ
 		writeError( w , http.StatusNotFound , fmt.Sprintf( "no user with id %d" , user_id ) )
 		return
 	}
-	revoked , err := models.RevokeAllCredentials( server.store , user_id )
+	revoked , err := models.RevokeAllCredentials( server.store , user_id , true )
 	if err != nil {
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
 	}
 	writeJSON( w , http.StatusOK , revoked )
+}
+
+// handleDeleteUser is models.DeleteUser with the operator as the actor: any
+// account but the owner can be deleted, admins included. The owner has to be
+// moved first with POST /v1/owner.
+func ( server *Server ) handleDeleteUser( w http.ResponseWriter , r *http.Request ) {
+	user_id , ok := pathUserID( w , r )
+	if ok == false { return }
+
+	removed , err := models.DeleteUser( server.store , user_id , 0 )
+	switch {
+	case err == nil:
+		writeJSON( w , http.StatusOK , removed )
+	case errors.Is( err , db.ErrNotFound ):
+		writeError( w , http.StatusNotFound , fmt.Sprintf( "no user with id %d" , user_id ) )
+	case errors.Is( err , models.ErrOwnerProtected ):
+		writeError( w , http.StatusForbidden , err.Error() )
+	default:
+		writeError( w , http.StatusInternalServerError , err.Error() )
+	}
+}
+
+// handleTransferOwner moves ownership to another enabled admin. There is no
+// web route for this on purpose -- see models.TransferOwner.
+func ( server *Server ) handleTransferOwner( w http.ResponseWriter , r *http.Request ) {
+	body := TransferOwnerRequest{}
+	if decodeBody( w , r , &body ) == false { return }
+
+	err := models.TransferOwner( server.store , body.UserID )
+	switch {
+	case err == nil:
+		server.writeOwnedUser( w , body.UserID , "" )
+	case errors.Is( err , db.ErrNotFound ):
+		writeError( w , http.StatusNotFound , fmt.Sprintf( "no user with id %d" , body.UserID ) )
+	case errors.Is( err , models.ErrNotAdmin ):
+		writeError( w , http.StatusBadRequest , err.Error() )
+	default:
+		writeError( w , http.StatusInternalServerError , err.Error() )
+	}
 }

@@ -20,7 +20,13 @@ import (
 
 // EnsureFirstAdmin is a no-op once any enabled admin exists, so restarting
 // the container does not keep minting new admin accounts.
+//
+// It also adopts an owner for a database written before the owner marker
+// existed (see models.EnsureOwner). A fresh database needs no adoption: the
+// admin created below becomes the owner as it is created.
 func EnsureFirstAdmin( store *db.Store , cfg *config.Config , display_name string ) ( err error ) {
+	if _ , err = models.EnsureOwner( store ); err != nil { return }
+
 	exists , err := models.AnyAdminExists( store )
 	if err != nil { return }
 	if exists {

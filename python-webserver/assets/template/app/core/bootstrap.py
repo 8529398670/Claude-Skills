@@ -33,7 +33,12 @@ def describe_seconds(seconds: int) -> str:
 
 def ensure_first_admin(store: Store, cfg: Config, display_name: str = "Admin") -> None:
     """A no-op once any enabled admin exists, so restarting the container does
-    not keep minting new admin accounts."""
+    not keep minting new admin accounts.
+
+    It also adopts an owner for a database written before the owner marker
+    existed (see users.ensure_owner). A fresh database needs no adoption: the
+    admin created below becomes the owner as it is created."""
+    users.ensure_owner(store)
     if users.any_admin_exists(store):
         return
     user = users.create_user(store, display_name, users.ROLE_ADMIN)

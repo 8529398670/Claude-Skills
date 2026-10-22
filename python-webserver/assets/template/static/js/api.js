@@ -65,6 +65,7 @@ const Api = {
   reissueLogin( userId )       { return this.post( "/api/admin/users/" + userId + "/reissue-login" ); },
   setDisabled( userId , flag ) { return this.post( "/api/admin/users/" + userId + "/disabled" , { disabled: flag } ); },
   revokeAccess( userId )       { return this.post( "/api/admin/users/" + userId + "/revoke-access" ); },
+  deleteUser( userId )         { return this.post( "/api/admin/users/" + userId + "/delete" ); },
 
   // API keys. createKey's expiresInDays is passed through as-is including null,
   // because the server reads absent as "use the default" and 0 as "never
@@ -74,6 +75,8 @@ const Api = {
     return this.post( "/api/keys" , { name: name , role: role , expires_in_days: expiresInDays } );
   },
   revokeKey( keyId )           { return this.post( "/api/keys/" + encodeURIComponent( keyId ) + "/revoke" ); },
+  deleteKey( keyId )           { return this.post( "/api/keys/" + encodeURIComponent( keyId ) + "/delete" ); },
   listAllKeys()                { return this.request( "/api/admin/keys" ); },
   revokeAnyKey( keyId )        { return this.post( "/api/admin/keys/" + encodeURIComponent( keyId ) + "/revoke" ); },
+  deleteAnyKey( keyId )        { return this.post( "/api/admin/keys/" + encodeURIComponent( keyId ) + "/delete" ); },
 };

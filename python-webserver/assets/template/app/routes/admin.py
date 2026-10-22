@@ -1,5 +1,10 @@
-"""Admin-only: deciding who gets in. This -- plus the first-run bootstrap and
-`python -m app manage` -- is the entire signup system.
+"""Admin-only: deciding who gets in, and removing who should not. This --
+plus the first-run bootstrap and `python -m app manage` -- is the entire
+signup system.
+
+One admin is the owner (see app/models/users.py). Any admin may delete an
+ordinary user; only the owner may delete another admin; and nobody here may
+delete, disable, or revoke the owner.
 
 Note this is the *only* thing admin rights gate in the base template. See
 references/architecture.md on defaulting new features to "any signed-in
@@ -16,9 +21,16 @@ from app.routes.helpers import bad_request, forbidden, get_config, get_store, no
 
 
 async def list_users(request: Request) -> Response:
-    rows = await run(users.list_users, get_store(request))
+    """Marks the owner on its row, so the UI can tell which delete, disable,
+    and revoke buttons the server would refuse."""
+    store = get_store(request)
+    rows = await run(users.list_users, store)
+    owner_id = await run(users.get_owner_id, store)
     return JSONResponse(
-        [{"id": u.id, "display_name": u.display_name, "role": u.role, "disabled": u.disabled} for u in rows]
+        [
+            {"id": u.id, "display_name": u.display_name, "role": u.role, "disabled": u.disabled, "owner": u.id == owner_id}
+            for u in rows
+        ]
     )
 
 
@@ -99,8 +111,13 @@ async def set_user_disabled(request: Request) -> Response:
         return bad_request("you cannot disable your own account")
 
     # Disabling also deletes the account's sessions and unused login links,
-    # in the same transaction -- see credentials.set_user_disabled.
-    if not await run(credentials.set_user_disabled, store, user_id, disabled):
+    # in the same transaction -- see credentials.set_user_disabled. The owner
+    # cannot be disabled; that check is in the model so every route gets it.
+    try:
+        found = await run(credentials.set_user_disabled, store, user_id, disabled)
+    except credentials.OwnerProtectedError:
+        return forbidden("the owner account cannot be disabled")
+    if not found:
         return not_found("no such user")
     return JSONResponse({"ok": True})
 
@@ -124,7 +141,43 @@ async def revoke_access(request: Request) -> Response:
     if user_id == actor_from(request).user.id:
         return bad_request("you cannot revoke your own access")
 
-    revoked = await run(credentials.revoke_all_credentials, get_store(request), user_id)
+    # The owner is refused here (allow_owner False). Only an operator with
+    # shell access may cut the owner off -- see revoke_all_credentials.
+    try:
+        revoked = await run(credentials.revoke_all_credentials, get_store(request), user_id)
+    except credentials.OwnerProtectedError:
+        return forbidden("the owner account's access cannot be revoked")
     if revoked is None:
         return not_found("no such user")
     return JSONResponse({"ok": True, "revoked": revoked.to_dict()})
+
+
+async def delete_user(request: Request) -> Response:
+    """Remove an account for good, together with every session, login link,
+    and API key it held. Disabling is the reversible version; this is for an
+    account that should not exist at all.
+
+    Who may delete whom lives in credentials.delete_user, checked inside its
+    transaction. The route also requires a browser session (see
+    app/routes/__init__.py): this cannot be undone, so a leaked admin-scoped
+    API key must not be able to do it."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    user_id = parse_id(request.path_params["user_id"])
+    if user_id is None:
+        return bad_request("invalid user id")
+
+    try:
+        removed = await run(credentials.delete_user, get_store(request), user_id, actor_from(request).user.id)
+    except credentials.SelfDeleteError:
+        return bad_request("you cannot delete your own account")
+    except credentials.OwnerProtectedError:
+        return forbidden("the owner account cannot be deleted")
+    except credentials.OwnerRequiredError:
+        return forbidden("only the owner can delete an admin account")
+    if removed is None:
+        return not_found("no such user")
+    return JSONResponse({"ok": True, "removed": removed.to_dict()})

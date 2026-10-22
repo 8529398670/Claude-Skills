@@ -51,9 +51,14 @@ def build_routes(static_server: StaticServer) -> list[BaseRoute]:
     # key, and revoking the leaked one would not end the compromise. The rule
     # is: an API key may use what an account can do, but it never creates
     # credentials. See RequireSession.
+    #
+    # Deleting an account requires a session too, for a different reason: it
+    # cannot be undone. A leaked admin key can disable accounts, which an
+    # admin can reverse; it must not be able to erase them. Who may delete
+    # whom (the owner rules) is enforced in credentials.delete_user.
     admin_sessions = group(RequireAdmin, RequireSession)
     # Admin view of every key in the app -- "who has standing access" -- and
-    # the ability to revoke someone else's.
+    # the ability to revoke or delete someone else's.
     admin_keys = group(RequireAPIKeys, RequireAdmin, RequireSession)
 
     return [
@@ -73,13 +78,16 @@ def build_routes(static_server: StaticServer) -> list[BaseRoute]:
         my_keys("/api/keys", api_keys.list_my_keys),
         my_keys("/api/keys", api_keys.create_my_key, ["POST"]),
         my_keys("/api/keys/{key_id}/revoke", api_keys.revoke_my_key, ["POST"]),
+        my_keys("/api/keys/{key_id}/delete", api_keys.delete_my_key, ["POST"]),
         admins("/api/admin/users", admin.list_users),
         admin_sessions("/api/admin/users", admin.create_user, ["POST"]),
         admin_sessions("/api/admin/users/{user_id}/reissue-login", admin.reissue_login, ["POST"]),
         admins("/api/admin/users/{user_id}/disabled", admin.set_user_disabled, ["POST"]),
         admins("/api/admin/users/{user_id}/revoke-access", admin.revoke_access, ["POST"]),
+        admin_sessions("/api/admin/users/{user_id}/delete", admin.delete_user, ["POST"]),
         admin_keys("/api/admin/keys", api_keys.list_all_keys),
         admin_keys("/api/admin/keys/{key_id}/revoke", api_keys.revoke_any_key, ["POST"]),
+        admin_keys("/api/admin/keys/{key_id}/delete", api_keys.delete_any_key, ["POST"]),
         # Any other /api/ path is a JSON 404, not the index.html fallback.
         Route("/api/{rest:path}", meta.unknown_api),
         # Catch-all static serving. Must stay last -- it matches every

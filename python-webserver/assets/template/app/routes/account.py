@@ -23,12 +23,16 @@ async def me(request: Request) -> Response:
     as "role" would have a client believe it has permissions the server will
     refuse to act on."""
     actor = actor_from(request)
+    # is_owner tells the UI which account-management buttons to offer; the
+    # server checks ownership again on every request that depends on it.
+    owner_id = await run(users.get_owner_id, get_store(request))
     payload = {
         "authenticated": True,
         "id": actor.user.id,
         "display_name": actor.user.display_name,
         "role": actor.role,
         "account_role": actor.user.role,
+        "is_owner": actor.user.id == owner_id,
         "auth": actor.method,
         "api_keys_enabled": get_config(request).api_keys_enabled,
     }

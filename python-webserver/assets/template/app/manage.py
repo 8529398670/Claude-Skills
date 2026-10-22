@@ -32,10 +32,17 @@ Usage:
   list-users                            id, name, role, status
   set-disabled    --user-id 3 [--enable]
   revoke-access   --user-id 3           end every session, login link and API key
+  delete-user     --user-id 3 --yes     remove the account and everything it held
+  transfer-owner  --user-id 3           make another enabled admin the owner
   list-keys       [--user-id 3]         API keys, whose they are, when last used
   create-key      --user-id 3 --name "CI" [--role user] [--days 90]
-  revoke-key      --key-id abc123       kill one API key now
+  revoke-key      --key-id abc123       kill one API key now, keep its record
+  delete-key      --key-id abc123       kill one API key now and remove its record
   paths                                 where this app keeps its state
+
+The owner is the first admin, and the one account that can delete other
+admins from the web UI. Nothing deletes or disables the owner -- move it with
+transfer-owner first. delete-user cannot be undone, hence --yes.
 
 An API key carries a role from the same set users do, so an admin-scoped key
 can do what an admin can and a user-scoped one cannot. A key never outranks
@@ -80,6 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = commands.add_parser("revoke-access", help="end every session, login link and API key")
     p.add_argument("--user-id", type=int, required=True)
 
+    p = commands.add_parser("delete-user", help="remove an account and everything it held")
+    p.add_argument("--user-id", type=int, required=True)
+    p.add_argument("--yes", action="store_true", help="confirm: this cannot be undone")
+
+    p = commands.add_parser("transfer-owner", help="make another enabled admin the owner")
+    p.add_argument("--user-id", type=int, required=True)
+
     p = commands.add_parser("list-keys", help="API keys, whose they are, when last used")
     p.add_argument("--user-id", type=int, default=None, help="only this user's keys (default: everyone's)")
 
@@ -91,8 +105,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--days", type=int, default=None,
                    help="lifetime in days; 0 never expires; omit for the server default")
 
-    p = commands.add_parser("revoke-key", help="kill one API key now")
+    p = commands.add_parser("revoke-key", help="kill one API key now, keep its record")
     p.add_argument("--key-id", required=True, help="id of the key to revoke (from list-keys)")
+
+    p = commands.add_parser("delete-key", help="kill one API key now and remove its record")
+    p.add_argument("--key-id", required=True, help="id of the key to delete (from list-keys)")
 
     commands.add_parser("paths", help="where this app keeps its state")
     return parser
@@ -112,6 +129,10 @@ def run(arguments: list[str]) -> None:
         return
 
     store = db.open_store(cfg.database_path, cfg.secret_key, cfg.encrypt_at_rest)
+    # A database written before the owner marker existed gets one here too,
+    # so the owner rules hold for commands run before the server's first boot
+    # on the new version.
+    users.ensure_owner(store)
     # Say where this went. stderr, so piping list-users stays clean.
     print(f"[manage] database at {cfg.database_path}", file=sys.stderr)
 
@@ -122,13 +143,16 @@ def run(arguments: list[str]) -> None:
         "list-users": command_list_users,
         "set-disabled": command_set_disabled,
         "revoke-access": command_revoke_access,
+        "delete-user": command_delete_user,
+        "transfer-owner": command_transfer_owner,
         "list-keys": command_list_keys,
         "create-key": command_create_key,
         "revoke-key": command_revoke_key,
+        "delete-key": command_delete_key,
     }
     try:
         handlers[args.command](store, cfg, args)
-    except db.DecodeError as error:
+    except (db.DecodeError, credentials.OwnerProtectedError, users.NotAdminError) as error:
         raise ManageError(str(error)) from None
 
 
@@ -169,9 +193,13 @@ def command_list_users(store: db.Store, cfg: config.Config, args: argparse.Names
     if not rows:
         print('No users yet. Create the first admin with: python -m app manage bootstrap-admin --name "Your Name"')
         return
+    owner_id = users.get_owner_id(store)
     print(f"{'ID':<6} {'NAME':<30} {'ROLE':<8} STATUS")
     for user in rows:
-        print(f"{user.id:<6} {user.display_name:<30} {user.role:<8} {'disabled' if user.disabled else 'active'}")
+        status = "disabled" if user.disabled else "active"
+        if user.id == owner_id:
+            status += ", owner"
+        print(f"{user.id:<6} {user.display_name:<30} {user.role:<8} {status}")
 
 
 def command_set_disabled(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
@@ -188,7 +216,9 @@ def command_revoke_access(store: db.Store, cfg: config.Config, args: argparse.Na
     may be in someone else's hands. The account stays enabled; follow it with
     reissue-login to let its owner back in."""
     user = require_user(store, args.user_id)
-    revoked = credentials.revoke_all_credentials(store, user.id)
+    # The operator may revoke the owner's access too -- see
+    # credentials.revoke_all_credentials.
+    revoked = credentials.revoke_all_credentials(store, user.id, allow_owner=True)
     if revoked is None:
         raise ManageError(f"no user with id {user.id}")
     print(
@@ -196,6 +226,33 @@ def command_revoke_access(store: db.Store, cfg: config.Config, args: argparse.Na
         f"{revoked.login_links} unused login links, revoked {revoked.api_keys} API keys"
     )
     print(f"To let them back in: python -m app manage reissue-login --user-id {user.id}")
+
+
+def command_delete_user(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
+    """Asks for --yes because nothing brings the account back: the id is never
+    reused and its keys and links are gone with it. Disabling is the
+    reversible option, and the error says so. Acts as the operator (actor
+    None): any account but the owner."""
+    if not args.yes:
+        raise ManageError(
+            f"delete-user cannot be undone; re-run with --yes "
+            f"(or use set-disabled --user-id {args.user_id} to keep the account)"
+        )
+    user = require_user(store, args.user_id)
+    removed = credentials.delete_user(store, user.id, None)
+    if removed is None:
+        raise ManageError(f"no user with id {user.id}")
+    print(
+        f"user #{user.id} ({user.display_name}) deleted, with {removed.sessions} sessions, "
+        f"{removed.login_links} login links and {removed.api_keys} API keys"
+    )
+
+
+def command_transfer_owner(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
+    user = users.transfer_owner(store, args.user_id)
+    if user is None:
+        raise ManageError(f"no user with id {args.user_id}")
+    print(f"user #{user.id} ({user.display_name}) is now the owner")
 
 
 def format_time(value: datetime | None, absent: str = "never") -> str:
@@ -263,6 +320,14 @@ def command_revoke_key(store: db.Store, cfg: config.Config, args: argparse.Names
     if key is None:
         raise ManageError(f"no api key with id {args.key_id}")
     print(f"api key {key.id} ({key.name!r}, owner #{key.user_id}) revoked -- it stops working immediately")
+
+
+def command_delete_key(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
+    """revoke-key without the record left behind."""
+    key = api_keys.get_api_key(store, args.key_id)
+    if key is None or not api_keys.delete_api_key(store, key.id):
+        raise ManageError(f"no api key with id {args.key_id}")
+    print(f"api key {key.id} ({key.name!r}, owner #{key.user_id}) deleted -- it stops working immediately")
 
 
 def command_paths(cfg: config.Config) -> None:

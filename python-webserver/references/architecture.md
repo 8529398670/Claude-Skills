@@ -6,6 +6,7 @@ when you are changing the template itself rather than building features on it.
 ## Contents
 
 - [Auth model: links instead of passwords](#auth-model-links-instead-of-passwords)
+- [The owner, and deleting accounts](#the-owner-and-deleting-accounts)
 - [API keys: the same roles, for callers that are not browsers](#api-keys-the-same-roles-for-callers-that-are-not-browsers)
 - [Why credentials are shaped `<id>.<secret>`](#why-credentials-are-shaped-idsecret)
 - [Which crypto is used where, and why](#which-crypto-is-used-where-and-why)
@@ -60,19 +61,21 @@ at the cost of needing an admin or shell access when someone loses their
 session. A project needing genuine self-service recovery -- email round trip,
 say -- has to add it; it is not part of the base model.
 
-Three operations look alike and are not:
+Four operations look alike and are not:
 
-| | pending link | sessions | API keys |
-|---|---|---|---|
-| **Reissue login** (`New link`, `manage reissue-login`) | replaced | kept | kept |
-| **Disable** (`manage set-disabled`) | deleted | deleted | refused while disabled, restored on re-enable |
-| **Revoke access** (`manage revoke-access`, `POST /api/admin/users/{id}/revoke-access`) | deleted | deleted | revoked |
+| | pending link | sessions | API keys | account |
+|---|---|---|---|---|
+| **Reissue login** (`New link`, `manage reissue-login`) | replaced | kept | kept | kept |
+| **Disable** (`manage set-disabled`) | deleted | deleted | refused while disabled, restored on re-enable | kept, disabled |
+| **Revoke access** (`manage revoke-access`, `POST /api/admin/users/{id}/revoke-access`) | deleted | deleted | revoked | kept, enabled |
+| **Delete** (`manage delete-user`, `POST /api/admin/users/{id}/delete`) | deleted, used ones too | deleted | records deleted | deleted, for good |
 
 Reissuing is for a lost cookie. When someone else may hold an account's
 credentials, revoke access first, then reissue -- reissuing alone leaves a
-stolen session signed in. Disable and revoke both run as one transaction with
-the account change (`app/models/credentials.py`), so nothing issued
-concurrently survives them.
+stolen session signed in. Disable is for someone who may come back; delete is
+for an account that should not exist at all. Disable, revoke, and delete each
+run as one transaction with the account change (`app/models/credentials.py`),
+so nothing issued concurrently survives them.
 
 The first-run bootstrap prints the initial admin link to the server's own
 logs, so a fresh deploy is usable without a separate setup step. Until that
@@ -82,6 +85,58 @@ shipper, a shared dashboard, a support engineer). Use the link promptly, or
 keep the logs private until you have; it also expires after
 `auth.login_token_ttl_seconds`. It only fires when no enabled admin exists, so
 restarts do not keep minting admins.
+
+## The owner, and deleting accounts
+
+One admin is the **owner**: the first admin ever created, whether by the
+first-run bootstrap or `manage bootstrap-admin`. The owner exists for a single
+decision the admin role cannot settle by itself -- who may permanently delete
+an admin. Without it, any admin can delete any other, and whoever acts first
+wins.
+
+| | an ordinary user | another admin | the owner | yourself |
+|---|---|---|---|---|
+| **Delete, as an admin** | yes | no | no | no |
+| **Delete, as the owner** | yes | yes | -- | no |
+| **Disable / revoke access** (any admin) | yes | yes | no | no |
+| **CLI** (the operator) | delete, disable, revoke | delete, disable, revoke | revoke only | -- |
+
+- **A marker, not a role.** The owner is one id in the `meta` bucket
+  (`owner_user_id`), not a third role beside admin and user. Roles are also
+  what API keys carry and what `narrow_role` compares, so a third one would
+  spread into key scoping, role validation, and every role check -- for
+  something only a few account routes care about. Everywhere else the owner
+  is an ordinary admin. `/api/me` reports `is_owner`; the admin user list
+  marks the owner's row.
+- **The invariant:** the owner is always an existing, enabled admin. Nothing
+  deletes or disables the owner, not even the CLI, and ownership only moves
+  to another enabled admin with `manage transfer-owner --user-id N`. There is
+  no web route for that on purpose: a compromised admin session must not be
+  able to promote itself past the other admins. Because an enabled admin
+  always exists, the first-run bootstrap never fires again either.
+- **The CLI may revoke the owner's access.** When it is the owner's own
+  credentials that leaked, someone with shell access has to be able to clean
+  up. The web route refuses.
+- **Older databases** get an owner on the next boot (or the next `manage`
+  command): the lowest-id enabled admin, which is the bootstrap admin on any
+  database that started from first run. See `users.ensure_owner`.
+- **Deleting needs a browser session.** `POST /api/admin/users/{id}/delete`
+  is registered behind `RequireSession`, unlike disable and revoke access.
+  Those can be undone, so a leaked admin-scoped key may use them; deleting
+  cannot, so a key may not.
+- **Ids are never reused.** They come from the `sequences` table, so a
+  deleted account's id cannot come back as a different person, and any stale
+  reference to it stays a dangling id rather than a wrong one.
+- **Records your app adds are not touched.** `credentials.delete_user`
+  removes sessions, login links, API keys, and the user record. When a
+  feature stores a `user_id` -- an assignee, an author -- decide in
+  `delete_user` whether those records go with the account (delete them in the
+  same transaction) or outlive it (render a missing user as `#<id>`).
+
+The rules live in `app/models/credentials.py` (`delete_user`,
+`set_user_disabled`, `revoke_all_credentials`), checked inside each one's own
+transaction, so ownership cannot move between a check and the change it
+guards.
 
 ## API keys: the same roles, for callers that are not browsers
 
@@ -135,9 +190,11 @@ out of it by also carrying a key.
 
 ### Why a key cannot create credentials
 
-`RequireSession` guards every route that creates a credential: creating and
-revoking keys, creating an account, and reissuing a login link. Those need a
-browser session even with a correctly scoped admin key.
+`RequireSession` guards every route that creates a credential: creating,
+revoking, and deleting keys, creating an account, and reissuing a login link.
+Those need a browser session even with a correctly scoped admin key. Deleting
+an account needs one too, for a different reason -- it cannot be undone (see
+[the owner](#the-owner-and-deleting-accounts)).
 
 This is containment, not privilege. A key is a bearer credential that lives in
 a config file or a CI secret. If a leaked key could create another credential,
@@ -150,7 +207,8 @@ person signing in (or an operator at a shell), and revoking a key actually
 revokes it.
 
 What a leaked admin key can still do is everything else an admin can: list
-and disable accounts, revoke access. That is why admin keys must be asked for.
+and disable accounts, revoke access -- but not delete accounts. That is why
+admin keys must be asked for.
 
 Drop `RequireSession` from a route if an app genuinely needs to provision
 accounts or keys programmatically. Do it knowingly -- such a key can then mint
@@ -162,8 +220,14 @@ its own successors -- and write it down in that app's docs.
   the same reasons -- see the next two sections. This runs on every request
   against a 256-bit random secret, so bcrypt would be a latency tax buying
   nothing.
-- **Shown once.** Only the hash is stored. A lost key is revoked and replaced,
-  never recovered.
+- **Shown once.** Only the hash is stored. A lost key is revoked or deleted
+  and replaced, never recovered.
+- **Revoke or delete.** Both stop the key on its next request. Revoking keeps
+  the record, marked dead, so the listing still answers "what existed last
+  week"; the purge drops it after 30 days. Deleting removes it now. A key's
+  owner can do either to their own keys, and an admin to anyone's
+  (`/api/keys/{id}/delete`, `/api/admin/keys/{id}/delete`,
+  `manage delete-key`). Deleting an account deletes all of its keys.
 - **Expiry is bounded by default** (`auth.api_key_ttl_seconds`, 90 days) so a
   forgotten key stops being a live credential. A key with no expiry is
   available but has to be asked for: `expires_in_days: 0`, or
@@ -179,13 +243,13 @@ its own successors -- and write it down in that app's docs.
   because someone was disabled for an afternoon is a footgun with no security
   gain, given the check already refuses the request.
 - **25 live keys per account** (`API_KEY_MAX_PER_USER`). Any signed-in user
-  can mint keys, so the bucket needs a bound; revoking one frees a slot. The
-  count and the insert share one transaction -- counted in one and inserted in
-  another, sixteen concurrent requests at 24 keys all pass the check. Dead
-  keys are kept 30 days for the listing, but at most 100 rows per account
-  (`API_KEY_MAX_ROWS_PER_USER`): past that, minting a key drops the oldest
-  dead ones, so mint-revoke churn cannot grow the bucket (or the scans over
-  it) without bound.
+  can mint keys, so the bucket needs a bound; revoking or deleting one frees a
+  slot. The count and the insert share one transaction -- counted in one and
+  inserted in another, sixteen concurrent requests at 24 keys all pass the
+  check. Dead keys are kept 30 days for the listing, but at most 100 rows per
+  account (`API_KEY_MAX_ROWS_PER_USER`): past that, minting a key drops the
+  oldest dead ones, so mint-revoke churn cannot grow the bucket (or the scans
+  over it) without bound.
 - **`auth.api_keys: false` closes the whole surface.** The header stops being
   believed, existing keys stop authenticating, and the management endpoints
   404. The records survive, so turning it back on restores them.
@@ -196,8 +260,8 @@ its own successors -- and write it down in that app's docs.
 |---|---|
 | The record, the ceiling, expiry, the per-user cap | `app/models/api_keys.py` |
 | Header parsing, the `Actor`, `RequireSession`, CSRF exemption | `app/core/security.py` |
-| Endpoints for minting, listing, revoking | `app/routes/api_keys.py` |
-| Admin CLI (`list-keys`, `create-key`, `revoke-key`) | `app/manage.py` |
+| Endpoints for minting, listing, revoking, deleting | `app/routes/api_keys.py` |
+| Admin CLI (`list-keys`, `create-key`, `revoke-key`, `delete-key`) | `app/manage.py` |
 | The screen | `static/js/keys.js` |
 
 ## Why credentials are shaped `<id>.<secret>`

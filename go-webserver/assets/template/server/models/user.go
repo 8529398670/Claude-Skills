@@ -53,16 +53,30 @@ func ValidDisplayName( display_name string ) ( result bool ) {
 	return
 }
 
+// CreateUser stores a new account. The first admin ever created -- by the
+// first-run bootstrap or `manage bootstrap-admin` -- also becomes the owner,
+// in the same transaction, so there is no moment where admins exist and no
+// owner does. See owner.go.
+//
+// Ids come from the bucket's sequence and are never reused, so a deleted
+// account's id can never come back as a different person.
 func CreateUser( store *db.Store , display_name string , role string ) ( user *User , err error ) {
-	next_id , err := store.NextSequence( db.BucketUsers )
-	if err != nil { return }
-	user = &User{
-		ID:          next_id,
-		DisplayName: strings.TrimSpace( display_name ),
-		Role:        role,
-		CreatedAt:   time.Now().UTC(),
-	}
-	err = store.Put( db.BucketUsers , encryption.Uint64ToBytes( user.ID ) , user )
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		next_id , tx_err := tx.NextSequence( db.BucketUsers )
+		if tx_err != nil { return }
+		user = &User{
+			ID:          next_id,
+			DisplayName: strings.TrimSpace( display_name ),
+			Role:        role,
+			CreatedAt:   time.Now().UTC(),
+		}
+		if tx_err = tx.Put( db.BucketUsers , encryption.Uint64ToBytes( user.ID ) , user ); tx_err != nil { return }
+		if role != RoleAdmin { return }
+		owner_id , tx_err := ownerIDTx( tx )
+		if tx_err != nil || owner_id != 0 { return }
+		tx_err = setOwnerTx( tx , user.ID )
+		return
+	} )
 	if err != nil { user = nil }
 	return
 }
@@ -111,12 +125,16 @@ func RenameUser( store *db.Store , user_id uint64 , display_name string ) ( err 
 // survived would come back to life the moment the account was re-enabled.
 // API keys are deliberately left alone -- see LoadAPIKey -- and use
 // RevokeAllCredentials when they should die too.
+//
+// The owner cannot be disabled by any route, the CLI included: the owner is
+// always an enabled admin (see owner.go). Transfer ownership first.
 func SetUserDisabled( store *db.Store , user_id uint64 , disabled bool ) ( err error ) {
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
 		key := encryption.Uint64ToBytes( user_id )
 		user := &User{}
 		if tx_err = tx.Get( db.BucketUsers , key , user ); tx_err != nil { return }
 		if disabled {
+			if tx_err = refuseOwnerTx( tx , user_id ); tx_err != nil { return }
 			now := time.Now().UTC()
 			user.DisabledAt = &now
 		} else {

@@ -76,6 +76,7 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	keys.Get( "" , handlers.ListMyAPIKeys )
 	keys.Post( "" , handlers.CreateMyAPIKey )
 	keys.Post( "/:key_id/revoke" , handlers.RevokeMyAPIKey )
+	keys.Post( "/:key_id/delete" , handlers.DeleteMyAPIKey )
 
 	// Admin only: deciding who gets in. Note this is the *only* thing admin
 	// rights gate in the base template -- see architecture.md on defaulting
@@ -88,19 +89,27 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// could turn itself into a fresh session and a fresh key, and revoking
 	// the leaked one would not end the compromise. The rule is: an API key
 	// may use what an account can do, but it never creates credentials.
+	//
+	// Deleting an account requires a session too, for a different reason: it
+	// cannot be undone. A leaked admin key can disable accounts, which an
+	// admin can reverse; it must not be able to erase them. Who may delete
+	// whom (the owner rules) is enforced in models.DeleteUser.
 	admin := app.Group( "/api/admin" , handlers.Guard.RequireAdmin )
 	admin.Get( "/users" , handlers.ListUsers )
 	admin.Post( "/users" , handlers.Guard.RequireSession , handlers.CreateUser )
 	admin.Post( "/users/:user_id/reissue-login" , handlers.Guard.RequireSession , handlers.ReissueLogin )
 	admin.Post( "/users/:user_id/disabled" , handlers.SetUserDisabled )
 	admin.Post( "/users/:user_id/revoke-access" , handlers.RevokeAccess )
+	admin.Post( "/users/:user_id/delete" , handlers.Guard.RequireSession , handlers.DeleteUser )
 
 	// Admin view of every key in the app -- "who has standing access" -- and
-	// the ability to revoke someone else's. Its own prefix for the same reason
-	// as above: mounted on "/api/admin" it would gate the account routes too.
+	// the ability to revoke or delete someone else's. Its own prefix for the
+	// same reason as above: mounted on "/api/admin" it would gate the account
+	// routes too.
 	admin_keys := app.Group( "/api/admin/keys" , handlers.RequireAPIKeys , handlers.Guard.RequireAdmin , handlers.Guard.RequireSession )
 	admin_keys.Get( "" , handlers.ListAllAPIKeys )
 	admin_keys.Post( "/:key_id/revoke" , handlers.RevokeAnyAPIKey )
+	admin_keys.Post( "/:key_id/delete" , handlers.DeleteAnyAPIKey )
 
 	// Catch-all static serving. Must be registered last -- it matches every
 	// remaining path, so anything added after this line never runs.

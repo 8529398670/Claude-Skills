@@ -60,6 +60,11 @@ admin:
   revoke_confirm: "End every session, unused login link and API key that {name} has? The account stays enabled; send them a new link to let them back in."
   disable_button: "Disable"
   enable_button: "Enable"
+  delete_button: "Delete"
+  # Empty this string to stop asking for confirmation before deleting.
+  delete_confirm: "Permanently delete {name}? Their sessions, login links and API keys go with the account, and it cannot be undone. Disable the account instead if they might come back."
+  # Shown after the role of the one owner account, e.g. "admin (owner)".
+  owner_label: "owner"
 
 api_keys:
   heading: "API keys"
@@ -88,10 +93,13 @@ api_keys:
   revoke_button: "Revoke"
   # Empty this string to stop asking for confirmation before revoking.
   revoke_confirm: "Revoke this key? Anything using it stops working immediately."
+  delete_button: "Delete"
+  # Empty this string to stop asking for confirmation before deleting.
+  delete_confirm: "Delete this key permanently? Anything using it stops working immediately, and it disappears from the list."
 
 admin_keys:
   heading: "All API keys"
-  description: "Every key in this app and who owns it. Revoke one to cut off whatever is using it, right away."
+  description: "Every key in this app and who owns it. Revoke or delete one to cut off whatever is using it, right away."
   table_owner: "Owner"
 
 errors:

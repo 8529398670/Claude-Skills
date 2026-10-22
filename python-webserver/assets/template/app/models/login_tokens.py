@@ -137,6 +137,13 @@ def delete_pending_login_tokens(tx: Transaction, user_id: int) -> int:
     )
 
 
+def delete_login_tokens_for_user(tx: Transaction, user_id: int) -> int:
+    """Remove every link an account holds, used ones included, inside the
+    caller's transaction. Only delete_user wants this: once the account is
+    gone, "already used" has nothing left to refer to."""
+    return tx.delete_where(BUCKET_LOGIN_TOKENS, lambda _key, record: record["user_id"] == user_id)
+
+
 def purge_expired_login_tokens(store: Store) -> int:
     """Drop spent and stale rows. Used tokens are kept until they expire
     rather than deleted on redemption, so a second click on a link fails as

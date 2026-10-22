@@ -26,12 +26,21 @@ func ( handlers *Handlers ) GetMe( c fiber.Ctx ) ( err error ) {
 	actor := security.ActorFrom( c )
 	user := actor.User
 
+	// is_owner tells the UI which account-management buttons to offer; the
+	// server checks ownership again on every request that depends on it.
+	owner_id , owner_err := models.OwnerID( handlers.Store )
+	if owner_err != nil {
+		err = serverError( c )
+		return
+	}
+
 	payload := fiber.Map{
 		"authenticated":    true,
 		"id":               user.ID,
 		"display_name":     user.DisplayName,
 		"role":             actor.Role,
 		"account_role":     user.Role,
+		"is_owner":         user.ID == owner_id,
 		"auth":             actor.Method(),
 		"api_keys_enabled": handlers.Config.APIKeysEnabled,
 	}

@@ -1,20 +1,48 @@
-"""User accounts.
+"""User accounts, and the owner.
 
 There is no password field, and adding one would undo the entire design:
 identity is proven only by redeeming a login link, presenting a session
 cookie, or presenting an API key. See references/architecture.md before
 changing that.
+
+The owner is the one admin who outranks the others. It exists for a single
+decision the admin role cannot settle by itself: who may permanently delete
+an admin. Without it, any admin can delete any other, and the last one to act
+wins.
+
+It is recorded as one id in the meta bucket rather than as a role beside
+admin and user. Roles are also what API keys carry and what narrow_role
+compares, so a third one would spread into key scoping, role validation, and
+every role check in the app -- all to express something that only matters to
+a few account-management routes. As a marker, the owner is an ordinary admin
+everywhere else.
+
+The invariant: the owner is always an existing, enabled admin, or there is no
+owner because there are no admins. Every path keeps it -- the first admin
+created becomes the owner (create_user), nothing may delete or disable the
+owner (app/models/credentials.py), and ownership only moves to another
+enabled admin (transfer_owner). That is also why the first-run bootstrap
+never fires again once an owner exists.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
 
-from app.core.db import BUCKET_USERS, Record, Store
+from app.core.db import BUCKET_META, BUCKET_USERS, Record, Store, Transaction
 from app.models import from_iso, to_iso, utc_now
 
 ROLE_ADMIN = "admin"
 ROLE_USER = "user"
+
+META_OWNER_KEY = "owner_user_id"
+
+
+class NotAdminError(Exception):
+    """Refusal for making a non-admin, or a disabled admin, the owner."""
+
+    def __init__(self) -> None:
+        super().__init__("the owner must be an enabled admin")
 
 
 @dataclass
@@ -65,15 +93,25 @@ def valid_display_name(display_name: str) -> bool:
 
 
 def create_user(store: Store, display_name: str, role: str) -> User:
+    """Store a new account. The first admin ever created -- by the first-run
+    bootstrap or `manage bootstrap-admin` -- also becomes the owner, in the
+    same transaction, so there is no moment where admins exist and no owner
+    does.
+
+    Ids come from the bucket's sequence and are never reused, so a deleted
+    account's id can never come back as a different person."""
     if not valid_role(role):
         raise ValueError(f"invalid role: {role!r}")
-    user = User(
-        id=store.next_sequence(BUCKET_USERS),
-        display_name=display_name.strip(),
-        role=role,
-        created_at=utc_now(),
-    )
-    store.put(BUCKET_USERS, user.id, user.to_record())
+    with store.transaction() as tx:
+        user = User(
+            id=tx.next_sequence(BUCKET_USERS),
+            display_name=display_name.strip(),
+            role=role,
+            created_at=utc_now(),
+        )
+        tx.put(BUCKET_USERS, user.id, user.to_record())
+        if role == ROLE_ADMIN and owner_id_tx(tx) is None:
+            _set_owner_tx(tx, user.id)
     return user
 
 
@@ -107,3 +145,52 @@ def any_admin_exists(store: Store) -> bool:
     """Decides whether the server prints a first-run login link on boot. Once
     one enabled admin exists, that bootstrap path stays closed."""
     return any(user.is_admin and not user.disabled for user in list_users(store))
+
+
+def owner_id_tx(tx: Transaction) -> int | None:
+    """The owner's id inside the caller's transaction, or None."""
+    record = tx.get(BUCKET_META, META_OWNER_KEY)
+    return None if record is None else record["user_id"]
+
+
+def _set_owner_tx(tx: Transaction, user_id: int) -> None:
+    tx.put(BUCKET_META, META_OWNER_KEY, {"user_id": user_id})
+
+
+def get_owner_id(store: Store) -> int | None:
+    record = store.get(BUCKET_META, META_OWNER_KEY)
+    return None if record is None else record["user_id"]
+
+
+def ensure_owner(store: Store) -> int | None:
+    """Adopt an owner for a database that predates the marker: the lowest-id
+    enabled admin, which on any database that started from the first-run
+    bootstrap is the account that bootstrap created. A no-op once an owner is
+    recorded, so it is safe to call on every boot."""
+    with store.transaction() as tx:
+        owner_id = owner_id_tx(tx)
+        if owner_id is not None:
+            return owner_id
+        for _key, record in tx.all(BUCKET_USERS):  # key order is id order
+            user = User.from_record(record)
+            if user.is_admin and not user.disabled:
+                _set_owner_tx(tx, user.id)
+                return user.id
+    return None
+
+
+def transfer_owner(store: Store, user_id: int) -> User | None:
+    """Hand ownership to another enabled admin; None if there is no such user.
+
+    Reachable only from the CLI: ownership is the one thing the web UI cannot
+    change about itself, so a compromised admin session cannot promote itself
+    past the other admins."""
+    with store.transaction() as tx:
+        record = tx.get(BUCKET_USERS, user_id)
+        if record is None:
+            return None
+        user = User.from_record(record)
+        if not user.is_admin or user.disabled:
+            raise NotAdminError()
+        _set_owner_tx(tx, user_id)
+    return user

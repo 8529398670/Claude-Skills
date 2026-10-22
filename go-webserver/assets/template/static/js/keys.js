@@ -81,10 +81,12 @@ const Keys = {
     return I18n.get( "api_keys.status_active" );
   },
 
-  // revokeButton is shared by both tables: the only difference is which
-  // endpoint kills the key, so that is the parameter.
+  // revokeButton and deleteButton are shared by both tables: the only
+  // difference is which endpoint acts on the key, so that is the parameter.
+  // Revoking keeps the row, marked dead; deleting removes it. Revoke is only
+  // offered on a live key, delete on every key.
   revokeButton( key , revoke ) {
-    if ( !key.live ) return Dom.el( "span" , { class: "muted" , text: "" } );
+    if ( !key.live ) return null;
     return Dom.el( "button" , {
       class: "secondary small",
       text: I18n.get( "api_keys.revoke_button" ),
@@ -95,6 +97,22 @@ const Keys = {
         if ( question !== "" && !window.confirm( question ) ) return;
         try {
           await revoke( key.id );
+          await Keys.refresh();
+          if ( Keys.me.role === "admin" ) await Keys.refreshAll();
+        } catch ( error ) { App.showError( error.message ); }
+      } },
+    } );
+  },
+
+  deleteButton( key , remove ) {
+    return Dom.el( "button" , {
+      class: "secondary small",
+      text: I18n.get( "api_keys.delete_button" ),
+      on: { click: async function () {
+        const question = I18n.get( "api_keys.delete_confirm" );
+        if ( question !== "" && !window.confirm( question ) ) return;
+        try {
+          await remove( key.id );
           await Keys.refresh();
           if ( Keys.me.role === "admin" ) await Keys.refreshAll();
         } catch ( error ) { App.showError( error.message ); }
@@ -125,7 +143,8 @@ const Keys = {
         Dom.el( "td" , { children: [
           Dom.el( "div" , { class: "row-actions" , children: [
             Keys.revokeButton( key , function ( id ) { return Api.revokeKey( id ); } ),
-          ] } ),
+            Keys.deleteButton( key , function ( id ) { return Api.deleteKey( id ); } ),
+          ].filter( Boolean ) } ),
         ] } ),
       ] } ) );
     } );
@@ -152,7 +171,8 @@ const Keys = {
         Dom.el( "td" , { children: [
           Dom.el( "div" , { class: "row-actions" , children: [
             Keys.revokeButton( key , function ( id ) { return Api.revokeAnyKey( id ); } ),
-          ] } ),
+            Keys.deleteButton( key , function ( id ) { return Api.deleteAnyKey( id ); } ),
+          ].filter( Boolean ) } ),
         ] } ),
       ] } ) );
     } );

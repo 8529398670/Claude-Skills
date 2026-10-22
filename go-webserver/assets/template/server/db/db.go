@@ -288,6 +288,14 @@ func ( tx *Tx ) Delete( bucket string , key []byte ) ( err error ) {
 	return
 }
 
+// NextSequence is Store.NextSequence inside this transaction, for a record
+// that has to be created together with something else -- a user and the
+// owner marker that names it, for one.
+func ( tx *Tx ) NextSequence( bucket string ) ( result uint64 , err error ) {
+	result , err = tx.tx.Bucket( []byte( bucket ) ).NextSequence()
+	return
+}
+
 // ForEach is Store.ForEach inside this transaction.
 func ( tx *Tx ) ForEach( bucket string , newItem func() any , visit func( key []byte , item any ) bool ) ( err error ) {
 	cursor := tx.tx.Bucket( []byte( bucket ) ).Cursor()

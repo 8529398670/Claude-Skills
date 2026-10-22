@@ -45,10 +45,17 @@ Usage:
   list-users                         id, name, role, status
   set-disabled    -user-id 3 -disabled=true
   revoke-access   -user-id 3         end every session, login link and API key
+  delete-user     -user-id 3 -yes    remove the account and everything it held
+  transfer-owner  -user-id 3         make another enabled admin the owner
   list-keys       [-user-id 3]       API keys, whose they are, when last used
   create-key      -user-id 3 -name "CI" [-role user] [-days 90]
-  revoke-key      -key-id abc123     kill one API key now
+  revoke-key      -key-id abc123     kill one API key now, keep its record
+  delete-key      -key-id abc123     kill one API key now and remove its record
   paths                              where this app keeps its state
+
+The owner is the first admin, and the one account that can delete other
+admins from the web UI. Nothing deletes or disables the owner -- move it with
+transfer-owner first. delete-user cannot be undone, hence -yes.
 
 An API key carries a role from the same set users do, so an admin-scoped key
 can do what an admin can and a user-scoped one cannot. A key never outranks
@@ -87,9 +94,12 @@ type backend interface {
 	ReissueLogin( user_id uint64 ) ( user control.UserResponse , err error )
 	SetDisabled( user_id uint64 , disabled bool ) ( user control.UserResponse , err error )
 	RevokeAccess( user_id uint64 ) ( revoked models.Revoked , err error )
+	DeleteUser( user_id uint64 ) ( removed models.Revoked , err error )
+	TransferOwner( user_id uint64 ) ( user control.UserResponse , err error )
 	ListAPIKeys( user_id uint64 ) ( keys []control.APIKeyResponse , err error )
 	CreateAPIKey( user_id uint64 , name string , role string , expires_in_days *int ) ( key control.APIKeyResponse , err error )
 	RevokeAPIKey( key_id string ) ( key control.APIKeyResponse , err error )
+	DeleteAPIKey( key_id string ) ( key control.APIKeyResponse , err error )
 	AnyAdminExists() ( result bool , err error )
 	Close() ( err error )
 	Route() ( description string )
@@ -142,12 +152,18 @@ func Run( arguments []string ) ( err error ) {
 		err = commandSetDisabled( back , rest )
 	case "revoke-access":
 		err = commandRevokeAccess( back , rest )
+	case "delete-user":
+		err = commandDeleteUser( back , rest )
+	case "transfer-owner":
+		err = commandTransferOwner( back , rest )
 	case "list-keys":
 		err = commandListKeys( back , rest )
 	case "create-key":
 		err = commandCreateKey( back , cfg , rest )
 	case "revoke-key":
 		err = commandRevokeKey( back , rest )
+	case "delete-key":
+		err = commandDeleteKey( back , rest )
 	default:
 		Usage()
 		err = fmt.Errorf( "unknown command %q" , command )
@@ -182,6 +198,13 @@ func connect( cfg *config.Config ) ( back backend , err error ) {
 			return
 		}
 		err = fmt.Errorf( "database error (server.control_socket is false, so the server must be stopped): %w" , open_err )
+		return
+	}
+	// A database written before the owner marker existed gets one here too,
+	// so that the owner rules hold for commands run before the server's
+	// first boot on the new version.
+	if _ , err = models.EnsureOwner( store ); err != nil {
+		store.Close()
 		return
 	}
 	back = &directBackend{ store: store , cfg: cfg }
@@ -226,6 +249,21 @@ func ( b *controlBackend ) SetDisabled( user_id uint64 , disabled bool ) ( user 
 
 func ( b *controlBackend ) RevokeAccess( user_id uint64 ) ( revoked models.Revoked , err error ) {
 	revoked , err = b.client.RevokeAccess( user_id )
+	return
+}
+
+func ( b *controlBackend ) DeleteUser( user_id uint64 ) ( removed models.Revoked , err error ) {
+	removed , err = b.client.DeleteUser( user_id )
+	return
+}
+
+func ( b *controlBackend ) TransferOwner( user_id uint64 ) ( user control.UserResponse , err error ) {
+	user , err = b.client.TransferOwner( user_id )
+	return
+}
+
+func ( b *controlBackend ) DeleteAPIKey( key_id string ) ( key control.APIKeyResponse , err error ) {
+	key , err = b.client.DeleteAPIKey( key_id )
 	return
 }
 
@@ -274,23 +312,37 @@ func ( b *directBackend ) Close() ( err error ) {
 	return
 }
 
-func fromModel( user *models.User , credential string ) ( result control.UserResponse ) {
+func fromModel( user *models.User , owner_id uint64 , credential string ) ( result control.UserResponse ) {
 	result = control.UserResponse{
 		ID:          user.ID,
 		DisplayName: user.DisplayName,
 		Role:        user.Role,
 		Disabled:    user.Disabled(),
+		Owner:       user.ID == owner_id,
 		Credential:  credential,
 	}
+	return
+}
+
+// response re-reads a user and the owner marker, so what is printed is what
+// is stored.
+func ( b *directBackend ) response( user_id uint64 , credential string ) ( user control.UserResponse , err error ) {
+	found , err := models.GetUser( b.store , user_id )
+	if err != nil { return }
+	owner_id , err := models.OwnerID( b.store )
+	if err != nil { return }
+	user = fromModel( found , owner_id , credential )
 	return
 }
 
 func ( b *directBackend ) ListUsers() ( users []control.UserResponse , err error ) {
 	stored , err := models.ListUsers( b.store )
 	if err != nil { return }
+	owner_id , err := models.OwnerID( b.store )
+	if err != nil { return }
 	users = []control.UserResponse{}
 	for _ , user := range stored {
-		users = append( users , fromModel( user , "" ) )
+		users = append( users , fromModel( user , owner_id , "" ) )
 	}
 	return
 }
@@ -300,7 +352,7 @@ func ( b *directBackend ) CreateUser( display_name string , role string ) ( user
 	if err != nil { return }
 	credential , err := models.IssueLoginToken( b.store , created.ID , b.cfg.LoginTokenTTL )
 	if err != nil { return }
-	user = fromModel( created , credential )
+	user , err = b.response( created.ID , credential )
 	return
 }
 
@@ -312,7 +364,7 @@ func ( b *directBackend ) ReissueLogin( user_id uint64 ) ( user control.UserResp
 	}
 	credential , err := models.IssueLoginToken( b.store , found.ID , b.cfg.LoginTokenTTL )
 	if err != nil { return }
-	user = fromModel( found , credential )
+	user , err = b.response( found.ID , credential )
 	return
 }
 
@@ -325,9 +377,7 @@ func ( b *directBackend ) SetDisabled( user_id uint64 , disabled bool ) ( user c
 	// Disabling deletes the account's sessions and unused login links in the
 	// same transaction -- see models.SetUserDisabled.
 	if err = models.SetUserDisabled( b.store , found.ID , disabled ); err != nil { return }
-	refreshed , err := models.GetUser( b.store , found.ID )
-	if err != nil { return }
-	user = fromModel( refreshed , "" )
+	user , err = b.response( found.ID , "" )
 	return
 }
 
@@ -336,7 +386,28 @@ func ( b *directBackend ) RevokeAccess( user_id uint64 ) ( revoked models.Revoke
 		err = fmt.Errorf( "no user with id %d" , user_id )
 		return
 	}
-	revoked , err = models.RevokeAllCredentials( b.store , user_id )
+	// The operator may revoke the owner's access too -- see
+	// models.RevokeAllCredentials.
+	revoked , err = models.RevokeAllCredentials( b.store , user_id , true )
+	return
+}
+
+// DeleteUser acts as the operator (actor 0): any account but the owner.
+func ( b *directBackend ) DeleteUser( user_id uint64 ) ( removed models.Revoked , err error ) {
+	removed , err = models.DeleteUser( b.store , user_id , 0 )
+	if errors.Is( err , db.ErrNotFound ) {
+		err = fmt.Errorf( "no user with id %d" , user_id )
+	}
+	return
+}
+
+func ( b *directBackend ) TransferOwner( user_id uint64 ) ( user control.UserResponse , err error ) {
+	err = models.TransferOwner( b.store , user_id )
+	if errors.Is( err , db.ErrNotFound ) {
+		err = fmt.Errorf( "no user with id %d" , user_id )
+	}
+	if err != nil { return }
+	user , err = b.response( user_id , "" )
 	return
 }
 
@@ -429,6 +500,19 @@ func ( b *directBackend ) RevokeAPIKey( key_id string ) ( key control.APIKeyResp
 	names , err := b.displayNames()
 	if err != nil { return }
 	key = fromKeyModel( refreshed , names[ refreshed.UserID ] , "" )
+	return
+}
+
+func ( b *directBackend ) DeleteAPIKey( key_id string ) ( key control.APIKeyResponse , err error ) {
+	found , err := models.GetAPIKey( b.store , key_id )
+	if err != nil {
+		err = fmt.Errorf( "no api key with id %s" , key_id )
+		return
+	}
+	names , err := b.displayNames()
+	if err != nil { return }
+	if err = models.DeleteAPIKey( b.store , found.ID ); err != nil { return }
+	key = fromKeyModel( found , names[ found.UserID ] , "" )
 	return
 }
 
@@ -554,6 +638,9 @@ func commandListUsers( back backend ) ( err error ) {
 		if user.Disabled {
 			status = "disabled"
 		}
+		if user.Owner {
+			status += ", owner"
+		}
 		fmt.Printf( "%-6d %-30s %-8s %s\n" , user.ID , user.DisplayName , user.Role , status )
 	}
 	return
@@ -663,6 +750,55 @@ func commandRevokeKey( back backend , arguments []string ) ( err error ) {
 	key , err := back.RevokeAPIKey( *key_id )
 	if err != nil { return }
 	fmt.Printf( "api key %s (%q, owner #%d) revoked -- it stops working immediately\n" , key.ID , key.Name , key.UserID )
+	return
+}
+
+// commandDeleteKey is revoke-key without the record left behind.
+func commandDeleteKey( back backend , arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "delete-key" , flag.ExitOnError )
+	key_id := set.String( "key-id" , "" , "id of the key to delete (from list-keys)" )
+	set.Parse( arguments )
+
+	if *key_id == "" {
+		err = fmt.Errorf( "-key-id is required (see: manage list-keys)" )
+		return
+	}
+
+	key , err := back.DeleteAPIKey( *key_id )
+	if err != nil { return }
+	fmt.Printf( "api key %s (%q, owner #%d) deleted -- it stops working immediately\n" , key.ID , key.Name , key.UserID )
+	return
+}
+
+// commandDeleteUser asks for -yes because nothing brings the account back:
+// the id is never reused and its keys and links are gone with it. Disabling
+// is the reversible option, and the error says so.
+func commandDeleteUser( back backend , arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "delete-user" , flag.ExitOnError )
+	user_id := set.Uint64( "user-id" , 0 , "id of an existing user" )
+	yes := set.Bool( "yes" , false , "confirm: this cannot be undone" )
+	set.Parse( arguments )
+
+	if *yes == false {
+		err = fmt.Errorf( "delete-user cannot be undone; re-run with -yes (or use set-disabled -user-id %d to keep the account)" , *user_id )
+		return
+	}
+
+	removed , err := back.DeleteUser( *user_id )
+	if err != nil { return }
+	fmt.Printf( "user #%d deleted, with %d sessions, %d login links and %d API keys\n" ,
+		*user_id , removed.Sessions , removed.LoginLinks , removed.APIKeys )
+	return
+}
+
+func commandTransferOwner( back backend , arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "transfer-owner" , flag.ExitOnError )
+	user_id := set.Uint64( "user-id" , 0 , "id of an enabled admin" )
+	set.Parse( arguments )
+
+	user , err := back.TransferOwner( *user_id )
+	if err != nil { return }
+	fmt.Printf( "user #%d (%s) is now the owner\n" , user.ID , user.DisplayName )
 	return
 }
 

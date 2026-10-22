@@ -251,6 +251,18 @@ class Transaction:
         rows = self._connection.execute(f"SELECT key, value FROM {_table(bucket)} ORDER BY key").fetchall()
         return [(key, self._store.decode(value)) for key, value in rows]
 
+    def next_sequence(self, bucket: str) -> int:
+        """Store.next_sequence inside this transaction, for a record that has
+        to be created together with something else -- a user and the owner
+        marker that names it, for one."""
+        _table(bucket)
+        self._connection.execute(
+            "INSERT INTO sequences (bucket, value) VALUES (?, 1) "
+            "ON CONFLICT (bucket) DO UPDATE SET value = value + 1",
+            (bucket,),
+        )
+        return self._connection.execute("SELECT value FROM sequences WHERE bucket = ?", (bucket,)).fetchone()[0]
+
     def delete_where(self, bucket: str, match: Callable[[Key, Record], bool]) -> int:
         doomed = [(key,) for key, record in self.all(bucket) if match(key, record)]
         self._connection.executemany(f"DELETE FROM {_table(bucket)} WHERE key = ?", doomed)

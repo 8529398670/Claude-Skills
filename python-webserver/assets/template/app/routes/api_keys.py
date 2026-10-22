@@ -3,11 +3,15 @@ cron job, a CI pipeline, another service. A key carries a role from the same
 set users do, so there is one permission model rather than two -- see
 app/models/api_keys.py and references/architecture.md.
 
-Every signed-in user can mint their own keys. An admin can additionally see
-and revoke everyone's, which is what makes "who has standing access to this
-app" an answerable question.
+Every signed-in user can mint their own keys, and revoke or delete them. An
+admin can additionally see, revoke, and delete everyone's, which is what makes
+"who has standing access to this app" an answerable question.
 
-Minting and revoking require a browser session (the routes are registered
+Revoking keeps the row, marked dead, so the listing still shows the key
+existed and when it stopped working; the purge drops it later. Deleting
+removes the row now. Either one stops the key immediately.
+
+Minting, revoking, and deleting require a browser session (the routes are registered
 behind RequireSession in app/routes/__init__.py), so a leaked key cannot
 quietly mint its replacement. The admin routes that hand out login links
 require one too, for the same reason -- see RequireSession.
@@ -132,6 +136,27 @@ async def revoke_my_key(request: Request) -> Response:
     return JSONResponse({"ok": True})
 
 
+async def delete_my_key(request: Request) -> Response:
+    """Remove one of your own keys outright -- live or already dead. Someone
+    else's key is "no such api key", for the same reason as in
+    revoke_my_key."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+
+    store = get_store(request)
+    key = await run(api_keys.get_api_key, store, request.path_params["key_id"])
+    if key is None or key.user_id != actor_from(request).user.id:
+        return not_found("no such api key")
+    # False here means it vanished since the lookup -- deleted by its owner
+    # and an admin at once -- which is still "no such key", not a fault.
+    if not await run(api_keys.delete_api_key, store, key.id):
+        return not_found("no such api key")
+    return JSONResponse({"ok": True})
+
+
 async def list_all_keys(request: Request) -> Response:
     """The admin view: every key in the app, with whose it is. This is the
     "who and what has standing access" question, and it is the reason admins
@@ -154,5 +179,18 @@ async def revoke_any_key(request: Request) -> Response:
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
     if await run(api_keys.revoke_api_key, get_store(request), request.path_params["key_id"]) is None:
+        return not_found("no such api key")
+    return JSONResponse({"ok": True})
+
+
+async def delete_any_key(request: Request) -> Response:
+    """revoke_any_key without the record left behind: the key stops working
+    and disappears from every listing, its owner's included."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    if not await run(api_keys.delete_api_key, get_store(request), request.path_params["key_id"]):
         return not_found("no such api key")
     return JSONResponse({"ok": True})

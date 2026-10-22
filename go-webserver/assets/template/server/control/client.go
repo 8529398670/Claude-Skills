@@ -188,3 +188,19 @@ func ( client *Client ) RevokeAPIKey( key_id string ) ( key APIKeyResponse , err
 	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/api-keys/%s/revoke" , key_id ) , nil , &key )
 	return
 }
+
+// DeleteAPIKey returns the key as it was just before it was removed.
+func ( client *Client ) DeleteAPIKey( key_id string ) ( key APIKeyResponse , err error ) {
+	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/api-keys/%s/delete" , key_id ) , nil , &key )
+	return
+}
+
+func ( client *Client ) DeleteUser( user_id uint64 ) ( removed models.Revoked , err error ) {
+	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/users/%d/delete" , user_id ) , nil , &removed )
+	return
+}
+
+func ( client *Client ) TransferOwner( user_id uint64 ) ( user UserResponse , err error ) {
+	err = client.do( http.MethodPost , "/v1/owner" , TransferOwnerRequest{ UserID: user_id } , &user )
+	return
+}

@@ -26,6 +26,12 @@ project.
   creating accounts, or reissuing login links -- so revoking a leaked key
   ends it. That is what lets a cron job, a CI pipeline, or a sidecar call the
   app.
+- **The first admin is the owner.** Any admin can permanently delete an
+  ordinary user; only the owner can delete another admin, and nobody can
+  delete, disable, or revoke the owner from the web. Ownership is a marker,
+  not a third role, and moves only from a shell (`manage transfer-owner`).
+  Deleting an account takes its sessions, links, and keys with it and needs a
+  browser session, so a leaked admin key cannot erase anyone.
 - **Every record is encrypted at rest.** SQLite is the file, but models store
   JSON records through one layer (`app/core/db.py`) that XChaCha-encrypts
   each one with the secret key. No model has to remember to; none can forget.
@@ -269,6 +275,15 @@ cannot mint a key (403, session required), that an admin key gets 403 from
 key kills it on the next request. `python -m app manage list-keys` works from a shell, with
 the server running or not.
 
+Then the delete rules, because they are permission checks that only show up
+when someone is refused. Create a second admin B and a user C, sign B in, and
+confirm: B can delete C (`POST /api/admin/users/<id>/delete`), B gets 403
+deleting another admin or the owner, the owner can delete an admin, nobody can
+delete themselves (400), an admin key gets 403 from the delete route (session
+required), and B gets 403 disabling or revoking the owner. A key's owner can
+delete it (`POST /api/keys/<id>/delete`) and it gets 401 on the next request;
+deleting an account kills its keys too. `manage list-users` marks the owner.
+
 `server.secure_cookies: false` matters locally: a `Secure` cookie is
 silently dropped over plain http, so login appears to succeed and then does
 nothing. That symptom is almost always this setting. Set it back to `true`
@@ -314,6 +329,8 @@ when nobody can get in, and works against the live container:
 docker exec -it <project-slug> python -m app manage list-users
 docker exec -it <project-slug> python -m app manage reissue-login --user-id 1
 docker exec -it <project-slug> python -m app manage create-key --user-id 1 --name "CI" --role admin --days 90
+docker exec -it <project-slug> python -m app manage delete-user --user-id 3 --yes
+docker exec -it <project-slug> python -m app manage transfer-owner --user-id 2
 docker exec -it <project-slug> python -m app version
 ```
 
@@ -328,11 +345,11 @@ Read these when the task goes past "scaffold and build features":
 
 - `references/architecture.md` -- the auth model, how API keys mirror the
   admin/user roles and why a key can neither outrank its owner nor mint
-  another key, why credentials are shaped `<id>.<secret>`, which crypto is
-  used where and why, encrypted records in SQLite and what they cost, why
-  there is no control socket, the threadpool rule, the static caching policy,
-  and the known limits. Read before changing the template's structure rather
-  than building on it.
+  another key, the owner account and who may delete whom, why credentials are
+  shaped `<id>.<secret>`, which crypto is used where and why, encrypted
+  records in SQLite and what they cost, why there is no control socket, the
+  threadpool rule, the static caching policy, and the known limits. Read
+  before changing the template's structure rather than building on it.
 - `references/configuration.md` -- the single `config.yaml`: where it is
   found, how it is validated, the secret key and what keeping it there trades
   away, the app directory convention, storage for application files, the

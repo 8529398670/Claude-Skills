@@ -1,10 +1,12 @@
 package routes
 
 import (
+	errors "errors"
 	strconv "strconv"
 
 	fiber "github.com/gofiber/fiber/v3"
 
+	db "{{MODULE_PATH}}/server/db"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 )
@@ -24,9 +26,16 @@ type setDisabledRequest struct {
 	CSRFToken string `json:"csrf_token"`
 }
 
+// ListUsers marks the owner on its row, so the UI can tell which delete,
+// disable, and revoke buttons the server would refuse -- see models/owner.go.
 func ( handlers *Handlers ) ListUsers( c fiber.Ctx ) ( err error ) {
 	users , list_err := models.ListUsers( handlers.Store )
 	if list_err != nil {
+		err = serverError( c )
+		return
+	}
+	owner_id , owner_err := models.OwnerID( handlers.Store )
+	if owner_err != nil {
 		err = serverError( c )
 		return
 	}
@@ -37,6 +46,7 @@ func ( handlers *Handlers ) ListUsers( c fiber.Ctx ) ( err error ) {
 			"display_name": user.DisplayName,
 			"role":         user.Role,
 			"disabled":     user.Disabled(),
+			"owner":        user.ID == owner_id,
 		} )
 	}
 	err = c.JSON( rows )
@@ -156,8 +166,13 @@ func ( handlers *Handlers ) SetUserDisabled( c fiber.Ctx ) ( err error ) {
 	}
 
 	// Disabling also deletes the account's sessions and unused login links,
-	// in the same transaction -- see models.SetUserDisabled.
-	if models.SetUserDisabled( handlers.Store , user_id , body.Disabled ) != nil {
+	// in the same transaction -- see models.SetUserDisabled. The owner cannot
+	// be disabled; that check is in the model so every route gets it.
+	if disable_err := models.SetUserDisabled( handlers.Store , user_id , body.Disabled ); disable_err != nil {
+		if errors.Is( disable_err , models.ErrOwnerProtected ) {
+			err = forbidden( c , "the owner account cannot be disabled" )
+			return
+		}
 		err = serverError( c )
 		return
 	}
@@ -197,11 +212,61 @@ func ( handlers *Handlers ) RevokeAccess( c fiber.Ctx ) ( err error ) {
 		return
 	}
 
-	revoked , revoke_err := models.RevokeAllCredentials( handlers.Store , user_id )
+	// The owner is refused here (allow_owner false). Only an operator with
+	// shell access may cut the owner off -- see models.RevokeAllCredentials.
+	revoked , revoke_err := models.RevokeAllCredentials( handlers.Store , user_id , false )
 	if revoke_err != nil {
+		if errors.Is( revoke_err , models.ErrOwnerProtected ) {
+			err = forbidden( c , "the owner account's access cannot be revoked" )
+			return
+		}
 		err = serverError( c )
 		return
 	}
 	err = c.JSON( fiber.Map{ "ok": true , "revoked": revoked } )
+	return
+}
+
+// DeleteUser removes an account for good, together with every session, login
+// link, and API key it held. Disabling is the reversible version; this is for
+// an account that should not exist at all.
+//
+// Any admin may delete an ordinary user. Deleting an admin takes the owner,
+// and nobody deletes the owner or themselves -- those rules live in
+// models.DeleteUser, checked inside its transaction. The route also requires
+// a browser session (see routes.go): this cannot be undone, so a leaked
+// admin-scoped API key must not be able to do it.
+func ( handlers *Handlers ) DeleteUser( c fiber.Ctx ) ( err error ) {
+	var body csrfOnlyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+
+	user_id , parse_err := strconv.ParseUint( c.Params( "user_id" ) , 10 , 64 )
+	if parse_err != nil {
+		err = badRequest( c , "invalid user id" )
+		return
+	}
+
+	removed , delete_err := models.DeleteUser( handlers.Store , user_id , security.UserFrom( c ).ID )
+	switch {
+	case delete_err == nil:
+		err = c.JSON( fiber.Map{ "ok": true , "removed": removed } )
+	case errors.Is( delete_err , db.ErrNotFound ):
+		err = notFound( c , "no such user" )
+	case errors.Is( delete_err , models.ErrDeleteSelf ):
+		err = badRequest( c , "you cannot delete your own account" )
+	case errors.Is( delete_err , models.ErrOwnerProtected ):
+		err = forbidden( c , "the owner account cannot be deleted" )
+	case errors.Is( delete_err , models.ErrOwnerRequired ):
+		err = forbidden( c , "only the owner can delete an admin account" )
+	default:
+		err = serverError( c )
+	}
 	return
 }

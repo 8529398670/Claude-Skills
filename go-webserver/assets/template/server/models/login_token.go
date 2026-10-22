@@ -137,6 +137,18 @@ func deletePendingLoginTokens( tx *db.Tx , user_id uint64 ) ( removed int , err 
 	return
 }
 
+// deleteLoginTokensForUser removes every link an account holds, used ones
+// included, inside the caller's transaction. Only DeleteUser wants this: once
+// the account is gone, "already used" has nothing left to refer to.
+func deleteLoginTokensForUser( tx *db.Tx , user_id uint64 ) ( removed int , err error ) {
+	removed , err = tx.DeleteWhere( db.BucketLoginTokens ,
+		func() any { return &LoginToken{} } ,
+		func( key []byte , item any ) bool {
+			return item.( *LoginToken ).UserID == user_id
+		} )
+	return
+}
+
 // PurgeExpiredLoginTokens drops spent and stale rows. Used tokens are kept
 // until they expire rather than deleted on redemption, so that a second click
 // on a link fails as "already used" instead of looking like it never existed.
