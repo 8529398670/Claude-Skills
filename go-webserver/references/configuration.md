@@ -34,7 +34,7 @@ docker:  image, container, bind_address, host_port, data_dir, restart,
 build:   binary_name, output_dir, targets
 ```
 
-The server, `manage`, `run.sh`, `dockerRun.sh`, `dockerBuild.sh`, and
+The server, `manage`, `run.sh`, `run.bat`, `dockerRun.sh`, `dockerBuild.sh`, and
 `build.sh` all read this one file. Nothing reads an environment variable for configuration:
 not `server/config`, not the scripts, and the container is started with no
 `-e` flags and an image with no `ENV`.
@@ -56,7 +56,7 @@ First match wins (`server/config.Locate`):
 
 1. `/app/config.yaml` -- only in the container image, which pins it (see
    [In containers](#in-containers))
-2. `./config.yaml` -- a source checkout; also what `run.sh`, `dockerRun.sh`,
+2. `./config.yaml` -- a source checkout; also what `run.sh`, `run.bat`, `dockerRun.sh`,
    and `build.sh` read
 3. `~/.config/<slug>/config.yaml` -- a portable binary run from anywhere else
 

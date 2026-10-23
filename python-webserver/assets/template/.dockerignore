@@ -17,3 +17,4 @@ app/build_info.py
 venv/
 .run/
 run.sh
+run.bat

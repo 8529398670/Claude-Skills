@@ -9,3 +9,4 @@ dockerRun.sh
 dist/
 .run/
 run.sh
+run.bat

@@ -30,7 +30,7 @@ TEMPLATE_DIR = SKILL_DIR / "assets" / "template"
 # Substitution is a plain text replace, so it must only touch text files.
 TEXT_SUFFIXES = {
     ".go", ".mod", ".sum", ".html", ".css", ".js", ".json",
-    ".yaml", ".yml", ".sh", ".md", ".txt", "",
+    ".yaml", ".yml", ".sh", ".bat", ".md", ".txt", "",
 }
 TEXT_NAMES = {"Dockerfile", ".dockerignore", ".gitignore"}
 
@@ -49,14 +49,16 @@ def stamp(path: Path, replacements: dict[str, str]) -> None:
     if not is_text_file(path):
         return
     try:
-        text = path.read_text(encoding="utf-8")
+        # Bytes, not read_text(): universal newlines would turn run.bat's CRLF
+        # line endings into LF, and cmd.exe misreads labels in an LF batch file.
+        text = path.read_bytes().decode("utf-8")
     except (UnicodeDecodeError, OSError):
         return
     original = text
     for token, value in replacements.items():
         text = text.replace(token, value)
     if text != original:
-        path.write_text(text, encoding="utf-8")
+        path.write_bytes(text.encode("utf-8"))
 
 
 # The one line in defaults.yaml that config.yaml must differ on. Mirrors
@@ -166,6 +168,7 @@ def main() -> None:
     print("  go mod tidy")
     print("  ./run.sh            # builds if needed, (re)starts the server")
     print("  ./run.sh manage ... # admin CLI, works while it is running")
+    print("  (run.bat on Windows, same arguments)")
 
 
 if __name__ == "__main__":

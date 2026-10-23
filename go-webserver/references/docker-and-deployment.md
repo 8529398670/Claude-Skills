@@ -274,7 +274,7 @@ The socket lives inside the mounted data directory, so it is covered by the
 volume's permissions and never crosses the container boundary. Nothing about
 it is published to the network, and it needs no port.
 
-## Running from a checkout (run.sh)
+## Running from a checkout (run.sh, run.bat)
 
 For development and internal boxes, without Docker:
 
@@ -296,6 +296,17 @@ you restart. With arguments it runs the binary with them and leaves the server
 alone; `manage` reaches the live server over its control socket. On a fresh
 clone with no `config.yaml` it writes one (`config init`) and stops, as
 `dockerRun.sh` does.
+
+On Windows, `run.bat` takes the same arguments and does the same, with three
+differences Windows forces. A running `.exe` cannot be overwritten, so it
+builds to `.run\<slug>.exe` and copies that over `<slug>.exe` only after the
+old server exits (one-offs run the `.run\` copy and never touch it). It finds
+the old server by image path -- any process running this checkout's
+`<slug>.exe` -- instead of a pid file. And with no SIGTERM to send another
+console's process, it kills the old server instead of draining it; bolt is
+crash-safe and `control.Listen` clears the stale socket on the next start.
+It needs only `go`, plus PowerShell (built into Windows) to find and stop
+the old process.
 
 Run from the checkout, `./static` beside `config.yaml` is served from disk, so
 frontend edits need only a page reload. Like a portable binary, it has no

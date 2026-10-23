@@ -277,6 +277,18 @@ with them and leaves the server alone; `manage` is safe alongside it because
 SQLite runs in WAL mode. On a fresh clone with no `config.yaml` it writes one
 (`config init`) and stops, as `dockerRun.sh` does.
 
+On Windows, `run.bat` takes the same arguments and does the same, using
+`.venv\Scripts\python.exe` (the venv is created with the `py` launcher when
+there is one, since a bare `python` is often the Microsoft Store stub). Three
+things differ. It reinstalls when `requirements.txt`'s contents differ from
+the copy saved as `.venv\.requirements.stamp`, since batch cannot compare file
+times. It finds the old server as any process running this checkout's
+`.venv\Scripts\python.exe` with exactly `-m app` -- on Windows that launcher
+does show up, and it starts the real interpreter as a child -- instead of a
+pid file. And with no SIGTERM to send another console's process, it kills the
+whole tree (`taskkill /T /F`) instead of draining it, which WAL-mode SQLite
+survives. PowerShell (built into Windows) does the process lookup.
+
 It runs from the project directory, so `./config.yaml` is the one found (and
 `app` is importable). State goes to `~/.config/<slug>/` unless
 `server.app_dir` says otherwise; `python -m app manage paths` reports where.

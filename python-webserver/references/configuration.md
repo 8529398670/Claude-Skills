@@ -33,7 +33,7 @@ docker:  image, container, bind_address, host_port, data_dir, restart,
          memory, cpus, pids_limit, tmpfs_size
 ```
 
-The server, `manage`, `run.sh`, `dockerRun.sh`, and `dockerBuild.sh` all read this one
+The server, `manage`, `run.sh`, `run.bat`, `dockerRun.sh`, and `dockerBuild.sh` all read this one
 file. Nothing reads an environment variable for configuration: not
 `app/core/config.py`, not the scripts, and the container is started with no
 `-e` flags from an image with no `ENV`. uvicorn is started by `python -m app`
@@ -57,7 +57,7 @@ First match wins (`app.core.config.locate`):
 
 1. `/app/config.yaml` -- only in the container image, which pins it (see
    [In containers](#in-containers))
-2. `./config.yaml` -- a source checkout; also what `run.sh` and
+2. `./config.yaml` -- a source checkout; also what `run.sh`, `run.bat`, and
    `dockerRun.sh` read
 3. `~/.config/<slug>/config.yaml` -- anywhere else
 

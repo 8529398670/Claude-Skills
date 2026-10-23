@@ -60,7 +60,7 @@ project.
   stops the copy it started last and starts a fresh one in the foreground
   (creating or updating `.venv` first). With arguments it is the
   admin CLI instead and leaves the running server alone
-  (`./run.sh manage reissue-login ...`).
+  (`./run.sh manage reissue-login ...`). `run.bat` is the same on Windows.
 - **One entry point.** `python -m app` is the server, and the same command is
   the admin CLI (`python -m app manage ...`), the config tool, the
   healthcheck, and `version`.
@@ -174,6 +174,7 @@ network or on disk that the user did not ask for.
   scripts/vendor.sh           # downloads a library into static/vendor/
   scripts/docker.sh           # shared by the docker scripts: build + read config
   run.sh                      # local run: (re)starts the server; with args, the CLI
+  run.bat                     # the same for Windows
   Dockerfile, dockerBuild.sh, dockerRun.sh, .dockerignore, .gitignore
 ```
 
@@ -266,7 +267,7 @@ file. Run it again after a Python change. The startup log prints which config
 file it loaded and where state landed; `./run.sh manage paths` reports the
 same without touching the server, and `./run.sh config check` validates the
 file. Any arguments make `run.sh` a one-off: it runs `python -m app` with them
-and leaves the running server alone.
+and leaves the running server alone. On Windows, `run.bat` does the same.
 
 On a fresh database the server prints a one-time login link. Confirm, by
 actually doing it:
