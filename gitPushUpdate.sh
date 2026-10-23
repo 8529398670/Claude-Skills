@@ -1,32 +1,52 @@
 #!/bin/bash
-function is_int() { return $(test "$@" -eq "$@" > /dev/null 2>&1); }
-ssh-add -D
-git init
-git config --global --unset user.name
-git config --global --unset user.email
-git config user.name "8529398670"
-git config user.email "banjo.kazooie.2955@gmail.com"
-ssh-add -k /home/sd/.ssh/github-8529398670
+set -euo pipefail
 
-LastCommit=$(git log -1 --pretty="%B" | xargs)
-# https://stackoverflow.com/a/3626205
-if $(is_int "${LastCommit}");
-	 then
-	 NextCommitNumber=$((LastCommit+1))
-else
-	echo "Not an integer Resetting"
-	NextCommitNumber=1
+# Use this repository even when invoked from another directory.
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+git rev-parse --git-dir >/dev/null
+branch=$(git symbolic-ref --quiet --short HEAD) || {
+    echo "Check out a branch before pushing." >&2
+    exit 1
+}
+git remote get-url origin >/dev/null
+
+# SSH uses the identity configured for origin in ~/.ssh/config.
+# Never clear the SSH agent or change global Git settings here.
+last_commit=$(git log -1 --format=%s)
+message=${1:-}
+tag=""
+if [[ -z "$message" ]]; then
+    if [[ "$last_commit" =~ ^[0-9]+$ ]]; then
+        number=$((10#$last_commit + 1))
+    else
+        number=1
+    fi
+    while git show-ref --verify --quiet "refs/tags/v1.0.$number"; do
+        number=$((number + 1))
+    done
+    message=$number
+fi
+if [[ "$message" =~ ^[0-9]+$ ]]; then
+    tag="v1.0.$message"
 fi
 
-git add .
-git tag -l | xargs git tag -d
-if [ -n "$1" ]; then
-	git commit -m "$1"
-	git tag v1.0.$1
+git add -A
+if ! git diff --cached --quiet; then
+    if [[ -n "$tag" ]] && git show-ref --verify --quiet "refs/tags/$tag"; then
+        echo "Tag $tag already exists; choose another commit number." >&2
+        exit 1
+    fi
+    git commit -m "$message"
+    if [[ -n "$tag" ]]; then
+        git tag "$tag"
+    fi
 else
-	git commit -m "$NextCommitNumber"
-	git tag v1.0.$NextCommitNumber
+    echo "No new changes to commit; pushing existing commits."
 fi
-git remote add origin git@github-8529398670:8529398670/Claude-Skills.git
-git push origin --tags
-git push origin master
+
+# Include version tags on HEAD so retrying a failed push also retries its tag.
+refs=("$branch")
+while IFS= read -r head_tag; do
+    [[ -z "$head_tag" ]] || refs+=("refs/tags/$head_tag")
+done < <(git tag --points-at HEAD --list 'v1.0.*')
+git push --atomic --set-upstream origin "${refs[@]}"
