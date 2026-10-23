@@ -7,6 +7,7 @@ when you are changing the template itself rather than building features on it.
 
 - [Auth model: links instead of passwords](#auth-model-links-instead-of-passwords)
 - [The owner, and deleting accounts](#the-owner-and-deleting-accounts)
+- [Invite links: one link for a group](#invite-links-one-link-for-a-group)
 - [API keys: the same roles, for callers that are not browsers](#api-keys-the-same-roles-for-callers-that-are-not-browsers)
 - [Why credentials are shaped `<id>.<secret>`](#why-credentials-are-shaped-idsecret)
 - [Which crypto is used where, and why](#which-crypto-is-used-where-and-why)
@@ -48,6 +49,10 @@ the design. Identity is proven exactly two ways:
    session is deleting a record -- no denylist, no token to outlive its
    welcome.
 
+An **invite link** is the other way to get a session: one link a whole group
+can join through, each person becoming a new `user`. It has its own section
+below, because it is the one public way to create an account.
+
 A third way exists for callers that are not people: an **API key** in an
 `Authorization: Bearer` header, carrying a role from the same set users have.
 It is a separate section below, because the interesting parts are the ceiling
@@ -69,6 +74,10 @@ Four operations look alike and are not:
 | **Disable** (`manage set-disabled`) | deleted | deleted | refused while disabled, restored on re-enable | kept, disabled |
 | **Revoke access** (`manage revoke-access`, `POST /api/admin/users/{id}/revoke-access`) | deleted | deleted | revoked | kept, enabled |
 | **Delete** (`manage delete-user`, `POST /api/admin/users/{id}/delete`) | deleted, used ones too | deleted | records deleted | deleted, for good |
+
+None of the four touch invite links. A link an admin made stops working
+when that admin is disabled, deleted, or demoted, and the accounts a link
+made are ordinary accounts that all four apply to.
 
 Reissuing is for a lost cookie. When someone else may hold an account's
 credentials, revoke access first, then reissue -- reissuing alone leaves a
@@ -137,6 +146,58 @@ The rules live in `app/models/credentials.py` (`delete_user`,
 `set_user_disabled`, `revoke_all_credentials`), checked inside each one's own
 transaction, so ownership cannot move between a check and the change it
 guards.
+
+## Invite links: one link for a group
+
+A login link is for one named person. An **invite link** is for a group: an
+admin makes one (`POST /api/admin/invite-links`, or `python -m app manage create-invite`), posts it in a group chat, and each
+person who opens it joins on their own. The code is `app/models/invite_links.py`
+(the record and the transactions), `app/models/pins.py` (PINs and name matching),
+`app/routes/join.py` (the public join page's calls), `app/routes/invite_links.py` (the admin
+panel's), and `static/js/join.js`, `pin.js`, `invites.js`.
+
+How it works:
+
+- **Opening `/join/<id>.<secret>` only serves the page**, with
+  `Referrer-Policy: no-referrer`, exactly like a login link -- a link preview
+  creates nothing. The page asks for a name and POSTs it with the credential
+  in a JSON body, under the same `same-origin JSON` rule as `/api/login`.
+- **A new name becomes a new account, always role `user`,** up to the link's
+  places (1-1000) and until it expires (1-365 days) or is switched off.
+  Checking the link, taking a place, creating the account, and storing its
+  session are one write transaction, so two people cannot both take the last
+  place.
+- **A name close to one that already joined through this link is offered
+  back** ("is one of these you?"). Picking it signs in as that account -- this
+  is how the same person gets in on their next device, with no admin
+  involved. The page shows this step even with no matches, because a typo
+  would otherwise use up a place. Only accounts the link itself created can be
+  offered or picked: never an admin, never a disabled account, never someone
+  who joined another way.
+- **A PIN closes the obvious hole in that.** Anyone holding the link can pick
+  anyone who joined through it, so a person can set a 4-8 digit PIN
+  (`POST /api/account/pin`) and it is then asked for. It is bcrypt-hashed, and
+  5 wrong guesses lock that account's PIN for 15 minutes. It is not a
+  password: nothing but the invite-link claim checks it.
+- **A link dies with its maker's admin rights.** Disabling, deleting, or
+  demoting the admin who made it stops it working at once, without touching
+  the link's row. Switching it off (`revoke`) keeps the row for the list;
+  deleting removes it. Neither touches the accounts it made or their sessions
+  -- disable or revoke those per account as usual.
+- **Creating a link, deleting one, and setting a PIN need a browser session.**
+  A link mints accounts and sessions, and a PIN lets its holder sign in through
+  a link, so an API key that could do either could turn itself into a session
+  -- the same rule as "a key never creates credentials". Listing links and
+  switching one off are fine for an admin key.
+
+The secret half is sha256-hashed, not bcrypt: it is 24 random bytes, not
+something a person chose, so there is nothing to slow down.
+
+What a leaked link costs: anyone holding it can join, up to the places left,
+and can sign in as any account it created that has no PIN. That is the trade
+for "one link in a group chat". Keep the places and the lifetime close to the
+group's real size, switch a link off once everyone is in, and tell people to
+set a PIN if the chat is large or public.
 
 ## API keys: the same roles, for callers that are not browsers
 
@@ -266,8 +327,8 @@ its own successors -- and write it down in that app's docs.
 
 ## Why credentials are shaped `<id>.<secret>`
 
-Login tokens, sessions, and API keys all use `<id>.<secret>`, and the reason
-is worth understanding before changing it.
+Login tokens, sessions, API keys, and invite links all use `<id>.<secret>`,
+and the reason is worth understanding before changing it.
 
 Storing only a hash of a credential is standard -- it means a stolen database
 cannot be replayed. But a *salted* hash like bcrypt cannot be looked up: you
@@ -285,10 +346,11 @@ The halves then use different hashes on purpose:
   comparison runs *before* the write transaction that marks the token used,
   so SQLite's single write lock is never held for the slow part; the
   transaction re-checks that the token is still unused before consuming it.
-- **Sessions and API keys use sha256.** These run on every authenticated
-  request. Against a 256-bit random secret there is nothing to brute force,
-  so a fast hash is correct -- bcrypt here would just be a self-inflicted
-  latency tax.
+- **Sessions, API keys, and invite links use sha256.** Sessions and keys
+  are checked on every authenticated request, and an invite link's secret is
+  24 random bytes, not a person's choice. Against a long random secret there
+  is nothing to brute force, so a fast hash is correct -- bcrypt here would
+  just be a self-inflicted latency tax.
 
 Comparisons go through `encryption.constant_time_equal` so the check does not
 leak, via timing, how many leading characters matched.
@@ -302,9 +364,9 @@ imports `secrets`, `hashlib`, `hmac`, `bcrypt`, or `nacl` -- that is what makes
 | Primitive | Library | Used for |
 |---|---|---|
 | OS CSPRNG | `secrets` | Every credential, key, and nonce |
-| bcrypt | `bcrypt` | Hashing one-time login secrets |
+| bcrypt | `bcrypt` | Hashing one-time login secrets and PINs |
 | XChaCha20-Poly1305 | PyNaCl (libsodium) | Session cookie payloads, records at rest |
-| sha256 + `hmac.compare_digest` | stdlib | Session and API key secret lookup, constant-time compare |
+| sha256 + `hmac.compare_digest` | stdlib | Session, API key, and invite link secret lookup, constant-time compare |
 | secretbox (XSalsa20-Poly1305) | PyNaCl | Available for authenticated blobs; unused by the base template |
 | X25519 | PyNaCl | Available for key exchange; unused by the base template |
 
@@ -625,6 +687,11 @@ State these to the user rather than letting them be discovered in production:
   doing the database lookup first.
 - **No TLS.** The app expects a reverse proxy in front. See
   `docker-and-deployment.md`.
+- **An invite link is a bearer credential for a group.** Anyone holding it
+  can join until the places run out, and can sign in as any account it made
+  that has no PIN. See [Invite links](#invite-links-one-link-for-a-group).
+- **The PIN lockout is in memory**, like the rate limiter: a restart clears
+  it, and with several processes each keeps its own count.
 - **`language.yaml` is public.** It is served to anyone at `/api/language`,
   signed in or not, because signed-out pages need text too. Never put
   anything sensitive in it.

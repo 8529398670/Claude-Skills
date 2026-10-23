@@ -257,11 +257,27 @@ For development, an internal box with no container runtime, or a quick demo,
 run from a checkout:
 
 ```bash
-python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
-./.venv/bin/python -m app
+./run.sh                                   # (re)start the server
+./run.sh manage reissue-login --user-id 1  # any arguments: the CLI, server untouched
 ```
 
-Run it from the project directory, so `./config.yaml` is the one found (and
+`run.sh` creates `.venv` if it is missing and runs `pip install -r
+requirements.txt` whenever that file is newer than `.venv/.requirements.stamp`
+-- all before stopping anything, so a failed install leaves the old server up.
+With no arguments it then stops the server it started last and runs a new one
+in the foreground: it records its own pid in `.run/server.pid` just before
+`exec`ing `python -m app`, and only signals that pid if it is still a
+`... -m app` process whose working directory is this checkout (SIGTERM, then
+SIGKILL after 15 seconds), so a stale pid is never mistaken for it. The venv
+path is not part of that check on purpose: a macOS framework Python
+re-executes `.venv/bin/python` as `Python.app/.../Python`, so it never shows
+up in `ps`. Running it again from
+another terminal is how you restart. With arguments it runs `python -m app`
+with them and leaves the server alone; `manage` is safe alongside it because
+SQLite runs in WAL mode. On a fresh clone with no `config.yaml` it writes one
+(`config init`) and stops, as `dockerRun.sh` does.
+
+It runs from the project directory, so `./config.yaml` is the one found (and
 `app` is importable). State goes to `~/.config/<slug>/` unless
 `server.app_dir` says otherwise; `python -m app manage paths` reports where.
 Two things to pass on to whoever runs it this way:

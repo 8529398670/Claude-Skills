@@ -54,6 +54,16 @@ const (
 //go:embed defaults.yaml
 var defaultsYAML []byte
 
+// exampleHeader is what turns defaults.yaml into config.example.yaml: a note
+// on how to copy it into place. See ExampleFileContent.
+//
+//go:embed example_header.yaml
+var exampleHeader []byte
+
+// ExampleFileName is the committed copy of the defaults that a fresh clone
+// copies to config.yaml. It is not read by anything.
+const ExampleFileName = "config.example.yaml"
+
 // ---------------------------------------------------------------------------
 // config.yaml, section by section
 // ---------------------------------------------------------------------------
@@ -508,6 +518,30 @@ func NewFileContent() ( content []byte , err error ) {
 	}
 	key := encryption.GenerateKeyHex()
 	content = secretKeyLine.ReplaceAll( defaultsYAML , []byte( `${1}"` + key + `"` ) )
+	return
+}
+
+// ExampleFileContent is defaults.yaml with a header explaining how to copy
+// it into place, and the secret key left empty. It is generated rather than
+// kept by hand so that it cannot drift from the defaults it documents, and
+// the empty key is deliberate: a key in a committed file is everyone's key.
+// A copy that never gets one fails at startup with the line to run (see
+// CheckSecretKey) instead of running on a shared key.
+func ExampleFileContent() ( content []byte , err error ) {
+	if matches := secretKeyLine.FindAllIndex( defaultsYAML , -1 ); len( matches ) != 1 {
+		err = fmt.Errorf( "embedded defaults.yaml must contain exactly one `secret_key: \"\"` line, found %d" , len( matches ) )
+		return
+	}
+	content = append( append( []byte{} , exampleHeader... ) , defaultsYAML... )
+	return
+}
+
+// WriteExample writes config.example.yaml. Unlike WriteNew it overwrites:
+// the file holds no secret, and regenerating it is the point.
+func WriteExample( path string ) ( err error ) {
+	content , err := ExampleFileContent()
+	if err != nil { return }
+	err = os.WriteFile( path , content , 0o644 )
 	return
 }
 

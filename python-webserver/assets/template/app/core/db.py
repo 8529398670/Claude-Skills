@@ -40,9 +40,10 @@ BUCKET_USERS = "users"
 BUCKET_SESSIONS = "sessions"
 BUCKET_LOGIN_TOKENS = "login_tokens"
 BUCKET_API_KEYS = "api_keys"
+BUCKET_INVITE_LINKS = "invite_links"
 BUCKET_META = "meta"
 
-BUCKETS = (BUCKET_USERS, BUCKET_SESSIONS, BUCKET_LOGIN_TOKENS, BUCKET_API_KEYS, BUCKET_META)
+BUCKETS = (BUCKET_USERS, BUCKET_SESSIONS, BUCKET_LOGIN_TOKENS, BUCKET_API_KEYS, BUCKET_INVITE_LINKS, BUCKET_META)
 
 # How long a writer waits for another writer before giving up. Without it a
 # second process (a `manage` command during a busy moment) fails at once with

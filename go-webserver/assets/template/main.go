@@ -230,11 +230,11 @@ func statusText( code int ) ( result string ) {
 	return
 }
 
-// startPurgeLoop drops expired sessions, expired login tokens, and API keys
-// that have been dead long enough to stop being worth listing. None of it is a
-// correctness issue -- every one of those is already refused on read -- so this
-// runs quietly in the background purely to keep the bolt file from growing
-// forever.
+// startPurgeLoop drops expired sessions, expired login tokens, and the API
+// keys and invite links that have been dead long enough to stop being worth
+// listing. None of it is a correctness issue -- every one of those is
+// already refused on read -- so this runs quietly in the background purely to
+// keep the bolt file from growing forever.
 func startPurgeLoop( store *db.Store ) ( stop chan struct{} ) {
 	stop = make( chan struct{} )
 	go func() {
@@ -248,8 +248,9 @@ func startPurgeLoop( store *db.Store ) ( stop chan struct{} ) {
 				sessions , _ := models.PurgeExpiredSessions( store )
 				tokens , _ := models.PurgeExpiredLoginTokens( store )
 				keys , _ := models.PurgeDeadAPIKeys( store )
-				if sessions > 0 || tokens > 0 || keys > 0 {
-					fmt.Printf( "[purge] removed %d expired sessions, %d expired login tokens, %d dead api keys\n" , sessions , tokens , keys )
+				invites , _ := models.PurgeDeadInviteLinks( store )
+				if sessions > 0 || tokens > 0 || keys > 0 || invites > 0 {
+					fmt.Printf( "[purge] removed %d expired sessions, %d expired login tokens, %d dead api keys, %d dead invite links\n" , sessions , tokens , keys , invites )
 				}
 			}
 		}

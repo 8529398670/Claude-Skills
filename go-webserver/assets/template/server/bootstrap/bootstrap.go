@@ -81,3 +81,19 @@ func PrintLoginLink( cfg *config.Config , label string , credential string ) {
 	fmt.Println( "  it, mint another with: {{PROJECT_SLUG}} manage reissue-login -user-id <id>" )
 	fmt.Println( line )
 }
+
+// PrintInviteLink shows a new invite link once. Like a login link it is
+// stored only as a hash, so this is the only time it can be copied.
+func PrintInviteLink( label string , credential string , expires string ) {
+	line := strings.Repeat( "-" , 72 )
+	fmt.Println( line )
+	fmt.Printf( "  INVITE LINK -- %s\n" , label )
+	fmt.Println( line )
+	fmt.Printf( "  /join/%s\n" , credential )
+	fmt.Println( line )
+	fmt.Printf( "  Works until %s. Prepend your real scheme and host, e.g.\n" , expires )
+	fmt.Printf( "    https://your-host.example.com/join/%s\n" , credential )
+	fmt.Println( "  Anyone holding it can join, so share it only where you mean to." )
+	fmt.Println( "  It cannot be shown again; switch it off in the admin panel." )
+	fmt.Println( line )
+}

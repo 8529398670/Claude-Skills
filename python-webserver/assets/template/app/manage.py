@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.core import bootstrap, config, db
-from app.models import api_keys, credentials, login_tokens, users
+from app.models import api_keys, credentials, invite_links, login_tokens, users
 
 USAGE = """manage -- account administration for {{PROJECT_NAME}}
 
@@ -38,6 +38,8 @@ Usage:
   create-key      --user-id 3 --name "CI" [--role user] [--days 90]
   revoke-key      --key-id abc123       kill one API key now, keep its record
   delete-key      --key-id abc123       kill one API key now and remove its record
+  create-invite   --user-id 1 --label "Book club" [--uses 10] [--days 30]
+                                        one link a group can join through
   paths                                 where this app keeps its state
 
 The owner is the first admin, and the one account that can delete other
@@ -111,6 +113,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = commands.add_parser("delete-key", help="kill one API key now and remove its record")
     p.add_argument("--key-id", required=True, help="id of the key to delete (from list-keys)")
 
+    p = commands.add_parser("create-invite", help="one link a whole group can join through")
+    p.add_argument("--user-id", type=int, required=True, help="id of the admin the link is made as")
+    p.add_argument("--label", required=True, help='what the link is for, e.g. "Book club"')
+    p.add_argument("--uses", type=int, default=10, help="how many people can join through it (1-1000)")
+    p.add_argument("--days", type=int, default=30, help="days until it stops working (1-365)")
+
     commands.add_parser("paths", help="where this app keeps its state")
     return parser
 
@@ -149,10 +157,17 @@ def run(arguments: list[str]) -> None:
         "create-key": command_create_key,
         "revoke-key": command_revoke_key,
         "delete-key": command_delete_key,
+        "create-invite": command_create_invite,
     }
     try:
         handlers[args.command](store, cfg, args)
-    except (db.DecodeError, credentials.OwnerProtectedError, users.NotAdminError) as error:
+    except (
+        db.DecodeError,
+        credentials.OwnerProtectedError,
+        users.NotAdminError,
+        invite_links.BadInviteLinkError,
+        invite_links.InviteNotAdminError,
+    ) as error:
         raise ManageError(str(error)) from None
 
 
@@ -253,6 +268,16 @@ def command_transfer_owner(store: db.Store, cfg: config.Config, args: argparse.N
     if user is None:
         raise ManageError(f"no user with id {args.user_id}")
     print(f"user #{user.id} ({user.display_name}) is now the owner")
+
+
+def command_create_invite(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
+    """A link a whole group can join through, made as the admin --user-id: it
+    stops working if that admin is disabled or demoted."""
+    issued = invite_links.issue_invite_link_as(store, args.user_id, args.label, args.uses, args.days)
+    if issued is None:
+        raise ManageError(f"no user with id {args.user_id}")
+    credential, link = issued
+    bootstrap.print_invite_link(f"{link.label!r}, {link.max_uses} places", credential, format_time(link.expires_at))
 
 
 def format_time(value: datetime | None, absent: str = "never") -> str:

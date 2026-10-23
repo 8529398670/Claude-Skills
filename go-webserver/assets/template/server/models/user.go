@@ -26,6 +26,10 @@ type User struct {
 	Role        string     `json:"role"`
 	CreatedAt   time.Time  `json:"created_at"`
 	DisabledAt  *time.Time `json:"disabled_at,omitempty"`
+	// PinHash is the optional PIN asked for when someone signs back in
+	// through an invite link. It is not a password: nothing else checks it.
+	// See pin.go.
+	PinHash string `json:"pin_hash,omitempty"`
 }
 
 func ( user *User ) Disabled() ( result bool ) {
@@ -62,22 +66,31 @@ func ValidDisplayName( display_name string ) ( result bool ) {
 // account's id can never come back as a different person.
 func CreateUser( store *db.Store , display_name string , role string ) ( user *User , err error ) {
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
-		next_id , tx_err := tx.NextSequence( db.BucketUsers )
-		if tx_err != nil { return }
-		user = &User{
-			ID:          next_id,
-			DisplayName: strings.TrimSpace( display_name ),
-			Role:        role,
-			CreatedAt:   time.Now().UTC(),
-		}
-		if tx_err = tx.Put( db.BucketUsers , encryption.Uint64ToBytes( user.ID ) , user ); tx_err != nil { return }
-		if role != RoleAdmin { return }
-		owner_id , tx_err := ownerIDTx( tx )
-		if tx_err != nil || owner_id != 0 { return }
-		tx_err = setOwnerTx( tx , user.ID )
+		user , tx_err = createUserTx( tx , display_name , role )
 		return
 	} )
 	if err != nil { user = nil }
+	return
+}
+
+// createUserTx is CreateUser inside the caller's transaction, for an account
+// that has to be created together with something else -- joining through an
+// invite link creates the account, takes a place on the link, and starts the
+// session all at once.
+func createUserTx( tx *db.Tx , display_name string , role string ) ( user *User , err error ) {
+	next_id , err := tx.NextSequence( db.BucketUsers )
+	if err != nil { return }
+	user = &User{
+		ID:          next_id,
+		DisplayName: strings.TrimSpace( display_name ),
+		Role:        role,
+		CreatedAt:   time.Now().UTC(),
+	}
+	if err = tx.Put( db.BucketUsers , encryption.Uint64ToBytes( user.ID ) , user ); err != nil { return }
+	if role != RoleAdmin { return }
+	owner_id , err := ownerIDTx( tx )
+	if err != nil || owner_id != 0 { return }
+	err = setOwnerTx( tx , user.ID )
 	return
 }
 

@@ -34,8 +34,8 @@ docker:  image, container, bind_address, host_port, data_dir, restart,
 build:   binary_name, output_dir, targets
 ```
 
-The server, `manage`, `dockerRun.sh`, `dockerBuild.sh`, and `build.sh` all
-read this one file. Nothing reads an environment variable for configuration:
+The server, `manage`, `run.sh`, `dockerRun.sh`, `dockerBuild.sh`, and
+`build.sh` all read this one file. Nothing reads an environment variable for configuration:
 not `server/config`, not the scripts, and the container is started with no
 `-e` flags and an image with no `ENV`.
 
@@ -56,8 +56,8 @@ First match wins (`server/config.Locate`):
 
 1. `/app/config.yaml` -- only in the container image, which pins it (see
    [In containers](#in-containers))
-2. `./config.yaml` -- a source checkout; also what `dockerRun.sh` and
-   `build.sh` read
+2. `./config.yaml` -- a source checkout; also what `run.sh`, `dockerRun.sh`,
+   and `build.sh` read
 3. `~/.config/<slug>/config.yaml` -- a portable binary run from anywhere else
 
 If none exists, the server (and `manage`) **create the third one** from the
@@ -67,6 +67,29 @@ That is what lets a portable binary just run with nothing beside it.
 `scaffold.py` writes `./config.yaml` for a new project. A fresh clone has none,
 because it is gitignored: `go run . config init` writes one, and the first
 `./dockerRun.sh` does the same and then stops so the file can be reviewed.
+
+### config.example.yaml
+
+`config.yaml` holds the secret key, so it is never committed. What is
+committed is `config.example.yaml`: every default, the comments that document
+them, and an empty `secret_key`. Someone on a fresh clone can read it to see
+every setting, or copy it into place:
+
+```bash
+cp config.example.yaml config.yaml && chmod 600 config.yaml
+openssl rand -hex 32        # paste into server.secret_key
+```
+
+The empty key is deliberate. A key in a committed file is everyone's key,
+and a copy that never gets one refuses to start with the line to run, rather
+than running on a shared secret. `config init` is still the one-step way --
+it writes the same file with a key already in it.
+
+The example is generated, never edited by hand: it is
+`server/config/example_header.yaml` (the copy-me note) followed by
+`defaults.yaml`. `scaffold.py` writes it on every scaffold, and
+`go run . config example` rewrites it after a default changes, so it cannot
+drift from what the server actually uses.
 
 Relative paths in `server:` resolve against the directory holding
 `config.yaml`, so the same file means the same thing whatever directory the
@@ -282,6 +305,8 @@ running server can catch a write in progress -- stop it first.
 3. If the value needs checking, add it to `File.Validate`.
 4. If the server reads it, copy it onto `Config` in `Load`. If a script reads
    it, add it to `config shell` in `server/config/command.go`.
+5. Regenerate the committed example: `go run . config example`. It is
+   `server/config/defaults.yaml` plus a header, and is never edited by hand.
 
 Do not read `os.Getenv` anywhere, and do not make a script read an
 environment variable instead of adding the key. Keeping every knob in one file

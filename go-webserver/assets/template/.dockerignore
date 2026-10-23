@@ -7,3 +7,5 @@ config.yaml
 Dockerfile
 dockerRun.sh
 dist/
+.run/
+run.sh

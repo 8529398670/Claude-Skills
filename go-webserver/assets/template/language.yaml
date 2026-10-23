@@ -18,7 +18,7 @@ app:
 
 signed_out:
   heading: "You are not signed in"
-  body: "There is no signup form here on purpose. Ask an admin for a one-time login link."
+  body: "There is no signup form here on purpose. Ask an admin for a one-time login link, or for your group's invite link."
   invalid_link: "That login link is invalid, expired, or has already been used. Ask for a new one."
 
 login_confirm:
@@ -27,6 +27,29 @@ login_confirm:
   # {name} is replaced with the account currently signed in.
   switch_warning: "You are signed in as {name}. Continuing signs you out of that account and into the one this link is for."
   button: "Sign in"
+
+# What an invite link opens (/join/...). Nothing is created until a button
+# is pressed. {label} is the link's label, {name} the name typed or picked.
+join:
+  heading: "Join {label}"
+  body: "Type your name. If you have joined through this link before, type the same name to sign back in on this device."
+  name_label: "Your name"
+  name_placeholder: "Your name"
+  continue_button: "Continue"
+  did_you_mean: "Is one of these you?"
+  no_match: "Nobody with a name like that has joined through this link yet."
+  this_is_me: "That's me"
+  has_pin: "PIN"
+  create_new: "No, I'm new -- join as {name}"
+  create_first: "Join as {name}"
+  full: "This link has no places left. You can still sign back in if you joined through it before."
+  back_button: "Back"
+  pin_prompt: "Enter the PIN for {name}."
+  pin_label: "PIN"
+  pin_button: "Sign in"
+  switch_warning: "You are signed in as {name}. Continuing signs you out of that account."
+  invalid_heading: "This link is not working"
+  invalid: "This invite link is invalid, expired, or has been switched off. Ask whoever shared it for a new one."
 
 account:
   heading: "Account"
@@ -97,6 +120,50 @@ api_keys:
   # Empty this string to stop asking for confirmation before deleting.
   delete_confirm: "Delete this key permanently? Anything using it stops working immediately, and it disappears from the list."
 
+# Only offered to non-admin accounts: an admin can never be signed in to
+# through an invite link, so a PIN would protect nothing.
+pin:
+  heading: "PIN"
+  description: "If you joined through an invite link, anyone else holding that link could pick your name and sign in as you. Set a PIN and it will be asked for. Nothing else uses it."
+  status_set: "A PIN is set."
+  status_none: "No PIN is set."
+  label: "New PIN"
+  placeholder: "4 to 8 digits"
+  save_button: "Set PIN"
+  clear_button: "Remove PIN"
+  saved_notice: "Saved."
+
+invite_links:
+  heading: "Invite links"
+  description: "One link for a group: post it in a group chat and each person who opens it joins as a new user, until the places run out. People who joined through it can sign back in on a new device with the same link."
+  label_label: "What is it for"
+  label_placeholder: "Book club"
+  uses_label: "Places"
+  days_label: "Works for (days)"
+  create_button: "Create invite link"
+  link_notice: "Share this link with the group. It is shown once and cannot be recovered. Anyone holding it can join, so switch it off below if it goes somewhere it should not."
+  copy_button: "Copy"
+  copied_notice: "Copied."
+  table_label: "Link"
+  table_joined: "Joined"
+  table_status: "Status"
+  table_expires: "Expires"
+  table_actions: "Actions"
+  # {used} and {max} are numbers.
+  joined_of: "{used} of {max}"
+  status_live: "live"
+  status_full: "full"
+  status_expired: "expired"
+  status_revoked: "switched off"
+  # The admin who made it was disabled, deleted, or is no longer an admin.
+  status_orphaned: "maker no longer an admin"
+  revoke_button: "Switch off"
+  # Empty this string to stop asking for confirmation.
+  revoke_confirm: "Switch off this link? Nobody can join or sign back in through it any more. Accounts it made keep working."
+  delete_button: "Delete"
+  # Empty this string to stop asking for confirmation.
+  delete_confirm: "Delete this link from the list? It stops working if it has not already. Accounts it made stay."
+
 admin_keys:
   heading: "All API keys"
   description: "Every key in this app and who owns it. Revoke or delete one to cut off whatever is using it, right away."
@@ -105,3 +172,11 @@ admin_keys:
 errors:
   generic: "Something went wrong. Please try again."
   network: "Could not reach the server."
+  # Error codes the invite link and PIN routes answer with, by name.
+  invite_link_invalid: "This invite link is invalid, expired, or has been switched off."
+  invite_link_full: "This link has no places left."
+  no_such_account: "That account cannot sign in through this link."
+  pin_needed: "Enter the PIN."
+  pin_wrong: "That PIN is not right."
+  pin_locked: "Too many wrong PINs. Try again in 15 minutes."
+  bad_pin: "A PIN is 4 to 8 digits."

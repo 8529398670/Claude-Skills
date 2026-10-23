@@ -13,6 +13,9 @@ const commandUsage = `config -- create, check, or read config.yaml
 Usage:
   init  [-file ./config.yaml]        write a new config.yaml with a fresh secret
                                      key (-file - prints it instead)
+  example [-file ./config.example.yaml]
+                                     write the committed example: every
+                                     default, no secret key (-file - prints it)
   check [-file path]                 validate the config in use and say which
                                      file it is
   shell [-file path] docker|build    print one section as shell assignments,
@@ -45,6 +48,8 @@ func RunCommand( arguments []string ) ( err error ) {
 	switch command {
 	case "init":
 		err = commandInit( rest )
+	case "example":
+		err = commandExample( rest )
 	case "check":
 		err = commandCheck( rest )
 	case "shell":
@@ -71,6 +76,26 @@ func commandInit( arguments []string ) ( err error ) {
 	if err = WriteNew( *path ); err != nil { return }
 	fmt.Printf( "wrote %s (mode 0600, fresh secret key)\n" , *path )
 	fmt.Println( "Review it, then keep it out of version control and back it up with the app's data." )
+	return
+}
+
+// commandExample regenerates config.example.yaml from the embedded defaults,
+// so after changing a default the example can be brought back in step with
+// one command instead of by hand.
+func commandExample( arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "config example" , flag.ExitOnError )
+	path := set.String( "file" , ExampleFileName , "where to write it; - for stdout" )
+	set.Parse( arguments )
+
+	if *path == "-" {
+		var content []byte
+		content , err = ExampleFileContent()
+		if err != nil { return }
+		_ , err = os.Stdout.Write( content )
+		return
+	}
+	if err = WriteExample( *path ); err != nil { return }
+	fmt.Printf( "wrote %s (no secret key -- safe to commit)\n" , *path )
 	return
 }
 

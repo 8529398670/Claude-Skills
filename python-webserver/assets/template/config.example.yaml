@@ -1,0 +1,139 @@
+# ===========================================================================
+# config.example.yaml -- every setting with its default. Safe to commit: it
+# has no secret key. config.yaml itself is gitignored, so a fresh clone starts
+# from this file.
+#
+# To use it:
+#
+#   cp config.example.yaml config.yaml
+#   chmod 600 config.yaml
+#   openssl rand -hex 32        # paste the output into server.secret_key
+#
+# Or skip the copy: `python -m app config init` writes config.yaml with a
+# fresh key already in it.
+#
+# This file is generated from app/core/defaults.yaml. After changing a
+# default there, regenerate it with `python -m app config example`.
+# ===========================================================================
+
+# {{PROJECT_NAME}} -- the one configuration file.
+#
+# Everything is configured here: the server and the Docker container. Nothing
+# reads environment variables. Every key is optional; a key you leave out
+# takes the value shown in this file.
+#
+# This file holds the secret key, so treat it like one: mode 0600, never
+# committed (it is in .gitignore), never baked into an image (.dockerignore).
+#
+# Where it is read from, first match wins:
+#
+#   ./config.yaml                      a source checkout; also what
+#                                      dockerRun.sh reads
+#   ~/.config/{{PROJECT_SLUG}}/config.yaml   the app run from anywhere else
+#
+# If neither exists the server writes the second one, with a fresh secret key,
+# on first run. `python -m app config init` writes ./config.yaml the same way,
+# and `python -m app config check` validates whichever file is in use.
+#
+# Relative paths in server: resolve against the directory holding this file.
+# Relative paths in docker: resolve against the project directory.
+#
+# An unknown key is an error, not a silently ignored typo.
+
+app:
+  # Shown in the startup log.
+  name: "{{PROJECT_NAME}}"
+
+server:
+  # 127.0.0.1 answers only this machine, which is what a development run and
+  # a server behind a reverse proxy on the same host both want. Use 0.0.0.0
+  # to listen on every interface -- and then put TLS in front, because login
+  # links, cookies, and API keys all cross the wire. Ignored inside the
+  # container, which always listens on 0.0.0.0 (what is reachable from
+  # outside is docker.bind_address).
+  host: 127.0.0.1
+  port: 8000
+
+  # Where the database and app storage live. Empty means
+  # ~/.config/{{PROJECT_SLUG}}/. Ignored inside the container, which always
+  # uses /app/data (mounted from docker.data_dir).
+  app_dir: ""
+
+  # Used when they exist; otherwise the copies that ship with the code. Empty
+  # language_file means <app_dir>/language.yaml if it exists, else
+  # language.yaml beside this file.
+  static_dir: ./static
+  language_file: ""
+
+  # Encrypts session cookies and, with encrypt_at_rest, every database record.
+  # 64 hex characters. Generated when this file is created. It must never
+  # change: a different key cannot read anything written with this one, so
+  # back this file up together with the app directory.
+  secret_key: ""
+  encrypt_at_rest: true
+
+  # false ONLY for plain http://localhost. A Secure cookie is silently dropped
+  # over http, so login appears to succeed and then does nothing.
+  secure_cookies: true
+  cookie_name: session
+
+  # Turn on when a reverse proxy you control is in front (the Docker setup
+  # assumes one), so the rate limiter sees each visitor's address instead of
+  # the proxy's. proxy_header is then believed only on connections from an
+  # address in trusted_proxies -- the address your proxy connects *from*, as
+  # this server sees it -- and read right to left, skipping trusted hops, so
+  # whatever a client wrote further left is ignored. trust_proxy without
+  # trusted_proxies is refused.
+  #
+  #   proxy on the same host, no Docker:    [127.0.0.1, "::1"]
+  #   proxy on the host, app in Docker:     [172.16.0.0/12] (the bridge
+  #                                         gateway; check with
+  #                                         `docker network inspect bridge`)
+  #
+  # This only holds if clients cannot reach this server except through the
+  # proxy. With a single-value header (X-Real-IP, CF-Connecting-IP) the proxy
+  # must also overwrite whatever the client sent rather than pass it on.
+  trust_proxy: false
+  trusted_proxies: []
+  proxy_header: X-Forwarded-For
+
+  body_limit_bytes: 1048576        # 1 MiB
+  rate_limit_max: 120
+  rate_limit_window_seconds: 60
+
+auth:
+  session_ttl_seconds: 1209600     # 14 days
+  login_token_ttl_seconds: 1800    # 30 minutes
+
+  # API keys let a script, a cron job, or another service call the API at the
+  # role of the account that owns them, never higher. false closes the surface
+  # completely: the Authorization header stops being believed, existing keys
+  # stop working (the rows survive), and the endpoints that mint keys 404.
+  api_keys: true
+
+  # Lifetime of a new key when the request does not say. A key that never
+  # expires has to be asked for (expires_in_days: 0, or `--days 0`).
+  api_key_ttl_seconds: 7776000     # 90 days
+
+docker:
+  image: {{PROJECT_SLUG}}
+  container: {{PROJECT_SLUG}}
+
+  # The host side of the published port. 127.0.0.1 keeps it reachable only
+  # from this machine -- put nginx/Caddy/Traefik in front for TLS. The
+  # container side is server.port.
+  bind_address: 127.0.0.1
+  host_port: 8000
+
+  # Host directory mounted at /app/data: the database and app storage. This
+  # file is mounted separately (read-only), so a backup of data_dir alone does
+  # not carry the key.
+  data_dir: ./data
+
+  restart: unless-stopped          # no | always | unless-stopped | on-failure[:N]
+
+  # Blast-radius limits. Raise them deliberately for real load.
+  memory: 256m
+  cpus: "1"
+  pids_limit: 128
+  tmpfs_size: 16m                  # the only writable path besides data_dir

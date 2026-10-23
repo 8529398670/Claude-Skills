@@ -19,6 +19,9 @@ USAGE = f"""config -- create, check, or read config.yaml
 Usage:
   init  [--file ./config.yaml]       write a new config.yaml with a fresh secret
                                      key (--file - prints it instead)
+  example [--file ./config.example.yaml]
+                                     write the committed example: every
+                                     default, no secret key (--file - prints it)
   check [--file path]                validate the config in use and say which
                                      file it is
   shell [--file path] docker         print the docker section as shell
@@ -37,6 +40,9 @@ def run(arguments: list[str]) -> None:
     init = commands.add_parser("init", help="write a new config.yaml with a fresh secret key")
     init.add_argument("--file", default=config.CONFIG_FILE_NAME, help="where to write it; - for stdout")
 
+    example = commands.add_parser("example", help="write config.example.yaml: every default, no secret key")
+    example.add_argument("--file", default=config.EXAMPLE_FILE_NAME, help="where to write it; - for stdout")
+
     check = commands.add_parser("check", help="validate the config in use")
     check.add_argument("--file", default="", help="config file to check (default: the one in use)")
 
@@ -45,7 +51,7 @@ def run(arguments: list[str]) -> None:
     shell.add_argument("section", choices=["docker"])
 
     args = parser.parse_args(arguments)
-    {"init": command_init, "check": command_check, "shell": command_shell}[args.command](args)
+    {"init": command_init, "example": command_example, "check": command_check, "shell": command_shell}[args.command](args)
 
 
 def command_init(args: argparse.Namespace) -> None:
@@ -55,6 +61,17 @@ def command_init(args: argparse.Namespace) -> None:
     config.write_new(Path(args.file))
     print(f"wrote {args.file} (mode 0600, fresh secret key)")
     print("Review it, then keep it out of version control and back it up with the app's data.")
+
+
+def command_example(args: argparse.Namespace) -> None:
+    """Regenerate config.example.yaml from the defaults, so after changing a
+    default the example can be brought back in step with one command instead
+    of by hand."""
+    if args.file == "-":
+        sys.stdout.write(config.example_file_content())
+        return
+    config.write_example(Path(args.file))
+    print(f"wrote {args.file} (no secret key -- safe to commit)")
 
 
 def pick_file(explicit: str) -> tuple[config.File, Path, bool]:

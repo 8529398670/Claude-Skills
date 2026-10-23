@@ -38,6 +38,10 @@ const App = {
       this.renderLoginConfirm( me );
       return;
     }
+    if ( Join.credential() !== "" ) {
+      await Join.init( me );
+      return;
+    }
     if ( !me.authenticated ) {
       this.renderSignedOut();
       return;
@@ -114,6 +118,7 @@ const App = {
 
     // Each screen owns its own file and its own init(). This is the one line
     // that knows the API keys screen exists.
+    Pin.init( me );
     await Keys.init( me );
 
     if ( me.role !== "admin" ) return;
@@ -122,6 +127,7 @@ const App = {
     Dom.get( "create-user-form" ).addEventListener( "submit" , this.onCreateUser.bind( this ) );
     Dom.get( "copy-link-button" ).addEventListener( "click" , this.onCopyLink.bind( this ) );
     await this.refreshUsers();
+    await Invites.init( me );
   },
 
   async onRename( event ) {
@@ -264,9 +270,12 @@ const App = {
     } );
   },
 
+  // message may be an error code the server answered with (pin_wrong,
+  // invite_link_full, ...); language.yaml's errors section words those.
   showError( message ) {
     const banner = Dom.get( "error-banner" );
-    Dom.text( banner , message || I18n.get( "errors.generic" ) );
+    const worded = message ? I18n.get( "errors." + message ) : "";
+    Dom.text( banner , worded || message || I18n.get( "errors.generic" ) );
     Dom.flash( banner , 5000 );
   },
 };

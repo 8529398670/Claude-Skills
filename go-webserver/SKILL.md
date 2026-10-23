@@ -1,6 +1,6 @@
 ---
 name: go-webserver
-description: Scaffold a new security-hardened Go + Fiber v3 web server with bolt (bbolt) storage, link-based login (no signup, no passwords), always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + dockerRun.sh with no docker-compose, a build.sh that cross-compiles single-file portable binaries with the whole frontend embedded, one config.yaml that configures the server, Docker, and the build (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Go -- trigger on "build me a Go webserver", "new Fiber app", "golang backend with logins", "scaffold a Go web project with Docker", "I need a small internal tool in Go", or any Go web project that needs auth and static file serving rather than a bare HTTP handler. Also trigger when someone wants a Go web app shipped as one self-contained executable with no Docker and no runtime dependencies -- "single binary web app", "embed the frontend with go:embed", "cross-compile for linux and windows", "one file I can just hand someone", "where should the app keep its database and config". Also use it when asked to add a login system, an admin panel, API keys or programmatic/machine access, bolt storage, or Docker packaging to a Go web project that has none -- trigger on "let a script call my Go API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my Fiber app", or "service account for CI". This is the Go counterpart to the `python-webserver` skill -- pick this one whenever Go, golang, or Fiber is mentioned, and that one for Python/Starlette.
+description: Scaffold a new security-hardened Go + Fiber v3 web server with bolt (bbolt) storage, link-based login (no open signup, no passwords -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + dockerRun.sh with no docker-compose, a build.sh that cross-compiles single-file portable binaries with the whole frontend embedded, one config.yaml that configures the server, Docker, and the build (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Go -- trigger on "build me a Go webserver", "new Fiber app", "golang backend with logins", "scaffold a Go web project with Docker", "I need a small internal tool in Go", or any Go web project that needs auth and static file serving rather than a bare HTTP handler. Also trigger when someone wants a Go web app shipped as one self-contained executable with no Docker and no runtime dependencies -- "single binary web app", "embed the frontend with go:embed", "cross-compile for linux and windows", "one file I can just hand someone", "where should the app keep its database and config". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, bolt storage, or Docker packaging to a Go web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Go API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my Fiber app", or "service account for CI". This is the Go counterpart to the `python-webserver` skill -- pick this one whenever Go, golang, or Fiber is mentioned, and that one for Python/Starlette.
 ---
 
 # Go webserver scaffolder
@@ -17,8 +17,16 @@ project.
   random one-time login link and prints it to its own logs. Opening it
   shows a sign-in page; confirming there logs you in as admin and sets a
   secure cookie (opening alone spends nothing, so link previews cannot burn
-  it). Admins mint more links for more people. That is the entire account
-  system.
+  it). Admins mint more links for more people. That, plus the invite links
+  below, is the entire account system.
+- **Invite links for groups.** An admin can also make one multi-use link
+  (`/join/<id>.<secret>`) to post in a group chat: each person types their
+  name and joins as a `user`, up to a set number of places, until it expires
+  or is switched off. Typing a name close to one that already joined through
+  the same link offers "is this you?", which is how that person signs in on
+  their next device; a person can set a PIN so nobody else holding the link
+  can pick their name. Links die with their maker's admin rights, and
+  creating one needs a browser session -- an API key never can.
 - **Every account can mint API keys, at its own permission level.** A key
   carries the same admin/user role a person does -- one permission model, not
   two -- sent as `Authorization: Bearer <key>`. A key can never outrank the
@@ -46,6 +54,11 @@ project.
   hardcoded in HTML or JS.
 - **Mobile-first and light-mode by default.**
 - **Docker, never compose.** One hardened Alpine image, one `dockerRun.sh`.
+- **`run.sh` just makes it run** outside Docker, from the checkout: it
+  stops the copy it started last and starts a fresh one in the foreground
+  (rebuilding first when anything changed). With arguments it is the
+  admin CLI instead and leaves the running server alone
+  (`./run.sh manage reissue-login ...`).
 - **Ships as a single file too.** The frontend is compiled in with `go:embed`,
   so `build.sh` cross-compiles portable binaries that need no Docker, no Go
   toolchain, and no files alongside them. The same binary is also the admin
@@ -118,7 +131,8 @@ python3 <skill_dir>/scripts/scaffold.py <target-dir> "<project-name>" [module-pa
 
 This copies `assets/template/`, replacing `{{PROJECT_NAME}}` and
 `{{MODULE_PATH}}`, and writes the project's `config.yaml` (the documented
-defaults plus a freshly generated secret key, mode 0600). It installs
+defaults plus a freshly generated secret key, mode 0600) and
+`config.example.yaml` (the same defaults with no key, for committing). It installs
 nothing, starts nothing, and creates no users -- so nothing happens on the
 network or on disk that the user did not ask for.
 
@@ -131,6 +145,9 @@ network or on disk that the user did not ask for.
   build.sh                    # cross-compiles single-file portable binaries
   config.yaml                 # THE config: server, docker, build + secret key
                               #   (written by scaffold.py; gitignored, 0600)
+  config.example.yaml         # every default, no secret key -- commit this; a
+                              #   fresh clone copies it to config.yaml
+                              #   (`go run . config example` regenerates it)
   go.mod / go.sum             # pinned deps, so the first build is reproducible
   language.yaml               # every user-facing string in the app
   server/
@@ -141,7 +158,8 @@ network or on disk that the user did not ask for.
     db/db.go                  # bolt open + buckets + encrypt-on-write helpers
     control/                  # unix socket so other processes reach the db
     encryption/encryption.go  # the ONLY place that touches crypto primitives
-    models/                   # user.go, session.go, login_token.go, api_key.go
+    models/                   # user.go, session.go, login_token.go, api_key.go,
+                              #   invite_link.go, pin.go (+ invite_link_test.go)
     security/security.go      # sessions + API keys resolved to one Actor,
                               #   RequireLogin/RequireAdmin/RequireSession, CSRF
     static/static.go          # gzip-always-fresh text, long-cached images
@@ -157,10 +175,12 @@ network or on disk that the user did not ask for.
   static/
     index.html                # placeholder account + admin UI, fully data-i18n'd
     css/style.css             # mobile-first, light default
-    js/dom.js, i18n.js, api.js, app.js, keys.js
+    js/dom.js, i18n.js, api.js, app.js, keys.js,
+      join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
     vendor/                   # self-hosted third-party libs (see its README)
   scripts/vendor.sh           # downloads a library into static/vendor/
   scripts/docker.sh           # shared by the docker scripts: build + read config
+  run.sh                      # local run: (re)starts the server; with args, the CLI
   Dockerfile, dockerBuild.sh, dockerRun.sh, .dockerignore, .gitignore
 ```
 
@@ -248,16 +268,20 @@ Do not scaffold and hand it over unverified. Actually exercise the flow:
 
 ```bash
 cd <target-dir>
-go build ./...
+go test ./...      # invite links: capacity, claiming, follows-creator, PINs
 # in config.yaml: server.secure_cookies: false   (plain http on localhost only)
-go run .
+./run.sh
 ```
 
 `scaffold.py` already wrote `./config.yaml` with a generated secret key, and
-`go run .` from the project root reads it. The startup log prints which config
-file it loaded and where state landed; `go run . manage paths` reports the
-same without starting the server, and `go run . config check` validates the
-file.
+`./run.sh` builds `./<slug>` (Go's build cache makes an unchanged tree a
+no-op), stops the server it started last (`.run/server.pid`), and runs the new
+one in the foreground, reading that file. Run it again after any change; a
+build error leaves the old server running. The startup log prints which config
+file it loaded and where state landed; `./run.sh manage paths` reports the
+same without touching the server, and `./run.sh config check` validates the
+file. Any arguments make `run.sh` a one-off: it builds, runs the binary with
+them, and leaves the running server alone.
 
 On a fresh database the server prints a one-time login link. Confirm, by
 actually doing it:
@@ -296,6 +320,24 @@ delete themselves (400), an admin key gets 403 from the delete route (session
 required), and B gets 403 disabling or revoking the owner. A key's owner can
 delete it (`POST /api/keys/<id>/delete`) and it gets 401 on the next request;
 deleting an account kills its keys too. `manage list-users` marks the owner.
+
+Then the invite links, because they are the one public way to create an
+account. In the admin panel make a link with 2 places and open it in a
+private window:
+
+- the page asks for a name and nothing is created until you press "Join as
+  ..."; you land signed in as a `user`,
+- a second private window typing a close spelling ("alise" for "Alice") is
+  offered Alice and can sign in as her -- set a PIN as Alice and that same
+  step now asks for it, and 5 wrong PINs give 429 `pin_locked`,
+- a third new name gets 409 `invite_link_full`, but a returning name still
+  signs in,
+- an admin is never offered, and a wrong secret, an expired link, or a
+  switched-off one all answer 404 `invite_link_invalid`,
+- an admin API key gets 403 from `POST /api/admin/invite-links` and
+  `POST /api/account/pin` (both would let a key become a session), and
+- `manage create-invite -user-id 1 -label "Test"` prints a working
+  `/join/...` path, with the server up or down.
 
 `server.secure_cookies: false` matters locally: a `Secure` cookie is
 silently dropped over plain http, so login appears to succeed and then does
@@ -373,6 +415,7 @@ self-sufficient:
 ./myapp manage delete-key -key-id <id>
 ./myapp manage delete-user -user-id 3 -yes
 ./myapp manage transfer-owner -user-id 2
+./myapp manage create-invite -user-id 1 -label "Book club" -uses 20 -days 14
 ./myapp version
 ```
 
@@ -390,8 +433,9 @@ expectations, and secret-key handling for both paths.
 
 Read these when the task goes past "scaffold and build features":
 
-- `references/architecture.md` -- the auth model, how API keys mirror the
-  admin/user roles and why a key can neither outrank its owner nor mint
+- `references/architecture.md` -- the auth model, invite links (who they
+  can create and sign in as, the PIN, and what a leaked one costs), how API
+  keys mirror the admin/user roles and why a key can neither outrank its owner nor mint
   another key, the owner account and who may delete whom, why credentials are
   shaped `<id>.<secret>`, which crypto is used where and why, the static
   caching policy, the `language.yaml` contract, and the known limits (one

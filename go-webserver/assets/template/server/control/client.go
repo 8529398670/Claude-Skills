@@ -189,6 +189,14 @@ func ( client *Client ) RevokeAPIKey( key_id string ) ( key APIKeyResponse , err
 	return
 }
 
+// CreateInviteLink makes an invite link as the admin user_id. The response
+// carries the credential, the only time it exists.
+func ( client *Client ) CreateInviteLink( user_id uint64 , label string , max_uses int , days int ) ( link InviteLinkResponse , err error ) {
+	err = client.do( http.MethodPost , "/v1/invite-links" ,
+		CreateInviteLinkRequest{ UserID: user_id , Label: label , MaxUses: max_uses , Days: days } , &link )
+	return
+}
+
 // DeleteAPIKey returns the key as it was just before it was removed.
 func ( client *Client ) DeleteAPIKey( key_id string ) ( key APIKeyResponse , err error ) {
 	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/api-keys/%s/delete" , key_id ) , nil , &key )

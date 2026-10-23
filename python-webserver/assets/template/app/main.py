@@ -24,25 +24,26 @@ from app.core import assets, bootstrap, config, db, language
 from app.core.middleware import EXCEPTION_HANDLERS, RateLimit, SecurityHeaders
 from app.core.security import LoadActor
 from app.core.static_files import StaticServer
-from app.models import api_keys, login_tokens, sessions
+from app.models import api_keys, invite_links, login_tokens, sessions
 from app.routes import build_routes
 
 PURGE_INTERVAL_SECONDS = 60 * 60
 
 
 def purge_once(store: db.Store) -> None:
-    """Drop expired sessions, expired login tokens, and API keys that have
-    been dead long enough to stop being worth listing. None of it is a
-    correctness issue -- every one of those is already refused on read -- so
-    this runs quietly in the background purely to keep the file from growing
-    forever."""
+    """Drop expired sessions, expired login tokens, and the API keys and
+    invite links that have been dead long enough to stop being worth listing.
+    None of it is a correctness issue -- every one of those is already refused
+    on read -- so this runs quietly in the background purely to keep the file
+    from growing forever."""
     removed_sessions = sessions.purge_expired_sessions(store)
     removed_tokens = login_tokens.purge_expired_login_tokens(store)
     removed_keys = api_keys.purge_dead_api_keys(store)
-    if removed_sessions or removed_tokens or removed_keys:
+    removed_invites = invite_links.purge_dead_invite_links(store)
+    if removed_sessions or removed_tokens or removed_keys or removed_invites:
         print(
             f"[purge] removed {removed_sessions} expired sessions, {removed_tokens} expired login tokens, "
-            f"{removed_keys} dead api keys",
+            f"{removed_keys} dead api keys, {removed_invites} dead invite links",
             flush=True,
         )
 

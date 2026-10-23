@@ -1,11 +1,18 @@
 package routes
 
 import (
+	errors "errors"
+
 	fiber "github.com/gofiber/fiber/v3"
 
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 )
+
+type pinRequest struct {
+	Pin       string `json:"pin"`
+	CSRFToken string `json:"csrf_token"`
+}
 
 type renameRequest struct {
 	DisplayName string `json:"display_name"`
@@ -41,6 +48,7 @@ func ( handlers *Handlers ) GetMe( c fiber.Ctx ) ( err error ) {
 		"role":             actor.Role,
 		"account_role":     user.Role,
 		"is_owner":         user.ID == owner_id,
+		"has_pin":          user.HasPin(),
 		"auth":             actor.Method(),
 		"api_keys_enabled": handlers.Config.APIKeysEnabled,
 	}
@@ -79,6 +87,31 @@ func ( handlers *Handlers ) RenameAccount( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	err = c.JSON( fiber.Map{ "ok": true , "display_name": body.DisplayName } )
+	return
+}
+
+// SetPin sets, or with an empty pin clears, the PIN asked for when this
+// account signs back in through an invite link (see models/pin.go).
+func ( handlers *Handlers ) SetPin( c fiber.Ctx ) ( err error ) {
+	var body pinRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	set_err := models.SetUserPin( handlers.Store , security.UserFrom( c ).ID , body.Pin )
+	if errors.Is( set_err , models.ErrBadPin ) {
+		err = badRequest( c , "bad_pin" )
+		return
+	}
+	if set_err != nil {
+		err = serverError( c )
+		return
+	}
+	err = c.JSON( fiber.Map{ "ok": true , "has_pin": body.Pin != "" } )
 	return
 }
 

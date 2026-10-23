@@ -66,6 +66,24 @@ def print_login_link(cfg: Config, label: str, credential: str) -> None:
     print("\n".join(lines), flush=True)
 
 
+def print_invite_link(label: str, credential: str, expires: str) -> None:
+    """Show a new invite link once. Like a login link it is stored only as a
+    hash, so this is the only time it can be copied."""
+    lines = [
+        RULE,
+        f"  INVITE LINK -- {label}",
+        RULE,
+        f"  /join/{credential}",
+        RULE,
+        f"  Works until {expires}. Prepend your real scheme and host, e.g.",
+        f"    https://your-host.example.com/join/{credential}",
+        "  Anyone holding it can join, so share it only where you mean to.",
+        "  It cannot be shown again; switch it off in the admin panel.",
+        RULE,
+    ]
+    print("\n".join(lines), flush=True)
+
+
 def print_api_key(label: str, credential: str, expires: str) -> None:
     """The one moment an API key is ever visible. Unlike a login link this is
     a complete credential, not a URL, so there is no host to guess at -- it

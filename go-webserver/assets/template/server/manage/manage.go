@@ -51,6 +51,8 @@ Usage:
   create-key      -user-id 3 -name "CI" [-role user] [-days 90]
   revoke-key      -key-id abc123     kill one API key now, keep its record
   delete-key      -key-id abc123     kill one API key now and remove its record
+  create-invite   -user-id 1 -label "Book club" [-uses 10] [-days 30]
+                                     one link a group can join through
   paths                              where this app keeps its state
 
 The owner is the first admin, and the one account that can delete other
@@ -100,6 +102,7 @@ type backend interface {
 	CreateAPIKey( user_id uint64 , name string , role string , expires_in_days *int ) ( key control.APIKeyResponse , err error )
 	RevokeAPIKey( key_id string ) ( key control.APIKeyResponse , err error )
 	DeleteAPIKey( key_id string ) ( key control.APIKeyResponse , err error )
+	CreateInviteLink( user_id uint64 , label string , max_uses int , days int ) ( link control.InviteLinkResponse , err error )
 	AnyAdminExists() ( result bool , err error )
 	Close() ( err error )
 	Route() ( description string )
@@ -164,6 +167,8 @@ func Run( arguments []string ) ( err error ) {
 		err = commandRevokeKey( back , rest )
 	case "delete-key":
 		err = commandDeleteKey( back , rest )
+	case "create-invite":
+		err = commandCreateInvite( back , rest )
 	default:
 		Usage()
 		err = fmt.Errorf( "unknown command %q" , command )
@@ -279,6 +284,11 @@ func ( b *controlBackend ) CreateAPIKey( user_id uint64 , name string , role str
 
 func ( b *controlBackend ) RevokeAPIKey( key_id string ) ( key control.APIKeyResponse , err error ) {
 	key , err = b.client.RevokeAPIKey( key_id )
+	return
+}
+
+func ( b *controlBackend ) CreateInviteLink( user_id uint64 , label string , max_uses int , days int ) ( link control.InviteLinkResponse , err error ) {
+	link , err = b.client.CreateInviteLink( user_id , label , max_uses , days )
 	return
 }
 
@@ -516,6 +526,16 @@ func ( b *directBackend ) DeleteAPIKey( key_id string ) ( key control.APIKeyResp
 	return
 }
 
+func ( b *directBackend ) CreateInviteLink( user_id uint64 , label string , max_uses int , days int ) ( link control.InviteLinkResponse , err error ) {
+	credential , created , err := models.IssueInviteLinkAs( b.store , user_id , label , max_uses , days )
+	if errors.Is( err , db.ErrNotFound ) {
+		err = fmt.Errorf( "no user with id %d" , user_id )
+	}
+	if err != nil { return }
+	link = control.InviteLinkFromModel( created , credential )
+	return
+}
+
 func ( b *directBackend ) AnyAdminExists() ( result bool , err error ) {
 	result , err = models.AnyAdminExists( b.store )
 	return
@@ -734,6 +754,24 @@ func commandCreateKey( back backend , cfg *config.Config , arguments []string ) 
 	bootstrap.PrintAPIKey( cfg ,
 		fmt.Sprintf( "%s-scoped %q for #%d %q" , key.Role , key.Name , key.UserID , key.DisplayName ) ,
 		key.Credential , expires )
+	return
+}
+
+// commandCreateInvite makes a link a whole group can join through, as the
+// admin -user-id: it stops working if that admin is disabled or demoted.
+func commandCreateInvite( back backend , arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "create-invite" , flag.ExitOnError )
+	user_id := set.Uint64( "user-id" , 0 , "id of the admin the link is made as" )
+	label := set.String( "label" , "" , "what the link is for, e.g. \"Book club\"" )
+	uses := set.Int( "uses" , 10 , "how many people can join through it (1-1000)" )
+	days := set.Int( "days" , 30 , "days until it stops working (1-365)" )
+	set.Parse( arguments )
+
+	link , err := back.CreateInviteLink( *user_id , *label , *uses , *days )
+	if err != nil { return }
+
+	bootstrap.PrintInviteLink( fmt.Sprintf( "%q, %d places" , link.Label , link.MaxUses ) ,
+		link.Credential , link.ExpiresAt.Local().Format( "2006-01-02 15:04" ) )
 	return
 }
 

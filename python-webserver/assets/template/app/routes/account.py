@@ -7,7 +7,7 @@ from starlette.responses import JSONResponse, Response
 
 from app.core.encryption import BadKeyError, CipherTextError
 from app.core.security import actor_from, check_csrf, clear_session_cookie, decrypt_cookie
-from app.models import sessions, users
+from app.models import pins, sessions, users
 from app.routes.helpers import bad_request, forbidden, get_config, get_store, read_json, run, server_error
 
 
@@ -33,6 +33,7 @@ async def me(request: Request) -> Response:
         "role": actor.role,
         "account_role": actor.user.role,
         "is_owner": actor.user.id == owner_id,
+        "has_pin": pins.has_pin(actor.user),
         "auth": actor.method,
         "api_keys_enabled": get_config(request).api_keys_enabled,
     }
@@ -60,6 +61,25 @@ async def rename(request: Request) -> Response:
     if not await run(users.rename_user, get_store(request), actor_from(request).user.id, display_name):
         return server_error()
     return JSONResponse({"ok": True, "display_name": display_name.strip()})
+
+
+async def set_pin(request: Request) -> Response:
+    """Set, or with an empty pin clear, the PIN asked for when this account
+    signs back in through an invite link (see app/models/pins.py)."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    pin = body.get("pin")
+    if not isinstance(pin, str):
+        return bad_request("bad_pin")
+    try:
+        if not await run(pins.set_user_pin, get_store(request), actor_from(request).user.id, pin):
+            return server_error()
+    except pins.BadPinError:
+        return bad_request("bad_pin")
+    return JSONResponse({"ok": True, "has_pin": pin != ""})
 
 
 async def logout(request: Request) -> Response:

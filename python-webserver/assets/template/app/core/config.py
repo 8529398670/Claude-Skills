@@ -43,6 +43,12 @@ STORAGE_DIR_NAME = "storage"
 LANGUAGE_FILE_NAME = "language.yaml"
 
 DEFAULTS_PATH = Path(__file__).with_name("defaults.yaml")
+# What turns defaults.yaml into config.example.yaml: a note on how to copy it
+# into place. See example_file_content.
+EXAMPLE_HEADER_PATH = Path(__file__).with_name("example_header.yaml")
+# The committed copy of the defaults that a fresh clone copies to
+# config.yaml. Nothing reads it.
+EXAMPLE_FILE_NAME = "config.example.yaml"
 
 
 class ConfigError(Exception):
@@ -543,6 +549,29 @@ def new_file_content() -> str:
         raise ConfigError(f'defaults.yaml must contain exactly one `secret_key: ""` line, found {len(matches)}')
     key = encryption.generate_key_hex()
     return _SECRET_KEY_LINE.sub(lambda match: f'{match.group(1)}"{key}"', text)
+
+
+def example_file_content() -> str:
+    """defaults.yaml with a header explaining how to copy it into place, and
+    the secret key left empty. Generated rather than kept by hand so that it
+    cannot drift from the defaults it documents, and the empty key is
+    deliberate: a key in a committed file is everyone's key. A copy that never
+    gets one fails at startup with the line to run (see check_secret_key)
+    instead of running on a shared key."""
+    text = DEFAULTS_PATH.read_text(encoding="utf-8")
+    matches = _SECRET_KEY_LINE.findall(text)
+    if len(matches) != 1:
+        raise ConfigError(f'defaults.yaml must contain exactly one `secret_key: ""` line, found {len(matches)}')
+    return EXAMPLE_HEADER_PATH.read_text(encoding="utf-8") + text
+
+
+def write_example(path: Path) -> None:
+    """Write config.example.yaml. Unlike write_new it overwrites: the file
+    holds no secret, and regenerating it is the point."""
+    try:
+        path.write_text(example_file_content(), encoding="utf-8")
+    except OSError as error:
+        raise ConfigError(f"could not write {path}: {error.strerror}") from None
 
 
 def write_new(path: Path) -> None:

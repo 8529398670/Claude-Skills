@@ -33,7 +33,7 @@ docker:  image, container, bind_address, host_port, data_dir, restart,
          memory, cpus, pids_limit, tmpfs_size
 ```
 
-The server, `manage`, `dockerRun.sh`, and `dockerBuild.sh` all read this one
+The server, `manage`, `run.sh`, `dockerRun.sh`, and `dockerBuild.sh` all read this one
 file. Nothing reads an environment variable for configuration: not
 `app/core/config.py`, not the scripts, and the container is started with no
 `-e` flags from an image with no `ENV`. uvicorn is started by `python -m app`
@@ -57,7 +57,8 @@ First match wins (`app.core.config.locate`):
 
 1. `/app/config.yaml` -- only in the container image, which pins it (see
    [In containers](#in-containers))
-2. `./config.yaml` -- a source checkout; also what `dockerRun.sh` reads
+2. `./config.yaml` -- a source checkout; also what `run.sh` and
+   `dockerRun.sh` read
 3. `~/.config/<slug>/config.yaml` -- anywhere else
 
 If none exists, the server (and `manage`) **create the third one** from the
@@ -69,6 +70,29 @@ first `./dockerRun.sh` does the same and then stops so the file can be
 reviewed. (Run `python -m app` on a fresh clone without doing either and it
 creates `~/.config/<slug>/config.yaml` instead -- a working setup, just not
 the one beside the code.)
+
+### config.example.yaml
+
+`config.yaml` holds the secret key, so it is never committed. What is
+committed is `config.example.yaml`: every default, the comments that document
+them, and an empty `secret_key`. Someone on a fresh clone can read it to see
+every setting, or copy it into place:
+
+```bash
+cp config.example.yaml config.yaml && chmod 600 config.yaml
+openssl rand -hex 32        # paste into server.secret_key
+```
+
+The empty key is deliberate. A key in a committed file is everyone's key,
+and a copy that never gets one refuses to start with the line to run, rather
+than running on a shared secret. `config init` is still the one-step way --
+it writes the same file with a key already in it.
+
+The example is generated, never edited by hand: it is
+`app/core/example_header.yaml` (the copy-me note) followed by
+`defaults.yaml`. `scaffold.py` writes it on every scaffold, and
+`python -m app config example` rewrites it after a default changes, so it
+cannot drift from what the server actually uses.
 
 Relative paths in `server:` resolve against the directory holding
 `config.yaml`, so the same file means the same thing whatever directory the
@@ -285,6 +309,8 @@ SQLite folds the log back in and `app.db` alone is complete.
 4. If the server reads it, add a field to `Config` and fill it in `load()`.
    If `dockerRun.sh` reads it, add it to `config shell` in
    `app/core/config_command.py`.
+5. Regenerate the committed example: `python -m app config example`. It is
+   `app/core/defaults.yaml` plus a header, and is never edited by hand.
 
 Do not read `os.environ` anywhere, and do not make a script read an
 environment variable instead of adding the key. Keeping every knob in one file

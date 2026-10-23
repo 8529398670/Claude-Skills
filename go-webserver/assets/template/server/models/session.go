@@ -30,10 +30,10 @@ func splitCredential( raw string ) ( id string , secret string , ok bool ) {
 	return
 }
 
-// newSession builds a session without storing it. The only caller that
-// creates sessions is RedeemLoginToken, which stores it in the same
-// transaction that consumes the login link and checks the account is enabled
-// -- so there is deliberately no CreateSession that writes one on its own.
+// newSession builds a session without storing it. Its callers --
+// RedeemLoginToken, JoinInviteLink, ClaimInviteAccount -- store it in the
+// same transaction that checks the link and the account are still good, so
+// there is deliberately no CreateSession that writes one on its own.
 func newSession( user_id uint64 , ttl time.Duration ) ( session_id string , credential string , session *Session ) {
 	session_id = encryption.GenerateURLToken( 16 )
 	secret := encryption.GenerateURLToken( 32 )

@@ -14,6 +14,7 @@ import (
 	config "{{MODULE_PATH}}/server/config"
 	db "{{MODULE_PATH}}/server/db"
 	language "{{MODULE_PATH}}/server/language"
+	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 	static "{{MODULE_PATH}}/server/static"
 )
@@ -27,6 +28,7 @@ type Handlers struct {
 	Guard    *security.Guard
 	Language *language.Language
 	Static   *static.Server
+	Pins     *models.PinGuard
 }
 
 func New( store *db.Store , cfg *config.Config , guard *security.Guard , lang *language.Language , static_server *static.Server ) ( handlers *Handlers ) {
@@ -36,6 +38,7 @@ func New( store *db.Store , cfg *config.Config , guard *security.Guard , lang *l
 		Guard:    guard,
 		Language: lang,
 		Static:   static_server,
+		Pins:     models.NewPinGuard(),
 	}
 	return
 }
@@ -55,10 +58,22 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	app.Get( "/api/language" , handlers.GetLanguage )
 	app.Get( "/api/health" , handlers.GetHealth )
 
+	// Public: invite links (see join.go). Holding the link is the permission,
+	// so these sit before the signed-in "/api" group below -- registered
+	// after it, they would pick up RequireLogin from the shared prefix.
+	app.Get( "/join/*" , handlers.ShowJoinPage )
+	app.Post( "/api/join/info" , handlers.JoinInfo )
+	app.Post( "/api/join/match" , handlers.JoinMatch )
+	app.Post( "/api/join/claim" , handlers.JoinClaim )
+	app.Post( "/api/join/create" , handlers.JoinCreate )
+
 	// Any signed-in user.
 	account := app.Group( "/api" , handlers.Guard.RequireLogin )
 	account.Get( "/me" , handlers.GetMe )
 	account.Post( "/account/rename" , handlers.RenameAccount )
+	// A session only: a PIN lets its holder sign in through an invite link,
+	// so a key that could set one could turn itself into a session.
+	account.Post( "/account/pin" , handlers.Guard.RequireSession , handlers.SetPin )
 	account.Post( "/logout" , handlers.Logout )
 	account.Get( "/team" , handlers.ListTeam )
 
@@ -101,6 +116,16 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	admin.Post( "/users/:user_id/disabled" , handlers.SetUserDisabled )
 	admin.Post( "/users/:user_id/revoke-access" , handlers.RevokeAccess )
 	admin.Post( "/users/:user_id/delete" , handlers.Guard.RequireSession , handlers.DeleteUser )
+
+	// Invite links: one link for a group, each person who opens it joins as a
+	// new user (see invite_links.go). Creating one needs a session for the
+	// same reason as creating a user -- the link mints accounts and sessions.
+	// Deleting one needs a session like deleting a user. Listing and
+	// switching one off are safe for an admin key.
+	admin.Get( "/invite-links" , handlers.ListInviteLinks )
+	admin.Post( "/invite-links" , handlers.Guard.RequireSession , handlers.CreateInviteLink )
+	admin.Post( "/invite-links/:link_id/revoke" , handlers.RevokeInviteLink )
+	admin.Post( "/invite-links/:link_id/delete" , handlers.Guard.RequireSession , handlers.DeleteInviteLink )
 
 	// Admin view of every key in the app -- "who has standing access" -- and
 	// the ability to revoke or delete someone else's. Its own prefix for the

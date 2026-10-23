@@ -57,7 +57,17 @@ const Api = {
     return this.request( "/api/login" , { method: "POST" , body: { credential: credential } } );
   },
 
+  // Invite links: no session yet either, so the same JSON-body rule as
+  // login() applies. The credential always goes in the body.
+  joinInfo( credential )                { return this.request( "/api/join/info" , { method: "POST" , body: { credential: credential } } ); },
+  joinMatch( credential , name )        { return this.request( "/api/join/match" , { method: "POST" , body: { credential: credential , display_name: name } } ); },
+  joinCreate( credential , name )       { return this.request( "/api/join/create" , { method: "POST" , body: { credential: credential , display_name: name } } ); },
+  joinClaim( credential , userId , pin ) {
+    return this.request( "/api/join/claim" , { method: "POST" , body: { credential: credential , user_id: userId , pin: pin || "" } } );
+  },
+
   rename( displayName )        { return this.post( "/api/account/rename" , { display_name: displayName } ); },
+  setPin( pin )                { return this.post( "/api/account/pin" , { pin: pin } ); },
   logout()                     { return this.post( "/api/logout" ); },
   listTeam()                   { return this.request( "/api/team" ); },
   listUsers()                  { return this.request( "/api/admin/users" ); },
@@ -66,6 +76,12 @@ const Api = {
   setDisabled( userId , flag ) { return this.post( "/api/admin/users/" + userId + "/disabled" , { disabled: flag } ); },
   revokeAccess( userId )       { return this.post( "/api/admin/users/" + userId + "/revoke-access" ); },
   deleteUser( userId )         { return this.post( "/api/admin/users/" + userId + "/delete" ); },
+  listInvites()                { return this.request( "/api/admin/invite-links" ); },
+  createInvite( label , maxUses , days ) {
+    return this.post( "/api/admin/invite-links" , { label: label , max_uses: maxUses , days: days } );
+  },
+  revokeInvite( linkId )       { return this.post( "/api/admin/invite-links/" + encodeURIComponent( linkId ) + "/revoke" ); },
+  deleteInvite( linkId )       { return this.post( "/api/admin/invite-links/" + encodeURIComponent( linkId ) + "/delete" ); },
 
   // API keys. createKey's expiresInDays is passed through as-is including null,
   // because the server reads absent as "use the default" and 0 as "never

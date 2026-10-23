@@ -85,6 +85,24 @@ def write_config(target_dir: Path) -> Path:
     return config_path
 
 
+def write_example(target_dir: Path) -> Path:
+    """Write <target>/config.example.yaml: the example header plus the stamped
+    defaults, secret key left empty.
+
+    It is the committed counterpart of config.yaml -- every setting with its
+    default, nothing secret -- so a fresh clone has something to copy. It is
+    regenerated here on every scaffold from the same two files that
+    `go run . config example` uses, so it always matches the defaults it was
+    scaffolded with; the copy in the template is only there to be read.
+    """
+    config_dir = target_dir / "server" / "config"
+    header = (config_dir / "example_header.yaml").read_text(encoding="utf-8")
+    defaults = (config_dir / "defaults.yaml").read_text(encoding="utf-8")
+    example_path = target_dir / "config.example.yaml"
+    example_path.write_text(header + defaults, encoding="utf-8")
+    return example_path
+
+
 def main() -> None:
     if len(sys.argv) not in (3, 4):
         print(__doc__)
@@ -125,6 +143,7 @@ def main() -> None:
             stamp(path, replacements)
 
     for script in (
+        target_dir / "run.sh",
         target_dir / "dockerRun.sh",
         target_dir / "dockerBuild.sh",
         target_dir / "build.sh",
@@ -134,15 +153,19 @@ def main() -> None:
             script.chmod(0o755)
 
     config_path = write_config(target_dir)
+    example_path = write_example(target_dir)
 
     print(f"Scaffolded '{project_name}' into {target_dir}")
     print(f"  module {module_path}")
     print(f"  docker image/container name: {slugify(project_name)}")
     print(f"  config: {config_path} (mode 0600, fresh secret key, gitignored)")
+    print(f"  example: {example_path} (no secret key, commit it -- `cp` it to config.yaml on a fresh clone)")
     print("")
     print("Next:")
     print(f"  cd {target_dir}")
-    print("  go mod tidy && go build ./...")
+    print("  go mod tidy")
+    print("  ./run.sh            # builds if needed, (re)starts the server")
+    print("  ./run.sh manage ... # admin CLI, works while it is running")
 
 
 if __name__ == "__main__":

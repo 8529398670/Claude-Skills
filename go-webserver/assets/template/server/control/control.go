@@ -172,6 +172,7 @@ func ( server *Server ) routes() ( handler http.Handler ) {
 	mux.HandleFunc( "POST /v1/api-keys" , server.handleCreateAPIKey )
 	mux.HandleFunc( "POST /v1/api-keys/{id}/revoke" , server.handleRevokeAPIKey )
 	mux.HandleFunc( "POST /v1/api-keys/{id}/delete" , server.handleDeleteAPIKey )
+	mux.HandleFunc( "POST /v1/invite-links" , server.handleCreateInviteLink )
 	handler = mux
 	return
 }
@@ -414,6 +415,51 @@ func ( server *Server ) handleCreateAPIKey( w http.ResponseWriter , r *http.Requ
 		return
 	}
 	writeJSON( w , http.StatusOK , apiKeyResponse( key , user.DisplayName , credential ) )
+}
+
+// CreateInviteLinkRequest is the body of POST /v1/invite-links. UserID is
+// the admin the link is made as: it lives only while they stay an enabled
+// admin, exactly like one made in the web UI.
+type CreateInviteLinkRequest struct {
+	UserID  uint64 `json:"user_id"`
+	Label   string `json:"label"`
+	MaxUses int    `json:"max_uses"`
+	Days    int    `json:"days"`
+}
+
+// InviteLinkResponse carries the credential once, on creation.
+type InviteLinkResponse struct {
+	ID         string    `json:"id"`
+	Label      string    `json:"label"`
+	MaxUses    int       `json:"max_uses"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Credential string    `json:"credential,omitempty"`
+}
+
+func InviteLinkFromModel( link *models.InviteLink , credential string ) ( result InviteLinkResponse ) {
+	result = InviteLinkResponse{
+		ID:         link.ID,
+		Label:      link.Label,
+		MaxUses:    link.MaxUses,
+		ExpiresAt:  link.ExpiresAt,
+		Credential: credential,
+	}
+	return
+}
+
+func ( server *Server ) handleCreateInviteLink( w http.ResponseWriter , r *http.Request ) {
+	body := CreateInviteLinkRequest{}
+	if decodeBody( w , r , &body ) == false { return }
+	credential , link , err := models.IssueInviteLinkAs( server.store , body.UserID , body.Label , body.MaxUses , body.Days )
+	if errors.Is( err , db.ErrNotFound ) {
+		writeError( w , http.StatusNotFound , fmt.Sprintf( "no user with id %d" , body.UserID ) )
+		return
+	}
+	if err != nil {
+		writeError( w , http.StatusBadRequest , err.Error() )
+		return
+	}
+	writeJSON( w , http.StatusOK , InviteLinkFromModel( link , credential ) )
 }
 
 func ( server *Server ) handleRevokeAPIKey( w http.ResponseWriter , r *http.Request ) {

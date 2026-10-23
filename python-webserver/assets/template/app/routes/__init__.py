@@ -22,7 +22,7 @@ from starlette.routing import BaseRoute, Route
 
 from app.core.security import RequireAdmin, RequireLogin, RequireSession
 from app.core.static_files import StaticServer
-from app.routes import account, admin, api_keys, auth, meta, team
+from app.routes import account, admin, api_keys, auth, invite_links, join, meta, team
 from app.routes.api_keys import RequireAPIKeys
 
 
@@ -40,6 +40,7 @@ def group(*guards: type) -> Callable[..., Route]:
 def build_routes(static_server: StaticServer) -> list[BaseRoute]:
     public = group()
     signed_in = group(RequireLogin)
+    sessions_only = group(RequireLogin, RequireSession)
     # API keys: any signed-in user manages their own, from a browser session.
     my_keys = group(RequireAPIKeys, RequireLogin, RequireSession)
     # Admin only: deciding who gets in.
@@ -70,9 +71,19 @@ def build_routes(static_server: StaticServer) -> list[BaseRoute]:
         public("/api/login", auth.redeem_login_link, ["POST"]),
         public("/api/language", meta.get_language),
         public("/api/health", meta.get_health),
+        # Public: invite links (see join.py). Holding the link is the
+        # permission; like a login link, the GET only serves the page.
+        public("/join/{credential:path}", static_server.serve_login_page),
+        public("/api/join/info", join.join_info, ["POST"]),
+        public("/api/join/match", join.join_match, ["POST"]),
+        public("/api/join/claim", join.join_claim, ["POST"]),
+        public("/api/join/create", join.join_create, ["POST"]),
         # Any signed-in user.
         signed_in("/api/me", account.me),
         signed_in("/api/account/rename", account.rename, ["POST"]),
+        # A session only: a PIN lets its holder sign in through an invite
+        # link, so a key that could set one could turn itself into a session.
+        sessions_only("/api/account/pin", account.set_pin, ["POST"]),
         signed_in("/api/logout", account.logout, ["POST"]),
         signed_in("/api/team", team.list_team),
         my_keys("/api/keys", api_keys.list_my_keys),
@@ -85,6 +96,15 @@ def build_routes(static_server: StaticServer) -> list[BaseRoute]:
         admins("/api/admin/users/{user_id}/disabled", admin.set_user_disabled, ["POST"]),
         admins("/api/admin/users/{user_id}/revoke-access", admin.revoke_access, ["POST"]),
         admin_sessions("/api/admin/users/{user_id}/delete", admin.delete_user, ["POST"]),
+        # Invite links: one link for a group, each person who opens it joins
+        # as a new user (see invite_links.py). Creating one needs a session for
+        # the same reason as creating a user -- the link mints accounts and
+        # sessions. Deleting one needs a session like deleting a user. Listing
+        # and switching one off are safe for an admin key.
+        admins("/api/admin/invite-links", invite_links.list_invite_links),
+        admin_sessions("/api/admin/invite-links", invite_links.create_invite_link, ["POST"]),
+        admins("/api/admin/invite-links/{link_id}/revoke", invite_links.revoke_invite_link, ["POST"]),
+        admin_sessions("/api/admin/invite-links/{link_id}/delete", invite_links.delete_invite_link, ["POST"]),
         admin_keys("/api/admin/keys", api_keys.list_all_keys),
         admin_keys("/api/admin/keys/{key_id}/revoke", api_keys.revoke_any_key, ["POST"]),
         admin_keys("/api/admin/keys/{key_id}/delete", api_keys.delete_any_key, ["POST"]),

@@ -52,6 +52,10 @@ class User:
     role: str
     created_at: datetime
     disabled_at: datetime | None = None
+    # The optional PIN asked for when someone signs back in through an
+    # invite link. It is not a password: nothing else checks it. See
+    # app/models/pins.py.
+    pin_hash: str = ""
 
     @property
     def disabled(self) -> bool:
@@ -68,6 +72,7 @@ class User:
             "role": self.role,
             "created_at": to_iso(self.created_at),
             "disabled_at": to_iso(self.disabled_at),
+            "pin_hash": self.pin_hash,
         }
 
     @classmethod
@@ -78,6 +83,7 @@ class User:
             role=record["role"],
             created_at=from_iso(record["created_at"]),
             disabled_at=from_iso(record.get("disabled_at")),
+            pin_hash=record.get("pin_hash", ""),
         )
 
 
@@ -100,18 +106,26 @@ def create_user(store: Store, display_name: str, role: str) -> User:
 
     Ids come from the bucket's sequence and are never reused, so a deleted
     account's id can never come back as a different person."""
+    with store.transaction() as tx:
+        return create_user_tx(tx, display_name, role)
+
+
+def create_user_tx(tx: Transaction, display_name: str, role: str) -> User:
+    """create_user inside the caller's transaction, for an account that has to
+    be created together with something else -- joining through an invite link
+    creates the account, takes a place on the link, and starts the session
+    all at once."""
     if not valid_role(role):
         raise ValueError(f"invalid role: {role!r}")
-    with store.transaction() as tx:
-        user = User(
-            id=tx.next_sequence(BUCKET_USERS),
-            display_name=display_name.strip(),
-            role=role,
-            created_at=utc_now(),
-        )
-        tx.put(BUCKET_USERS, user.id, user.to_record())
-        if role == ROLE_ADMIN and owner_id_tx(tx) is None:
-            _set_owner_tx(tx, user.id)
+    user = User(
+        id=tx.next_sequence(BUCKET_USERS),
+        display_name=display_name.strip(),
+        role=role,
+        created_at=utc_now(),
+    )
+    tx.put(BUCKET_USERS, user.id, user.to_record())
+    if role == ROLE_ADMIN and owner_id_tx(tx) is None:
+        _set_owner_tx(tx, user.id)
     return user
 
 

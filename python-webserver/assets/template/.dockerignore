@@ -15,3 +15,5 @@ app/build_info.py
 **/*.pyc
 .venv/
 venv/
+.run/
+run.sh

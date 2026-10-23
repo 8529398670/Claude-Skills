@@ -1,6 +1,6 @@
 ---
 name: python-webserver
-description: Scaffold a new security-hardened Python web server on Starlette + uvicorn with link-based login (no signup, no passwords), every database record encrypted at rest in a single SQLite file, API keys that reuse the admin/user roles, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + dockerRun.sh with no docker-compose, one config.yaml that configures the server and the Docker container (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Python -- trigger on "build me a webserver/website/web app", "new Starlette app", "Python backend with logins", "I need a simple internal tool with logins", "set up a Python backend with an admin panel", "scaffold a new app with Docker", or "I don't want a signup page, just let me create accounts myself". Also use it when asked to add a login system, an admin panel, API keys or programmatic/machine access, encrypted storage, or Docker packaging to a Python web project that has none -- trigger on "let a script call my Python API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my app", or "service account for CI". Do NOT use it for a one-off script, a data pipeline, a CLI tool, or a project that already has its own auth/serving stack the user wants extended in its own style. This is the Python counterpart to the `go-webserver` skill -- pick that one whenever Go, golang, or Fiber is mentioned, or when the user needs one self-contained executable with no runtime at all.
+description: Scaffold a new security-hardened Python web server on Starlette + uvicorn with link-based login (no open signup, no passwords -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), every database record encrypted at rest in a single SQLite file, API keys that reuse the admin/user roles, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + dockerRun.sh with no docker-compose, one config.yaml that configures the server and the Docker container (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Python -- trigger on "build me a webserver/website/web app", "new Starlette app", "Python backend with logins", "I need a simple internal tool with logins", "set up a Python backend with an admin panel", "scaffold a new app with Docker", or "I don't want a signup page, just let me create accounts myself". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, encrypted storage, or Docker packaging to a Python web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Python API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my app", or "service account for CI". Do NOT use it for a one-off script, a data pipeline, a CLI tool, or a project that already has its own auth/serving stack the user wants extended in its own style. This is the Python counterpart to the `go-webserver` skill -- pick that one whenever Go, golang, or Fiber is mentioned, or when the user needs one self-contained executable with no runtime at all.
 ---
 
 # Python webserver scaffolder
@@ -17,8 +17,16 @@ project.
   random one-time login link and prints it to its own logs. Opening it
   shows a sign-in page; confirming there logs you in as admin and sets a
   secure cookie (opening alone spends nothing, so link previews cannot burn
-  it). Admins mint more links for more people. That is the entire account
-  system.
+  it). Admins mint more links for more people. That, plus the invite links
+  below, is the entire account system.
+- **Invite links for groups.** An admin can also make one multi-use link
+  (`/join/<id>.<secret>`) to post in a group chat: each person types their
+  name and joins as a `user`, up to a set number of places, until it expires
+  or is switched off. Typing a name close to one that already joined through
+  the same link offers "is this you?", which is how that person signs in on
+  their next device; a person can set a PIN so nobody else holding the link
+  can pick their name. Links die with their maker's admin rights, and
+  creating one needs a browser session -- an API key never can.
 - **Every account can mint API keys, at its own permission level.** A key
   carries the same admin/user role a person does -- one permission model, not
   two -- sent as `Authorization: Bearer <key>`. A key can never outrank the
@@ -48,6 +56,11 @@ project.
   hardcoded in HTML or JS.
 - **Mobile-first and light-mode by default.**
 - **Docker, never compose.** One hardened Alpine image, one `dockerRun.sh`.
+- **`run.sh` just makes it run** outside Docker, from the checkout: it
+  stops the copy it started last and starts a fresh one in the foreground
+  (creating or updating `.venv` first). With arguments it is the
+  admin CLI instead and leaves the running server alone
+  (`./run.sh manage reissue-login ...`).
 - **One entry point.** `python -m app` is the server, and the same command is
   the admin CLI (`python -m app manage ...`), the config tool, the
   healthcheck, and `version`.
@@ -114,7 +127,8 @@ python3 <skill_dir>/scripts/scaffold.py <target-dir> "<project-name>"
 
 This copies `assets/template/`, replacing `{{PROJECT_NAME}}` and
 `{{PROJECT_SLUG}}`, and writes the project's `config.yaml` (the documented
-defaults plus a freshly generated secret key, mode 0600). It installs
+defaults plus a freshly generated secret key, mode 0600) and
+`config.example.yaml` (the same defaults with no key, for committing). It installs
 nothing, starts nothing, and creates no users -- so nothing happens on the
 network or on disk that the user did not ask for.
 
@@ -124,6 +138,9 @@ network or on disk that the user did not ask for.
 <target-dir>/
   config.yaml                 # THE config: server, docker + secret key
                               #   (written by scaffold.py; gitignored, 0600)
+  config.example.yaml         # every default, no secret key -- commit this; a
+                              #   fresh clone copies it to config.yaml
+                              #   (`python -m app config example` regenerates it)
   requirements.txt            # pinned; every dependency ships Alpine wheels
   language.yaml               # every user-facing string in the app
   app/
@@ -145,15 +162,18 @@ network or on disk that the user did not ask for.
       language.py             # loads language.yaml, serves it as JSON
       bootstrap.py            # first-run admin + credential printing
       healthcheck.py          # `health`, the container HEALTHCHECK
-    models/                   # users.py, sessions.py, login_tokens.py, api_keys.py
+    models/                   # users.py, sessions.py, login_tokens.py, api_keys.py,
+                              #   invite_links.py, pins.py
     routes/                   # __init__.py (the URL map) + one module per group
   static/
     index.html                # placeholder account + admin UI, fully data-i18n'd
     css/style.css             # mobile-first, light default
-    js/dom.js, i18n.js, api.js, app.js, keys.js
+    js/dom.js, i18n.js, api.js, app.js, keys.js,
+      join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
     vendor/                   # self-hosted third-party libs (see its README)
   scripts/vendor.sh           # downloads a library into static/vendor/
   scripts/docker.sh           # shared by the docker scripts: build + read config
+  run.sh                      # local run: (re)starts the server; with args, the CLI
   Dockerfile, dockerBuild.sh, dockerRun.sh, .dockerignore, .gitignore
 ```
 
@@ -234,16 +254,19 @@ Do not scaffold and hand it over unverified. Actually exercise the flow:
 
 ```bash
 cd <target-dir>
-python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 # in config.yaml: server.secure_cookies: false   (plain http on localhost only)
-./.venv/bin/python -m app
+./run.sh
 ```
 
-`scaffold.py` already wrote `./config.yaml` with a generated secret key, and
-`python -m app` from the project root reads it. The startup log prints which
-config file it loaded and where state landed; `python -m app manage paths`
-reports the same without starting the server, and `python -m app config check`
-validates the file.
+`scaffold.py` already wrote `./config.yaml` with a generated secret key.
+`./run.sh` creates `.venv` and installs `requirements.txt` when needed (again
+whenever that file changes), stops the server it started last
+(`.run/server.pid`), and runs `python -m app` in the foreground, reading that
+file. Run it again after a Python change. The startup log prints which config
+file it loaded and where state landed; `./run.sh manage paths` reports the
+same without touching the server, and `./run.sh config check` validates the
+file. Any arguments make `run.sh` a one-off: it runs `python -m app` with them
+and leaves the running server alone.
 
 On a fresh database the server prints a one-time login link. Confirm, by
 actually doing it:
@@ -283,6 +306,24 @@ delete themselves (400), an admin key gets 403 from the delete route (session
 required), and B gets 403 disabling or revoking the owner. A key's owner can
 delete it (`POST /api/keys/<id>/delete`) and it gets 401 on the next request;
 deleting an account kills its keys too. `manage list-users` marks the owner.
+
+Then the invite links, because they are the one public way to create an
+account. In the admin panel make a link with 2 places and open it in a
+private window:
+
+- the page asks for a name and nothing is created until you press "Join as
+  ..."; you land signed in as a `user`,
+- a second private window typing a close spelling ("alise" for "Alice") is
+  offered Alice and can sign in as her -- set a PIN as Alice and that same
+  step now asks for it, and 5 wrong PINs give 429 `pin_locked`,
+- a third new name gets 409 `invite_link_full`, but a returning name still
+  signs in,
+- an admin is never offered, and a wrong secret, an expired link, or a
+  switched-off one all answer 404 `invite_link_invalid`,
+- an admin API key gets 403 from `POST /api/admin/invite-links` and
+  `POST /api/account/pin` (both would let a key become a session), and
+- `python -m app manage create-invite --user-id 1 --label "Test"` prints a
+  working `/join/...` path.
 
 `server.secure_cookies: false` matters locally: a `Secure` cookie is
 silently dropped over plain http, so login appears to succeed and then does
@@ -331,6 +372,7 @@ docker exec -it <project-slug> python -m app manage reissue-login --user-id 1
 docker exec -it <project-slug> python -m app manage create-key --user-id 1 --name "CI" --role admin --days 90
 docker exec -it <project-slug> python -m app manage delete-user --user-id 3 --yes
 docker exec -it <project-slug> python -m app manage transfer-owner --user-id 2
+docker exec -it <project-slug> python -m app manage create-invite --user-id 1 --label "Book club" --uses 20 --days 14
 docker exec -it <project-slug> python -m app version
 ```
 
@@ -343,8 +385,9 @@ expectations, running without Docker, and secret-key handling.
 
 Read these when the task goes past "scaffold and build features":
 
-- `references/architecture.md` -- the auth model, how API keys mirror the
-  admin/user roles and why a key can neither outrank its owner nor mint
+- `references/architecture.md` -- the auth model, invite links (who they
+  can create and sign in as, the PIN, and what a leaked one costs), how API
+  keys mirror the admin/user roles and why a key can neither outrank its owner nor mint
   another key, the owner account and who may delete whom, why credentials are
   shaped `<id>.<secret>`, which crypto is used where and why, encrypted
   records in SQLite and what they cost, why there is no control socket, the

@@ -118,9 +118,10 @@ class StaticServer:
         return await self._send(request, path)
 
     async def serve_login_page(self, request: Request) -> Response:
-        """A login link opens the ordinary app page, which sees the /login/
-        path and asks the person to confirm -- nothing is redeemed by the GET.
-        See app/routes/auth.py."""
+        """A login link (or an invite link) opens the ordinary app page,
+        which sees the /login/ (or /join/) path and asks the person to confirm
+        -- nothing is redeemed by the GET. See app/routes/auth.py and
+        app/routes/join.py."""
         path = self.resolve(self.index_file)
         if path is None or not path.is_file():
             return PlainTextResponse("Not found", status_code=404)

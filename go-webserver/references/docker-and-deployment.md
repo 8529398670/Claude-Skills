@@ -274,6 +274,34 @@ The socket lives inside the mounted data directory, so it is covered by the
 volume's permissions and never crosses the container boundary. Nothing about
 it is published to the network, and it needs no port.
 
+## Running from a checkout (run.sh)
+
+For development and internal boxes, without Docker:
+
+```bash
+./run.sh                                   # (re)start the server
+./run.sh manage reissue-login -user-id 1   # any arguments: the CLI, server untouched
+```
+
+`run.sh` always runs `go build -o ./<slug>`; Go's build cache makes that a
+near-instant no-op when nothing changed and a real rebuild when any `.go`
+file, `go.mod`, or the embedded `static/` / `language.yaml` did. The build
+happens before anything is stopped, so a compile error leaves the old server
+up. With no arguments it then stops the server it started last and runs the
+new binary in the foreground: it records its own pid in `.run/server.pid` just
+before `exec`ing the binary, and only signals that pid if its command line is
+still `<checkout>/<slug>` (SIGTERM, then SIGKILL after 15 seconds), so a stale
+pid is never mistaken for it. Running it again from another terminal is how
+you restart. With arguments it runs the binary with them and leaves the server
+alone; `manage` reaches the live server over its control socket. On a fresh
+clone with no `config.yaml` it writes one (`config init`) and stops, as
+`dockerRun.sh` does.
+
+Run from the checkout, `./static` beside `config.yaml` is served from disk, so
+frontend edits need only a page reload. Like a portable binary, it has no
+sandbox: none of Docker's read-only filesystem, dropped capabilities, or pid
+and memory limits apply.
+
 ## Portable binaries (build.sh)
 
 `./build.sh` cross-compiles a self-contained executable per platform into
