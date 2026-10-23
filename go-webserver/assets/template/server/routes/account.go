@@ -115,6 +115,36 @@ func ( handlers *Handlers ) SetPin( c fiber.Ctx ) ( err error ) {
 	return
 }
 
+// CreateMyLoginLink mints a one-time login link for the caller's own
+// account: the way to sign in on another device without asking an admin.
+// It is ReissueLogin pointed at yourself, so it has the same effect: any
+// unused link the account had stops working, and existing sessions stay
+// signed in.
+//
+// Session only (see routes.go): a login link becomes a session, so an API
+// key that could call this could turn itself into one.
+func ( handlers *Handlers ) CreateMyLoginLink( c fiber.Ctx ) ( err error ) {
+	var body csrfOnlyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	credential , token_err := models.IssueLoginToken( handlers.Store , security.UserFrom( c ).ID , handlers.Config.LoginTokenTTL )
+	if token_err != nil {
+		err = serverError( c )
+		return
+	}
+	err = c.JSON( fiber.Map{
+		"login_path":         "/login/" + credential,
+		"expires_in_seconds": int( handlers.Config.LoginTokenTTL.Seconds() ),
+	} )
+	return
+}
+
 // Logout deletes the session server-side as well as clearing the cookie, so
 // a copy of the cookie captured earlier is dead too.
 //

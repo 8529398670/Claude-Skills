@@ -84,6 +84,9 @@ def build_routes(static_server: StaticServer) -> list[BaseRoute]:
         # A session only: a PIN lets its holder sign in through an invite
         # link, so a key that could set one could turn itself into a session.
         sessions_only("/api/account/pin", account.set_pin, ["POST"]),
+        # A session only, for the same reason as every route that hands out
+        # a login link: the link becomes a session. See admin_sessions above.
+        sessions_only("/api/account/login-link", account.create_my_login_link, ["POST"]),
         signed_in("/api/logout", account.logout, ["POST"]),
         signed_in("/api/team", team.list_team),
         my_keys("/api/keys", api_keys.list_my_keys),

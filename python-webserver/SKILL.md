@@ -17,8 +17,9 @@ project.
   random one-time login link and prints it to its own logs. Opening it
   shows a sign-in page; confirming there logs you in as admin and sets a
   secure cookie (opening alone spends nothing, so link previews cannot burn
-  it). Admins mint more links for more people. That, plus the invite links
-  below, is the entire account system.
+  it). Admins mint more links for more people, and anyone signed in can
+  mint a fresh one for their own account to sign in on another device.
+  That, plus the invite links below, is the entire account system.
 - **Invite links for groups.** An admin can also make one multi-use link
   (`/join/<id>.<secret>`) to post in a group chat: each person types their
   name and joins as a `user`, up to a set number of places, until it expires
@@ -61,6 +62,9 @@ project.
   (creating or updating `.venv` first). With arguments it is the
   admin CLI instead and leaves the running server alone
   (`./run.sh manage reissue-login ...`). `run.bat` is the same on Windows.
+  Run inside the skill's own `assets/template/`, it stamps a demo project
+  into `~/.cache/python-webserver-demo/` (via `scripts/demo.py`) and runs
+  that, so the template can be tried without scaffolding anything.
 - **One entry point.** `python -m app` is the server, and the same command is
   the admin CLI (`python -m app manage ...`), the config tool, the
   healthcheck, and `version`.
@@ -294,7 +298,8 @@ The third line is the one worth reading: an admin who mints a user-scoped key
 gets `"role":"user"` back, because the effective role is the lower of the two.
 Also confirm a non-admin is refused when asking for an admin key, that a key
 cannot mint a key (403, session required), that an admin key gets 403 from
-`POST /api/admin/users` and `POST /api/admin/users/<id>/reissue-login` too
+`POST /api/admin/users` and `POST /api/admin/users/<id>/reissue-login` too,
+and any key gets 403 from `POST /api/account/login-link`
 (a login link would become a session that mints keys), and that revoking a
 key kills it on the next request. `python -m app manage list-keys` works from a shell, with
 the server running or not.

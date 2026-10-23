@@ -105,6 +105,38 @@ def write_example(target_dir: Path) -> Path:
     return example_path
 
 
+# What a ./run.sh or ./dockerRun.sh run inside the template itself can leave
+# at its top level: runtime state, build output, and the secret-bearing
+# config.yaml. None of it belongs in a new project.
+RUN_LEFTOVERS = {
+    "config.yaml", ".run", ".venv", "data", "dist",
+    "{{PROJECT_SLUG}}", "{{PROJECT_SLUG}}.exe",
+}
+CRUFT = shutil.ignore_patterns(".DS_Store", "Thumbs.db", "*.swp", "__pycache__")
+
+
+def ignore_cruft(directory: str, names: list[str]) -> set[str]:
+    ignored = set(CRUFT(directory, names))
+    if Path(directory).resolve() == TEMPLATE_DIR:
+        ignored |= RUN_LEFTOVERS.intersection(names)
+    return ignored
+
+
+# run.sh and run.bat carry a block, between these two marker lines, that
+# turns ./run.sh inside the template into a demo (see demo.py). A scaffolded
+# project is not the template, so the block is cut out of it.
+DEMO_BLOCK = re.compile(r"^[^\n]*>>> template demo[^\n]*\n.*?^[^\n]*<<< template demo[^\n]*\n", re.MULTILINE | re.DOTALL)
+
+
+def strip_demo_block(path: Path) -> None:
+    if not path.exists():
+        return
+    text = path.read_bytes().decode("utf-8")
+    stripped, count = DEMO_BLOCK.subn("", text)
+    if count:
+        path.write_bytes(stripped.encode("utf-8"))
+
+
 def main() -> None:
     if len(sys.argv) not in (3, 4):
         print(__doc__)
@@ -123,12 +155,12 @@ def main() -> None:
 
     # Skip editor/OS cruft rather than copying it into a fresh project. A
     # stray .DS_Store in the template would otherwise end up committed in
-    # every scaffolded repo.
+    # every scaffolded repo. RUN_LEFTOVERS go too, at the top level only.
     shutil.copytree(
         TEMPLATE_DIR,
         target_dir,
         dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns(".DS_Store", "Thumbs.db", "*.swp", "__pycache__"),
+        ignore=ignore_cruft,
     )
 
     replacements = {
@@ -143,6 +175,8 @@ def main() -> None:
     for path in sorted(target_dir.rglob("*")):
         if path.is_file():
             stamp(path, replacements)
+    strip_demo_block(target_dir / "run.sh")
+    strip_demo_block(target_dir / "run.bat")
 
     for script in (
         target_dir / "run.sh",

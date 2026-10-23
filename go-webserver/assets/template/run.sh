@@ -31,6 +31,17 @@
 set -euo pipefail
 cd "$( dirname "${BASH_SOURCE[0]}" )"
 
+# >>> template demo -- scaffold.py removes this block from every project.
+# This is the skill's template, not a project: its {{PLACEHOLDERS}} are not
+# filled in, so it cannot run as it is. Stamp a demo project from it instead
+# (../../scripts/demo.py, kept in a cache directory with its config and
+# database) and hand over to that project's own run.sh.
+if [ -f ../../scripts/demo.py ] && [ -f ../../scripts/scaffold.py ]; then
+  DEMO_DIR="$( python3 ../../scripts/demo.py )"
+  exec "${DEMO_DIR}/run.sh" "$@"
+fi
+# <<< template demo
+
 BINARY="$( pwd )/{{PROJECT_SLUG}}"
 RUN_DIR="$( pwd )/.run"
 PID_FILE="${RUN_DIR}/server.pid"
@@ -45,7 +56,9 @@ PID_FILE="${RUN_DIR}/server.pid"
 #
 # Version metadata is stamped the way build.sh does it, so `./run.sh version`
 # says what is running. No -s -w: this build is for debugging, not shipping.
-VERSION="$( git describe --tags --always --dirty 2>/dev/null || echo "dev" )"
+# The version is the UTC build time (2026.10.23-1412): it sorts, it says
+# when, and the commit hash is stamped separately alongside it.
+VERSION="$( date -u +%Y.%m.%d-%H%M )"
 COMMIT="$( git rev-parse --short HEAD 2>/dev/null || echo "unknown" )"
 go build -trimpath \
   -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" \

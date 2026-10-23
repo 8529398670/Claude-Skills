@@ -43,6 +43,22 @@ rem long-lived or internet-facing.
 setlocal
 cd /d "%~dp0"
 
+rem >>> template demo -- scaffold.py removes this block from every project.
+rem This is the skill's template, not a project: its {{PLACEHOLDERS}} are not
+rem filled in, so it cannot run as it is. Stamp a demo project from it instead
+rem (..\..\scripts\demo.py, kept in a cache directory with its config and
+rem database) and hand over to that project's own run.bat.
+if not exist "..\..\scripts\demo.py" goto not_template
+set "DEMO_PYTHON=python"
+where py >nul 2>&1 && set "DEMO_PYTHON=py -3"
+set "DEMO_DIR="
+for /f "delims=" %%d in ('%DEMO_PYTHON% ..\..\scripts\demo.py') do set "DEMO_DIR=%%d"
+if not defined DEMO_DIR exit /b 1
+call "%DEMO_DIR%\run.bat" %*
+exit /b %errorlevel%
+:not_template
+rem <<< template demo
+
 set "VENV=%CD%\.venv"
 set "PYTHON=%VENV%\Scripts\python.exe"
 rem The requirements.txt that was last installed successfully. Any edit to the

@@ -31,6 +31,17 @@
 set -euo pipefail
 cd "$( dirname "${BASH_SOURCE[0]}" )"
 
+# >>> template demo -- scaffold.py removes this block from every project.
+# This is the skill's template, not a project: its {{PLACEHOLDERS}} are not
+# filled in, so it cannot run as it is. Stamp a demo project from it instead
+# (../../scripts/demo.py, kept in a cache directory with its config and
+# database) and hand over to that project's own run.sh.
+if [ -f ../../scripts/demo.py ] && [ -f ../../scripts/scaffold.py ]; then
+  DEMO_DIR="$( python3 ../../scripts/demo.py )"
+  exec "${DEMO_DIR}/run.sh" "$@"
+fi
+# <<< template demo
+
 VENV="$( pwd )/.venv"
 PYTHON="${VENV}/bin/python"
 RUN_DIR="$( pwd )/.run"

@@ -45,7 +45,9 @@ build_image() {
   # Version metadata, stamped into the binary exactly as build.sh does, so
   # `docker exec <name> /app/server version` is as informative as a portable
   # binary's.
-  VERSION="$( git describe --tags --always --dirty 2>/dev/null || echo "dev" )"
+  # The version is the UTC build time (2026.10.23-1412): it sorts, it says
+  # when, and the commit hash is stamped separately alongside it.
+  VERSION="$( date -u +%Y.%m.%d-%H%M )"
   commit="$( git rev-parse --short HEAD 2>/dev/null || echo "unknown" )"
   build_date="$( date -u +%Y-%m-%dT%H:%M:%SZ )"
 

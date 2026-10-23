@@ -58,6 +58,12 @@ account:
   save_button: "Save"
   saved_notice: "Saved."
   logout_button: "Log out"
+  device_heading: "Sign in on another device"
+  device_description: "Make a one-time login link for your own account and open it on your phone or another computer. Making a new one cancels any earlier link you have not used yet; devices already signed in stay signed in."
+  device_button: "Make a login link"
+  device_link_notice: "Open this on the other device. It works once."
+  copy_button: "Copy"
+  copied_notice: "Copied."
 
 admin:
   heading: "Admin"

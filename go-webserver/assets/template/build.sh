@@ -49,7 +49,9 @@ fi
 # Version metadata, stamped into the binary and readable later with
 # `./{{PROJECT_SLUG}} version`. Being able to ask a binary what it is beats
 # guessing from a filename once a few copies are in circulation.
-VERSION="$( git describe --tags --always --dirty 2>/dev/null || echo "dev" )"
+# The version is the UTC build time (2026.10.23-1412): it sorts, it says
+# when, and the commit hash is stamped separately alongside it.
+VERSION="$( date -u +%Y.%m.%d-%H%M )"
 COMMIT="$( git rev-parse --short HEAD 2>/dev/null || echo "unknown" )"
 # The commit's own timestamp rather than "now", so building the same commit
 # twice produces the same bytes. Outside a git checkout there is no commit to

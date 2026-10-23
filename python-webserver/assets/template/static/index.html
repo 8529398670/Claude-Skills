@@ -93,6 +93,19 @@
           <button type="submit" data-i18n="account.save_button"></button>
         </form>
         <p id="rename-saved" class="notice notice-ok" data-i18n="account.saved_notice" hidden></p>
+
+        <!-- A login link for your own account, to sign in on another device.
+             Any signed-in user may mint one; see Api.createMyLoginLink. -->
+        <h3 data-i18n="account.device_heading"></h3>
+        <p class="muted" data-i18n="account.device_description"></p>
+        <button id="my-link-button" class="secondary" data-i18n="account.device_button"></button>
+        <div id="my-link-box" class="notice notice-link" hidden>
+          <p data-i18n="account.device_link_notice"></p>
+          <code id="my-link-value"></code>
+          <button id="my-link-copy-button" class="secondary" data-i18n="account.copy_button"></button>
+          <span id="my-link-copied" class="muted" data-i18n="account.copied_notice" hidden></span>
+        </div>
+
         <button id="logout-button" class="secondary" data-i18n="account.logout_button"></button>
       </div>
 

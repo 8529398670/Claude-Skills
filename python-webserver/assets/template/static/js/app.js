@@ -115,6 +115,8 @@ const App = {
 
     Dom.get( "rename-form" ).addEventListener( "submit" , this.onRename.bind( this ) );
     Dom.get( "logout-button" ).addEventListener( "click" , this.onLogout.bind( this ) );
+    Dom.get( "my-link-button" ).addEventListener( "click" , this.onMyLoginLink.bind( this ) );
+    Dom.get( "my-link-copy-button" ).addEventListener( "click" , () => Dom.copy( Dom.get( "my-link-value" ) , Dom.get( "my-link-copied" ) ) );
 
     // Each screen owns its own file and its own init(). This is the one line
     // that knows the API keys screen exists.
@@ -138,6 +140,18 @@ const App = {
       this.currentUser.display_name = value;
       Dom.text( Dom.get( "who-am-i" ) , value + " (" + this.currentUser.role + ")" );
       Dom.flash( Dom.get( "rename-saved" ) );
+    } catch ( error ) {
+      this.showError( error.message );
+    }
+  },
+
+  // A fresh one-time link for this account, to open on another device. The
+  // server only allows it from a browser session, never an API key.
+  async onMyLoginLink() {
+    try {
+      const issued = await Api.createMyLoginLink();
+      Dom.text( Dom.get( "my-link-value" ) , window.location.origin + issued.login_path );
+      Dom.show( Dom.get( "my-link-box" ) , true );
     } catch ( error ) {
       this.showError( error.message );
     }

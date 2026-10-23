@@ -44,6 +44,22 @@ rem long-lived or internet-facing.
 setlocal
 cd /d "%~dp0"
 
+rem >>> template demo -- scaffold.py removes this block from every project.
+rem This is the skill's template, not a project: its {{PLACEHOLDERS}} are not
+rem filled in, so it cannot run as it is. Stamp a demo project from it instead
+rem (..\..\scripts\demo.py, kept in a cache directory with its config and
+rem database) and hand over to that project's own run.bat.
+if not exist "..\..\scripts\demo.py" goto not_template
+set "DEMO_PYTHON=python"
+where py >nul 2>&1 && set "DEMO_PYTHON=py -3"
+set "DEMO_DIR="
+for /f "delims=" %%d in ('%DEMO_PYTHON% ..\..\scripts\demo.py') do set "DEMO_DIR=%%d"
+if not defined DEMO_DIR exit /b 1
+call "%DEMO_DIR%\run.bat" %*
+exit /b %errorlevel%
+:not_template
+rem <<< template demo
+
 set "BINARY=%CD%\{{PROJECT_SLUG}}.exe"
 set "RUN_DIR=%CD%\.run"
 set "BUILT=%RUN_DIR%\{{PROJECT_SLUG}}.exe"
@@ -60,9 +76,10 @@ rem that was already running untouched.
 rem
 rem Version metadata is stamped the way build.sh does it, so `run.bat version`
 rem says what is running. No -s -w: this build is for debugging, not shipping.
+rem The version is the UTC build time (2026.10.23-1412), like run.sh.
 set "VERSION=dev"
 set "COMMIT=unknown"
-for /f "delims=" %%v in ('git describe --tags --always --dirty 2^>nul') do set "VERSION=%%v"
+for /f "delims=" %%v in ('powershell -NoProfile -Command "(Get-Date).ToUniversalTime().ToString('yyyy.MM.dd-HHmm')" 2^>nul') do set "VERSION=%%v"
 for /f "delims=" %%c in ('git rev-parse --short HEAD 2^>nul') do set "COMMIT=%%c"
 go build -trimpath -ldflags "-X main.version=%VERSION% -X main.commit=%COMMIT%" -o "%BUILT%" .
 if errorlevel 1 exit /b 1

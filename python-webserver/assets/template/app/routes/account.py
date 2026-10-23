@@ -1,5 +1,5 @@
 """Self-service endpoints for any signed-in caller: who am I, rename myself,
-log out. The account screen itself is static/js/app.js, calling these."""
+a login link for another device, log out. The account screen itself is static/js/app.js, calling these."""
 from __future__ import annotations
 
 from starlette.requests import Request
@@ -7,7 +7,7 @@ from starlette.responses import JSONResponse, Response
 
 from app.core.encryption import BadKeyError, CipherTextError
 from app.core.security import actor_from, check_csrf, clear_session_cookie, decrypt_cookie
-from app.models import pins, sessions, users
+from app.models import login_tokens, pins, sessions, users
 from app.routes.helpers import bad_request, forbidden, get_config, get_store, read_json, run, server_error
 
 
@@ -80,6 +80,27 @@ async def set_pin(request: Request) -> Response:
     except pins.BadPinError:
         return bad_request("bad_pin")
     return JSONResponse({"ok": True, "has_pin": pin != ""})
+
+
+async def create_my_login_link(request: Request) -> Response:
+    """Mint a one-time login link for the caller's own account: the way to
+    sign in on another device without asking an admin. It is
+    admin.reissue_login pointed at yourself, so it has the same effect: any
+    unused link the account had stops working, and existing sessions stay
+    signed in.
+
+    Session only (see routes/__init__.py): a login link becomes a session, so
+    an API key that could call this could turn itself into one."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    store, cfg = get_store(request), get_config(request)
+    credential = await run(
+        login_tokens.issue_login_token, store, actor_from(request).user.id, cfg.login_token_ttl_seconds
+    )
+    return JSONResponse({"login_path": f"/login/{credential}", "expires_in_seconds": cfg.login_token_ttl_seconds})
 
 
 async def logout(request: Request) -> Response:

@@ -68,6 +68,7 @@ const Api = {
 
   rename( displayName )        { return this.post( "/api/account/rename" , { display_name: displayName } ); },
   setPin( pin )                { return this.post( "/api/account/pin" , { pin: pin } ); },
+  createMyLoginLink()          { return this.post( "/api/account/login-link" ); },
   logout()                     { return this.post( "/api/logout" ); },
   listTeam()                   { return this.request( "/api/team" ); },
   listUsers()                  { return this.request( "/api/admin/users" ); },

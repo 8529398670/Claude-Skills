@@ -23,8 +23,8 @@ Python. The image name lives in `config.yaml` too, which is why it is applied
 with `docker tag` after the build rather than passed to it. An extra tag is a
 positional argument: `./dockerBuild.sh v1.2.3`.
 
-Both stamp version metadata into the image (`git describe`, the commit, the
-build time), so `docker exec <name> python -m app version` says which build is
+Both stamp version metadata into the image (the version is the UTC build
+time, `2026.10.23-1412`, plus the commit hash), so `docker exec <name> python -m app version` says which build is
 running.
 
 ## Why there is no docker-compose

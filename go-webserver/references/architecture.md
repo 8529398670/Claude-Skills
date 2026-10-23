@@ -61,11 +61,18 @@ cost of needing an admin or shell access when someone loses their session. A
 project needing genuine self-service recovery -- email round trip, say -- has
 to add it; it is not part of the base model.
 
+Anyone already signed in can also mint a fresh link for their own account
+from the account screen ("Sign in on another device",
+`POST /api/account/login-link`), which is how a second device gets in
+without an admin. It is a reissue pointed at yourself, so it behaves exactly
+like one, and like every route that hands out a login link it needs a
+browser session: an API key cannot call it.
+
 Four operations look alike and are not:
 
 | | pending link | sessions | API keys | account |
 |---|---|---|---|---|
-| **Reissue login** (`New link`, `manage reissue-login`) | replaced | kept | kept | kept |
+| **Reissue login** (`New link`, `manage reissue-login`, or your own `Make a login link`) | replaced | kept | kept | kept |
 | **Disable** (`manage set-disabled`) | deleted | deleted | refused while disabled, restored on re-enable | kept, disabled |
 | **Revoke access** (`manage revoke-access`, `POST /api/admin/users/:id/revoke-access`) | deleted | deleted | revoked | kept, enabled |
 | **Delete** (`manage delete-user`, `POST /api/admin/users/:id/delete`) | deleted, used ones too | deleted | rows deleted | deleted, for good |
