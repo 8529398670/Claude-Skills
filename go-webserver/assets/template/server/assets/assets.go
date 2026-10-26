@@ -4,10 +4,10 @@
 // This is what lets one codebase produce two very different things without a
 // build flag or a second code path:
 //
-//   - Running from a source checkout, ./static and ./language.yaml are read
+//   - Running from a source checkout, ./static and ./config/language.yaml are read
 //     from disk. Edit a file, refresh, see the change -- the whole point of
 //     the no-store serving policy.
-//   - A binary built by build.sh has no source tree next to it, so it falls
+//   - A binary built by scripts/build.sh has no source tree next to it, so it falls
 //     back to the embedded copy and runs anywhere as a single file.
 //
 // Disk wins when it is present because that is the only case where someone
@@ -51,7 +51,7 @@ func isRegularFile( path string ) ( result bool ) {
 // Resolve prefers disk and falls back to embedded, independently for the
 // static tree and the language file. They are separate on purpose: a
 // deployment that wants the shipped UI but its own wording only has to place
-// a language.yaml next to the binary.
+// a language.yaml in its app directory.
 func Resolve( static_dir string , language_file string , embedded_static fs.FS , embedded_language []byte ) ( bundle Bundle , err error ) {
 	static_source := "embedded"
 	bundle.Static = embedded_static
@@ -64,7 +64,7 @@ func Resolve( static_dir string , language_file string , embedded_static fs.FS ,
 		// os.Root, not os.DirFS. Both re-read on every call, so the
 		// always-fresh serving behaviour survives either way -- but os.DirFS
 		// follows symlinks wherever they point, so a link in static/ to
-		// ../config.yaml would hand the secret key to any visitor. A Root
+		// ../config/config.yaml would hand the secret key to any visitor. A Root
 		// refuses to resolve anything, symlinks included, that lands outside
 		// the directory. It holds the directory open for the life of the
 		// process, so replacing static/ wholesale (rather than the files in

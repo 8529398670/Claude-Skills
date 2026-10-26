@@ -18,7 +18,7 @@ downloading a file:
 Add one with the helper, which downloads the file and prints the tag to paste:
 
 ```bash
-./scripts/vendor.sh https://cdnjs.cloudflare.com/ajax/libs/htmx.org/2.0.4/htmx.min.js
+misc/vendor.sh https://cdnjs.cloudflare.com/ajax/libs/htmx.org/2.0.4/htmx.min.js
 ```
 
 Then reference it from your HTML:

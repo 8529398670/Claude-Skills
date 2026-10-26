@@ -45,16 +45,23 @@ func ( handlers *Handlers ) inviteLinkRow( link *models.InviteLink ) ( row fiber
 }
 
 func ( handlers *Handlers ) ListInviteLinks( c fiber.Ctx ) ( err error ) {
-	links , list_err := models.ListInviteLinks( handlers.Store )
+	rows , list_err := handlers.inviteLinkRows()
 	if list_err != nil {
 		err = serverError( c )
 		return
 	}
-	rows := []fiber.Map{}
+	err = c.JSON( rows )
+	return
+}
+
+// inviteLinkRows is shared with the MCP admin_list_invite_links tool.
+func ( handlers *Handlers ) inviteLinkRows() ( rows []fiber.Map , err error ) {
+	links , err := models.ListInviteLinks( handlers.Store )
+	if err != nil { return }
+	rows = []fiber.Map{}
 	for _ , link := range links {
 		rows = append( rows , handlers.inviteLinkRow( link ) )
 	}
-	err = c.JSON( rows )
 	return
 }
 

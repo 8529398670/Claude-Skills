@@ -29,17 +29,22 @@ type setDisabledRequest struct {
 // ListUsers marks the owner on its row, so the UI can tell which delete,
 // disable, and revoke buttons the server would refuse -- see models/owner.go.
 func ( handlers *Handlers ) ListUsers( c fiber.Ctx ) ( err error ) {
-	users , list_err := models.ListUsers( handlers.Store )
+	rows , list_err := handlers.userRows()
 	if list_err != nil {
 		err = serverError( c )
 		return
 	}
-	owner_id , owner_err := models.OwnerID( handlers.Store )
-	if owner_err != nil {
-		err = serverError( c )
-		return
-	}
-	rows := []fiber.Map{}
+	err = c.JSON( rows )
+	return
+}
+
+// userRows is shared with the MCP admin_list_users tool.
+func ( handlers *Handlers ) userRows() ( rows []fiber.Map , err error ) {
+	users , err := models.ListUsers( handlers.Store )
+	if err != nil { return }
+	owner_id , err := models.OwnerID( handlers.Store )
+	if err != nil { return }
+	rows = []fiber.Map{}
 	for _ , user := range users {
 		rows = append( rows , fiber.Map{
 			"id":           user.ID,
@@ -49,7 +54,6 @@ func ( handlers *Handlers ) ListUsers( c fiber.Ctx ) ( err error ) {
 			"owner":        user.ID == owner_id,
 		} )
 	}
-	err = c.JSON( rows )
 	return
 }
 
@@ -153,27 +157,8 @@ func ( handlers *Handlers ) SetUserDisabled( c fiber.Ctx ) ( err error ) {
 		err = badRequest( c , "invalid user id" )
 		return
 	}
-	if _ , get_err := models.GetUser( handlers.Store , user_id ); get_err != nil {
-		err = notFound( c , "no such user" )
-		return
-	}
-
-	// Locking yourself out is unrecoverable without shell access, so it is
-	// worth one guard rail even though an admin could still disable a peer.
-	if body.Disabled && user_id == security.UserFrom( c ).ID {
-		err = badRequest( c , "you cannot disable your own account" )
-		return
-	}
-
-	// Disabling also deletes the account's sessions and unused login links,
-	// in the same transaction -- see models.SetUserDisabled. The owner cannot
-	// be disabled; that check is in the model so every route gets it.
-	if disable_err := models.SetUserDisabled( handlers.Store , user_id , body.Disabled ); disable_err != nil {
-		if errors.Is( disable_err , models.ErrOwnerProtected ) {
-			err = forbidden( c , "the owner account cannot be disabled" )
-			return
-		}
-		err = serverError( c )
+	if refused := handlers.setUserDisabled( security.UserFrom( c ).ID , user_id , body.Disabled ); refused != nil {
+		err = refused.send( c )
 		return
 	}
 	err = c.JSON( fiber.Map{ "ok": true } )
@@ -201,26 +186,9 @@ func ( handlers *Handlers ) RevokeAccess( c fiber.Ctx ) ( err error ) {
 		err = badRequest( c , "invalid user id" )
 		return
 	}
-	if _ , get_err := models.GetUser( handlers.Store , user_id ); get_err != nil {
-		err = notFound( c , "no such user" )
-		return
-	}
-	// Same guard rail as disabling: revoking your own access signs you out
-	// with no link to get back in.
-	if user_id == security.UserFrom( c ).ID {
-		err = badRequest( c , "you cannot revoke your own access" )
-		return
-	}
-
-	// The owner is refused here (allow_owner false). Only an operator with
-	// shell access may cut the owner off -- see models.RevokeAllCredentials.
-	revoked , revoke_err := models.RevokeAllCredentials( handlers.Store , user_id , false )
-	if revoke_err != nil {
-		if errors.Is( revoke_err , models.ErrOwnerProtected ) {
-			err = forbidden( c , "the owner account's access cannot be revoked" )
-			return
-		}
-		err = serverError( c )
+	revoked , refused := handlers.revokeAccess( security.UserFrom( c ).ID , user_id )
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
 	err = c.JSON( fiber.Map{ "ok": true , "revoked": revoked } )
@@ -267,6 +235,79 @@ func ( handlers *Handlers ) DeleteUser( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "only the owner can delete an admin account" )
 	default:
 		err = serverError( c )
+	}
+	return
+}
+
+// refusal is a rule saying no, kept apart from how it is delivered: the HTTP
+// handlers send it as a status and an error body, the MCP tools as a tool
+// error with the same words. Writing the rule once is what keeps the two
+// doors from drifting apart.
+type refusal struct {
+	status  int
+	message string
+}
+
+func ( refused *refusal ) send( c fiber.Ctx ) ( err error ) {
+	if refused.status >= 500 {
+		err = serverError( c )
+		return
+	}
+	err = c.Status( refused.status ).JSON( fiber.Map{ "error": refused.message } )
+	return
+}
+
+// setUserDisabled carries every rule for switching an account off or on, for
+// SetUserDisabled and the MCP admin_set_user_disabled tool.
+func ( handlers *Handlers ) setUserDisabled( self_id uint64 , user_id uint64 , disabled bool ) ( refused *refusal ) {
+	if _ , get_err := models.GetUser( handlers.Store , user_id ); get_err != nil {
+		refused = &refusal{ fiber.StatusNotFound , "no such user" }
+		return
+	}
+
+	// Locking yourself out is unrecoverable without shell access, so it is
+	// worth one guard rail even though an admin could still disable a peer.
+	if disabled && user_id == self_id {
+		refused = &refusal{ fiber.StatusBadRequest , "you cannot disable your own account" }
+		return
+	}
+
+	// Disabling also deletes the account's sessions and unused login links,
+	// in the same transaction -- see models.SetUserDisabled. The owner cannot
+	// be disabled; that check is in the model so every route gets it.
+	if disable_err := models.SetUserDisabled( handlers.Store , user_id , disabled ); disable_err != nil {
+		if errors.Is( disable_err , models.ErrOwnerProtected ) {
+			refused = &refusal{ fiber.StatusForbidden , "the owner account cannot be disabled" }
+			return
+		}
+		refused = &refusal{ fiber.StatusInternalServerError , "internal error" }
+	}
+	return
+}
+
+// revokeAccess carries every rule for cutting an account's credentials off,
+// for RevokeAccess and the MCP admin_revoke_access tool.
+func ( handlers *Handlers ) revokeAccess( self_id uint64 , user_id uint64 ) ( revoked models.Revoked , refused *refusal ) {
+	if _ , get_err := models.GetUser( handlers.Store , user_id ); get_err != nil {
+		refused = &refusal{ fiber.StatusNotFound , "no such user" }
+		return
+	}
+	// Same guard rail as disabling: revoking your own access signs you out
+	// with no link to get back in.
+	if user_id == self_id {
+		refused = &refusal{ fiber.StatusBadRequest , "you cannot revoke your own access" }
+		return
+	}
+
+	// The owner is refused here (allow_owner false). Only an operator with
+	// shell access may cut the owner off -- see models.RevokeAllCredentials.
+	revoked , revoke_err := models.RevokeAllCredentials( handlers.Store , user_id , false )
+	if revoke_err != nil {
+		if errors.Is( revoke_err , models.ErrOwnerProtected ) {
+			refused = &refusal{ fiber.StatusForbidden , "the owner account's access cannot be revoked" }
+			return
+		}
+		refused = &refusal{ fiber.StatusInternalServerError , "internal error" }
 	}
 	return
 }

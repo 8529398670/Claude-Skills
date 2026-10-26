@@ -7,7 +7,7 @@ checkout or a venv sees an empty layout and takes every path from config.yaml,
 while the image always sees the paths it was built to be mounted into.
 
 These are not settings because they are not choices -- they are the paths
-dockerRun.sh mounts into. Pinning them in the image rather than passing them
+docker/run.sh mounts into. Pinning them in the image rather than passing them
 through ENV or flags means `docker exec <name> python -m app manage ...` finds
 the same config and database as the server with nothing extra to type, and a
 host-oriented server.app_dir in the shared config.yaml cannot point the

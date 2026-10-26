@@ -29,7 +29,7 @@ const Invites = {
   },
 
   async onCopy() {
-    await Dom.copy( Dom.get( "invite-link-value" ) , Dom.get( "invite-copied-notice" ) );
+    await Dom.copy( Dom.get( "invite-link-value" ) );
   },
 
   status( link ) {

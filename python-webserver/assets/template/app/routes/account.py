@@ -2,11 +2,15 @@
 a login link for another device, log out. The account screen itself is static/js/app.js, calling these."""
 from __future__ import annotations
 
+from typing import Any
+
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.core.config import Config
+from app.core.db import Store
 from app.core.encryption import BadKeyError, CipherTextError
-from app.core.security import actor_from, check_csrf, clear_session_cookie, decrypt_cookie
+from app.core.security import Actor, actor_from, check_csrf, clear_session_cookie, decrypt_cookie
 from app.models import login_tokens, pins, sessions, users
 from app.routes.helpers import bad_request, forbidden, get_config, get_store, read_json, run, server_error
 
@@ -22,11 +26,16 @@ async def me(request: Request) -> Response:
     rare caller that needs to tell the two apart. Reporting the account's role
     as "role" would have a client believe it has permissions the server will
     refuse to act on."""
-    actor = actor_from(request)
+    return JSONResponse(await run(me_row, get_store(request), get_config(request), actor_from(request)))
+
+
+def me_row(store: Store, cfg: Config, actor: Actor) -> dict[str, Any]:
+    """me's answer, shared with the MCP whoami tool so the two cannot describe
+    the same caller differently."""
     # is_owner tells the UI which account-management buttons to offer; the
     # server checks ownership again on every request that depends on it.
-    owner_id = await run(users.get_owner_id, get_store(request))
-    payload = {
+    owner_id = users.get_owner_id(store)
+    payload: dict[str, Any] = {
         "authenticated": True,
         "id": actor.user.id,
         "display_name": actor.user.display_name,
@@ -35,7 +44,7 @@ async def me(request: Request) -> Response:
         "is_owner": actor.user.id == owner_id,
         "has_pin": pins.has_pin(actor.user),
         "auth": actor.method,
-        "api_keys_enabled": get_config(request).api_keys_enabled,
+        "api_keys_enabled": cfg.api_keys_enabled,
     }
     # Only a session has a CSRF token. A key-authenticated request has no
     # ambient credential to protect, so there is nothing to hand back -- see
@@ -45,7 +54,7 @@ async def me(request: Request) -> Response:
     if actor.api_key is not None:
         payload["api_key_id"] = actor.api_key.id
         payload["api_key_name"] = actor.api_key.name
-    return JSONResponse(payload)
+    return payload
 
 
 async def rename(request: Request) -> Response:

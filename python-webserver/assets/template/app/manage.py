@@ -277,7 +277,7 @@ def command_create_invite(store: db.Store, cfg: config.Config, args: argparse.Na
     if issued is None:
         raise ManageError(f"no user with id {args.user_id}")
     credential, link = issued
-    bootstrap.print_invite_link(f"{link.label!r}, {link.max_uses} places", credential, format_time(link.expires_at))
+    bootstrap.print_invite_link(cfg, f"{link.label!r}, {link.max_uses} places", credential, format_time(link.expires_at))
 
 
 def format_time(value: datetime | None, absent: str = "never") -> str:
@@ -334,6 +334,7 @@ def command_create_key(store: db.Store, cfg: config.Config, args: argparse.Names
     except api_keys.APIKeyError as error:
         raise ManageError(str(error)) from None
     bootstrap.print_api_key(
+        cfg,
         f"{key.role}-scoped {key.name!r} for #{owner.id} {owner.display_name!r}",
         credential,
         format_time(key.expires_at),
@@ -360,12 +361,15 @@ def command_paths(cfg: config.Config) -> None:
     can only settle by reading the source or the startup log."""
 
     def note(path: str) -> str:
-        return "" if Path(path).exists() else "  (absent -- optional)"
+        return "" if Path(path).exists() else "  (absent -- the bundled copy is used)"
 
     print(f"{'config':<14} {cfg.config_file}  (holds the secret key)")
+    print(f"{'project dir':<14} {cfg.project_dir}  (relative paths in the config start here)")
+    print(f"{'url':<14} {cfg.url}  (from {cfg.url_source})")
     print(f"{'app dir':<14} {cfg.app_dir}")
     print(f"{'database':<14} {cfg.database_path}  (plus -wal and -shm files while in use)")
     print(f"{'storage':<14} {cfg.storage_dir}")
+    print(f"{'static':<14} {cfg.static_dir}{note(cfg.static_dir)}")
     print(f"{'language':<14} {cfg.language_file}{note(cfg.language_file)}")
     if cfg.config_warning:
         print(f"{'warning':<14} {cfg.config_warning}")
@@ -374,7 +378,7 @@ def command_paths(cfg: config.Config) -> None:
     # cover, so say which case this is rather than leaving it to be worked out
     # from the paths above.
     print("")
-    print("Change any of these in config.yaml (server.app_dir moves the app dir).")
+    print(f"Change any of these in {cfg.config_file} (server.app_dir moves the app dir).")
     if cfg.config_file.parent == cfg.app_dir:
         print("Back up the app dir as a unit -- app.db is unreadable without the key in config.yaml.")
     else:

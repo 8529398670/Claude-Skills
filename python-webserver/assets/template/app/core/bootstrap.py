@@ -47,36 +47,37 @@ def ensure_first_admin(store: Store, cfg: Config, display_name: str = "Admin") -
 
 
 def print_login_link(cfg: Config, label: str, credential: str) -> None:
-    """The one moment a login credential is ever visible. It is shown as a path
-    because the server genuinely does not know its public origin -- behind a
-    reverse proxy it sees an internal address, and printing a confidently
-    wrong URL is worse than printing an obviously partial one."""
+    """The one moment a login credential is ever visible, as one full URL you
+    can click. The address is server.public_url when set; without it the
+    server only knows its own listen address, which the note under it says
+    rather than leaving a confidently wrong host unexplained."""
     lines = [
         RULE,
         f"  ONE-TIME LOGIN LINK -- {label}",
         RULE,
-        f"  /login/{credential}",
+        f"  {cfg.url}/login/{credential}",
         RULE,
-        f"  Valid once, for {describe_seconds(cfg.login_token_ttl_seconds)}. Prepend your real scheme and host, e.g.",
-        f"    https://your-host.example.com/login/{credential}",
+        f"  Valid once, for {describe_seconds(cfg.login_token_ttl_seconds)}.",
+        _link_note(cfg),
         "  It is not stored anywhere and cannot be shown again -- if you lose",
-        "  it, mint another with: python -m app manage reissue-login --user-id <id>",
+        "  it, mint another with scripts/login.sh (or: python -m app manage",
+        "  reissue-login --user-id <id>).",
         RULE,
     ]
     print("\n".join(lines), flush=True)
 
 
-def print_invite_link(label: str, credential: str, expires: str) -> None:
+def print_invite_link(cfg: Config, label: str, credential: str, expires: str) -> None:
     """Show a new invite link once. Like a login link it is stored only as a
     hash, so this is the only time it can be copied."""
     lines = [
         RULE,
         f"  INVITE LINK -- {label}",
         RULE,
-        f"  /join/{credential}",
+        f"  {cfg.url}/join/{credential}",
         RULE,
-        f"  Works until {expires}. Prepend your real scheme and host, e.g.",
-        f"    https://your-host.example.com/join/{credential}",
+        f"  Works until {expires}.",
+        _link_note(cfg),
         "  Anyone holding it can join, so share it only where you mean to.",
         "  It cannot be shown again; switch it off in the admin panel.",
         RULE,
@@ -84,10 +85,10 @@ def print_invite_link(label: str, credential: str, expires: str) -> None:
     print("\n".join(lines), flush=True)
 
 
-def print_api_key(label: str, credential: str, expires: str) -> None:
+def print_api_key(cfg: Config, label: str, credential: str, expires: str) -> None:
     """The one moment an API key is ever visible. Unlike a login link this is
-    a complete credential, not a URL, so there is no host to guess at -- it
-    goes in an Authorization header."""
+    a complete credential, not a URL; the example request uses the same
+    address the links do."""
     lines = [
         RULE,
         f"  API KEY -- {label}",
@@ -96,9 +97,16 @@ def print_api_key(label: str, credential: str, expires: str) -> None:
         RULE,
         f"  Expires: {expires}",
         "  Send it as a header:",
-        f'    curl -H "Authorization: Bearer {credential}" https://your-host.example.com/api/me',
+        f'    curl -H "Authorization: Bearer {credential}" {cfg.url}/api/me',
+        _link_note(cfg),
         "  It is not stored anywhere and cannot be shown again. If it leaks,",
         "  revoke it: python -m app manage revoke-key --key-id <id>",
         RULE,
     ]
     print("\n".join(lines), flush=True)
+
+
+def _link_note(cfg: Config) -> str:
+    """Where the address in a printed link came from, so a link built from
+    127.0.0.1 is not mistaken for one other people can open."""
+    return f"  Address from {cfg.url_source}."

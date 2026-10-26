@@ -69,7 +69,7 @@ class StaticServer:
 
         Every file this server sends comes through here, the index.html
         fallback included -- a path built by hand and served without this
-        check is how a symlinked static/index.html pointing at ../config.yaml
+        check is how a symlinked static/index.html pointing at ../config/config.yaml
         would reach a visitor. Static content should still be writable only by
         whoever deploys the app: the check runs before the read, so a writer
         able to swap a file for a symlink between the two could still win."""

@@ -1,10 +1,11 @@
 """`python -m app config ...` -- create, check, or read config.yaml.
 
-These exist so that nothing else has to parse YAML. dockerRun.sh evals the
-output of `config shell docker`, which means the script gets the same
-defaults, the same strict decoding, and the same validation as the server --
-a typo in the docker section fails the deploy before anything starts, instead
-of being ignored by a second, looser parser.
+These exist so that nothing else has to parse YAML. The scripts in scripts/
+and docker/ eval the output of `config shell server|docker`, which means they
+get the same defaults, the same strict decoding, the same validation and the
+same resolved paths as the server -- a typo fails the deploy before anything
+starts, instead of being ignored by a second, looser parser, and what a
+script prints is what the server will do.
 """
 from __future__ import annotations
 
@@ -17,18 +18,22 @@ from app.core import config
 USAGE = f"""config -- create, check, or read config.yaml
 
 Usage:
-  init  [--file ./config.yaml]       write a new config.yaml with a fresh secret
-                                     key (--file - prints it instead)
-  example [--file ./config.example.yaml]
+  init  [--file ./config/config.yaml]
+                                     write a new config.yaml with a fresh
+                                     secret key (--file - prints it instead)
+  example [--file ./config/config.example.yaml]
                                      write the committed example: every
                                      default, no secret key (--file - prints it)
   check [--file path]                validate the config in use and say which
                                      file it is
-  shell [--file path] docker         print the docker section as shell
-                                     assignments, for dockerRun.sh to eval
+  shell [--file path] [--format sh|bat] server|docker
+                                     print one section as assignments for the
+                                     scripts to read: sh (quoted, for eval) or
+                                     bat (plain key=value, for for /f).
+                                     server is every resolved path and the URL
 
 Without --file, the file is found the way the server finds it:
-  ./config.yaml, then ~/.config/{config.APP_SLUG}/config.yaml
+  ./config/config.yaml, then ~/.config/{config.APP_SLUG}/config.yaml
 """
 
 
@@ -38,17 +43,18 @@ def run(arguments: list[str]) -> None:
     commands = parser.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="write a new config.yaml with a fresh secret key")
-    init.add_argument("--file", default=config.CONFIG_FILE_NAME, help="where to write it; - for stdout")
+    init.add_argument("--file", default=str(Path(config.CONFIG_DIR_NAME) / config.CONFIG_FILE_NAME), help="where to write it; - for stdout")
 
     example = commands.add_parser("example", help="write config.example.yaml: every default, no secret key")
-    example.add_argument("--file", default=config.EXAMPLE_FILE_NAME, help="where to write it; - for stdout")
+    example.add_argument("--file", default=str(Path(config.CONFIG_DIR_NAME) / config.EXAMPLE_FILE_NAME), help="where to write it; - for stdout")
 
     check = commands.add_parser("check", help="validate the config in use")
     check.add_argument("--file", default="", help="config file to check (default: the one in use)")
 
     shell = commands.add_parser("shell", help="print one section as shell assignments")
     shell.add_argument("--file", default="", help="config file to read (default: the one in use)")
-    shell.add_argument("section", choices=["docker"])
+    shell.add_argument("--format", choices=["sh", "bat"], default="sh", help="sh (single-quoted, for eval) or bat (plain key=value)")
+    shell.add_argument("section", choices=["server", "docker"])
 
     args = parser.parse_args(arguments)
     {"init": command_init, "example": command_example, "check": command_check, "shell": command_shell}[args.command](args)
@@ -90,7 +96,7 @@ def command_check(args: argparse.Namespace) -> None:
     if not found:
         if args.file:
             raise config.ConfigError(f"{path} does not exist")
-        print(f"no config.yaml yet -- the server will create {path} on first run")
+        print(f"no config.yaml yet -- the server will create {path} on first run (scripts/run.sh writes ./config/config.yaml instead)")
         return
     config.check_secret_key(file, path)
     print(f"ok  {path}")
@@ -105,29 +111,68 @@ def shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\\''") + "'"
 
 
+def _flag(value: bool) -> str:
+    return "true" if value else "false"
+
+
 def command_shell(args: argparse.Namespace) -> None:
-    file, _, _ = pick_file(args.file)
-    docker = file.docker
-    # The full -p value is assembled here so the script does not have to know
-    # that an IPv6 address needs brackets.
-    bind = f"[{docker.bind_address}]" if ":" in docker.bind_address else docker.bind_address
-    lines = [
-        ("docker_image", docker.image),
-        ("docker_container", docker.container),
-        ("docker_bind_address", docker.bind_address),
-        ("docker_host_port", str(docker.host_port)),
-        ("docker_publish", f"{bind}:{docker.host_port}:{file.server.port}"),
-        ("docker_data_dir", docker.data_dir),
-        ("docker_restart", docker.restart),
-        ("docker_memory", docker.memory),
-        ("docker_cpus", docker.cpus),
-        ("docker_pids_limit", str(docker.pids_limit)),
-        ("docker_tmpfs_size", docker.tmpfs_size),
-        ("server_port", str(file.server.port)),
-        ("server_secure_cookies", "true" if file.server.secure_cookies else "false"),
-        ("server_trust_proxy", "true" if file.server.trust_proxy else "false"),
-    ]
+    file, path, found = pick_file(args.file)
+    path = path.absolute()
+    if args.section == "server":
+        # What the server would use, resolved exactly as load() resolves it,
+        # without creating anything. The scripts print these instead of
+        # guessing, so what they say is what will happen.
+        paths = config.resolve_paths(file, path)
+        url, url_source = config.server_url(file)
+        lines = [
+            ("config_file", str(path)),
+            ("config_exists", _flag(found)),
+            ("project_dir", str(paths.project_dir)),
+            ("app_dir", str(paths.app_dir)),
+            ("database", str(paths.database_path)),
+            ("database_exists", _flag(paths.database_path.is_file())),
+            ("static_dir", paths.static_dir),
+            ("static_on_disk", _flag(bool(paths.static_dir) and Path(paths.static_dir).is_dir())),
+            ("language_file", paths.language_file),
+            ("language_on_disk", _flag(bool(paths.language_file) and Path(paths.language_file).is_file())),
+            ("host", file.server.host),
+            ("port", str(file.server.port)),
+            ("url", url),
+            ("url_source", url_source),
+            ("public_url", file.server.public_url),
+            ("secure_cookies", _flag(file.server.secure_cookies)),
+            ("trust_proxy", _flag(file.server.trust_proxy)),
+        ]
+    else:
+        docker = file.docker
+        # The full -p value is assembled here so the script does not have to
+        # know that an IPv6 address needs brackets.
+        bind = f"[{docker.bind_address}]" if ":" in docker.bind_address else docker.bind_address
+        url, url_source = config.docker_url(file)
+        lines = [
+            ("docker_image", docker.image),
+            ("docker_container", docker.container),
+            ("docker_bind_address", docker.bind_address),
+            ("docker_host_port", str(docker.host_port)),
+            ("docker_publish", f"{bind}:{docker.host_port}:{file.server.port}"),
+            ("docker_data_dir", docker.data_dir),
+            ("docker_restart", docker.restart),
+            ("docker_memory", docker.memory),
+            ("docker_cpus", docker.cpus),
+            ("docker_pids_limit", str(docker.pids_limit)),
+            ("docker_tmpfs_size", docker.tmpfs_size),
+            ("server_port", str(file.server.port)),
+            ("server_secure_cookies", _flag(file.server.secure_cookies)),
+            ("server_trust_proxy", _flag(file.server.trust_proxy)),
+            ("docker_url", url),
+            ("docker_url_source", url_source),
+        ]
     # Never the secret key: nothing a script does needs it, and this output
     # tends to end up in terminal scrollback and CI logs.
     for name, value in lines:
-        print(f"{name}={shell_quote(value)}")
+        if args.format == "bat":
+            # cmd has no quoting to undo; for /f "tokens=1,* delims==" splits
+            # on the first = and keeps the rest of the line as the value.
+            sys.stdout.write(f"{name}={value.replace(chr(13), ' ').replace(chr(10), ' ')}\r\n")
+        else:
+            print(f"{name}={shell_quote(value)}")

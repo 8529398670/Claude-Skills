@@ -55,7 +55,7 @@ func SecurityHeaders( cfg *config.Config ) ( handler fiber.Handler ) {
 }
 
 // RateLimit is a per-process, in-memory limiter. That is exactly right for
-// the single container dockerRun.sh builds. Run more than one replica and the
+// the single container docker/run.sh builds. Run more than one replica and the
 // counters stop being shared, so each replica would allow the full budget --
 // move to a shared store (limiter.Config.Storage) at that point rather than
 // assuming the limit still holds.

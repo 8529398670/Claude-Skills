@@ -21,10 +21,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-# The directory holding app/, static/, and language.yaml.
+# The directory holding app/, static/, and config/language.yaml.
 CODE_ROOT = Path(__file__).resolve().parents[2]
 BUNDLED_STATIC = CODE_ROOT / "static"
-BUNDLED_LANGUAGE = CODE_ROOT / "language.yaml"
+BUNDLED_LANGUAGE = CODE_ROOT / "config" / "language.yaml"
 
 
 @dataclass(frozen=True)

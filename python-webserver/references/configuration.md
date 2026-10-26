@@ -23,17 +23,17 @@ adding a setting or writing a file anywhere.
 
 ```yaml
 app:     name
-server:  host, port, app_dir, static_dir, language_file, secret_key,
+server:  host, port, public_url, app_dir, static_dir, language_file, secret_key,
          encrypt_at_rest, secure_cookies, cookie_name, trust_proxy,
          trusted_proxies, proxy_header, body_limit_bytes, rate_limit_max,
-         rate_limit_window_seconds
+         rate_limit_window_seconds, mcp
 auth:    session_ttl_seconds, login_token_ttl_seconds, api_keys,
          api_key_ttl_seconds
 docker:  image, container, bind_address, host_port, data_dir, restart,
          memory, cpus, pids_limit, tmpfs_size
 ```
 
-The server, `manage`, `run.sh`, `run.bat`, `dockerRun.sh`, and `dockerBuild.sh` all read this one
+The server, `manage`, everything in `scripts/` and everything in `docker/` all read this one
 file. Nothing reads an environment variable for configuration: not
 `app/core/config.py`, not the scripts, and the container is started with no
 `-e` flags from an image with no `ENV`. uvicorn is started by `python -m app`
@@ -55,19 +55,21 @@ of the one config file should not depend on a variable.
 
 First match wins (`app.core.config.locate`):
 
-1. `/app/config.yaml` -- only in the container image, which pins it (see
-   [In containers](#in-containers))
-2. `./config.yaml` -- a source checkout; also what `run.sh`, `run.bat`, and
-   `dockerRun.sh` read
+1. `/app/config/config.yaml` -- only in the container image, which pins it
+   (see [In containers](#in-containers))
+2. `./config/config.yaml` -- a source checkout; also what every script in
+   `scripts/` and `docker/` reads
 3. `~/.config/<slug>/config.yaml` -- anywhere else
 
 If none exists, the server (and `manage`) **create the third one** from the
 defaults with a fresh secret key at mode 0600, and say so in the startup log.
 
-`scaffold.py` writes `./config.yaml` for a new project. A fresh clone has none,
-because it is gitignored: `python -m app config init` writes one, and the
-first `./dockerRun.sh` does the same and then stops so the file can be
-reviewed. (Run `python -m app` on a fresh clone without doing either and it
+`scaffold.py` writes `config/config.yaml` for a new project. A fresh clone has
+none, because it is gitignored: `python -m app config init` writes one, and
+the first `scripts/run.sh` or `docker/run.sh` does the same and then stops so
+the file can be reviewed -- saying which URL it will serve and, when that URL
+is plain `http://`, which line to change so `secure_cookies` does not
+silently break sign-in. (Run `python -m app` on a fresh clone without doing either and it
 creates `~/.config/<slug>/config.yaml` instead -- a working setup, just not
 the one beside the code.)
 
@@ -79,7 +81,7 @@ them, and an empty `secret_key`. Someone on a fresh clone can read it to see
 every setting, or copy it into place:
 
 ```bash
-cp config.example.yaml config.yaml && chmod 600 config.yaml
+cp config/config.example.yaml config/config.yaml && chmod 600 config/config.yaml
 openssl rand -hex 32        # paste into server.secret_key
 ```
 
@@ -89,16 +91,54 @@ than running on a shared secret. `config init` is still the one-step way --
 it writes the same file with a key already in it.
 
 The example is generated, never edited by hand: it is
-`app/core/example_header.yaml` (the copy-me note) followed by
-`defaults.yaml`. `scaffold.py` writes it on every scaffold, and
+`config/example_header.yaml` (the copy-me note) followed by
+`config/defaults.yaml`. `scaffold.py` writes it on every scaffold, and
 `python -m app config example` rewrites it after a default changes, so it
 cannot drift from what the server actually uses.
 
-Relative paths in `server:` resolve against the directory holding
-`config.yaml`, so the same file means the same thing whatever directory the
-process was started from. Relative paths in `docker:` resolve against the
-project directory (the scripts' directory, which is also where `config.yaml`
-lives).
+### Relative paths: the project directory
+
+Every relative path in the file resolves against one place, the **project
+directory** (`config.project_dir_for`):
+
+- when `config.yaml` sits in a folder named `config/` -- a checkout, or
+  `/app/config/` in the image -- it is the folder around that, so
+  `static_dir: ./static` and `data_dir: ./data` mean the project's `static/`
+  and `data/`;
+- otherwise (`~/.config/<slug>/config.yaml`) it is the folder holding
+  `config.yaml`.
+
+So the same file means the same thing whatever directory a process was
+started from. The scripts `cd` to the project root before anything else,
+which is where `docker:` paths land too.
+
+### What the scripts are told
+
+The scripts never parse YAML or work a path out themselves. They ask the app,
+which resolves everything exactly the way the server does:
+
+```bash
+scripts/run.sh config shell server   # config_file, project_dir, app_dir,
+                                     # database(+_exists), static_dir(+_on_disk),
+                                     # language_file, host, port, url,
+                                     # url_source, secure_cookies, ...
+scripts/run.sh config shell docker   # docker_* values + docker_url
+python -m app config shell --format bat server   # plain key=value, for the .bat files
+```
+
+`sh` output is single-quoted for `eval`; `bat` output is unquoted for
+`for /f "tokens=1,* delims=="`. Neither ever includes the secret key.
+
+### server.public_url: the address in printed links
+
+Login, invite and API-key links are printed as one full URL. The server
+cannot see what sits in front of it, so it takes the origin from
+`server.public_url` (e.g. `https://app.example.com`; validated as a bare
+http(s) origin, no path). Empty, it falls back to the listen address --
+`http://server.host:server.port`, a wildcard host shown as `127.0.0.1` -- or,
+inside the container, to `http://docker.bind_address:docker.host_port`. Every
+printed link says which of those it used, so a `127.0.0.1` link is not
+mistaken for one other people can open.
 
 Ask which file is in use, without starting the server:
 
@@ -109,7 +149,7 @@ python -m app manage paths        # the config file, app dir, database, storage
 
 ## Defaults and strict validation
 
-Defaults are not written in Python. They live in `app/core/defaults.yaml`,
+Defaults are not written in Python. They live in `config/defaults.yaml`,
 which ships with the code, documents every key, and is exactly what
 `config init` writes out (with the key filled in). A `config.yaml` is decoded
 *on top of* it, so a key you leave out takes the value shown there, and a
@@ -158,10 +198,10 @@ else -- is applied as a tag after the build.
 `server.encrypt_at_rest` on (the default), every record written to the
 database. It is 64 hex characters, generated whenever a `config.yaml` is
 created (`scaffold.py`, `config init`, a first run with no config anywhere, a
-fresh `dockerRun.sh`).
+first `scripts/run.sh` or `docker/run.sh`).
 
 That makes **`config.yaml` itself a secret**: it is written at mode 0600, it
-is in `.gitignore` and `.dockerignore`, and the server logs a warning on every
+is in `.gitignore` and `docker/Dockerfile.dockerignore`, and the server logs a warning on every
 start if it is readable by every user. Never commit it and never bake it into
 an image.
 
@@ -179,7 +219,7 @@ of `app.db`, a backup that captured only the database file -- but not someone
 who takes the whole directory. Docker keeps them apart: `config.yaml` stays in
 the project directory and is mounted separately from the data directory, so a
 leaked backup of `./data` is not enough to read it. Outside Docker you get the
-same separation by keeping `./config.yaml` in the project (or setting
+same separation by keeping `config/config.yaml` in the project (or setting
 `server.app_dir` to somewhere other than the directory holding it).
 
 Losing the key loses the data. There is no recovery, and no in-place
@@ -265,8 +305,8 @@ template's `-tags container`. That file exists nowhere else (it is in
 
 | Pinned | Why |
 |---|---|
-| config file `/app/config.yaml` | where `dockerRun.sh` mounts `./config.yaml`, read-only |
-| app dir `/app/data` | where `dockerRun.sh` mounts `docker.data_dir`, the only writable mount |
+| config file `/app/config/config.yaml` | where `docker/run.sh` mounts `./config/config.yaml`, read-only; its folder makes `/app` the project directory, so `./static` resolves as in a checkout |
+| app dir `/app/data` | where `docker/run.sh` mounts `docker.data_dir`, the only writable mount |
 | listen host `0.0.0.0` | inside the container's own network namespace; exposure is `docker.bind_address` |
 
 These are not settings because they are not choices -- they are the paths the
@@ -285,8 +325,8 @@ the data directory (`/app/data/language.yaml`).
 Back up **`config.yaml` and the app directory together**:
 
 - Outside Docker: the whole `~/.config/<slug>/` directory, plus
-  `./config.yaml` if that is the one in use (`manage paths` says which).
-- Docker: `./config.yaml` **and** `docker.data_dir` (`./data` by default) --
+  `config/config.yaml` if that is the one in use (`manage paths` says which).
+- Docker: `config/config.yaml` **and** `docker.data_dir` (`./data` by default) --
   deliberately separate.
 
 Either half alone is useless: `app.db` without the key is unreadable, and the
@@ -297,7 +337,7 @@ SQLite folds the log back in and `app.db` alone is complete.
 
 ## Adding a setting
 
-1. Add the key to `app/core/defaults.yaml`, with its default and a one-line
+1. Add the key to `config/defaults.yaml`, with its default and a one-line
    comment on what it does and, where it matters, what goes wrong if it is
    set incorrectly. This file is the documentation.
 2. Add the field to the matching section dataclass (`ServerSection`,
@@ -307,10 +347,10 @@ SQLite folds the log back in and `app.db` alone is complete.
    drift.
 3. If the value needs checking, add it to `validate()`.
 4. If the server reads it, add a field to `Config` and fill it in `load()`.
-   If `dockerRun.sh` reads it, add it to `config shell` in
-   `app/core/config_command.py`.
+   If a script reads it, add it to `config shell` in
+   `app/core/config_command.py` (the `server` or `docker` section).
 5. Regenerate the committed example: `python -m app config example`. It is
-   `app/core/defaults.yaml` plus a header, and is never edited by hand.
+   `config/defaults.yaml` plus a header, and is never edited by hand.
 
 Do not read `os.environ` anywhere, and do not make a script read an
 environment variable instead of adding the key. Keeping every knob in one file

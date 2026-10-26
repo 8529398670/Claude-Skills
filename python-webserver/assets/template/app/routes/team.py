@@ -8,13 +8,20 @@ than about who you can hand work to.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.core.db import Store
 from app.models import users
 from app.routes.helpers import get_store, run
 
 
 async def list_team(request: Request) -> Response:
-    members = await run(users.list_users, get_store(request))
-    return JSONResponse([{"id": user.id, "display_name": user.display_name} for user in members if not user.disabled])
+    return JSONResponse(await run(team_rows, get_store(request)))
+
+
+def team_rows(store: Store) -> list[dict[str, Any]]:
+    """Shared with the MCP list_team tool."""
+    return [{"id": user.id, "display_name": user.display_name} for user in users.list_users(store) if not user.disabled]

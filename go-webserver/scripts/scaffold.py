@@ -32,7 +32,7 @@ TEXT_SUFFIXES = {
     ".go", ".mod", ".sum", ".html", ".css", ".js", ".json",
     ".yaml", ".yml", ".sh", ".bat", ".md", ".txt", "",
 }
-TEXT_NAMES = {"Dockerfile", ".dockerignore", ".gitignore"}
+TEXT_NAMES = {"Dockerfile", "Dockerfile.dockerignore", ".gitignore"}
 
 
 def slugify(name: str) -> str:
@@ -68,19 +68,19 @@ SECRET_KEY_LINE = re.compile(r'^(\s*secret_key:\s*)""', re.MULTILINE)
 
 
 def write_config(target_dir: Path) -> Path:
-    """Write <target>/config.yaml: the stamped defaults plus a fresh key.
+    """Write <target>/config/config.yaml: the stamped defaults plus a fresh key.
 
     config.yaml is the project's one configuration file -- server, Docker,
     and build -- and it holds the secret key, so it is created at 0600 and is
-    already in the template's .gitignore and .dockerignore.
+    already in the template's .gitignore and docker/Dockerfile.dockerignore.
     """
-    defaults = (target_dir / "server" / "config" / "defaults.yaml").read_text(encoding="utf-8")
+    defaults = (target_dir / "config" / "defaults.yaml").read_text(encoding="utf-8")
     content, count = SECRET_KEY_LINE.subn(
         lambda match: f'{match.group(1)}"{secrets.token_hex(32)}"', defaults
     )
     if count != 1:
         raise SystemExit(f"defaults.yaml must contain exactly one `secret_key: \"\"` line, found {count}")
-    config_path = target_dir / "config.yaml"
+    config_path = target_dir / "config" / "config.yaml"
     descriptor = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(content)
@@ -88,7 +88,7 @@ def write_config(target_dir: Path) -> Path:
 
 
 def write_example(target_dir: Path) -> Path:
-    """Write <target>/config.example.yaml: the example header plus the stamped
+    """Write <target>/config/config.example.yaml: the example header plus the stamped
     defaults, secret key left empty.
 
     It is the committed counterpart of config.yaml -- every setting with its
@@ -97,19 +97,20 @@ def write_example(target_dir: Path) -> Path:
     `go run . config example` uses, so it always matches the defaults it was
     scaffolded with; the copy in the template is only there to be read.
     """
-    config_dir = target_dir / "server" / "config"
+    config_dir = target_dir / "config"
     header = (config_dir / "example_header.yaml").read_text(encoding="utf-8")
     defaults = (config_dir / "defaults.yaml").read_text(encoding="utf-8")
-    example_path = target_dir / "config.example.yaml"
+    example_path = config_dir / "config.example.yaml"
     example_path.write_text(header + defaults, encoding="utf-8")
     return example_path
 
 
-# What a ./run.sh or ./dockerRun.sh run inside the template itself can leave
-# at its top level: runtime state, build output, and the secret-bearing
-# config.yaml. None of it belongs in a new project.
+# What a scripts/run.sh or docker/run.sh run inside the template itself can
+# leave behind: runtime state, build output, and the secret-bearing
+# config/config.yaml. None of it belongs in a new project. Paths are relative
+# to the template root.
 RUN_LEFTOVERS = {
-    "config.yaml", ".run", ".venv", "data", "dist",
+    "config/config.yaml", ".run", ".venv", "data", "dist",
     "{{PROJECT_SLUG}}", "{{PROJECT_SLUG}}.exe",
 }
 CRUFT = shutil.ignore_patterns(".DS_Store", "Thumbs.db", "*.swp", "__pycache__")
@@ -117,13 +118,15 @@ CRUFT = shutil.ignore_patterns(".DS_Store", "Thumbs.db", "*.swp", "__pycache__")
 
 def ignore_cruft(directory: str, names: list[str]) -> set[str]:
     ignored = set(CRUFT(directory, names))
-    if Path(directory).resolve() == TEMPLATE_DIR:
-        ignored |= RUN_LEFTOVERS.intersection(names)
+    here = Path(directory).resolve()
+    if here == TEMPLATE_DIR or TEMPLATE_DIR in here.parents:
+        relative = here.relative_to(TEMPLATE_DIR)
+        ignored |= {name for name in names if (relative / name).as_posix() in RUN_LEFTOVERS}
     return ignored
 
 
-# run.sh and run.bat carry a block, between these two marker lines, that
-# turns ./run.sh inside the template into a demo (see demo.py). A scaffolded
+# scripts/run.sh and scripts/run.bat carry a block, between these two marker
+# lines, that turns scripts/run.sh inside the template into a demo (see demo.py). A scaffolded
 # project is not the template, so the block is cut out of it.
 DEMO_BLOCK = re.compile(r"^[^\n]*>>> template demo[^\n]*\n.*?^[^\n]*<<< template demo[^\n]*\n", re.MULTILINE | re.DOTALL)
 
@@ -168,25 +171,21 @@ def main() -> None:
         "{{MODULE_PATH}}": module_path,
         # Docker rejects uppercase repository names, so anything that becomes
         # an image or container name uses the slug rather than the display
-        # name. Otherwise a project called "Ledger" produces a dockerRun.sh
+        # name. Otherwise a project called "Ledger" produces a docker/run.sh
         # that fails with "repository name must be lowercase".
         "{{PROJECT_SLUG}}": slugify(project_name),
     }
     for path in sorted(target_dir.rglob("*")):
         if path.is_file():
             stamp(path, replacements)
-    strip_demo_block(target_dir / "run.sh")
-    strip_demo_block(target_dir / "run.bat")
+    for name in ("run.sh", "run.bat", "login.sh", "login.bat"):
+        strip_demo_block(target_dir / "scripts" / name)
 
-    for script in (
-        target_dir / "run.sh",
-        target_dir / "dockerRun.sh",
-        target_dir / "dockerBuild.sh",
-        target_dir / "build.sh",
-        target_dir / "scripts" / "vendor.sh",
-    ):
-        if script.exists():
-            script.chmod(0o755)
+    # docker/lib.sh is sourced, not run, so it stays non-executable.
+    for folder in ("scripts", "docker", "misc"):
+        for script in (target_dir / folder).glob("*.sh"):
+            if script.name != "lib.sh":
+                script.chmod(0o755)
 
     config_path = write_config(target_dir)
     example_path = write_example(target_dir)
@@ -195,14 +194,15 @@ def main() -> None:
     print(f"  module {module_path}")
     print(f"  docker image/container name: {slugify(project_name)}")
     print(f"  config: {config_path} (mode 0600, fresh secret key, gitignored)")
-    print(f"  example: {example_path} (no secret key, commit it -- `cp` it to config.yaml on a fresh clone)")
+    print(f"  example: {example_path} (no secret key, commit it -- `cp` it to config/config.yaml on a fresh clone)")
     print("")
     print("Next:")
     print(f"  cd {target_dir}")
     print("  go mod tidy")
-    print("  ./run.sh            # builds if needed, (re)starts the server")
-    print("  ./run.sh manage ... # admin CLI, works while it is running")
-    print("  (run.bat on Windows, same arguments)")
+    print("  scripts/run.sh            # builds if needed, (re)starts the server, prints its URL")
+    print("  scripts/login.sh          # a login link for the owner (user 1), wherever it runs")
+    print("  scripts/run.sh manage ... # admin CLI, works while it is running")
+    print("  (scripts\\run.bat and scripts\\login.bat on Windows, same arguments)")
 
 
 if __name__ == "__main__":

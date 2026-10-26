@@ -110,13 +110,15 @@ const App = {
 
   async renderSignedIn( me ) {
     Dom.show( Dom.get( "signed-in" ) , true );
-    Dom.text( Dom.get( "who-am-i" ) , me.display_name + " (" + me.role + ")" );
+    Dom.show( Dom.get( "app-nav" ) , true );
+    this.labelProfile();
+    Theme.render( Dom.get( "theme-picker" ) , Dom.get( "theme-summary" ) );
     Dom.get( "display-name" ).value = me.display_name;
 
     Dom.get( "rename-form" ).addEventListener( "submit" , this.onRename.bind( this ) );
     Dom.get( "logout-button" ).addEventListener( "click" , this.onLogout.bind( this ) );
     Dom.get( "my-link-button" ).addEventListener( "click" , this.onMyLoginLink.bind( this ) );
-    Dom.get( "my-link-copy-button" ).addEventListener( "click" , () => Dom.copy( Dom.get( "my-link-value" ) , Dom.get( "my-link-copied" ) ) );
+    Dom.get( "my-link-copy-button" ).addEventListener( "click" , () => Dom.copy( Dom.get( "my-link-value" ) ) );
 
     // Each screen owns its own file and its own init(). This is the one line
     // that knows the API keys screen exists.
@@ -138,11 +140,22 @@ const App = {
     try {
       await Api.rename( value );
       this.currentUser.display_name = value;
-      Dom.text( Dom.get( "who-am-i" ) , value + " (" + this.currentUser.role + ")" );
-      Dom.flash( Dom.get( "rename-saved" ) );
+      this.labelProfile();
+      Dom.toast( I18n.get( "ui.saved" ) , "ok" );
     } catch ( error ) {
       this.showError( error.message );
     }
+  },
+
+  // The header's profile icon jumps to the Account card; its tooltip and
+  // accessible name say who is signed in, which the header used to spell out.
+  labelProfile() {
+    const user = this.currentUser;
+    const label = I18n.get( "nav.account" );
+    const who = user.display_name + " (" + user.role + ")";
+    const link = Dom.get( "profile-link" );
+    link.setAttribute( "title" , label ? label + " · " + who : who );
+    link.setAttribute( "aria-label" , link.getAttribute( "title" ) );
   },
 
   // A fresh one-time link for this account, to open on another device. The
@@ -189,7 +202,7 @@ const App = {
   },
 
   async onCopyLink() {
-    await Dom.copy( Dom.get( "login-link-value" ) , Dom.get( "copied-notice" ) );
+    await Dom.copy( Dom.get( "login-link-value" ) );
   },
 
   async refreshUsers() {

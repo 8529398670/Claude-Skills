@@ -40,13 +40,13 @@ def _row(link: InviteLink, creator: User | None) -> dict[str, Any]:
     return row
 
 
-def _rows(store: Store) -> list[dict[str, Any]]:
+def invite_link_rows(store: Store) -> list[dict[str, Any]]:
     creators = {user.id: user for user in users.list_users(store)}
     return [_row(link, creators.get(link.created_by)) for link in invite_links.list_invite_links(store)]
 
 
 async def list_invite_links(request: Request) -> Response:
-    return JSONResponse(await run(_rows, get_store(request)))
+    return JSONResponse(await run(invite_link_rows, get_store(request)))
 
 
 async def create_invite_link(request: Request) -> Response:

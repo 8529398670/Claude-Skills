@@ -187,7 +187,7 @@ func ( guard *Guard ) resolveAPIKey( c fiber.Ctx ) ( actor *Actor ) {
 	return
 }
 
-// RequireLogin, RequireAdmin, and RequireSession are middleware rather than
+// RequireLogin, RequireAdmin, RequireSession and RequireAPIKey are middleware rather than
 // helpers called at the top of each handler, so a new protected route is
 // protected by where it is registered -- forgetting the check is not something
 // you can do silently.
@@ -242,6 +242,26 @@ func ( guard *Guard ) RequireSession( c fiber.Ctx ) ( err error ) {
 	}
 	if actor.ViaAPIKey() {
 		err = c.Status( fiber.StatusForbidden ).JSON( fiber.Map{ "error": "this endpoint requires a signed-in session, not an API key" } )
+		return
+	}
+	err = c.Next()
+	return
+}
+
+// RequireAPIKey is RequireSession's mirror: it refuses a browser session and
+// lets only a key through. It guards /mcp, which is for agents and scripts.
+// Taking only a header credential there means no ambient cookie can ride
+// along on a request some other page caused, so the endpoint needs no CSRF
+// token and the no-credentials rule for keys covers everything it can do.
+func ( guard *Guard ) RequireAPIKey( c fiber.Ctx ) ( err error ) {
+	actor := ActorFrom( c )
+	if actor == nil {
+		c.Set( fiber.HeaderWWWAuthenticate , "Bearer" )
+		err = c.Status( fiber.StatusUnauthorized ).JSON( fiber.Map{ "error": "not authenticated" } )
+		return
+	}
+	if actor.ViaAPIKey() == false {
+		err = c.Status( fiber.StatusForbidden ).JSON( fiber.Map{ "error": "this endpoint requires an API key, not a signed-in session" } )
 		return
 	}
 	err = c.Next()

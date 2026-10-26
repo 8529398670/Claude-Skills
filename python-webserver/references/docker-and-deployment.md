@@ -2,12 +2,16 @@
 
 ## Two scripts, one config file
 
-`dockerBuild.sh` builds the image; `dockerRun.sh` builds through the same
-function (`scripts/docker.sh`) and then runs the container. They are split so
-building and running are separately runnable -- CI can build without
-starting anything. The common case is still one command: `./dockerRun.sh`.
+Everything Docker lives in `docker/`. `docker/build.sh` builds the image;
+`docker/run.sh` builds through the same function (`docker/lib.sh`) and then
+runs the container. They are split so building and running are separately
+runnable -- CI can build without starting anything. The common case is still
+one command: `docker/run.sh`. Both `cd` to the project root first, which is
+the build context: `docker build -f docker/Dockerfile .`, with
+`docker/Dockerfile.dockerignore` (BuildKit's per-Dockerfile ignore file)
+keeping the secret, the scripts and local state out of it.
 
-Every value either script uses comes from `config.yaml`: the `docker:`
+Every value either script uses comes from `config/config.yaml`: the `docker:`
 section (image and container names, `bind_address`, `host_port`, `data_dir`,
 `restart`, `memory`, `cpus`, `pids_limit`, `tmpfs_size`) and `server.port` for
 the container side of the published port. Neither reads an environment
@@ -21,7 +25,10 @@ assignments it prints. So the deploy gets the server's own defaults and
 strict validation, and needs nothing on the host but Docker -- not even
 Python. The image name lives in `config.yaml` too, which is why it is applied
 with `docker tag` after the build rather than passed to it. An extra tag is a
-positional argument: `./dockerBuild.sh v1.2.3`.
+positional argument: `docker/build.sh v1.2.3`. The build says which
+Dockerfile and which config file it used (or that there is none yet and the
+image is named from the defaults), and stops early with a plain message when
+`docker` is missing or its daemon is not answering.
 
 Both stamp version metadata into the image (the version is the UTC build
 time, `2026.10.23-1412`, plus the commit hash), so `docker exec <name> python -m app version` says which build is
@@ -52,13 +59,13 @@ reconsider -- not before.
 - **pip removed from the runtime image.** Nothing installs packages at
   runtime, and a package manager is one more tool for anyone who gets code
   execution inside.
-- **No `config.yaml` in the image.** `.dockerignore` keeps it out because it
+- **No `config.yaml` in the image.** `docker/Dockerfile.dockerignore` keeps it out because it
   holds the secret key and an image layer is forever -- it is mounted at run
   time instead, so one image serves any deployment and a config change needs a
   restart, not a rebuild.
 - **No `ENV`, no `EXPOSE`.** The image's fixed layout is pinned by a file the
   Dockerfile writes (`app/core/layout_pinned.py`: config at
-  `/app/config.yaml`, state in `/app/data`, listen on `0.0.0.0`; see
+  `/app/config/config.yaml`, state in `/app/data`, listen on `0.0.0.0`; see
   `configuration.md`). The port is `server.port`, so a hardcoded `EXPOSE`
   would be stale the first time it changed. Even the interpreter flags that
   are usually set with `ENV` are on the entrypoint instead: `python -u` for
@@ -68,7 +75,7 @@ reconsider -- not before.
   `--read-only` means the process can never write `.pyc` files later.
 - **Non-root user with a fixed uid/gid of 10001.** `app` is created with
   `/sbin/nologin`, and `USER app` drops root before the entrypoint runs. The
-  number is fixed and high on purpose: `dockerRun.sh` grants this uid the
+  number is fixed and high on purpose: `docker/run.sh` grants this uid the
   host's data directory and this gid read access to `config.yaml`, and a
   low system uid is likely to belong to a real account on a Linux host, which
   would get the same access.
@@ -83,16 +90,28 @@ reconsider -- not before.
   URL in the image.
 
 The Python version in the two `FROM` lines should move together, and match
-what you develop on; `requirements.txt` is pinned so the first build is
+what you develop on; `app/requirements.txt` is pinned so the first build is
 reproducible and does not silently resolve to newer versions.
 
-## dockerRun.sh choices
+## docker/run.sh choices
 
-- **Stops on first run for review.** A fresh clone has no `config.yaml` (it
-  is gitignored), so the first `./dockerRun.sh` writes one from the image's
+- **Stops on first run for review.** A fresh clone has no `config/config.yaml` (it
+  is gitignored), so the first `docker/run.sh` writes one from the image's
   defaults with a new key and exits, naming the settings that depend on what
   sits in front of this. Starting on unreviewed defaults would mean guessing
   at `secure_cookies` and `trust_proxy`.
+- **Names whatever holds the host port.** With its own old container
+  removed, anything still listening on `docker.host_port` is something else,
+  and `docker run` would fail with a bind error after creating the
+  container. The script names the process (and the container, if it is one)
+  and stops instead.
+- **Waits until it is really up.** After `docker run -d` it polls the image's
+  own healthcheck (`python -m app health`) for up to 30 seconds. If the
+  container exits or never answers, it prints the status, the exit code and
+  the last 40 log lines, and exits non-zero; only a healthy container gets
+  `Ready: <url>`. On a fresh database it then prints the owner's first-run
+  login link straight from the log, and points at `scripts/login.sh --docker`
+  for a new one later.
 - **Checks that Docker can see the project at all.** Docker Desktop and
   colima run the daemon in a VM that shares only some host paths (colima
   shares your home directory). Mount anything outside those and Docker
@@ -122,7 +141,7 @@ reproducible and does not silently resolve to newer versions.
   reaches the container from the bridge gateway, so `[172.16.0.0/12]` covers
   the default bridge -- confirm with `docker network inspect bridge`. With a
   single-value header from a CDN (`CF-Connecting-IP`, say), list the CDN's
-  ranges and make sure it overwrites what the client sent. `dockerRun.sh`
+  ranges and make sure it overwrites what the client sent. `docker/run.sh`
   reminds you while it is off.
 - **`config.yaml` is mounted read-only, separately from the data
   directory,** so the secret key is never inside `docker.data_dir`. The
@@ -143,7 +162,7 @@ reproducible and does not silently resolve to newer versions.
 ## Paths inside the container
 
 The image pins the app directory to `/app/data` and the config file to
-`/app/config.yaml`, overriding `server.app_dir` and the `~/.config/<slug>`
+`/app/config/config.yaml`, overriding `server.app_dir` and the `~/.config/<slug>`
 default that apply outside a container. A container has no meaningful home
 directory, and the point of the mounts is that state lives on the host.
 
@@ -155,7 +174,7 @@ distinction is worth keeping.
 
 ## The data directory and container ownership
 
-`dockerRun.sh` bind-mounts `docker.data_dir` (`./data`) so the database stays
+`docker/run.sh` bind-mounts `docker.data_dir` (`./data`) so the database stays
 visible on the host for backups. A bind mount ignores the image's ownership,
 though, so the script makes sure the container's unprivileged user can
 actually write there -- and read `config.yaml` -- before starting anything.
@@ -178,7 +197,7 @@ denied" -- which looks like a bug in the app and is not.
 ## The secret key
 
 `server.secret_key` is generated once, when `config.yaml` is created
-(`scaffold.py`, `config init`, or the first `./dockerRun.sh` on a fresh
+(`scaffold.py`, `config init`, or the first `docker/run.sh` on a fresh
 clone), and read from there on every run. It must stay stable:
 
 - It encrypts session cookie payloads -- rotating it logs everyone out.
@@ -240,11 +259,14 @@ needs it, or revoke and mint another. `list-keys` is the standing answer to
 assuming the answer is nothing. Set `auth.api_keys: false` in `config.yaml`
 and restart to close that surface entirely.
 
+For a login link, `scripts/login.sh --docker` does the `docker exec` for you
+and says which container and address the link is for.
+
 If the container is stopped, run a one-off with the same two mounts:
 
 ```bash
 docker run --rm -v "$(pwd)/data:/app/data" \
-  -v "$(pwd)/config.yaml:/app/config.yaml:ro" \
+  -v "$(pwd)/config/config.yaml:/app/config/config.yaml:ro" \
   <image> manage reissue-login --user-id 1
 ```
 
@@ -257,12 +279,13 @@ For development, an internal box with no container runtime, or a quick demo,
 run from a checkout:
 
 ```bash
-./run.sh                                   # (re)start the server
-./run.sh manage reissue-login --user-id 1  # any arguments: the CLI, server untouched
+scripts/run.sh                       # (re)start the server
+scripts/login.sh                     # the owner's login link, from whatever is live
+scripts/run.sh manage list-users     # any arguments: the CLI, server untouched
 ```
 
-`run.sh` creates `.venv` if it is missing and runs `pip install -r
-requirements.txt` whenever that file is newer than `.venv/.requirements.stamp`
+`scripts/run.sh` creates `.venv` if it is missing and runs `pip install -r
+app/requirements.txt` whenever that file is newer than `.venv/.requirements.stamp`
 -- all before stopping anything, so a failed install leaves the old server up.
 With no arguments it then stops the server it started last and runs a new one
 in the foreground: it records its own pid in `.run/server.pid` just before
@@ -274,13 +297,42 @@ re-executes `.venv/bin/python` as `Python.app/.../Python`, so it never shows
 up in `ps`. Running it again from
 another terminal is how you restart. With arguments it runs `python -m app`
 with them and leaves the server alone; `manage` is safe alongside it because
-SQLite runs in WAL mode. On a fresh clone with no `config.yaml` it writes one
-(`config init`) and stops, as `dockerRun.sh` does.
+SQLite runs in WAL mode.
 
-On Windows, `run.bat` takes the same arguments and does the same, using
+Before starting, it reads `config shell server` -- every path and the URL,
+resolved by the app exactly as the server will -- and:
+
+- on a fresh clone with no `config/config.yaml`, writes one (`config init`)
+  and stops, as `docker/run.sh` does, saying which URL it will serve and,
+  when that is plain `http://`, the line to change so `secure_cookies` does
+  not silently break sign-in;
+- refuses to start, naming the process (via `lsof`), when anything else is
+  listening on `server.port` -- including this project's docker container;
+- warns when `secure_cookies` is on but the URL is plain `http://`;
+- prints the URL and where it came from, the config file, the app dir, the
+  database (existing, or new with the first login link to follow), and
+  whether static/ and language come from disk or the bundled copies;
+- prints `Ready: <url>` once `/api/health` answers (or says it is not
+  answering after 20 seconds).
+
+The shared helpers are in `scripts/lib.sh`.
+
+`scripts/login.sh [user-id] [--docker|--local]` prints a one-time login link
+(user 1, the owner, by default) as a full URL. It decides where from: this
+checkout's local database when its server is running, otherwise the docker
+container when it is running (`docker exec`), otherwise the local database
+offline, saying the link waits until the server starts. The local and
+container deployments keep separate databases, so it always says which one
+the link is for; when both run, it uses the local one and says so. Errors are
+specific: no `.venv` or config yet, no database yet, no such user (with the
+command that lists them), container not running (with its status).
+
+On Windows, `scripts\run.bat` and `scripts\login.bat` take the same
+arguments and do the same, reading `config shell --format bat` and using
+PowerShell for the port owner and the readiness check. `run.bat` uses
 `.venv\Scripts\python.exe` (the venv is created with the `py` launcher when
 there is one, since a bare `python` is often the Microsoft Store stub). Three
-things differ. It reinstalls when `requirements.txt`'s contents differ from
+things differ. It reinstalls when `app\requirements.txt`'s contents differ from
 the copy saved as `.venv\.requirements.stamp`, since batch cannot compare file
 times. It finds the old server as any process running this checkout's
 `.venv\Scripts\python.exe` with exactly `-m app` -- on Windows that launcher
@@ -289,7 +341,7 @@ pid file. And with no SIGTERM to send another console's process, it kills the
 whole tree (`taskkill /T /F`) instead of draining it, which WAL-mode SQLite
 survives. PowerShell (built into Windows) does the process lookup.
 
-It runs from the project directory, so `./config.yaml` is the one found (and
+It runs from the project directory, so `./config/config.yaml` is the one found (and
 `app` is importable). State goes to `~/.config/<slug>/` unless
 `server.app_dir` says otherwise; `python -m app manage paths` reports where.
 Two things to pass on to whoever runs it this way:
@@ -307,7 +359,7 @@ the requirement, `go-webserver` is the template for it.
 
 ## Backups
 
-The entire state is the `data/` directory plus `config.yaml`, and you need
+The entire state is the `data/` directory plus `config/config.yaml`, and you need
 both -- `app.db` without the key in `config.yaml` is unreadable. Stop the
 container before copying: while the server runs, recent writes can still be in
 `app.db-wal` rather than `app.db`. Use `docker stop`, copy, `docker start`.
@@ -319,10 +371,10 @@ live inside the app directory instead.
 
 Every knob is a key in `config.yaml` -- session and login-token lifetimes,
 rate limits, body size, at-rest encryption, proxy trust, and the container's
-own resource limits. `app/core/defaults.yaml` documents all of them with their
+own resource limits. `config/defaults.yaml` documents all of them with their
 defaults.
 
-Edit the project's `config.yaml` and re-run `./dockerRun.sh` (or just
+Edit the project's `config/config.yaml` and re-run `docker/run.sh` (or just
 `docker restart <name>` for a `server:` or `auth:` change, since the file is
 mounted rather than baked in). The image stays the same across environments;
 each deployment's `config.yaml` is what differs. See `configuration.md`.

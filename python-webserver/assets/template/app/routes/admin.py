@@ -12,26 +12,31 @@ user".
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.core.db import Store
 from app.core.security import actor_from, check_csrf
 from app.models import credentials, login_tokens, users
-from app.routes.helpers import bad_request, forbidden, get_config, get_store, not_found, parse_id, read_json, run
+from app.routes.helpers import bad_request, error, forbidden, get_config, get_store, not_found, parse_id, read_json, run
 
 
 async def list_users(request: Request) -> Response:
     """Marks the owner on its row, so the UI can tell which delete, disable,
     and revoke buttons the server would refuse."""
-    store = get_store(request)
-    rows = await run(users.list_users, store)
-    owner_id = await run(users.get_owner_id, store)
-    return JSONResponse(
-        [
-            {"id": u.id, "display_name": u.display_name, "role": u.role, "disabled": u.disabled, "owner": u.id == owner_id}
-            for u in rows
-        ]
-    )
+    return JSONResponse(await run(user_rows, get_store(request)))
+
+
+def user_rows(store: Store) -> list[dict[str, Any]]:
+    """Shared with the MCP admin_list_users tool."""
+    owner_id = users.get_owner_id(store)
+    return [
+        {"id": u.id, "display_name": u.display_name, "role": u.role, "disabled": u.disabled, "owner": u.id == owner_id}
+        for u in users.list_users(store)
+    ]
 
 
 async def create_user(request: Request) -> Response:
@@ -102,23 +107,9 @@ async def set_user_disabled(request: Request) -> Response:
     if not isinstance(disabled, bool):
         return bad_request("disabled must be true or false")
 
-    store = get_store(request)
-    if await run(users.get_user, store, user_id) is None:
-        return not_found("no such user")
-    # Locking yourself out is unrecoverable without shell access, so it is
-    # worth one guard rail even though an admin could still disable a peer.
-    if disabled and user_id == actor_from(request).user.id:
-        return bad_request("you cannot disable your own account")
-
-    # Disabling also deletes the account's sessions and unused login links,
-    # in the same transaction -- see credentials.set_user_disabled. The owner
-    # cannot be disabled; that check is in the model so every route gets it.
-    try:
-        found = await run(credentials.set_user_disabled, store, user_id, disabled)
-    except credentials.OwnerProtectedError:
-        return forbidden("the owner account cannot be disabled")
-    if not found:
-        return not_found("no such user")
+    refused = await run(set_disabled_checked, get_store(request), actor_from(request).user.id, user_id, disabled)
+    if refused is not None:
+        return refused.response()
     return JSONResponse({"ok": True})
 
 
@@ -136,19 +127,9 @@ async def revoke_access(request: Request) -> Response:
     user_id = parse_id(request.path_params["user_id"])
     if user_id is None:
         return bad_request("invalid user id")
-    # Same guard rail as disabling: revoking your own access signs you out
-    # with no link to get back in.
-    if user_id == actor_from(request).user.id:
-        return bad_request("you cannot revoke your own access")
-
-    # The owner is refused here (allow_owner False). Only an operator with
-    # shell access may cut the owner off -- see revoke_all_credentials.
-    try:
-        revoked = await run(credentials.revoke_all_credentials, get_store(request), user_id)
-    except credentials.OwnerProtectedError:
-        return forbidden("the owner account's access cannot be revoked")
-    if revoked is None:
-        return not_found("no such user")
+    revoked = await run(revoke_access_checked, get_store(request), actor_from(request).user.id, user_id)
+    if isinstance(revoked, RuleRefusal):
+        return revoked.response()
     return JSONResponse({"ok": True, "revoked": revoked.to_dict()})
 
 
@@ -181,3 +162,61 @@ async def delete_user(request: Request) -> Response:
     if removed is None:
         return not_found("no such user")
     return JSONResponse({"ok": True, "removed": removed.to_dict()})
+
+
+# ---------------------------------------------------------------------------
+# rules shared with the MCP tools
+#
+# A refusal is kept apart from how it is delivered: the HTTP handlers above
+# send it as a status and an error body, the MCP tools (mcp_tools.py) as a
+# tool error with the same words. Writing each rule once is what keeps the two
+# doors from drifting apart. These are synchronous; call them through run().
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RuleRefusal:
+    status: int
+    message: str
+
+    def response(self) -> JSONResponse:
+        return error(self.status, self.message)
+
+
+def set_disabled_checked(store: Store, self_id: int, user_id: int, disabled: bool) -> RuleRefusal | None:
+    """Every rule for switching an account off or on."""
+    if users.get_user(store, user_id) is None:
+        return RuleRefusal(404, "no such user")
+    # Locking yourself out is unrecoverable without shell access, so it is
+    # worth one guard rail even though an admin could still disable a peer.
+    if disabled and user_id == self_id:
+        return RuleRefusal(400, "you cannot disable your own account")
+
+    # Disabling also deletes the account's sessions and unused login links,
+    # in the same transaction -- see credentials.set_user_disabled. The owner
+    # cannot be disabled; that check is in the model so every route gets it.
+    try:
+        found = credentials.set_user_disabled(store, user_id, disabled)
+    except credentials.OwnerProtectedError:
+        return RuleRefusal(403, "the owner account cannot be disabled")
+    if not found:
+        return RuleRefusal(404, "no such user")
+    return None
+
+
+def revoke_access_checked(store: Store, self_id: int, user_id: int) -> credentials.Revoked | RuleRefusal:
+    """Every rule for cutting an account's credentials off."""
+    # Same guard rail as disabling: revoking your own access signs you out
+    # with no link to get back in.
+    if user_id == self_id:
+        return RuleRefusal(400, "you cannot revoke your own access")
+
+    # The owner is refused here (allow_owner False). Only an operator with
+    # shell access may cut the owner off -- see revoke_all_credentials.
+    try:
+        revoked = credentials.revoke_all_credentials(store, user_id)
+    except credentials.OwnerProtectedError:
+        return RuleRefusal(403, "the owner account's access cannot be revoked")
+    if revoked is None:
+        return RuleRefusal(404, "no such user")
+    return revoked

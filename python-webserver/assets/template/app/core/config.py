@@ -10,8 +10,8 @@ shell scripts follow the same rule -- they ask this module for their values
 parsing YAML themselves, so there is exactly one parser and one set of
 validation rules.
 
-Defaults are not written in Python. They live in defaults.yaml, which ships
-beside this file, documents every key, and is what `config init` writes out.
+Defaults are not written in Python. They live in config/defaults.yaml, which
+ships with the code, documents every key, and is what `config init` writes out.
 A config.yaml is decoded on top of it, strictly: an unknown key is an error,
 because a typo that is silently ignored is a setting that silently is not
 applied.
@@ -21,6 +21,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -37,15 +38,20 @@ APP_SLUG = "{{PROJECT_SLUG}}"
 
 # Filenames this app uses. Everything it persists lives under the app
 # directory -- see default_app_dir for why.
+# The folder of a source checkout that holds config.yaml, config.example.yaml,
+# language.yaml and the defaults.
+CONFIG_DIR_NAME = "config"
 CONFIG_FILE_NAME = "config.yaml"
 DATABASE_FILE_NAME = "app.db"
 STORAGE_DIR_NAME = "storage"
 LANGUAGE_FILE_NAME = "language.yaml"
 
-DEFAULTS_PATH = Path(__file__).with_name("defaults.yaml")
+# The folder holding app/ -- the project root in a checkout, /app in the image.
+CODE_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULTS_PATH = CODE_ROOT / CONFIG_DIR_NAME / "defaults.yaml"
 # What turns defaults.yaml into config.example.yaml: a note on how to copy it
 # into place. See example_file_content.
-EXAMPLE_HEADER_PATH = Path(__file__).with_name("example_header.yaml")
+EXAMPLE_HEADER_PATH = CODE_ROOT / CONFIG_DIR_NAME / "example_header.yaml"
 # The committed copy of the defaults that a fresh clone copies to
 # config.yaml. Nothing reads it.
 EXAMPLE_FILE_NAME = "config.example.yaml"
@@ -63,7 +69,7 @@ class ConfigError(Exception):
 # The dataclasses below are the schema. Every key in defaults.yaml must be a
 # field here and every field must be in defaults.yaml, so the two cannot drift
 # silently. The docker section is decoded and validated too even though the
-# server never reads it: that is what lets dockerRun.sh fail on a typo before
+# server never reads it: that is what lets docker/run.sh fail on a typo before
 # it starts anything.
 
 
@@ -76,6 +82,7 @@ class AppSection:
 class ServerSection:
     host: str
     port: int
+    public_url: str
     app_dir: str
     static_dir: str
     language_file: str
@@ -89,6 +96,7 @@ class ServerSection:
     body_limit_bytes: int
     rate_limit_max: int
     rate_limit_window_seconds: int
+    mcp: bool
 
 
 @dataclass
@@ -141,6 +149,17 @@ class Config:
     file's shape stays inside this module."""
 
     project_name: str
+
+    # What relative paths in config.yaml are resolved against. See
+    # project_dir_for.
+    project_dir: Path
+
+    # Where a browser reaches this server, for the links it prints:
+    # server.public_url when set, otherwise one worked out from the listen
+    # address (see server_url). url_source names which, so a printed link can
+    # say how much to trust it.
+    url: str
+    url_source: str
 
     # The config.yaml this was loaded from. It also holds the secret key,
     # which is why it is reported wherever backups are mentioned.
@@ -210,6 +229,10 @@ class Config:
     trusted_proxies: tuple[str, ...] = ()
     proxy_header: str = "X-Forwarded-For"
 
+    # Whether POST /mcp exists. It answers only API keys, so with
+    # api_keys_enabled off it is not registered either.
+    mcp_enabled: bool = True
+
     @property
     def listen_address(self) -> str:
         return f"{self.host}:{self.port}"
@@ -238,26 +261,36 @@ def default_app_dir() -> Path:
 
 def locate() -> tuple[Path, bool]:
     """Find the config.yaml in use: the pinned path inside the container
-    image, otherwise ./config.yaml, otherwise the one in the default app
-    directory. When none exists, the path is where one would be created.
+    image, otherwise ./config/config.yaml, otherwise the one in the default
+    app directory. When none exists, the path is where one would be created.
 
-    ./config.yaml comes first because that is a source checkout, which is
-    also where dockerRun.sh reads it. Run from anywhere else, the app falls
+    ./config/config.yaml comes first because that is a source checkout, which
+    is also where the scripts read it. Run from anywhere else, the app falls
     through to ~/.config/<slug>/ and finds the same file every time."""
     if PINNED.config_file:
         path = Path(PINNED.config_file)
         return path, path.is_file()
-    local = Path(CONFIG_FILE_NAME).absolute()
+    local = (Path(CONFIG_DIR_NAME) / CONFIG_FILE_NAME).absolute()
     if local.is_file():
         return local, True
     path = (default_app_dir() / CONFIG_FILE_NAME).absolute()
     return path, path.is_file()
 
 
+def project_dir_for(config_path: Path) -> Path:
+    """The directory relative paths in config.yaml resolve against. In a
+    checkout (and in the container image, /app) config.yaml sits in config/,
+    and paths like ./static and ./data mean the project folder around it, so
+    that is the parent. Anywhere else -- ~/.config/<slug>/ -- it is the folder
+    holding config.yaml."""
+    folder = config_path.parent
+    return folder.parent if folder.name == CONFIG_DIR_NAME else folder
+
+
 def resolve_path(base: Path, value: str) -> str:
-    """Make a config path absolute against the directory holding config.yaml,
-    so the same file means the same thing whatever directory the process was
-    started from."""
+    """Make a config path absolute against the project directory
+    (project_dir_for), so the same file means the same thing whatever
+    directory the process was started from."""
     if value == "" or os.path.isabs(value):
         return value
     return str(base / value)
@@ -420,6 +453,23 @@ _CPUS = re.compile(r"^[0-9]+(\.[0-9]+)?$")
 _SECRET = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
+def _valid_public_url(value: str) -> bool:
+    if value == "":
+        return True
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
+    return (
+        parts.scheme in ("http", "https")
+        and bool(parts.hostname)
+        and parts.path in ("", "/")
+        and not parts.query
+        and not parts.fragment
+        and parts.username is None
+    )
+
+
 def _valid_ip(value: str) -> bool:
     try:
         ipaddress.ip_address(value)
@@ -460,6 +510,11 @@ def validate(file: File) -> list[str]:
     server = file.server
     check(server.host.strip() != "", "server.host must not be empty")
     check(1 <= server.port <= 65535, f"server.port must be 1-65535, got {server.port}")
+    check(
+        _valid_public_url(server.public_url),
+        f"server.public_url {server.public_url!r} must be empty or a bare origin like "
+        "https://app.example.com (http or https, no path)",
+    )
     check(server.cookie_name.strip() != "", "server.cookie_name must not be empty")
     check(server.proxy_header.strip() != "", "server.proxy_header must not be empty")
     check(
@@ -599,49 +654,35 @@ def load() -> Config:
     created = False
     if not exists:
         if in_container():
-            raise ConfigError(f"no config at {path} -- dockerRun.sh mounts config.yaml there")
+            raise ConfigError(f"no config at {path} -- docker/run.sh mounts the project's config/config.yaml there")
         write_new(path)
         created = True
 
     file = read_file(path)
     check_secret_key(file, path)
 
-    base = path.parent
-
-    app_dir = default_app_dir()
-    if file.server.app_dir:
-        app_dir = Path(resolve_path(base, file.server.app_dir))
-    if PINNED.app_dir:
-        app_dir = Path(PINNED.app_dir)
-    app_dir = app_dir.absolute()
-
-    storage_dir = app_dir / STORAGE_DIR_NAME
-    for directory, purpose in ((app_dir, "app directory"), (storage_dir, "storage directory")):
+    paths = resolve_paths(file, path)
+    for directory, purpose in ((paths.app_dir, "app directory"), (paths.app_dir / STORAGE_DIR_NAME, "storage directory")):
         try:
             # 0700 because the database lives in here.
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         except OSError as error:
             raise ConfigError(f"could not create {purpose} {str(directory)!r}: {error.strerror}") from None
-
-    # An operator can drop a language.yaml into the app directory to reword
-    # the UI without touching the code. Failing that, the one beside
-    # config.yaml (a source checkout) is used, and failing that the copy that
-    # ships with the code (app/core/assets.py decides).
-    language_file = resolve_path(base, file.server.language_file)
-    if language_file == "":
-        candidate = app_dir / LANGUAGE_FILE_NAME
-        language_file = str(candidate if candidate.is_file() else base / LANGUAGE_FILE_NAME)
+    url, url_source = server_url(file)
 
     return Config(
         project_name=file.app.name,
+        project_dir=paths.project_dir,
+        url=url,
+        url_source=url_source,
         config_file=path,
         config_created=created,
         config_warning=permission_warning(path),
-        app_dir=app_dir,
-        database_path=app_dir / DATABASE_FILE_NAME,
-        storage_dir=storage_dir,
-        static_dir=resolve_path(base, file.server.static_dir),
-        language_file=language_file,
+        app_dir=paths.app_dir,
+        database_path=paths.database_path,
+        storage_dir=paths.app_dir / STORAGE_DIR_NAME,
+        static_dir=paths.static_dir,
+        language_file=paths.language_file,
         host=PINNED.host or file.server.host,
         port=file.server.port,
         secure_cookies=file.server.secure_cookies,
@@ -658,4 +699,78 @@ def load() -> Config:
         trust_proxy=file.server.trust_proxy,
         trusted_proxies=tuple(entry.strip() for entry in file.server.trusted_proxies),
         proxy_header=file.server.proxy_header,
+        mcp_enabled=file.server.mcp,
     )
+
+
+@dataclass(frozen=True)
+class Paths:
+    """Where everything config.yaml names actually is, resolved the one way
+    the server resolves it. `config shell server` prints the same values, so
+    the scripts never work out a path on their own."""
+
+    project_dir: Path
+    app_dir: Path
+    database_path: Path
+    static_dir: str
+    language_file: str
+
+
+def resolve_paths(file: File, config_path: Path) -> Paths:
+    """Work the paths out without creating anything."""
+    base = project_dir_for(config_path)
+    app_dir = default_app_dir()
+    if file.server.app_dir:
+        app_dir = Path(resolve_path(base, file.server.app_dir))
+    if PINNED.app_dir:
+        app_dir = Path(PINNED.app_dir)
+    app_dir = app_dir.absolute()
+
+    # An operator can drop a language.yaml into the app directory to reword
+    # the UI without touching the code. Failing that, the one beside
+    # config.yaml (config/language.yaml in a checkout) is used, and failing
+    # that the copy that ships with the code (app/core/assets.py decides).
+    language_file = resolve_path(base, file.server.language_file)
+    if language_file == "":
+        candidate = app_dir / LANGUAGE_FILE_NAME
+        language_file = str(candidate if candidate.is_file() else config_path.parent / LANGUAGE_FILE_NAME)
+
+    return Paths(
+        project_dir=base,
+        app_dir=app_dir,
+        database_path=app_dir / DATABASE_FILE_NAME,
+        static_dir=resolve_path(base, file.server.static_dir),
+        language_file=language_file,
+    )
+
+
+def server_url(file: File) -> tuple[str, str]:
+    """The address printed links start with, and where it came from.
+    server.public_url wins: only the operator knows what sits in front.
+    Without it, the container's answer is the address Docker publishes
+    (docker.bind_address:docker.host_port), and anywhere else it is the
+    listen address -- with a wildcard host shown as loopback, since 0.0.0.0
+    is not somewhere a browser can go."""
+    if file.server.public_url:
+        return file.server.public_url.rstrip("/"), "server.public_url"
+    if in_container():
+        return docker_url(file)
+    return (
+        "http://" + _host_port(file.server.host, file.server.port),
+        "server.host and server.port; this machine only -- set server.public_url for the address people use",
+    )
+
+
+def docker_url(file: File) -> tuple[str, str]:
+    """server_url for the container as seen from the host."""
+    if file.server.public_url:
+        return file.server.public_url.rstrip("/"), "server.public_url"
+    return (
+        "http://" + _host_port(file.docker.bind_address, file.docker.host_port),
+        "docker.bind_address and docker.host_port, the published port -- set server.public_url for the address people use",
+    )
+
+
+def _host_port(host: str, port: int) -> str:
+    host = {"0.0.0.0": "127.0.0.1", "": "127.0.0.1", "::": "::1"}.get(host, host)
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"

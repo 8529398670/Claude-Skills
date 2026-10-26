@@ -41,7 +41,7 @@ const Keys = {
   },
 
   async onCopy() {
-    await Dom.copy( Dom.get( "key-secret-value" ) , Dom.get( "key-copied-notice" ) );
+    await Dom.copy( Dom.get( "key-secret-value" ) );
   },
 
   async onCreate( event ) {

@@ -20,9 +20,11 @@ from typing import Callable, Sequence
 from starlette.middleware import Middleware
 from starlette.routing import BaseRoute, Route
 
-from app.core.security import RequireAdmin, RequireLogin, RequireSession
+from app.core.config import Config
+from app.core.security import RequireAdmin, RequireAPIKey, RequireLogin, RequireSession
 from app.core.static_files import StaticServer
-from app.routes import account, admin, api_keys, auth, invite_links, join, meta, team
+from app.mcp.protocol import Server as MCPServer
+from app.routes import account, admin, api_keys, auth, invite_links, join, mcp_tools, meta, team
 from app.routes.api_keys import RequireAPIKeys
 
 
@@ -37,7 +39,7 @@ def group(*guards: type) -> Callable[..., Route]:
     return route
 
 
-def build_routes(static_server: StaticServer) -> list[BaseRoute]:
+def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
     public = group()
     signed_in = group(RequireLogin)
     sessions_only = group(RequireLogin, RequireSession)
@@ -62,7 +64,7 @@ def build_routes(static_server: StaticServer) -> list[BaseRoute]:
     # the ability to revoke or delete someone else's.
     admin_keys = group(RequireAPIKeys, RequireAdmin, RequireSession)
 
-    return [
+    routes: list[BaseRoute] = [
         # Public: the login link's page and the call it makes, the UI's text
         # (needed to render the signed-out page at all), and the healthcheck.
         # Opening a login link only shows a page; the link is spent by the
@@ -111,6 +113,21 @@ def build_routes(static_server: StaticServer) -> list[BaseRoute]:
         admin_keys("/api/admin/keys", api_keys.list_all_keys),
         admin_keys("/api/admin/keys/{key_id}/revoke", api_keys.revoke_any_key, ["POST"]),
         admin_keys("/api/admin/keys/{key_id}/delete", api_keys.delete_any_key, ["POST"]),
+    ]
+
+    # MCP: agents calling the app with an API key (see app/mcp and
+    # mcp_tools.py). Keys only -- RequireAPIKey turns a browser session away --
+    # and every tool runs at the key's effective role, so this is the API above
+    # in another shape, not a wider one. Without API keys nothing could
+    # authenticate to it, so it is not registered either.
+    if cfg.mcp_enabled and cfg.api_keys_enabled:
+        mcp = MCPServer(mcp_tools.build_registry())
+        routes += [
+            group(RequireAPIKey)("/mcp", mcp.endpoint, ["POST"]),
+            public("/mcp", mcp.method_not_allowed, ["GET", "DELETE"]),
+        ]
+
+    return routes + [
         # Any other /api/ path is a JSON 404, not the index.html fallback.
         Route("/api/{rest:path}", meta.unknown_api),
         # Catch-all static serving. Must stay last -- it matches every

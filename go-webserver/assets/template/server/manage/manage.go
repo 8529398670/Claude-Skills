@@ -2,10 +2,10 @@
 // happen through the web UI, because they are needed before anyone can log in
 // or at the point when nobody can.
 //
-// It lives in a package rather than a main so that both entry points can
-// share it: the single portable binary dispatches "myapp manage ..." here,
-// and cmd/manage builds it as a standalone tool for the container image.
-// One implementation, two ways to reach it.
+// It lives in a package rather than in main.go so the binary's "manage"
+// subcommand stays a one-line dispatch and the commands can be tested on
+// their own. The container image runs the same binary: docker exec <name>
+// /app/server manage ...
 //
 // # How it reaches the database
 //
@@ -108,9 +108,7 @@ type backend interface {
 	Route() ( description string )
 }
 
-// Run executes one subcommand. arguments is everything after the program name
-// (for cmd/manage) or after "manage" (for the combined binary), so both
-// callers pass the same shape.
+// Run executes one subcommand. arguments is everything after "manage".
 func Run( arguments []string ) ( err error ) {
 	if len( arguments ) < 1 {
 		Usage()
@@ -168,7 +166,7 @@ func Run( arguments []string ) ( err error ) {
 	case "delete-key":
 		err = commandDeleteKey( back , rest )
 	case "create-invite":
-		err = commandCreateInvite( back , rest )
+		err = commandCreateInvite( back , cfg , rest )
 	default:
 		Usage()
 		err = fmt.Errorf( "unknown command %q" , command )
@@ -602,7 +600,7 @@ func commandReissueLogin( back backend , cfg *config.Config , arguments []string
 
 func existsNote( path string ) ( note string ) {
 	if _ , err := os.Stat( path ); err != nil {
-		note = "  (absent -- optional)"
+		note = "  (absent -- the embedded copy is used)"
 	}
 	return
 }
@@ -611,9 +609,12 @@ func existsNote( path string ) ( note string ) {
 // question you can only settle by reading the source or the startup log.
 func commandPaths( cfg *config.Config ) ( err error ) {
 	fmt.Printf( "%-14s %s  (holds the secret key)\n" , "config" , cfg.ConfigFile )
+	fmt.Printf( "%-14s %s  (relative paths in the config start here)\n" , "project dir" , cfg.ProjectDir )
+	fmt.Printf( "%-14s %s  (from %s)\n" , "url" , cfg.URL , cfg.URLSource )
 	fmt.Printf( "%-14s %s\n" , "app dir" , cfg.AppDir )
 	fmt.Printf( "%-14s %s\n" , "database" , cfg.DatabasePath )
 	fmt.Printf( "%-14s %s\n" , "storage" , cfg.StorageDir )
+	fmt.Printf( "%-14s %s%s\n" , "static" , cfg.StaticDir , existsNote( cfg.StaticDir ) )
 	fmt.Printf( "%-14s %s%s\n" , "language" , cfg.LanguageFile , existsNote( cfg.LanguageFile ) )
 
 	// Whether a server is live decides which route every other command
@@ -635,7 +636,7 @@ func commandPaths( cfg *config.Config ) ( err error ) {
 	// cover, so say which case this is rather than leaving it to be worked
 	// out from the paths above.
 	fmt.Println( "" )
-	fmt.Println( "Change any of these in config.yaml (server.app_dir moves the app dir)." )
+	fmt.Printf( "Change any of these in %s (server.app_dir moves the app dir).\n" , cfg.ConfigFile )
 	if filepath.Dir( cfg.ConfigFile ) == cfg.AppDir {
 		fmt.Println( "Back up the app dir as a unit -- app.db is unreadable without the key in config.yaml." )
 	} else {
@@ -759,7 +760,7 @@ func commandCreateKey( back backend , cfg *config.Config , arguments []string ) 
 
 // commandCreateInvite makes a link a whole group can join through, as the
 // admin -user-id: it stops working if that admin is disabled or demoted.
-func commandCreateInvite( back backend , arguments []string ) ( err error ) {
+func commandCreateInvite( back backend , cfg *config.Config , arguments []string ) ( err error ) {
 	set := flag.NewFlagSet( "create-invite" , flag.ExitOnError )
 	user_id := set.Uint64( "user-id" , 0 , "id of the admin the link is made as" )
 	label := set.String( "label" , "" , "what the link is for, e.g. \"Book club\"" )
@@ -770,7 +771,7 @@ func commandCreateInvite( back backend , arguments []string ) ( err error ) {
 	link , err := back.CreateInviteLink( *user_id , *label , *uses , *days )
 	if err != nil { return }
 
-	bootstrap.PrintInviteLink( fmt.Sprintf( "%q, %d places" , link.Label , link.MaxUses ) ,
+	bootstrap.PrintInviteLink( cfg , fmt.Sprintf( "%q, %d places" , link.Label , link.MaxUses ) ,
 		link.Credential , link.ExpiresAt.Local().Format( "2006-01-02 15:04" ) )
 	return
 }

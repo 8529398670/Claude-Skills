@@ -33,7 +33,7 @@ const Pin = {
       this.me.has_pin = result.has_pin;
       Dom.get( "pin-value" ).value = "";
       this.render();
-      Dom.flash( Dom.get( "pin-saved" ) );
+      Dom.toast( I18n.get( "ui.saved" ) , "ok" );
     } catch ( error ) {
       App.showError( error.message );
     }

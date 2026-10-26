@@ -26,7 +26,7 @@ whose server is deliberately thin, that has been a good trade.
 Download it once and serve it yourself:
 
 ```bash
-./scripts/vendor.sh https://cdnjs.cloudflare.com/ajax/libs/htmx.org/2.0.4/htmx.min.js
+misc/vendor.sh https://cdnjs.cloudflare.com/ajax/libs/htmx.org/2.0.4/htmx.min.js
 ```
 
 Then `<script src="/vendor/htmx.min.js"></script>`. Commit the file -- it is
@@ -45,7 +45,7 @@ the user, not to fix by loosening the CSP.
 
 ## The language.yaml contract
 
-Every user-facing string lives in `language.yaml`. None are hardcoded in HTML
+Every user-facing string lives in `config/language.yaml`. None are hardcoded in HTML
 or JS.
 
 ```html
@@ -76,7 +76,7 @@ exactly like a missing feature.
 
 ## Disk during development, embedded when shipped
 
-Everything under `static/` is compiled into the binary by `embed.go`. At
+Everything under `static/` is compiled into the binary by the `go:embed` lines in `main.go`. At
 startup the server prefers a real `./static` directory if one exists and falls
 back to the embedded copy otherwise, logging which it chose:
 
@@ -96,7 +96,8 @@ Plain scripts, loaded in dependency order, each adding one global:
 
 | File | Responsibility |
 |---|---|
-| `dom.js` | Element helpers. No app logic. |
+| `theme.js` | Light, dark, or a preset theme. Loaded in `<head>`; see below. |
+| `dom.js` | Element helpers, `Dom.copy`, `Dom.toast`. No app logic. |
 | `i18n.js` | Loads and applies `language.yaml`. |
 | `api.js` | Every call to the server. Attaches cookies and the CSRF token. |
 | `app.js` | The account + admin screen. |
@@ -127,6 +128,40 @@ literal characters. The same row assembled with `innerHTML` executes it.
 There is deliberately no escaping helper in `dom.js` -- the safe path should
 be the only path.
 
+## The shell every page shares
+
+- **The app's name in the header is the home link** (`a.brand-link` to `/`).
+- **A profile icon, not "Name (role)" text.** `#app-nav` on the right of the
+  header is shown once signed in; it holds the round `.profile-link` icon
+  (jumps to the `#account` card; its `title`/`aria-label` say who is signed
+  in -- `App.labelProfile`). The app's own top-level links go in the same
+  `<nav>`, before the icon.
+- **Secondary cards fold.** `<details class="card collapsible">` with the
+  `h2` and a one-line `.muted` summary inside `<summary>` (Appearance, PIN,
+  API keys, invite links, all keys). `<details>` does the opening, so it
+  works by keyboard with no script, and toggling `hidden` on it still works.
+  Keep the cards someone uses every visit as plain open `.card`s.
+- **Confirmations are toasts.** `Dom.toast( I18n.get( "ui.saved" ) , "ok" )`
+  shows a short line pinned to the bottom (`#toast`) for four seconds;
+  `Dom.copy( element )` toasts `ui.copied` itself. A message that must stay
+  (a key shown once) gets its own box on the page instead, and page-level
+  errors stay in `#error-banner`.
+
+### Themes
+
+`static/js/theme.js` is loaded in `<head>`, before the stylesheet paints, and
+applies the saved theme at once, so a dark choice never flashes light.
+`Theme.presets` lists light, dark and eight ready-made themes -- ocean, forest, sepia, grape, pink, midnight, slate, dark pink -- (each a mode plus
+optional `accent`, `background`, `surface` colours -> `--accent`, `--bg`,
+`--card-bg`, set inline on `<html>`; `--accent-fg` is picked for contrast).
+The Appearance card is `Theme.render( root , summary )`; names come from
+`theme.preset_<key>` in language.yaml.
+
+The choice lives in this browser's `localStorage` only -- no server state.
+To make it follow a person across devices, store the preset key on the
+account and call `Theme.set( key )` after `/api/me`. Whatever you do, first
+load is always light.
+
 ## CSS structure
 
 `static/css/style.css` is mobile-first: base rules describe a narrow screen,
@@ -139,6 +174,8 @@ Things worth preserving when editing:
 - **Light mode is the default and stays it.** Dark is opt-in via
   `<html data-theme="dark">`, deliberately *not* `prefers-color-scheme`, so
   the app looks the same for everyone unless someone chooses otherwise.
+  `:root, [data-theme="light"]` carries the light tokens; `theme.js` sets
+  `data-theme` and any preset colours.
 - **Colors are custom properties on `:root`.** Change a token, not a rule.
 - **16px base font size.** Smaller makes iOS Safari zoom in on a focused
   input.

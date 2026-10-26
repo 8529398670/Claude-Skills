@@ -1,6 +1,6 @@
 ---
 name: python-webserver
-description: Scaffold a new security-hardened Python web server on Starlette + uvicorn with link-based login (no open signup, no passwords -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), every database record encrypted at rest in a single SQLite file, API keys that reuse the admin/user roles, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + dockerRun.sh with no docker-compose, one config.yaml that configures the server and the Docker container (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Python -- trigger on "build me a webserver/website/web app", "new Starlette app", "Python backend with logins", "I need a simple internal tool with logins", "set up a Python backend with an admin panel", "scaffold a new app with Docker", or "I don't want a signup page, just let me create accounts myself". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, encrypted storage, or Docker packaging to a Python web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Python API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my app", or "service account for CI". Do NOT use it for a one-off script, a data pipeline, a CLI tool, or a project that already has its own auth/serving stack the user wants extended in its own style. This is the Python counterpart to the `go-webserver` skill -- pick that one whenever Go, golang, or Fiber is mentioned, or when the user needs one self-contained executable with no runtime at all.
+description: Scaffold a new security-hardened Python web server on Starlette + uvicorn with link-based login (no open signup, no passwords -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), every database record encrypted at rest in a single SQLite file, API keys that reuse the admin/user roles, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + docker/run.sh with no docker-compose, scripts/run.sh and scripts/login.sh that report the real URL, paths and state, one config/config.yaml that configures the server and the Docker container (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Python -- trigger on "build me a webserver/website/web app", "new Starlette app", "Python backend with logins", "I need a simple internal tool with logins", "set up a Python backend with an admin panel", "scaffold a new app with Docker", or "I don't want a signup page, just let me create accounts myself". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, encrypted storage, or Docker packaging to a Python web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Python API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my app", "service account for CI", "add an MCP server/endpoint", or "let Claude (Code) use my app". Do NOT use it for a one-off script, a data pipeline, a CLI tool, or a project that already has its own auth/serving stack the user wants extended in its own style. This is the Python counterpart to the `go-webserver` skill -- pick that one whenever Go, golang, or Fiber is mentioned, or when the user needs one self-contained executable with no runtime at all.
 ---
 
 # Python webserver scaffolder
@@ -35,6 +35,11 @@ project.
   creating accounts, or reissuing login links -- so revoking a leaked key
   ends it. That is what lets a cron job, a CI pipeline, or a sidecar call the
   app.
+- **The same keys speak MCP at `/mcp`.** An agent such as Claude Code uses the
+  app through a key, at that key's role: admin tools are invisible to a
+  user-scoped key, a browser session is refused, and no tool creates a
+  credential or deletes anything. Stateless JSON-RPC over POST, written by
+  hand -- no SDK, no SSE, no sessions. `server.mcp: false` removes it.
 - **The first admin is the owner.** Any admin can permanently delete an
   ordinary user; only the owner can delete another admin, and nobody can
   delete, disable, or revoke the owner from the web. Ownership is a marker,
@@ -53,26 +58,31 @@ project.
 - **No build step, ever.** Plain browser JS and CSS. No npm, no bundler, no
   transpiler, no JSX. Third-party libraries are downloaded once into
   `static/vendor/` and served from there, never pulled from a CDN at runtime.
-- **All UI text lives in `language.yaml`.** No user-facing string is
+- **All UI text lives in `config/language.yaml`.** No user-facing string is
   hardcoded in HTML or JS.
 - **Mobile-first and light-mode by default.**
-- **Docker, never compose.** One hardened Alpine image, one `dockerRun.sh`.
-- **`run.sh` just makes it run** outside Docker, from the checkout: it
-  stops the copy it started last and starts a fresh one in the foreground
-  (creating or updating `.venv` first). With arguments it is the
-  admin CLI instead and leaves the running server alone
-  (`./run.sh manage reissue-login ...`). `run.bat` is the same on Windows.
-  Run inside the skill's own `assets/template/`, it stamps a demo project
+- **Docker, never compose.** One hardened Alpine image, one `docker/run.sh`.
+- **`scripts/run.sh` just makes it run** outside Docker, from the
+  checkout: it stops the copy it started last and starts a fresh one in the
+  foreground (creating or updating `.venv` first), and says what is really
+  happening -- the URL, config file, app dir, whether the database is new,
+  which process holds the port if it is taken -- then `Ready: <url>` once it
+  answers. With arguments it is the admin CLI instead and leaves the running
+  server alone (`scripts/run.sh manage list-users`). **`scripts/login.sh`**
+  prints a clickable login link for the owner (user 1) from whichever
+  deployment is live -- the local server or the docker container -- and says
+  which. `run.bat` / `login.bat` are the same on Windows.
+  Run inside the skill's own `assets/template/`, they stamp a demo project
   into `~/.cache/python-webserver-demo/` (via `scripts/demo.py`) and runs
   that, so the template can be tried without scaffolding anything.
 - **One entry point.** `python -m app` is the server, and the same command is
   the admin CLI (`python -m app manage ...`), the config tool, the
   healthcheck, and `version`.
-- **One `config.yaml` configures everything** -- the server and the Docker
+- **One `config/config.yaml` configures everything** -- the server and the Docker
   container (image name, ports, mounts, resource limits). Nothing reads
-  environment variables: not the Python code, not `dockerRun.sh`, and the
-  container gets no `-e` flags and the image no `ENV`. The script asks the
-  app for its values (`python -m app config shell docker`), so there is one
+  environment variables: not the Python code, not the scripts, and the
+  container gets no `-e` flags and the image no `ENV`. The scripts ask the
+  app for their values (`python -m app config shell server|docker`), so there is one
   YAML parser and one set of validation rules, and an unknown key is an error
   rather than a silently ignored typo. The file holds the secret key, so it is
   mode 0600, gitignored, and never baked into an image.
@@ -130,9 +140,9 @@ python3 <skill_dir>/scripts/scaffold.py <target-dir> "<project-name>"
 ```
 
 This copies `assets/template/`, replacing `{{PROJECT_NAME}}` and
-`{{PROJECT_SLUG}}`, and writes the project's `config.yaml` (the documented
-defaults plus a freshly generated secret key, mode 0600) and
-`config.example.yaml` (the same defaults with no key, for committing). It installs
+`{{PROJECT_SLUG}}`, and writes the project's `config/config.yaml` (the
+documented defaults plus a freshly generated secret key, mode 0600) and
+`config/config.example.yaml` (the same defaults with no key, for committing). It installs
 nothing, starts nothing, and creates no users -- so nothing happens on the
 network or on disk that the user did not ask for.
 
@@ -140,46 +150,60 @@ network or on disk that the user did not ask for.
 
 ```
 <target-dir>/
-  config.yaml                 # THE config: server, docker + secret key
+  config/
+    config.yaml               # THE config: server, docker + secret key
                               #   (written by scaffold.py; gitignored, 0600)
-  config.example.yaml         # every default, no secret key -- commit this; a
-                              #   fresh clone copies it to config.yaml
+    config.example.yaml       # every default, no secret key -- commit this; a
+                              #   fresh clone copies it to config/config.yaml
                               #   (`python -m app config example` regenerates it)
-  requirements.txt            # pinned; every dependency ships Alpine wheels
-  language.yaml               # every user-facing string in the app
+    defaults.yaml             # every config key, documented -- the defaults
+    example_header.yaml       # the note config.example.yaml starts with
+    language.yaml             # every user-facing string in the app
   app/
+    requirements.txt          # pinned; every dependency ships Alpine wheels
     __main__.py               # `python -m app` dispatch: serve | manage |
                               #   config | health | version
     main.py                   # wiring only: config, assets, db, routes, uvicorn
     manage.py                 # the admin CLI (opens the database directly)
     core/
-      defaults.yaml           # every config key, documented
-      config.py               # locate, strict-parse, validate, resolve paths
-      config_command.py       # `config init|check|shell docker`
+      config.py               # locate, strict-parse, validate, resolve paths/URL
+      config_command.py       # `config init|example|check|shell server|docker`
       layout.py               # the container image's pinned paths
       encryption.py           # the ONLY module that touches crypto
       db.py                   # SQLite record store, encrypt-on-write
-      security.py             # sessions + API keys -> one Actor, guards, CSRF
+      security.py             # sessions + API keys -> one Actor, guards
+                              #   (incl. RequireAPIKey for /mcp), CSRF
       middleware.py           # CSP + security headers, rate limit, JSON errors
       static_files.py         # gzip-always-fresh text, long-cached images
       assets.py               # configured static dir/language file, or bundled
       language.py             # loads language.yaml, serves it as JSON
-      bootstrap.py            # first-run admin + credential printing
+      bootstrap.py            # first-run admin + printing links as full URLs
       healthcheck.py          # `health`, the container HEALTHCHECK
     models/                   # users.py, sessions.py, login_tokens.py, api_keys.py,
                               #   invite_links.py, pins.py
-    routes/                   # __init__.py (the URL map) + one module per group
+    mcp/                      # protocol.py: the /mcp JSON-RPC protocol
+                              # registry.py: Tool, Call.bind, Refusal
+    routes/                   # __init__.py (the URL map) + one module per group,
+                              #   including mcp_tools.py (the MCP tools)
   static/
-    index.html                # placeholder account + admin UI, fully data-i18n'd
+    index.html                # placeholder account + admin UI, fully data-i18n'd;
+                              #   brand = home link, profile icon, folding cards, toasts
     css/style.css             # mobile-first, light default
+    js/theme.js               # light/dark/preset themes, applied before first paint
     js/dom.js, i18n.js, api.js, app.js, keys.js,
       join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
     vendor/                   # self-hosted third-party libs (see its README)
-  scripts/vendor.sh           # downloads a library into static/vendor/
-  scripts/docker.sh           # shared by the docker scripts: build + read config
-  run.sh                      # local run: (re)starts the server; with args, the CLI
-  run.bat                     # the same for Windows
-  Dockerfile, dockerBuild.sh, dockerRun.sh, .dockerignore, .gitignore
+  scripts/
+    run.sh, run.bat           # local run: (re)starts the server; with args, the CLI
+    login.sh, login.bat       # the owner's login link, from whatever is live
+    lib.sh                    # shared by run.sh and login.sh (sourced)
+  docker/
+    Dockerfile                # built with the project root as context
+    Dockerfile.dockerignore   # what the build context leaves out
+    build.sh, run.sh          # build the image; build + run the container
+    lib.sh                    # shared by both (sourced)
+  misc/vendor.sh              # downloads a library into static/vendor/
+  .gitignore, .gitattributes
 ```
 
 ## Step 3: Build the actual app on top
@@ -190,7 +214,7 @@ but stay consistent with the patterns already there:
 - **New pages** are static files under `static/`. Give each screen its own
   file in `static/js/` with its own `init()`, included from that page's
   HTML. Do not keep appending to `app.js` -- `keys.js` is the worked example.
-- **New text** goes in `language.yaml` and is referenced with
+- **New text** goes in `config/language.yaml` and is referenced with
   `data-i18n="section.key"` (or `data-i18n-attr="placeholder:section.key"`).
   Never hardcode a user-facing string in HTML or JS. A missing or empty
   key hides its element -- that is the documented way to switch a label or
@@ -217,6 +241,16 @@ but stay consistent with the patterns already there:
   deliberately carries less. Add `RequireSession` to a route only when it
   must be browser-only, the way key management, account creation and
   login-link reissue are -- and to any new route that creates a credential.
+- **New MCP tools** go in `app/routes/mcp_tools_<feature>.py`, registered
+  from `build_registry` in `mcp_tools.py`. Pull the HTTP handler's body into
+  a synchronous helper both call (the way `me_row` and `set_disabled_checked`
+  are), so the two doors share one set of rules. Default to any signed-in
+  key; set `admin_only` only when the matching route is admin-only. Read
+  arguments with `call.bind({...})` (strict), return a dict, and say no with
+  `raise Refusal("...")`. Never write a tool that creates a credential or
+  deletes something -- `/mcp` takes only keys, and those routes need a
+  session. Set `read_only`/`destructive` honestly; clients use them to decide
+  when to ask the person first.
 - **New data** gets a bucket constant in `app/core/db.py` (added to
   `BUCKETS` so its table is created at startup) and a new module in
   `app/models/` with a dataclass and plain functions, matching `users.py`. Go
@@ -227,19 +261,20 @@ but stay consistent with the patterns already there:
 - **New files on disk** go under `cfg.storage_dir` (`<app dir>/storage/`),
   never a path relative to the working directory -- that changes depending on
   how the process was started, and would land outside what users back up.
-- **New settings** get a key in `app/core/defaults.yaml` (with its default
+- **New settings** get a key in `config/defaults.yaml` (with its default
   and a comment), a field on the matching section dataclass in
   `app/core/config.py`, a check in `validate()` if the value can be wrong, and
   -- if the server reads it -- a field on `Config` filled in by `load()`.
   Strict decoding means a key missing from the dataclass is rejected, so the
   two cannot drift silently. Never read `os.environ`, and never make
-  `dockerRun.sh` read an environment variable instead. See
+  a script read an environment variable instead -- add the value to
+  `config shell` in `app/core/config_command.py`. See
   `references/configuration.md`.
 - **Never import a crypto module outside `app/core/encryption.py`.** Add a
   function there instead. One file to audit is the entire point.
 - **Never build HTML from strings containing user data.** Use `Dom.el`
   with `text:`, which is why that helper exists.
-- **Adding a library?** Run `./scripts/vendor.sh <url>` and reference
+- **Adding a library?** Run `misc/vendor.sh <url>` and reference
   `/vendor/<file>`. A `<script src>` pointing at a CDN is blocked by the
   Content-Security-Policy -- that is the policy working. Vendor the file
   rather than loosening the CSP.
@@ -259,19 +294,25 @@ Do not scaffold and hand it over unverified. Actually exercise the flow:
 
 ```bash
 cd <target-dir>
-# in config.yaml: server.secure_cookies: false   (plain http on localhost only)
-./run.sh
+# in config/config.yaml: server.secure_cookies: false   (plain http on localhost only)
+scripts/run.sh
+scripts/login.sh   # from another terminal: a fresh owner login link
 ```
 
-`scaffold.py` already wrote `./config.yaml` with a generated secret key.
-`./run.sh` creates `.venv` and installs `requirements.txt` when needed (again
+`scaffold.py` already wrote `config/config.yaml` with a generated secret key.
+`scripts/run.sh` creates `.venv` and installs `app/requirements.txt` when needed (again
 whenever that file changes), stops the server it started last
 (`.run/server.pid`), and runs `python -m app` in the foreground, reading that
-file. Run it again after a Python change. The startup log prints which config
-file it loaded and where state landed; `./run.sh manage paths` reports the
-same without touching the server, and `./run.sh config check` validates the
-file. Any arguments make `run.sh` a one-off: it runs `python -m app` with them
-and leaves the running server alone. On Windows, `run.bat` does the same.
+file. Run it again after a Python change. Before starting it prints the
+resolved URL, config file, app dir, database (new or existing), and whether
+static/ and language come from disk; it refuses to start -- naming the
+process -- when something else holds the port, warns when `secure_cookies` is
+on for a plain `http://` URL, and prints `Ready: <url>` once the server
+answers. `scripts/run.sh config shell server` prints those same resolved
+values, `scripts/run.sh manage paths` reports them too, and
+`scripts/run.sh config check` validates the file. Any arguments make `run.sh`
+a one-off: it runs `python -m app` with them and leaves the running server
+alone. On Windows, `scripts\run.bat` does the same.
 
 On a fresh database the server prints a one-time login link. Confirm, by
 actually doing it:
@@ -303,6 +344,22 @@ and any key gets 403 from `POST /api/account/login-link`
 (a login link would become a session that mints keys), and that revoking a
 key kills it on the next request. `python -m app manage list-keys` works from a shell, with
 the server running or not.
+
+Then `/mcp` with the same two keys:
+
+```bash
+MCP='Content-Type: application/json'
+curl -s localhost:8000/mcp -H "$MCP" -H "Authorization: Bearer <user key>" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'                  # no admin_* tools
+curl -s localhost:8000/mcp -H "$MCP" -H "Authorization: Bearer <admin key>" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"admin_list_users","arguments":{}}}'
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8000/mcp -d '{}'   # 401
+```
+
+A signed-in browser posting to `/mcp` gets 403, `GET /mcp` gets 405, and
+`admin_set_user_disabled` on your own account or the owner comes back with
+`isError: true`. To use it from Claude Code:
+`claude mcp add --transport http <name> http://localhost:8000/mcp --header "Authorization: Bearer <key>"`.
 
 Then the delete rules, because they are permission checks that only show up
 when someone is refused. Create a second admin B and a user C, sign B in, and
@@ -340,15 +397,18 @@ for anything served over https.
 
 ```bash
 cd <target-dir>
-./dockerRun.sh
-docker logs <project-slug>     # the first-run login link is printed here
+docker/run.sh                  # build, run, wait until healthy, print the URL
+scripts/login.sh --docker      # a fresh owner login link from the container
 ```
 
 Every flag on the `docker run` comes from the `docker:` section of
-`config.yaml` (plus `server.port` for the container side of the published
-port), and the container reads the same file mounted read-only at
-`/app/config.yaml`. On a fresh clone there is no `config.yaml` (it is
-gitignored), so the first `./dockerRun.sh` writes one with a new key and
+`config/config.yaml` (plus `server.port` for the container side of the
+published port), and the container reads the same file mounted read-only at
+`/app/config/config.yaml`. `docker/run.sh` waits for the healthcheck, prints
+`Ready: <url>` (or the container's last log lines if it fails), and on a fresh
+database prints the owner's first login link straight from the log. On a fresh
+clone there is no `config/config.yaml` (it is gitignored), so the first
+`docker/run.sh` writes one with a new key and
 stops, asking for a review of `server.secure_cookies`, `server.trust_proxy`
 (with `server.trusted_proxies`), and the published port before anything
 starts.
@@ -358,7 +418,7 @@ capabilities dropped, no-new-privileges, non-root fixed uid, memory, CPU and
 pid limits, restart policy. Use it for anything internet-facing or
 long-running.
 
-Before starting anything, `dockerRun.sh` also proves the container can read
+Before starting anything, `docker/run.sh` also proves the container can read
 `config.yaml` and write the data directory, and that both are really the
 host's files -- a project outside the paths the Docker VM shares (colima
 shares only your home directory) is refused with a clear message instead of
@@ -395,7 +455,8 @@ Read these when the task goes past "scaffold and build features":
   can create and sign in as, the PIN, and what a leaked one costs), how API
   keys mirror the admin/user roles and why a key can neither outrank its owner nor mint
   another key, the owner account and who may delete whom, why credentials are
-  shaped `<id>.<secret>`, which crypto is used where and why, encrypted
+  shaped `<id>.<secret>`, the `/mcp` endpoint and what it deliberately leaves
+  out, which crypto is used where and why, encrypted
   records in SQLite and what they cost, why there is no control socket, the
   threadpool rule, the static caching policy, and the known limits. Read
   before changing the template's structure rather than building on it.
@@ -405,7 +466,7 @@ Read these when the task goes past "scaffold and build features":
   container's pinned layout, and what to back up. Read before adding a
   setting or writing a file anywhere.
 - `references/docker-and-deployment.md` -- what each Dockerfile and
-  `dockerRun.sh` choice is protecting against, how the scripts read
+  `docker/run.sh` choice is protecting against, how the scripts read
   `config.yaml` through the image, TLS/reverse-proxy expectations, the secret
   key, backups, operating the container, and running without Docker.
 - `references/frontend.md` -- the language.yaml contract in detail, the

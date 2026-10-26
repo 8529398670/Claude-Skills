@@ -5,20 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light" />
   <title data-i18n="app.title">&nbsp;</title>
+  <!-- Before the stylesheet paints, so a saved dark theme never flashes light. -->
+  <script src="/js/theme.js"></script>
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
   <!--
     No text is hardcoded here. Every visible string carries a data-i18n key
-    that app/core/language.py loads from language.yaml at runtime, so the copy
+    that server/language resolves from language.yaml at runtime, so the copy
     can change (or be removed entirely) without editing this file.
   -->
   <header class="app-header">
     <div>
-      <h1 data-i18n="app.title"></h1>
+      <!-- The app's name is the way home, from any screen. -->
+      <h1><a href="/" class="brand-link" data-i18n="app.title"></a></h1>
       <p class="muted" data-i18n="app.tagline"></p>
     </div>
-    <div id="who-am-i" class="who"></div>
+    <div class="header-side">
+      <nav id="app-nav" class="app-nav" hidden>
+        <!-- The app's own top-level links go here, before the profile icon. -->
+        <!-- Your account and settings, behind the usual profile icon. Its
+             title says who is signed in; see App.labelProfile. -->
+        <a href="#account" id="profile-link" class="profile-link"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8.5" r="4"/><path d="M4 20.5c0-4.1 3.6-6.5 8-6.5s8 2.4 8 6.5"/></svg></a>
+      </nav>
+    </div>
   </header>
 
   <main hidden id="main">
@@ -82,7 +92,7 @@
     </section>
 
     <section id="signed-in" hidden>
-      <div class="card">
+      <div class="card" id="account">
         <h2 data-i18n="account.heading"></h2>
         <form id="rename-form" autocomplete="off">
           <div class="field">
@@ -92,7 +102,6 @@
           </div>
           <button type="submit" data-i18n="account.save_button"></button>
         </form>
-        <p id="rename-saved" class="notice notice-ok" data-i18n="account.saved_notice" hidden></p>
 
         <!-- A login link for your own account, to sign in on another device.
              Any signed-in user may mint one; see Api.createMyLoginLink. -->
@@ -103,17 +112,33 @@
           <p data-i18n="account.device_link_notice"></p>
           <code id="my-link-value"></code>
           <button id="my-link-copy-button" class="secondary" data-i18n="account.copy_button"></button>
-          <span id="my-link-copied" class="muted" data-i18n="account.copied_notice" hidden></span>
         </div>
 
         <button id="logout-button" class="secondary" data-i18n="account.logout_button"></button>
       </div>
 
+      <!-- Light, dark, or a ready-made theme; kept in this browser. See
+           theme.js. Folded to a line naming the current one. -->
+      <details class="card collapsible" id="appearance">
+        <summary>
+          <span class="collapsible-head">
+            <h2 data-i18n="theme.heading"></h2>
+            <span id="theme-summary" class="muted"></span>
+          </span>
+        </summary>
+        <p class="muted" data-i18n="theme.description"></p>
+        <div id="theme-picker" class="theme-picker"></div>
+      </details>
+
       <!-- Only for non-admin accounts; see pin.js. -->
-      <div class="card" id="pin-panel" hidden>
-        <h2 data-i18n="pin.heading"></h2>
+      <details class="card collapsible" id="pin-panel" hidden>
+        <summary>
+          <span class="collapsible-head">
+            <h2 data-i18n="pin.heading"></h2>
+            <span id="pin-status" class="muted"></span>
+          </span>
+        </summary>
         <p class="muted" data-i18n="pin.description"></p>
-        <p id="pin-status"></p>
         <form id="pin-form" autocomplete="off">
           <div class="field">
             <label for="pin-value" data-i18n="pin.label"></label>
@@ -125,16 +150,20 @@
             <button type="button" id="pin-clear-button" class="secondary" data-i18n="pin.clear_button" hidden></button>
           </div>
         </form>
-        <p id="pin-saved" class="notice notice-ok" data-i18n="pin.saved_notice" hidden></p>
-      </div>
+      </details>
 
       <!--
         API keys: the non-browser way in, for every signed-in user. The role
         select is revealed only for an admin (see keys.js) because a key can
         never carry more permission than the account that owns it.
       -->
-      <div class="card" id="api-keys-panel" hidden>
-        <h2 data-i18n="api_keys.heading"></h2>
+      <details class="card collapsible" id="api-keys-panel" hidden>
+        <summary>
+          <span class="collapsible-head">
+            <h2 data-i18n="api_keys.heading"></h2>
+            <span class="muted" data-i18n="api_keys.summary"></span>
+          </span>
+        </summary>
         <p class="muted" data-i18n="api_keys.description"></p>
 
         <form id="create-key-form" autocomplete="off">
@@ -162,7 +191,6 @@
           <p data-i18n="api_keys.secret_notice"></p>
           <code id="key-secret-value"></code>
           <button id="copy-key-button" class="secondary" data-i18n="api_keys.copy_button"></button>
-          <span id="key-copied-notice" class="muted" data-i18n="api_keys.copied_notice" hidden></span>
         </div>
 
         <div class="table-scroll">
@@ -180,7 +208,7 @@
             <tbody></tbody>
           </table>
         </div>
-      </div>
+      </details>
 
       <div class="card" id="admin-panel" hidden>
         <h2 data-i18n="admin.heading"></h2>
@@ -206,7 +234,6 @@
           <p data-i18n="admin.link_notice"></p>
           <code id="login-link-value"></code>
           <button id="copy-link-button" class="secondary" data-i18n="admin.copy_button"></button>
-          <span id="copied-notice" class="muted" data-i18n="admin.copied_notice" hidden></span>
         </div>
 
         <div class="table-scroll">
@@ -225,8 +252,13 @@
       </div>
 
       <!-- One link a whole group can join through; see invites.js. -->
-      <div class="card" id="invite-links-panel" hidden>
-        <h2 data-i18n="invite_links.heading"></h2>
+      <details class="card collapsible" id="invite-links-panel" hidden>
+        <summary>
+          <span class="collapsible-head">
+            <h2 data-i18n="invite_links.heading"></h2>
+            <span class="muted" data-i18n="invite_links.summary"></span>
+          </span>
+        </summary>
         <p class="muted" data-i18n="invite_links.description"></p>
 
         <form id="create-invite-form" autocomplete="off">
@@ -250,7 +282,6 @@
           <p data-i18n="invite_links.link_notice"></p>
           <code id="invite-link-value"></code>
           <button id="copy-invite-button" class="secondary" data-i18n="invite_links.copy_button"></button>
-          <span id="invite-copied-notice" class="muted" data-i18n="invite_links.copied_notice" hidden></span>
         </div>
 
         <div class="table-scroll">
@@ -267,12 +298,17 @@
             <tbody></tbody>
           </table>
         </div>
-      </div>
+      </details>
 
       <!-- Every key in the app, whoever owns it: the admin answer to "what
            has standing access", and where a lost laptop's key gets killed. -->
-      <div class="card" id="admin-keys-panel" hidden>
-        <h2 data-i18n="admin_keys.heading"></h2>
+      <details class="card collapsible" id="admin-keys-panel" hidden>
+        <summary>
+          <span class="collapsible-head">
+            <h2 data-i18n="admin_keys.heading"></h2>
+            <span class="muted" data-i18n="admin_keys.summary"></span>
+          </span>
+        </summary>
         <p class="muted" data-i18n="admin_keys.description"></p>
 
         <div class="table-scroll">
@@ -290,11 +326,13 @@
             <tbody></tbody>
           </table>
         </div>
-      </div>
+      </details>
     </section>
 
     <p id="error-banner" class="notice notice-error" hidden></p>
   </main>
+  <!-- "Saved.", "Copied.": see Dom.toast. -->
+  <p id="toast" class="notice toast" role="status" hidden></p>
 
   <!--
     Plain scripts in dependency order. No bundler, no modules that need a

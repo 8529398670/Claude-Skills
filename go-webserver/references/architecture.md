@@ -9,6 +9,7 @@ when you are changing the template itself rather than building features on it.
 - [The owner, and deleting accounts](#the-owner-and-deleting-accounts)
 - [Invite links: one link for a group](#invite-links-one-link-for-a-group)
 - [API keys: the same roles, for callers that are not browsers](#api-keys-the-same-roles-for-callers-that-are-not-browsers)
+- [MCP: the API keys, for agents](#mcp-the-api-keys-for-agents)
 - [Why credentials are shaped `<id>.<secret>`](#why-credentials-are-shaped-idsecret)
 - [Which crypto is used where, and why](#which-crypto-is-used-where-and-why)
 - [At-rest encryption and the secret key tradeoff](#at-rest-encryption-and-the-secret-key-tradeoff)
@@ -327,6 +328,64 @@ its own successors -- and write it down in that app's docs.
 | The same operations for other processes | `server/control/control.go` |
 | The screen | `static/js/keys.js` |
 
+## MCP: the API keys, for agents
+
+`POST /mcp` speaks the Model Context Protocol, so an agent -- Claude Code, or
+any MCP client that can send a header -- can use the app with an API key:
+
+```bash
+claude mcp add --transport http myapp https://myapp.example/mcp \
+  --header "Authorization: Bearer <key>"
+```
+
+It is the API keys in another shape, not a new way in:
+
+- **Keys only.** `Guard.RequireAPIKey` is `RequireSession` turned around: a
+  browser session gets 403, no credential gets 401 with
+  `WWW-Authenticate: Bearer`. With no ambient cookie accepted there is nothing
+  for another page to ride on, so there is no CSRF token to ask for -- and a
+  cross-origin `Origin` header is refused anyway, which is the spec's DNS
+  rebinding rule.
+- **The key's role, per tool.** Each tool is plain or `AdminOnly`, read
+  against the actor's *effective* role. `tools/list` leaves admin tools out
+  for a user-scoped key, and `tools/call` answers "unknown tool" for one, so
+  the key is never even told they exist.
+- **No credentials, no deleting.** The built-in tools are the safe half of the
+  REST API: `whoami`, `list_team`, and for admins listing users and invite
+  links, disabling/enabling an account, revoking an account's access, and
+  switching off an invite link. Creating accounts, login links, invite links,
+  PINs or keys, and every delete, need a browser session on the REST side for
+  the reasons in [Why a key cannot create credentials](#why-a-key-cannot-create-credentials);
+  a tool is a key-authenticated route, so the same rule keeps them out.
+- **One set of rules.** A tool calls the helper its HTTP handler calls
+  (`meRow`, `userRows`, `setUserDisabled`, `revokeAccess`, ...), so "you
+  cannot disable yourself" and the owner protection hold through both doors
+  and refuse in the same words.
+
+The transport is the simplest legal form of Streamable HTTP: stateless, one
+JSON-RPC message per POST, a JSON reply. No SSE stream, no `Mcp-Session-Id`,
+no batches; `GET`/`DELETE /mcp` answer 405. A tool call is then an ordinary
+request -- authenticate, check, act, answer -- with no per-client state to
+hold or leak between keys. It is written by hand (`server/mcp/`, about 300
+lines) rather than with an SDK, because four methods do not justify a
+dependency and its net/http adaptor.
+
+What it is not: an OAuth authorization server. claude.ai's remote connectors
+and other clients that can only sign in through OAuth cannot use it; anything
+that can set a header can. That follows from the template's position on
+OAuth -- see "When this template does not fit" in SKILL.md.
+
+`server.mcp: false`, or `auth.api_keys: false`, means the route is never
+registered.
+
+| Concern | File |
+|---|---|
+| JSON-RPC, version negotiation, the transport rules | `server/mcp/mcp.go` |
+| `Tool`, argument binding, `Refuse`, role filtering | `server/mcp/registry.go` |
+| The built-in tools | `server/routes/mcp_tools.go` |
+| The guard | `Guard.RequireAPIKey` in `server/security/security.go` |
+| End-to-end tests | `server/routes/mcp_test.go` |
+
 ## Why credentials are shaped `<id>.<secret>`
 
 Login tokens, sessions, API keys, and invite links all use `<id>.<secret>`,
@@ -526,7 +585,7 @@ break by accident.
 ## Where assets come from: disk or embedded
 
 `server/assets.Resolve` decides, at startup, whether the frontend is read from
-disk or from the copy compiled into the binary by `embed.go`. Disk wins when
+disk or from the copy compiled into the binary by `main.go`'s `go:embed` lines. Disk wins when
 it is present; embedded is the fallback. It logs which it chose:
 
 ```
@@ -558,7 +617,7 @@ elements for free, independently of the explicit check in the handler.
 
 It is `os.Root` and not `os.DirFS` on purpose. `os.DirFS` follows symlinks
 wherever they point -- its documentation says so -- so a link in `static/` to
-`../config.yaml` would serve the secret key to any visitor. An `os.Root`
+`../config/config.yaml` would serve the secret key to any visitor. An `os.Root`
 refuses to resolve anything, symlinks included, that lands outside the
 directory. Two consequences: a symlink that stays inside `static/` still
 works, and the root holds the directory open for the life of the process, so
@@ -569,9 +628,10 @@ untrusted users write there.
 
 ### The single binary is also the CLI
 
-`main.go` dispatches `manage` and `version` subcommands before starting the
-server. The commands themselves live in `server/manage`, which `cmd/manage`
-also wraps -- one implementation, two entry points, no drift.
+`main.go` dispatches `manage`, `config`, `health` and `version` subcommands
+before starting the server. The commands themselves live in `server/manage`,
+and the container image runs the same binary (`docker exec <name> /app/server
+manage ...`) -- one implementation, one entry point, no drift.
 
 This matters more than it looks: a portable binary that could not mint a login
 link would strand anyone who lost their session on a machine with no Go
@@ -656,7 +716,7 @@ State these to the user rather than letting them be discovered in production:
   by the TLS proxy (`server.host: 127.0.0.1`, `docker.bind_address:
   127.0.0.1`).
 - **Rate limiting is per-process, in memory.** Correct for the single
-  container `dockerRun.sh` builds. With multiple replicas each holds its own
+  container `docker/run.sh` builds. With multiple replicas each holds its own
   counters, so the effective limit multiplies -- move to a shared
   `limiter.Config.Storage` at that point rather than assuming it still holds.
 - **Losing the secret key loses the data** when at-rest encryption is on. It

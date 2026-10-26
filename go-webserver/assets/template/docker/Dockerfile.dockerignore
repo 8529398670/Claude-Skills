@@ -1,0 +1,17 @@
+# What the build context leaves out. The context is the project root
+# (docker/lib.sh runs `docker build -f docker/Dockerfile .`), and BuildKit
+# reads this file because it sits beside that Dockerfile and is named after it.
+.git
+.gitignore
+.run/
+data/
+dist/
+*.db
+# Holds the secret key: never in an image layer, which is forever.
+config/config.yaml
+*.md
+docker/
+scripts/
+misc/
+/{{PROJECT_SLUG}}
+/{{PROJECT_SLUG}}.exe

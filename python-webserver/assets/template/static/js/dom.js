@@ -54,11 +54,11 @@ const Dom = {
   // plain-http://localhost run lands there, and a copy button that silently
   // does nothing is worse than no button. Used for both login links and API
   // keys, which are exactly the strings nobody wants to retype by hand.
-  async copy( source , notice ) {
+  async copy( source ) {
     const value = source ? source.textContent : "";
     try {
       await navigator.clipboard.writeText( value );
-      this.flash( notice );
+      this.toast( I18n.get( "ui.copied" ) , "ok" );
     } catch ( error ) {
       const range = document.createRange();
       range.selectNodeContents( source );
@@ -77,5 +77,17 @@ const Dom = {
     element._flashTimer = window.setTimeout( function () {
       element.hidden = true;
     } , milliseconds || 2000 );
+  },
+
+  // A short status line pinned to the bottom of the screen ("Saved.",
+  // "Copied."), for confirmations that need no place of their own on the
+  // page. kind is "ok" or "error". An empty message shows nothing, so a
+  // language.yaml key set to "" switches that toast off.
+  toast( message , kind ) {
+    const banner = this.get( "toast" );
+    if ( !banner || !message ) return;
+    banner.className = "notice toast " + ( kind === "error" ? "notice-error" : "notice-ok" );
+    this.text( banner , message );
+    this.flash( banner , 4000 );
   },
 };

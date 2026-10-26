@@ -9,6 +9,7 @@ when you are changing the template itself rather than building features on it.
 - [The owner, and deleting accounts](#the-owner-and-deleting-accounts)
 - [Invite links: one link for a group](#invite-links-one-link-for-a-group)
 - [API keys: the same roles, for callers that are not browsers](#api-keys-the-same-roles-for-callers-that-are-not-browsers)
+- [MCP: the API keys, for agents](#mcp-the-api-keys-for-agents)
 - [Why credentials are shaped `<id>.<secret>`](#why-credentials-are-shaped-idsecret)
 - [Which crypto is used where, and why](#which-crypto-is-used-where-and-why)
 - [Encrypted records in SQLite](#encrypted-records-in-sqlite)
@@ -332,6 +333,66 @@ its own successors -- and write it down in that app's docs.
 | Admin CLI (`list-keys`, `create-key`, `revoke-key`, `delete-key`) | `app/manage.py` |
 | The screen | `static/js/keys.js` |
 
+## MCP: the API keys, for agents
+
+`POST /mcp` speaks the Model Context Protocol, so an agent -- Claude Code, or
+any MCP client that can send a header -- can use the app with an API key:
+
+```bash
+claude mcp add --transport http myapp https://myapp.example/mcp \
+  --header "Authorization: Bearer <key>"
+```
+
+It is the API keys in another shape, not a new way in:
+
+- **Keys only.** `RequireAPIKey` is `RequireSession` turned around: a browser
+  session gets 403, no credential gets 401 with `WWW-Authenticate: Bearer`.
+  With no ambient cookie accepted there is nothing for another page to ride
+  on, so there is no CSRF token to ask for -- and a cross-origin `Origin`
+  header is refused anyway, which is the spec's DNS rebinding rule.
+- **The key's role, per tool.** Each tool is plain or `admin_only`, read
+  against the actor's *effective* role. `tools/list` leaves admin tools out
+  for a user-scoped key, and `tools/call` answers "unknown tool" for one, so
+  the key is never even told they exist.
+- **No credentials, no deleting.** The built-in tools are the safe half of the
+  REST API: `whoami`, `list_team`, and for admins listing users and invite
+  links, disabling/enabling an account, revoking an account's access, and
+  switching off an invite link. Creating accounts, login links, invite links,
+  PINs or keys, and every delete, need a browser session on the REST side for
+  the reasons in [Why a key cannot create credentials](#why-a-key-cannot-create-credentials);
+  a tool is a key-authenticated route, so the same rule keeps them out.
+- **One set of rules.** A tool calls the helper its HTTP handler calls
+  (`me_row`, `user_rows`, `set_disabled_checked`, `revoke_access_checked`,
+  ...), so "you cannot disable yourself" and the owner protection hold
+  through both doors and refuse in the same words.
+- **The threadpool rule holds.** Tools are plain synchronous functions; the
+  protocol runs each one with `run_in_threadpool`, so a tool may use the
+  store directly.
+
+The transport is the simplest legal form of Streamable HTTP: stateless, one
+JSON-RPC message per POST, a JSON reply. No SSE stream, no `Mcp-Session-Id`,
+no batches; `GET`/`DELETE /mcp` answer 405. A tool call is then an ordinary
+request -- authenticate, check, act, answer -- with no per-client state to
+hold or leak between keys. It is written by hand (`app/mcp/`, about 300
+lines) rather than with the `mcp` SDK, which would bring pydantic, httpx and
+an SSE library -- more native code to trust, and against the pinned
+Alpine-wheels rule in app/requirements.txt -- for four methods.
+
+What it is not: an OAuth authorization server. claude.ai's remote connectors
+and other clients that can only sign in through OAuth cannot use it; anything
+that can set a header can. That follows from the template's position on
+OAuth -- see "When this template does not fit" in SKILL.md.
+
+`server.mcp: false`, or `auth.api_keys: false`, means the route is never
+registered.
+
+| Concern | File |
+|---|---|
+| JSON-RPC, version negotiation, the transport rules | `app/mcp/protocol.py` |
+| `Tool`, `Call.bind`, `Refusal`, role filtering | `app/mcp/registry.py` |
+| The built-in tools | `app/routes/mcp_tools.py` |
+| The guard | `RequireAPIKey` in `app/core/security.py` |
+
 ## Why credentials are shaped `<id>.<secret>`
 
 Login tokens, sessions, API keys, and invite links all use `<id>.<secret>`,
@@ -459,10 +520,10 @@ The key always lives in `config.yaml`, but where that file sits relative to
 the database depends on how the app is run -- `configuration.md` covers this
 in full, but the short version:
 
-- **Container**: `config.yaml` stays in the project directory and is mounted
+- **Container**: `config/config.yaml` stays in the project directory and is mounted
   read-only, separately from the data volume, so a leaked `./data` backup is
   not enough to read it.
-- **Run outside Docker with no `./config.yaml`**: the first run writes
+- **Run outside Docker with no `./config/config.yaml`**: the first run writes
   `config.yaml`, key included, into `~/.config/<slug>/` beside `app.db`. That
   is what lets it just run -- at the cost that at-rest encryption then protects
   a database file that leaks *on its own*, not someone who takes the whole
@@ -635,13 +696,13 @@ which `language.yaml` to serve, and logs the answer:
 That one line answers "why isn't my edit showing up" faster than any amount of
 debugging, which is why it is printed on every start.
 
-The rule: `server.static_dir` (default `./static` beside `config.yaml`) wins
+The rule: `server.static_dir` (default `./static` in the project directory -- the folder holding `config/`) wins
 when it exists; otherwise the `static/` that ships beside the `app/` package
 is used. In a source checkout those are the same directory, so editing a file
 and refreshing just works -- the whole point of the no-store policy. The
 language file is decided independently: `server.language_file` if set, else a
-`language.yaml` in the app directory, else one beside `config.yaml`, else the
-bundled copy.
+`language.yaml` in the app directory, else one beside `config.yaml`
+(`config/language.yaml`), else the bundled copy.
 
 Treating the two independently gives a useful third case: dropping a
 `language.yaml` into the app directory rewords the UI without touching the

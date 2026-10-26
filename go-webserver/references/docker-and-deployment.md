@@ -2,12 +2,16 @@
 
 ## Two scripts, one config file
 
-`dockerBuild.sh` builds the image; `dockerRun.sh` builds through the same
-function (`scripts/docker.sh`) and then runs the container. They are split so
-building and running are separately runnable -- CI can build without
-starting anything. The common case is still one command: `./dockerRun.sh`.
+Everything Docker lives in `docker/`. `docker/build.sh` builds the image;
+`docker/run.sh` builds through the same function (`docker/lib.sh`) and then
+runs the container. They are split so building and running are separately
+runnable -- CI can build without starting anything. The common case is still
+one command: `docker/run.sh`. Both `cd` to the project root first, which is
+the build context: `docker build -f docker/Dockerfile .`, with
+`docker/Dockerfile.dockerignore` (BuildKit's per-Dockerfile ignore file)
+keeping the secret, the scripts and local state out of it.
 
-Every value either script uses comes from `config.yaml`: the `docker:`
+Every value either script uses comes from `config/config.yaml`: the `docker:`
 section (image and container names, `bind_address`, `host_port`, `data_dir`,
 `restart`, `memory`, `cpus`, `pids_limit`, `tmpfs_size`) and `server.port` for
 the container side of the published port. Neither reads an environment
@@ -21,9 +25,12 @@ single-quoted assignments it prints. So the deploy gets the server's own
 defaults and strict validation, and needs nothing on the host but Docker. The
 image name lives in `config.yaml` too, which is why it is applied with
 `docker tag` after the build rather than passed to it. An extra tag is a
-positional argument: `./dockerBuild.sh v1.2.3`.
+positional argument: `docker/build.sh v1.2.3`. The build says which
+Dockerfile and which config file it used (or that there is none yet and the
+image is named from the defaults), and stops early with a plain message when
+`docker` is missing or its daemon is not answering.
 
-Both stamp version metadata into the binary the same way `build.sh` does, so
+Both stamp version metadata into the binary the same way `scripts/build.sh` does, so
 `docker exec <name> /app/server version` is as informative as a portable
 binary.
 
@@ -48,11 +55,11 @@ reconsider -- not before.
   `server.static_dir` (`./static` beside the config, so `/app/static`) does
   not exist, so the embedded frontend is used; a `language.yaml` in the data
   directory overrides the embedded wording. `config.yaml` is kept out by
-  `.dockerignore` because it holds the secret key and an image layer is
+  `docker/Dockerfile.dockerignore` because it holds the secret key and an image layer is
   forever -- it is mounted at run time instead, so one image serves any
   deployment and a config change needs a restart, not a rebuild.
 - **No `ENV`, no `EXPOSE`.** `-tags container` pins the image's fixed
-  layout into the binary instead (config at `/app/config.yaml`, state in
+  layout into the binary instead (config at `/app/config/config.yaml`, state in
   `/app/data`, listen on `0.0.0.0`; see `configuration.md`). The port is
   `server.port`, so a hardcoded `EXPOSE` would be stale the first time it
   changed.
@@ -68,7 +75,7 @@ reconsider -- not before.
   does not silently resolve to newer versions.
 - **Non-root user with a fixed uid/gid of 10001.** `app` is created with
   `/sbin/nologin`, and `USER app` drops root before the entrypoint runs. The
-  number is fixed and high on purpose: `dockerRun.sh` grants this uid the
+  number is fixed and high on purpose: `docker/run.sh` grants this uid the
   host's data directory and this gid read access to `config.yaml`, and a
   low system uid is likely to belong to a real account on a Linux host, which
   would get the same access.
@@ -97,10 +104,10 @@ explicit bumps. Standard-library fixes ship in Go patch releases, not in
 and the dependencies before a release -- and scan the built image too, which
 `govulncheck` does not cover.
 
-## dockerRun.sh choices
+## docker/run.sh choices
 
-- **Stops on first run for review.** A fresh clone has no `config.yaml` (it
-  is gitignored), so the first `./dockerRun.sh` writes one from the image's
+- **Stops on first run for review.** A fresh clone has no `config/config.yaml` (it
+  is gitignored), so the first `docker/run.sh` writes one from the image's
   defaults with a new key and exits, naming the settings that depend on what
   sits in front of this. Starting on unreviewed defaults would mean guessing
   at `secure_cookies` and `trust_proxy`.
@@ -112,6 +119,18 @@ and the dependencies before a release -- and scan the built image too, which
   ever finds it. The script checks that `config.yaml` arrives as a file and
   that a probe written to the data directory appears on the host, and stops
   with an explanation if not.
+- **Names whatever holds the host port.** With its own old container
+  removed, anything still listening on `docker.host_port` is something else,
+  and `docker run` would fail with a bind error after creating the
+  container. The script names the process (and the container, if it is one)
+  and stops instead.
+- **Waits until it is really up.** After `docker run -d` it polls the image's
+  own healthcheck (`/app/server health`) for up to 30 seconds. If the
+  container exits or never answers, it prints the status, the exit code and
+  the last 40 log lines, and exits non-zero; only a healthy container gets
+  `Ready: <url>`. On a fresh database it then prints the owner's first-run
+  login link straight from the log, and points at `scripts/login.sh --docker`
+  for a new one later.
 - **Publishes to `docker.bind_address`, `127.0.0.1` by default.** This app
   does **not** terminate TLS. Put nginx, Caddy, or Traefik in front and let it
   hold the certificate.
@@ -132,7 +151,7 @@ and the dependencies before a release -- and scan the built image too, which
   the default bridge -- confirm with `docker network inspect bridge`. It
   defaults to off because it is only correct when a proxy you control really
   is in front and clients cannot reach the backend any other way.
-  `dockerRun.sh` reminds you while it is off.
+  `docker/run.sh` reminds you while it is off.
 - **`config.yaml` is mounted read-only, separately from the data
   directory,** so the secret key is never inside `docker.data_dir`. The
   script makes the file readable by the container's group (0640, you stay the
@@ -152,7 +171,7 @@ and the dependencies before a release -- and scan the built image too, which
 ## Paths inside the container
 
 The binary in the image is built with `-tags container`, which pins the app
-directory to `/app/data` and the config file to `/app/config.yaml`,
+directory to `/app/data` and the config file to `/app/config/config.yaml`,
 overriding `server.app_dir` and the `~/.config/<slug>` default that apply
 outside a container. A container has no meaningful home directory, and the
 point of the mounts is that state lives on the host.
@@ -165,7 +184,7 @@ distinction is worth keeping.
 
 ## The data directory and container ownership
 
-`dockerRun.sh` bind-mounts `docker.data_dir` (`./data`) so the database stays
+`docker/run.sh` bind-mounts `docker.data_dir` (`./data`) so the database stays
 visible on the host for backups. A bind mount ignores the image's ownership,
 though, so the script makes sure the container's unprivileged user can
 actually write there -- and read `config.yaml` -- before starting anything.
@@ -189,7 +208,7 @@ denied" -- which looks like a bug in the app and is not.
 ## The secret key
 
 `server.secret_key` is generated once, when `config.yaml` is created
-(`scaffold.py`, `config init`, or the first `./dockerRun.sh` on a fresh
+(`scaffold.py`, `config init`, or the first `docker/run.sh` on a fresh
 clone), and read from there on every run. It must stay stable:
 
 - It encrypts session cookie payloads -- rotating it logs everyone out.
@@ -256,13 +275,16 @@ needs it, or revoke and mint another. `list-keys` is the standing answer to
 assuming the answer is nothing. Set `auth.api_keys: false` in `config.yaml`
 and restart to close that surface entirely.
 
+For a login link, `scripts/login.sh --docker` does the `docker exec` for you
+and says which container and address the link is for.
+
 If the container is stopped, or it was started with
 `server.control_socket: false`, run a one-off with the same two mounts:
 
 ```bash
 docker stop <name>
 docker run --rm -v "$(pwd)/data:/app/data" \
-  -v "$(pwd)/config.yaml:/app/config.yaml:ro" \
+  -v "$(pwd)/config/config.yaml:/app/config/config.yaml:ro" \
   <image> manage reissue-login -user-id 1
 docker start <name>
 ```
@@ -274,54 +296,81 @@ The socket lives inside the mounted data directory, so it is covered by the
 volume's permissions and never crosses the container boundary. Nothing about
 it is published to the network, and it needs no port.
 
-## Running from a checkout (run.sh, run.bat)
+## Running from a checkout (scripts/run.sh, scripts/login.sh)
 
 For development and internal boxes, without Docker:
 
 ```bash
-./run.sh                                   # (re)start the server
-./run.sh manage reissue-login -user-id 1   # any arguments: the CLI, server untouched
+scripts/run.sh                       # (re)start the server
+scripts/login.sh                     # the owner's login link, from whatever is live
+scripts/run.sh manage list-users     # any arguments: the CLI, server untouched
 ```
 
-`run.sh` always runs `go build -o ./<slug>`; Go's build cache makes that a
-near-instant no-op when nothing changed and a real rebuild when any `.go`
-file, `go.mod`, or the embedded `static/` / `language.yaml` did. The build
+`scripts/run.sh` always runs `go build -o ./<slug>`; Go's build cache makes
+that a near-instant no-op when nothing changed and a real rebuild when any
+`.go` file, `go.mod`, or the embedded `static/` / `config/` did. The build
 happens before anything is stopped, so a compile error leaves the old server
-up. With no arguments it then stops the server it started last and runs the
-new binary in the foreground: it records its own pid in `.run/server.pid` just
-before `exec`ing the binary, and only signals that pid if its command line is
-still `<checkout>/<slug>` (SIGTERM, then SIGKILL after 15 seconds), so a stale
-pid is never mistaken for it. Running it again from another terminal is how
-you restart. With arguments it runs the binary with them and leaves the server
-alone; `manage` reaches the live server over its control socket. On a fresh
-clone with no `config.yaml` it writes one (`config init`) and stops, as
-`dockerRun.sh` does.
+up. With no arguments it then reads `config shell server` -- every path and
+the URL, resolved by the binary exactly as the server will -- and:
 
-On Windows, `run.bat` takes the same arguments and does the same, with three
-differences Windows forces. A running `.exe` cannot be overwritten, so it
-builds to `.run\<slug>.exe` and copies that over `<slug>.exe` only after the
-old server exits (one-offs run the `.run\` copy and never touch it). It finds
-the old server by image path -- any process running this checkout's
-`<slug>.exe` -- instead of a pid file. And with no SIGTERM to send another
-console's process, it kills the old server instead of draining it; bolt is
-crash-safe and `control.Listen` clears the stale socket on the next start.
-It needs only `go`, plus PowerShell (built into Windows) to find and stop
-the old process.
+- on a fresh clone with no `config/config.yaml`, writes one (`config init`)
+  and stops, as `docker/run.sh` does, saying which URL it will serve and,
+  when that is plain `http://`, the line to change so `secure_cookies` does
+  not silently break sign-in;
+- stops the server it started last: it records its own pid in
+  `.run/server.pid` just before `exec`ing the binary, and only signals that
+  pid if its command line is still `<checkout>/<slug>` (SIGTERM, then SIGKILL
+  after 15 seconds), so a stale pid is never mistaken for it;
+- refuses to start, naming the process (via `lsof`), when anything else is
+  listening on `server.port` -- including this project's docker container;
+- warns when `secure_cookies` is on but the URL is plain `http://`;
+- prints the URL and where it came from, the config file, the app dir, the
+  database (existing, or new with the first login link to follow), and
+  whether static/ and language come from disk or the embedded copies;
+- runs the server in the foreground and prints `Ready: <url>` once
+  `/api/health` answers (or says it is not answering after 20 seconds).
 
-Run from the checkout, `./static` beside `config.yaml` is served from disk, so
-frontend edits need only a page reload. Like a portable binary, it has no
-sandbox: none of Docker's read-only filesystem, dropped capabilities, or pid
-and memory limits apply.
+Running it again from another terminal is how you restart. With arguments it
+runs the binary with them and leaves the server alone; `manage` reaches the
+live server over its control socket. The shared helpers are in
+`scripts/lib.sh`.
 
-## Portable binaries (build.sh)
+`scripts/login.sh [user-id] [--docker|--local]` prints a one-time login link
+(user 1, the owner, by default) as a full URL. It decides where from: the
+local server when this checkout's is running (through its control socket),
+otherwise the docker container when it is running (`docker exec`), otherwise
+the local database offline, saying the link waits until the server starts.
+The local and container deployments keep separate databases, so it always
+says which one the link is for; when both run, it uses the local one and
+says so. Errors are specific: no config yet, no database yet, no such user
+(with the command that lists them), container not running (with its status).
 
-`./build.sh` cross-compiles a self-contained executable per platform into
+On Windows, `scripts\run.bat` and `scripts\login.bat` take the same arguments
+and do the same, reading `config shell -format bat` and using PowerShell
+for the port owner and the readiness check. `run.bat` has three differences
+Windows forces. A running `.exe` cannot be overwritten, so it builds to
+`.run\<slug>.exe` and copies that over `<slug>.exe` only after the old server
+exits (one-offs run the `.run\` copy and never touch it). It finds the old
+server by image path -- any process running this checkout's `<slug>.exe` --
+instead of a pid file. And with no SIGTERM to send another console's
+process, it kills the old server instead of draining it; bolt is crash-safe
+and `control.Listen` clears the stale socket on the next start. It needs only
+`go`, plus PowerShell (built into Windows).
+
+Run from the checkout, `./static` is served from disk, so frontend edits need
+only a page reload. Like a portable binary, it has no sandbox: none of
+Docker's read-only filesystem, dropped capabilities, or pid and memory limits
+apply.
+
+## Portable binaries (scripts/build.sh)
+
+`scripts/build.sh` cross-compiles a self-contained executable per platform into
 `dist/`, plus `SHA256SUMS`. Each one carries the whole frontend, so it runs
 with no Docker, no Go toolchain, and no files beside it.
 
 ```bash
-./build.sh                  # every target
-./build.sh linux/amd64      # just one
+scripts/build.sh                  # every target
+scripts/build.sh linux/amd64      # just one
 ```
 
 Three choices make that work: `CGO_ENABLED=0` (static linking, so there is no
@@ -374,10 +423,10 @@ lives inside the app directory instead.
 
 Every knob is a key in `config.yaml` -- session and login-token lifetimes,
 rate limits, body size, at-rest encryption, proxy trust, and the container's
-own resource limits. `server/config/defaults.yaml` documents all of them with
+own resource limits. `config/defaults.yaml` documents all of them with
 their defaults.
 
-Edit the project's `config.yaml` and re-run `./dockerRun.sh` (or just
+Edit the project's `config/config.yaml` and re-run `docker/run.sh` (or just
 `docker restart <name>` for a `server:` or `auth:` change, since the file is
 mounted rather than baked in). The image stays the same across environments;
 each deployment's `config.yaml` is what differs. See `configuration.md`.

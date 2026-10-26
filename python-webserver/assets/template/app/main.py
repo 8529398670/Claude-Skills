@@ -57,7 +57,9 @@ async def purge_loop(store: db.Store) -> None:
             print(f"[purge] failed: {error}", flush=True)
 
 
-def build_app(cfg: config.Config, store: db.Store, lang: language.Language, static_server: StaticServer) -> Starlette:
+def build_app(
+    cfg: config.Config, store: db.Store, lang: language.Language, static_server: StaticServer, version: str = "dev"
+) -> Starlette:
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         task = asyncio.create_task(purge_loop(store))
@@ -67,7 +69,7 @@ def build_app(cfg: config.Config, store: db.Store, lang: language.Language, stat
             task.cancel()
 
     app = Starlette(
-        routes=build_routes(static_server),
+        routes=build_routes(static_server, cfg),
         # Outermost first. Headers go on everything; the rate limit runs
         # before anything touches the database, so a flood is cheap to refuse;
         # then the caller is resolved once for every route behind it.
@@ -83,6 +85,8 @@ def build_app(cfg: config.Config, store: db.Store, lang: language.Language, stat
     app.state.config = cfg
     app.state.store = store
     app.state.language = lang
+    # Reported to MCP clients as serverInfo.version.
+    app.state.version = version
     return app
 
 
@@ -95,9 +99,10 @@ def serve(version: str) -> None:
 
     bootstrap.ensure_first_admin(store, cfg, "Admin")
 
-    app = build_app(cfg, store, lang, static_server)
+    app = build_app(cfg, store, lang, static_server, version)
 
     print(f"[start] {cfg.project_name} {version} listening on {cfg.listen_address} (secure cookies: {cfg.secure_cookies})")
+    print(f"[url]    {cfg.url}  (from {cfg.url_source})")
     if cfg.config_created:
         print(f"[config] {cfg.config_file} (created, with a new secret key -- back it up)")
     else:

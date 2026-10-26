@@ -9,8 +9,9 @@
 // values (`config shell`, see command.go) rather than parsing YAML themselves,
 // so there is exactly one parser and one set of validation rules.
 //
-// Defaults are not written in Go. They live in defaults.yaml, which is
-// embedded, documents every key, and is what `config init` writes out. A
+// Defaults are not written in Go. They live in config/defaults.yaml, which
+// main.go embeds and hands over (UseEmbedded), documents every key, and is
+// what `config init` writes out. A
 // config.yaml is decoded on top of it, strictly: an unknown key is an error,
 // because a typo that is silently ignored is a setting that silently is not
 // applied.
@@ -18,11 +19,11 @@ package config
 
 import (
 	bytes "bytes"
-	_ "embed"
 	errors "errors"
 	fmt "fmt"
 	io "io"
 	net "net"
+	url "net/url"
 	os "os"
 	filepath "path/filepath"
 	regexp "regexp"
@@ -44,6 +45,9 @@ const AppSlug = "{{PROJECT_SLUG}}"
 // Filenames this app uses. Everything it persists lives under the app
 // directory -- see DefaultAppDir for why.
 const (
+	// ConfigDirName is the folder of a source checkout that holds
+	// config.yaml, config.example.yaml, language.yaml and the defaults.
+	ConfigDirName     = "config"
 	ConfigFileName    = "config.yaml"
 	DatabaseFileName  = "app.db"
 	ControlSocketName = "control.sock"
@@ -51,14 +55,21 @@ const (
 	LanguageFileName  = "language.yaml"
 )
 
-//go:embed defaults.yaml
-var defaultsYAML []byte
-
+// defaultsYAML and exampleHeader are config/defaults.yaml and
+// config/example_header.yaml. go:embed cannot reach outside this package's
+// directory, so main.go embeds them and passes them in before anything runs.
 // exampleHeader is what turns defaults.yaml into config.example.yaml: a note
 // on how to copy it into place. See ExampleFileContent.
-//
-//go:embed example_header.yaml
-var exampleHeader []byte
+var (
+	defaultsYAML  []byte
+	exampleHeader []byte
+)
+
+// UseEmbedded registers the embedded defaults. main.go calls it from init().
+func UseEmbedded( defaults []byte , header []byte ) {
+	defaultsYAML = defaults
+	exampleHeader = header
+}
 
 // ExampleFileName is the committed copy of the defaults that a fresh clone
 // copies to config.yaml. It is not read by anything.
@@ -70,7 +81,7 @@ const ExampleFileName = "config.example.yaml"
 
 // File mirrors config.yaml. Every section is decoded strictly, including the
 // docker and build sections the server itself never reads: validating them
-// here is what lets dockerRun.sh and build.sh fail on a typo before they
+// here is what lets docker/run.sh and scripts/build.sh fail on a typo before they
 // start anything.
 type File struct {
 	App    AppSection    `yaml:"app"`
@@ -87,6 +98,7 @@ type AppSection struct {
 type ServerSection struct {
 	Host                   string `yaml:"host"`
 	Port                   int    `yaml:"port"`
+	PublicURL              string `yaml:"public_url"`
 	AppDir                 string `yaml:"app_dir"`
 	StaticDir              string `yaml:"static_dir"`
 	LanguageFile           string `yaml:"language_file"`
@@ -101,6 +113,7 @@ type ServerSection struct {
 	RateLimitMax           int    `yaml:"rate_limit_max"`
 	RateLimitWindowSeconds int    `yaml:"rate_limit_window_seconds"`
 	ControlSocket          bool   `yaml:"control_socket"`
+	MCP                    bool   `yaml:"mcp"`
 }
 
 type AuthSection struct {
@@ -138,6 +151,17 @@ type BuildSection struct {
 // this, never File, so a change to the file's shape stays inside this package.
 type Config struct {
 	ProjectName string
+
+	// ProjectDir is what relative paths in config.yaml are resolved against.
+	// See ProjectDirFor.
+	ProjectDir string
+
+	// URL is where a browser reaches this server, for the links it prints:
+	// server.public_url when set, otherwise one worked out from the listen
+	// address (see ServerURL). URLSource names which, so a printed link can
+	// say how much to trust it.
+	URL       string
+	URLSource string
 
 	// ConfigFile is the config.yaml this was loaded from. It also holds the
 	// secret key, which is why it is reported wherever backups are mentioned.
@@ -214,6 +238,11 @@ type Config struct {
 	// a live credential.
 	APIKeyTTL time.Duration
 
+	// MCPEnabled decides whether POST /mcp exists. It answers only API keys,
+	// so with APIKeysEnabled off it is not registered either -- nothing could
+	// authenticate to it.
+	MCPEnabled bool
+
 	// SecretKey encrypts session cookie payloads and, when EncryptAtRest is
 	// on, every value written to bolt. Losing it means losing the database
 	// contents.
@@ -270,20 +299,19 @@ func DefaultAppDir() ( dir string ) {
 }
 
 // Locate finds the config.yaml in use: the pinned path inside the container
-// image, otherwise ./config.yaml, otherwise the one in the default app
+// image, otherwise ./config/config.yaml, otherwise the one in the default app
 // directory. When none exists, path is where one would be created.
 //
-// ./config.yaml comes first because that is a source checkout, which is also
-// where dockerRun.sh and build.sh read it. A portable binary run from
-// anywhere else falls through to ~/.config/<slug>/ and finds the same file
-// every time.
+// ./config/config.yaml comes first because that is a source checkout, which
+// is also where the scripts read it. A portable binary run from anywhere else
+// falls through to ~/.config/<slug>/ and finds the same file every time.
 func Locate() ( path string , exists bool ) {
 	if pinned.ConfigFile != "" {
 		path = pinned.ConfigFile
 		exists = isFile( path )
 		return
 	}
-	if local , err := filepath.Abs( ConfigFileName ); err == nil && isFile( local ) {
+	if local , err := filepath.Abs( filepath.Join( ConfigDirName , ConfigFileName ) ); err == nil && isFile( local ) {
 		path , exists = local , true
 		return
 	}
@@ -301,9 +329,22 @@ func isFile( path string ) ( result bool ) {
 	return
 }
 
-// resolvePath makes a config path absolute against the directory holding
-// config.yaml, so the same file means the same thing whatever directory the
-// process was started from.
+// ProjectDirFor is the directory relative paths in config.yaml resolve
+// against. In a checkout (and in the container image, /app) config.yaml sits
+// in config/, and paths like ./static and ./data mean the project folder
+// around it, so that is the parent. Anywhere else -- ~/.config/<slug>/ for a
+// portable binary -- it is the folder holding config.yaml.
+func ProjectDirFor( config_path string ) ( dir string ) {
+	dir = filepath.Dir( config_path )
+	if filepath.Base( dir ) == ConfigDirName {
+		dir = filepath.Dir( dir )
+	}
+	return
+}
+
+// resolvePath makes a config path absolute against the project directory
+// (ProjectDirFor), so the same file means the same thing whatever directory
+// the process was started from.
 func resolvePath( base string , value string ) ( result string ) {
 	result = value
 	if result == "" || filepath.IsAbs( result ) {
@@ -331,6 +372,10 @@ func decodeStrict( raw []byte , out *File ) ( err error ) {
 // Defaults is defaults.yaml on its own: the configuration a missing key falls
 // back to.
 func Defaults() ( file *File , err error ) {
+	if len( defaultsYAML ) == 0 {
+		err = errors.New( "no defaults registered -- main.go must call config.UseEmbedded before reading config" )
+		return
+	}
 	file = &File{}
 	if err = decodeStrict( defaultsYAML , file ); err != nil {
 		err = fmt.Errorf( "embedded defaults.yaml is invalid: %w" , err )
@@ -408,6 +453,8 @@ func ( file *File ) Validate() ( err error ) {
 	server := file.Server
 	check( strings.TrimSpace( server.Host ) != "" , "server.host must not be empty" )
 	check( server.Port >= 1 && server.Port <= 65535 , "server.port must be 1-65535, got %d" , server.Port )
+	check( validPublicURL( server.PublicURL ) ,
+		"server.public_url %q must be empty or a bare origin like https://app.example.com (http or https, no path)" , server.PublicURL )
 	check( strings.TrimSpace( server.CookieName ) != "" , "server.cookie_name must not be empty" )
 	check( strings.TrimSpace( server.ProxyHeader ) != "" , "server.proxy_header must not be empty" )
 	check( server.TrustProxy == false || len( server.TrustedProxies ) > 0 ,
@@ -458,6 +505,17 @@ func validProxyEntry( value string ) ( result bool ) {
 		return
 	}
 	result = net.ParseIP( value ) != nil
+	return
+}
+
+func validPublicURL( value string ) ( result bool ) {
+	if value == "" {
+		result = true
+		return
+	}
+	parsed , err := url.Parse( value )
+	result = err == nil && ( parsed.Scheme == "http" || parsed.Scheme == "https" ) && parsed.Host != "" &&
+		( parsed.Path == "" || parsed.Path == "/" ) && parsed.RawQuery == "" && parsed.Fragment == "" && parsed.User == nil
 	return
 }
 
@@ -575,7 +633,7 @@ func Load() ( cfg *Config , err error ) {
 	created := false
 	if exists == false {
 		if InContainer() {
-			err = fmt.Errorf( "no config at %s -- dockerRun.sh mounts config.yaml there" , path )
+			err = fmt.Errorf( "no config at %s -- docker/run.sh mounts the project's config/config.yaml there" , path )
 			return
 		}
 		if err = WriteNew( path ); err != nil { return }
@@ -586,62 +644,44 @@ func Load() ( cfg *Config , err error ) {
 	if err != nil { return }
 	if err = CheckSecretKey( file , path ); err != nil { return }
 
-	base := filepath.Dir( path )
-
-	app_dir := DefaultAppDir()
-	if file.Server.AppDir != "" {
-		app_dir = resolvePath( base , file.Server.AppDir )
-	}
-	if pinned.AppDir != "" {
-		app_dir = pinned.AppDir
-	}
-	if absolute , abs_err := filepath.Abs( app_dir ); abs_err == nil {
-		app_dir = absolute
-	}
+	paths := ResolvePaths( file , path )
 
 	// 0700 because the database lives in here.
-	if mkdir_err := os.MkdirAll( app_dir , 0o700 ); mkdir_err != nil {
-		err = fmt.Errorf( "could not create app directory %q: %w" , app_dir , mkdir_err )
+	if mkdir_err := os.MkdirAll( paths.AppDir , 0o700 ); mkdir_err != nil {
+		err = fmt.Errorf( "could not create app directory %q: %w" , paths.AppDir , mkdir_err )
 		return
 	}
-	storage_dir := filepath.Join( app_dir , StorageDirName )
+	storage_dir := filepath.Join( paths.AppDir , StorageDirName )
 	if mkdir_err := os.MkdirAll( storage_dir , 0o700 ); mkdir_err != nil {
 		err = fmt.Errorf( "could not create storage directory %q: %w" , storage_dir , mkdir_err )
 		return
-	}
-
-	// An operator can drop a language.yaml into the app directory to reword
-	// the UI without rebuilding. Failing that, the one beside config.yaml (a
-	// source checkout) is used, and failing that the embedded copy.
-	language_file := resolvePath( base , file.Server.LanguageFile )
-	if language_file == "" {
-		language_file = filepath.Join( app_dir , LanguageFileName )
-		if isFile( language_file ) == false {
-			language_file = filepath.Join( base , LanguageFileName )
-		}
 	}
 
 	host := file.Server.Host
 	if pinned.Host != "" {
 		host = pinned.Host
 	}
+	link_url , link_source := ServerURL( file )
 
 	cfg = &Config{
 		ProjectName: file.App.Name,
+		ProjectDir:  paths.ProjectDir,
+		URL:         link_url,
+		URLSource:   link_source,
 
 		ConfigFile:    path,
 		ConfigCreated: created,
 		ConfigWarning: permissionWarning( path ),
 
-		AppDir:       app_dir,
-		DatabasePath: filepath.Join( app_dir , DatabaseFileName ),
+		AppDir:       paths.AppDir,
+		DatabasePath: paths.DatabasePath,
 
-		ControlSocketPath:    filepath.Join( app_dir , ControlSocketName ),
+		ControlSocketPath:    filepath.Join( paths.AppDir , ControlSocketName ),
 		ControlSocketEnabled: file.Server.ControlSocket,
 		StorageDir:           storage_dir,
 
-		StaticDir:    resolvePath( base , file.Server.StaticDir ),
-		LanguageFile: language_file,
+		StaticDir:    paths.StaticDir,
+		LanguageFile: paths.LanguageFile,
 
 		Host: host,
 		Port: file.Server.Port,
@@ -654,6 +694,7 @@ func Load() ( cfg *Config , err error ) {
 
 		APIKeysEnabled: file.Auth.APIKeys,
 		APIKeyTTL:      seconds( file.Auth.APIKeyTTLSeconds ),
+		MCPEnabled:     file.Server.MCP,
 
 		SecretKey:     strings.TrimSpace( file.Server.SecretKey ),
 		EncryptAtRest: file.Server.EncryptAtRest,
@@ -666,6 +707,93 @@ func Load() ( cfg *Config , err error ) {
 		TrustedProxies: file.Server.TrustedProxies,
 		ProxyHeader:    file.Server.ProxyHeader,
 	}
+	return
+}
+
+// Paths is where everything config.yaml names actually is, resolved the one
+// way the server resolves it. `config shell server` prints the same values,
+// so the scripts never work out a path on their own.
+type Paths struct {
+	ProjectDir   string
+	AppDir       string
+	DatabasePath string
+	StaticDir    string
+	LanguageFile string
+}
+
+// ResolvePaths works the paths out without creating anything.
+func ResolvePaths( file *File , config_path string ) ( paths Paths ) {
+	base := ProjectDirFor( config_path )
+	paths.ProjectDir = base
+
+	paths.AppDir = DefaultAppDir()
+	if file.Server.AppDir != "" {
+		paths.AppDir = resolvePath( base , file.Server.AppDir )
+	}
+	if pinned.AppDir != "" {
+		paths.AppDir = pinned.AppDir
+	}
+	if absolute , err := filepath.Abs( paths.AppDir ); err == nil {
+		paths.AppDir = absolute
+	}
+	paths.DatabasePath = filepath.Join( paths.AppDir , DatabaseFileName )
+	paths.StaticDir = resolvePath( base , file.Server.StaticDir )
+
+	// An operator can drop a language.yaml into the app directory to reword
+	// the UI without rebuilding. Failing that, the one beside config.yaml
+	// (config/language.yaml in a checkout) is used, and failing that the
+	// embedded copy.
+	paths.LanguageFile = resolvePath( base , file.Server.LanguageFile )
+	if paths.LanguageFile == "" {
+		paths.LanguageFile = filepath.Join( paths.AppDir , LanguageFileName )
+		if isFile( paths.LanguageFile ) == false {
+			paths.LanguageFile = filepath.Join( filepath.Dir( config_path ) , LanguageFileName )
+		}
+	}
+	return
+}
+
+// ServerURL is the address printed links start with, and source says where
+// it came from. server.public_url wins: only the operator knows what sits in
+// front. Without it, the container's answer is the address Docker publishes
+// (docker.bind_address:docker.host_port), and anywhere else it is the listen
+// address -- with a wildcard host shown as loopback, since 0.0.0.0 is not
+// somewhere a browser can go.
+func ServerURL( file *File ) ( result string , source string ) {
+	if file.Server.PublicURL != "" {
+		result = strings.TrimRight( file.Server.PublicURL , "/" )
+		source = "server.public_url"
+		return
+	}
+	if InContainer() {
+		result , source = DockerURL( file )
+		return
+	}
+	result = "http://" + hostPort( file.Server.Host , file.Server.Port )
+	source = "server.host and server.port; this machine only -- set server.public_url for the address people use"
+	return
+}
+
+// DockerURL is ServerURL for the container as seen from the host.
+func DockerURL( file *File ) ( result string , source string ) {
+	if file.Server.PublicURL != "" {
+		result = strings.TrimRight( file.Server.PublicURL , "/" )
+		source = "server.public_url"
+		return
+	}
+	result = "http://" + hostPort( file.Docker.BindAddress , file.Docker.HostPort )
+	source = "docker.bind_address and docker.host_port, the published port -- set server.public_url for the address people use"
+	return
+}
+
+func hostPort( host string , port int ) ( result string ) {
+	switch host {
+	case "0.0.0.0" , "":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	result = net.JoinHostPort( host , fmt.Sprint( port ) )
 	return
 }
 

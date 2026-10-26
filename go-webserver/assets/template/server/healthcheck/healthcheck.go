@@ -1,7 +1,7 @@
 // Package healthcheck is the `health` subcommand: the container's HEALTHCHECK.
 //
 // It lives in the binary rather than as a wget line in the Dockerfile for two
-// reasons. The port comes from config.yaml, so a hardcoded URL in the image
+// reasons. The port comes from config/config.yaml, so a hardcoded URL in the image
 // would silently go stale the moment someone changed server.port. And the
 // runtime image then needs no HTTP client of its own.
 package healthcheck
