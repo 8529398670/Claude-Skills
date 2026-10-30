@@ -159,7 +159,10 @@ fi
 # else, and docker run would fail with a bind error after creating the
 # container. Name it instead.
 if command -v lsof >/dev/null 2>&1; then
-  PORT_PID="$( lsof -nP -iTCP:"$docker_host_port" -sTCP:LISTEN -t 2>/dev/null | head -n 1 )"
+  # lsof exits 1 when nothing is listening -- the usual case -- and under
+  # pipefail that failure would end this script silently, before it starts
+  # the container. An empty answer is the one we want, so swallow it.
+  PORT_PID="$( lsof -nP -iTCP:"$docker_host_port" -sTCP:LISTEN -t 2>/dev/null | head -n 1 || true )"
   if [ -n "$PORT_PID" ]; then
     PORT_OWNER="$( ps -p "$PORT_PID" -o command= 2>/dev/null | awk '{ n = split( $1 , part , "/" ); $1 = part[ n ]; print }' | cut -c1-100 )"
     OTHER_CONTAINER="$( docker ps --filter "publish=${docker_host_port}" --format '{{.Names}}' | head -n 1 )"

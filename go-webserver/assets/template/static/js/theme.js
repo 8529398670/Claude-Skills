@@ -26,9 +26,12 @@ const Theme = {
     { key: "sepia" , mode: "light" , accent: "#9c5a1c" , background: "#f6f0e4" , surface: "#fbf7ef" },
     { key: "grape" , mode: "light" , accent: "#7048c8" , background: "#f5f2fc" , surface: "#ffffff" },
     { key: "pink" , mode: "light" , accent: "#c2255c" , background: "#fdf0f5" , surface: "#ffffff" },
+    // Wright State University: Green on Off White, and Gold on Black with Dark Green panels.
+    { key: "wsu" , mode: "light" , accent: "#046a38" , background: "#f2f1f0" , surface: "#ffffff" },
     { key: "midnight" , mode: "dark" , accent: "#8c7cff" , background: "#0e1020" , surface: "#171a30" },
     { key: "slate" , mode: "dark" , accent: "#4fb3a9" , background: "#15191e" , surface: "#1d232a" },
     { key: "dark_pink" , mode: "dark" , accent: "#f06595" , background: "#1f0d16" , surface: "#2a1220" },
+    { key: "wsu_dark" , mode: "dark" , accent: "#cba052" , background: "#101820" , surface: "#00482b" },
   ],
 
   vars: { accent: "--app-accent" , background: "--app-bg" , surface: "--app-surface" },

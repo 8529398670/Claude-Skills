@@ -5,7 +5,7 @@
 # takes the value shown in this file.
 #
 # This file holds the secret key, so treat it like one: mode 0600, never
-# committed (it is in .gitignore), never baked into an image (docker/Dockerfile.dockerignore).
+# committed (it is in .gitignore), never baked into an image (.dockerignore).
 #
 # Where it is read from, first match wins:
 #

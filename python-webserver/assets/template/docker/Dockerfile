@@ -35,7 +35,7 @@ COPY --from=builder /install /usr/local
 COPY app ./app
 COPY static ./static
 # The language file and the defaults the app reads; never config.yaml, which
-# docker/Dockerfile.dockerignore keeps out of the build context entirely.
+# .dockerignore keeps out of the build context entirely.
 COPY config/language.yaml config/defaults.yaml config/example_header.yaml ./config/
 
 # Version metadata, passed by docker/lib.sh so that
@@ -61,7 +61,7 @@ RUN cp app/core/layout_container.py app/core/layout_pinned.py \
  && python -m compileall -q app
 
 # There is no ENV here and no config.yaml in the image
-# (docker/Dockerfile.dockerignore keeps it out -- it holds the secret key, and
+# (.dockerignore keeps it out -- it holds the secret key, and
 # an image layer is forever). docker/run.sh mounts the project's
 # config/config.yaml at /app/config/config.yaml at run time, so one image
 # serves any deployment and a config change needs a restart, not a rebuild.

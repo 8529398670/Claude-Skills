@@ -8,8 +8,9 @@ runs the container. They are split so building and running are separately
 runnable -- CI can build without starting anything. The common case is still
 one command: `docker/run.sh`. Both `cd` to the project root first, which is
 the build context: `docker build -f docker/Dockerfile .`, with
-`docker/Dockerfile.dockerignore` (BuildKit's per-Dockerfile ignore file)
-keeping the secret, the scripts and local state out of it.
+`.dockerignore` at the project root (read by both BuildKit and the legacy
+builder; a per-Dockerfile `docker/Dockerfile.dockerignore` is read only by
+BuildKit, so the legacy builder would ignore it) keeping the secret, the scripts and local state out of it.
 
 Every value either script uses comes from `config/config.yaml`: the `docker:`
 section (image and container names, `bind_address`, `host_port`, `data_dir`,
@@ -33,6 +34,16 @@ image is named from the defaults), and stops early with a plain message when
 Both stamp version metadata into the image (the version is the UTC build
 time, `2026.10.23-1412`, plus the commit hash), so `docker exec <name> python -m app version` says which build is
 running.
+
+## Builders: BuildKit (buildx) or the legacy builder
+
+Either builds this image. Prefer BuildKit: Docker Desktop and colima ship it,
+and on a Linux server it is the `docker-buildx-plugin` package (Docker's own
+apt repo, `docker-ce`) or `docker-buildx` (the distro's `docker.io`); check
+with `docker buildx version`. Without it, `docker build` falls back to the
+legacy builder, prints a deprecation warning, and still works -- which is why
+the ignore file is the root `.dockerignore` that both read. Install buildx
+before the legacy builder is removed rather than after.
 
 ## Why there is no docker-compose
 
@@ -59,7 +70,7 @@ reconsider -- not before.
 - **pip removed from the runtime image.** Nothing installs packages at
   runtime, and a package manager is one more tool for anyone who gets code
   execution inside.
-- **No `config.yaml` in the image.** `docker/Dockerfile.dockerignore` keeps it out because it
+- **No `config.yaml` in the image.** `.dockerignore` keeps it out because it
   holds the secret key and an image layer is forever -- it is mounted at run
   time instead, so one image serves any deployment and a config change needs a
   restart, not a rebuild.

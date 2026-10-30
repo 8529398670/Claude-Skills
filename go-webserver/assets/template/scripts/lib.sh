@@ -74,7 +74,8 @@ our_server_pid() {
 port_owner() {
   local port="$1" pid name
   command -v lsof >/dev/null 2>&1 || return 0
-  pid="$( lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -n 1 )"
+  # || true: lsof exits 1 when nothing listens, which pipefail would pass on.
+  pid="$( lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -n 1 || true )"
   [ -n "$pid" ] || return 0
   # The command with its program's directory dropped: "Python -m http.server
   # 8080" says more in one line than a long install path does.

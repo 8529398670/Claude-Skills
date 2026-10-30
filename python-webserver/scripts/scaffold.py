@@ -26,7 +26,7 @@ TEMPLATE_DIR = SKILL_DIR / "assets" / "template"
 
 # Substitution is a plain text replace, so it must only touch text files.
 TEXT_SUFFIXES = {".py", ".html", ".css", ".js", ".json", ".yaml", ".yml", ".sh", ".bat", ".md", ".txt", ""}
-TEXT_NAMES = {"Dockerfile", "Dockerfile.dockerignore", ".gitignore"}
+TEXT_NAMES = {"Dockerfile", ".dockerignore", ".gitignore"}
 
 # The name lands inside Python and YAML string literals, so the characters
 # that would end or escape one are refused up front rather than producing a
@@ -71,7 +71,7 @@ def write_config(target_dir: Path) -> Path:
 
     config.yaml is the project's one configuration file -- server and Docker
     -- and it holds the secret key, so it is created at 0600 and is already in
-    the template's .gitignore and docker/Dockerfile.dockerignore.
+    the template's .gitignore and .dockerignore.
     """
     defaults = (target_dir / "config" / "defaults.yaml").read_text(encoding="utf-8")
     content, count = SECRET_KEY_LINE.subn(lambda match: f'{match.group(1)}"{secrets.token_hex(32)}"', defaults)

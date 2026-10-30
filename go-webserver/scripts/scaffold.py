@@ -33,7 +33,7 @@ TEXT_SUFFIXES = {
     ".go", ".mod", ".sum", ".html", ".css", ".js", ".json",
     ".yaml", ".yml", ".sh", ".bat", ".md", ".txt", "",
 }
-TEXT_NAMES = {"Dockerfile", "Dockerfile.dockerignore", ".gitignore"}
+TEXT_NAMES = {"Dockerfile", ".dockerignore", ".gitignore"}
 
 
 def slugify(name: str) -> str:
@@ -73,7 +73,7 @@ def write_config(target_dir: Path) -> Path:
 
     config.yaml is the project's one configuration file -- server, Docker,
     and build -- and it holds the secret key, so it is created at 0600 and is
-    already in the template's .gitignore and docker/Dockerfile.dockerignore.
+    already in the template's .gitignore and .dockerignore.
     """
     defaults = (target_dir / "config" / "defaults.yaml").read_text(encoding="utf-8")
     content, count = SECRET_KEY_LINE.subn(

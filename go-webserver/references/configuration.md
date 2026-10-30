@@ -209,7 +209,7 @@ created (`scaffold.py`, `config init`, a binary's first run, the first
 `scripts/run.sh` or `docker/run.sh`).
 
 That makes **`config.yaml` itself a secret**: it is written at mode 0600, it
-is in `.gitignore` and `docker/Dockerfile.dockerignore`, and the server logs a warning on every
+is in `.gitignore` and `.dockerignore`, and the server logs a warning on every
 start if it is readable by every user. Never commit it and never bake it into
 an image.
 

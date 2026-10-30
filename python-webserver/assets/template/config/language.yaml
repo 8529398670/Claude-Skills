@@ -47,9 +47,11 @@ theme:
   preset_sepia: "Sepia"
   preset_grape: "Grape"
   preset_pink: "Pink"
+  preset_wsu: "WSU"
   preset_midnight: "Midnight"
   preset_slate: "Slate"
   preset_dark_pink: "Dark pink"
+  preset_wsu_dark: "WSU dark"
 
 signed_out:
   heading: "You are not signed in"

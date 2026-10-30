@@ -186,7 +186,7 @@ To upgrade, delete the old files from `static/vendor/` and re-run
 
 `static/js/theme.js` is loaded in `<head>`, before the stylesheet paints, and
 applies the saved theme at once, so a dark choice never flashes light.
-`Theme.presets` lists light, dark and eight ready-made themes -- ocean, forest, sepia, grape, pink, midnight, slate, dark pink -- (each a mode plus
+`Theme.presets` lists light, dark and ten ready-made themes -- ocean, forest, sepia, grape, pink, WSU, midnight, slate, dark pink, WSU dark (Wright State University green and gold) -- (each a mode plus
 optional `accent`, `background`, `surface` colours -> `--app-accent`,
 `--app-bg`, `--app-surface`, set inline on `<html>`; `--app-accent-fg` is
 picked for contrast). A dark mode sets Bootstrap's `data-bs-theme="dark"` on

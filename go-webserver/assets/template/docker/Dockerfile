@@ -58,7 +58,7 @@ WORKDIR /app
 COPY --from=builder /out/server ./
 
 # There is no ENV here and no config.yaml in the image
-# (docker/Dockerfile.dockerignore keeps it out -- it holds the secret key, and
+# (.dockerignore keeps it out -- it holds the secret key, and
 # an image layer is forever). docker/run.sh mounts the project's
 # config/config.yaml at /app/config/config.yaml at run time, so one image
 # serves any deployment and a config change needs a restart, not a rebuild.

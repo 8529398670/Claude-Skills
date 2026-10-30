@@ -210,11 +210,10 @@ ports they ran on. Do not reset either to a shared value.
     lib.sh                    # shared by run.sh and login.sh (sourced)
   docker/
     Dockerfile                # built with the project root as context
-    Dockerfile.dockerignore   # what the build context leaves out
     build.sh, run.sh          # build the image; build + run the container
     lib.sh                    # shared by both (sourced)
   misc/vendor.sh              # downloads a library into static/vendor/
-  .gitignore, .gitattributes
+  .gitignore, .gitattributes, .dockerignore   # .dockerignore: what the build context leaves out
 ```
 
 ## Step 3: Build the actual app on top

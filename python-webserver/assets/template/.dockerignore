@@ -1,6 +1,8 @@
 # What the build context leaves out. The context is the project root
-# (docker/lib.sh runs `docker build -f docker/Dockerfile .`), and BuildKit
-# reads this file because it sits beside that Dockerfile and is named after it.
+# (docker/lib.sh runs `docker build -f docker/Dockerfile .`). It lives at the
+# root, not beside the Dockerfile as Dockerfile.dockerignore, because only
+# BuildKit reads that name: the legacy builder still in use on some hosts reads
+# only this one, and would otherwise send data/ and config.yaml into the build.
 .git
 .gitignore
 .run/

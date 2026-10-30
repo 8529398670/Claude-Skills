@@ -8,8 +8,9 @@ runs the container. They are split so building and running are separately
 runnable -- CI can build without starting anything. The common case is still
 one command: `docker/run.sh`. Both `cd` to the project root first, which is
 the build context: `docker build -f docker/Dockerfile .`, with
-`docker/Dockerfile.dockerignore` (BuildKit's per-Dockerfile ignore file)
-keeping the secret, the scripts and local state out of it.
+`.dockerignore` at the project root (read by both BuildKit and the legacy
+builder; a per-Dockerfile `docker/Dockerfile.dockerignore` is read only by
+BuildKit, so the legacy builder would ignore it) keeping the secret, the scripts and local state out of it.
 
 Every value either script uses comes from `config/config.yaml`: the `docker:`
 section (image and container names, `bind_address`, `host_port`, `data_dir`,
@@ -34,6 +35,16 @@ Both stamp version metadata into the binary the same way `scripts/build.sh` does
 `docker exec <name> /app/server version` is as informative as a portable
 binary.
 
+## Builders: BuildKit (buildx) or the legacy builder
+
+Either builds this image. Prefer BuildKit: Docker Desktop and colima ship it,
+and on a Linux server it is the `docker-buildx-plugin` package (Docker's own
+apt repo, `docker-ce`) or `docker-buildx` (the distro's `docker.io`); check
+with `docker buildx version`. Without it, `docker build` falls back to the
+legacy builder, prints a deprecation warning, and still works -- which is why
+the ignore file is the root `.dockerignore` that both read. Install buildx
+before the legacy builder is removed rather than after.
+
 ## Why there is no docker-compose
 
 This project is exactly one container. Compose's value is orchestrating
@@ -55,7 +66,7 @@ reconsider -- not before.
   `server.static_dir` (`./static` beside the config, so `/app/static`) does
   not exist, so the embedded frontend is used; a `language.yaml` in the data
   directory overrides the embedded wording. `config.yaml` is kept out by
-  `docker/Dockerfile.dockerignore` because it holds the secret key and an image layer is
+  `.dockerignore` because it holds the secret key and an image layer is
   forever -- it is mounted at run time instead, so one image serves any
   deployment and a config change needs a restart, not a rebuild.
 - **No `ENV`, no `EXPOSE`.** `-tags container` pins the image's fixed
