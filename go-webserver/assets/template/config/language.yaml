@@ -16,8 +16,8 @@ app:
   title: "{{PROJECT_NAME}}"
   tagline: "Sign in with a one-time link."
 
-# The sidebar, one entry per signed-in screen. account is also the header's
-# profile icon label (it also names who is signed in).
+# The sidebar, one entry per signed-in screen. menu labels the header's
+# button that opens/collapses it.
 nav:
   menu: "Menu"
   close: "Close"

@@ -10,6 +10,10 @@
 // app.js calls Nav.init() last, once every screen has had its say.
 const Nav = {
   fallback: "account",
+  // Matches Bootstrap's lg breakpoint, where offcanvas-lg becomes a column.
+  wide: window.matchMedia( "(min-width: 992px)" ),
+  // Collapsed-or-not is a per-browser convenience, like the theme.
+  storageKey: "sidebar-collapsed",
 
   init() {
     Dom.all( "[data-nav]" ).forEach( ( link ) => {
@@ -20,8 +24,12 @@ const Nav = {
     Dom.all( ".sidebar-group" ).forEach( function ( group ) {
       Dom.show( group , Dom.all( "[data-nav]:not([hidden])" , group ).length > 0 );
     } );
+    // Before the sidebar appears, so a collapsed one never flashes open.
+    this.setCollapsed( this.savedCollapsed() );
     Dom.show( Dom.get( "sidebar" ) , true );
-    Dom.show( Dom.get( "sidebar-toggle" ) , true );
+    const toggle = Dom.get( "sidebar-toggle" );
+    toggle.addEventListener( "click" , () => this.toggleSidebar() );
+    Dom.show( toggle , true );
 
     window.addEventListener( "hashchange" , () => this.render() );
     this.render();
@@ -51,6 +59,34 @@ const Nav = {
       else link.removeAttribute( "aria-current" );
     } );
     window.scrollTo( 0 , 0 );
+  },
+
+  // The menu button: on a wide screen it folds the sidebar column away and
+  // back; on a phone it slides the panel in and out.
+  toggleSidebar() {
+    if ( this.wide.matches ) {
+      const collapsed = !document.documentElement.classList.contains( "sidebar-collapsed" );
+      this.setCollapsed( collapsed );
+      try {
+        if ( collapsed ) window.localStorage.setItem( this.storageKey , "1" );
+        else window.localStorage.removeItem( this.storageKey );
+      } catch ( error ) { /* storage blocked: it just is not remembered */ }
+    } else if ( window.bootstrap ) {
+      bootstrap.Offcanvas.getOrCreateInstance( Dom.get( "sidebar" ) ).toggle();
+    }
+  },
+
+  setCollapsed( collapsed ) {
+    document.documentElement.classList.toggle( "sidebar-collapsed" , collapsed );
+    Dom.get( "sidebar-toggle" ).setAttribute( "aria-expanded" , String( !collapsed ) );
+  },
+
+  savedCollapsed() {
+    try {
+      return window.localStorage.getItem( this.storageKey ) === "1";
+    } catch ( error ) {
+      return false;
+    }
   },
 
   // On a phone the sidebar is a slide-in panel; picking a screen closes it,

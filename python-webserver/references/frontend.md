@@ -157,7 +157,11 @@ To upgrade, delete the old files from `static/vendor/` and re-run
 - **Navbar on top, sidebar on the left, one screen at a time.** The app's
   name in the navbar is the home link. The sidebar is a Bootstrap
   `offcanvas-lg`: a fixed column from the `lg` breakpoint up, a slide-in panel
-  behind the navbar's menu button on a phone.
+  on a phone. The menu button (`bi-list`, far left of the navbar) works at
+  every width: on a phone it slides the panel in, on a wide screen it
+  collapses and expands the column (`Nav.toggleSidebar`, a `sidebar-collapsed`
+  class on `<html>`, remembered in `localStorage`). The content column stays
+  centred either way.
 - **A screen is a `<section class="card view" data-view="name">` in `<main>`
   plus a sidebar link `<a class="nav-link" href="#name" data-nav="name">`.**
   `nav.js` shows the one the URL hash names, so back/forward, reload and a
@@ -166,10 +170,10 @@ To upgrade, delete the old files from `static/vendor/` and re-run
   `App.renderSignedIn`) offers only the sections that were un-hidden, and a
   hash for one that wasn't falls back to `#account`. Admin-only links go
   inside `#sidebar-admin`, whose heading disappears when it has nothing left.
-- **A profile icon, not "Name (role)" text.** `#app-nav` on the right of the
-  navbar holds the `bi-person-circle` link to `#account`; its
-  `title`/`aria-label` say who is signed in (`App.labelProfile`). The app's
-  own top-level links go in the same `<div>`, before the icon.
+- **Your account lives in the sidebar, not a header icon.** The first
+  sidebar entry is Account, and its second line (`#sidebar-user`) says who is
+  signed in (`App.labelAccount`). `#app-nav` on the right of the navbar is
+  left for the app's own top-level links.
 - **Signed-out pages have no sidebar.** The signed-out, login-confirm and
   join cards sit in `<main>` on their own.
 - **Confirmations are toasts.** `Dom.toast( I18n.get( "ui.saved" ) , "ok" )`

@@ -35,6 +35,8 @@ server:
   # container, which always listens on 0.0.0.0 (what is reachable from
   # outside is docker.bind_address).
   host: 127.0.0.1
+  # scaffold.py replaces 8080 with a random free port, different per project,
+  # so several projects can run on this machine at once.
   port: 8080
 
   # The address people open this at, e.g. https://app.example.com -- just the
@@ -65,7 +67,9 @@ server:
   # false ONLY for plain http://localhost. A Secure cookie is silently dropped
   # over http, so login appears to succeed and then does nothing.
   secure_cookies: true
-  cookie_name: session
+  # Named per project: browsers share cookies across every port on a host,
+  # so two local projects both using "session" would log each other out.
+  cookie_name: {{PROJECT_SLUG}}_session
 
   # Turn on when a reverse proxy you control is in front (the Docker setup
   # assumes one), so the rate limiter sees each visitor's address instead of

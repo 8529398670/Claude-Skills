@@ -152,6 +152,14 @@ documented defaults plus a freshly generated secret key, mode 0600) and
 nothing, starts nothing, and creates no users -- so nothing happens on the
 network or on disk that the user did not ask for.
 
+Each project also gets **its own port and its own session cookie name**:
+`scaffold.py` picks a random free port in 20000-39999 for `server.port` and
+`docker.host_port` (it prints it -- use that wherever this file says
+`<port>`), and `server.cookie_name` is `<slug>_session`. Both are needed:
+browsers share cookies across every port on `localhost`, so two projects
+that both used `session` would keep signing each other out no matter which
+ports they ran on. Do not reset either to a shared value.
+
 ### What you get
 
 ```
@@ -346,9 +354,9 @@ and it is the kind of thing that silently stops holding:
 
 ```bash
 # in the UI: create one "user" key and one "admin" key, then
-curl -H "Authorization: Bearer <admin key>" localhost:8080/api/admin/users   # 200
-curl -H "Authorization: Bearer <user key>"  localhost:8080/api/admin/users   # 403
-curl -H "Authorization: Bearer <user key>"  localhost:8080/api/me            # role: user
+curl -H "Authorization: Bearer <admin key>" localhost:<port>/api/admin/users   # 200
+curl -H "Authorization: Bearer <user key>"  localhost:<port>/api/admin/users   # 403
+curl -H "Authorization: Bearer <user key>"  localhost:<port>/api/me            # role: user
 ```
 
 The third line is the one worth reading: an admin who mints a user-scoped key
@@ -365,17 +373,17 @@ all of this too, but see it once against the real server):
 
 ```bash
 MCP='Content-Type: application/json'
-curl -s localhost:8080/mcp -H "$MCP" -H "Authorization: Bearer <user key>" \
+curl -s localhost:<port>/mcp -H "$MCP" -H "Authorization: Bearer <user key>" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'                  # no admin_* tools
-curl -s localhost:8080/mcp -H "$MCP" -H "Authorization: Bearer <admin key>" \
+curl -s localhost:<port>/mcp -H "$MCP" -H "Authorization: Bearer <admin key>" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"admin_list_users","arguments":{}}}'
-curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8080/mcp -d '{}'   # 401
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:<port>/mcp -d '{}'   # 401
 ```
 
 A signed-in browser posting to `/mcp` gets 403, `GET /mcp` gets 405, and
 `admin_set_user_disabled` on your own account or the owner comes back with
 `isError: true`. To use it from Claude Code:
-`claude mcp add --transport http <name> http://localhost:8080/mcp --header "Authorization: Bearer <key>"`.
+`claude mcp add --transport http <name> http://localhost:<port>/mcp --header "Authorization: Bearer <key>"`.
 
 Then the delete rules, because they are permission checks that only show up
 when someone is refused. Create a second admin B and a user C, sign B in, and

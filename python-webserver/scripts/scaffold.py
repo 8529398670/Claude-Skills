@@ -17,6 +17,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import sys
 from pathlib import Path
 
@@ -102,6 +103,43 @@ def write_example(target_dir: Path) -> Path:
     return example_path
 
 
+# Every project gets its own port, chosen once here and written into the
+# project's defaults.yaml, so several local projects can run side by side and
+# each keeps its own browser tab, theme, and sign-in. (The session cookie is
+# named per project too -- browsers share cookies across ports on one host.)
+# Writing defaults.yaml rather than only config.yaml means config.yaml,
+# config.example.yaml, `config init`, and a fresh clone all agree on it.
+PORT_RANGE = (20000, 39999)
+PORT_LINES = (
+    re.compile(r"^(\s*port:\s*)\d+[ \t]*$", re.MULTILINE),
+    re.compile(r"^(\s*host_port:\s*)\d+[ \t]*$", re.MULTILINE),
+)
+
+
+def pick_port() -> int:
+    """A random port in PORT_RANGE that nothing on this machine is listening on."""
+    for _ in range(50):
+        port = secrets.choice(range(PORT_RANGE[0], PORT_RANGE[1] + 1))
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+        return port
+    raise SystemExit(f"Could not find a free port in {PORT_RANGE[0]}-{PORT_RANGE[1]}")
+
+
+def stamp_port(target_dir: Path, port: int) -> None:
+    """Set server.port and docker.host_port in <target>/config/defaults.yaml."""
+    defaults_path = target_dir / "config" / "defaults.yaml"
+    text = defaults_path.read_text(encoding="utf-8")
+    for pattern in PORT_LINES:
+        text, count = pattern.subn(lambda match: f"{match.group(1)}{port}", text)
+        if count != 1:
+            raise SystemExit(f"defaults.yaml must contain exactly one `{pattern.pattern}` line, found {count}")
+    defaults_path.write_text(text, encoding="utf-8")
+
+
 # What a scripts/run.sh or docker/run.sh run inside the template itself can
 # leave behind: runtime state and the secret-bearing config/config.yaml. None
 # of it belongs in a new project. Paths are relative to the template root.
@@ -182,11 +220,14 @@ def main() -> None:
             if script.name != "lib.sh":
                 script.chmod(0o755)
 
+    port = pick_port()
+    stamp_port(target_dir, port)
     config_path = write_config(target_dir)
     example_path = write_example(target_dir)
 
     print(f"Scaffolded '{project_name}' into {target_dir}")
     print(f"  slug (state dir, docker image/container name): {slug}")
+    print(f"  port: {port} (random per project, so local projects never collide)")
     print(f"  config: {config_path} (mode 0600, fresh secret key, gitignored)")
     print(f"  example: {example_path} (no secret key, commit it -- `cp` it to config/config.yaml on a fresh clone)")
     print("")

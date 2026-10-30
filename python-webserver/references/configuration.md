@@ -33,6 +33,13 @@ docker:  image, container, bind_address, host_port, data_dir, restart,
          memory, cpus, pids_limit, tmpfs_size
 ```
 
+Two defaults differ per project: `scaffold.py` writes a random free
+`server.port` (and the same `docker.host_port`) into the project's
+`config/defaults.yaml`, and `server.cookie_name` is `<slug>_session`. That lets
+several projects run on one machine at once without signing each other out --
+browsers scope cookies by host, not port, so the distinct cookie name matters as
+much as the distinct port.
+
 The server, `manage`, everything in `scripts/` and everything in `docker/` all read this one
 file. Nothing reads an environment variable for configuration: not
 `app/core/config.py`, not the scripts, and the container is started with no

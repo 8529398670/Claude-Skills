@@ -111,7 +111,7 @@ const App = {
   async renderSignedIn( me ) {
     Dom.show( Dom.get( "signed-in" ) , true );
     Dom.show( Dom.get( "app-nav" ) , true );
-    this.labelProfile();
+    this.labelAccount();
     Theme.render( Dom.get( "theme-picker" ) );
     Dom.get( "display-name" ).value = me.display_name;
 
@@ -143,22 +143,17 @@ const App = {
     try {
       await Api.rename( value );
       this.currentUser.display_name = value;
-      this.labelProfile();
+      this.labelAccount();
       Dom.toast( I18n.get( "ui.saved" ) , "ok" );
     } catch ( error ) {
       this.showError( error.message );
     }
   },
 
-  // The header's profile icon opens the Account screen; its tooltip and
-  // accessible name say who is signed in, which the header used to spell out.
-  labelProfile() {
+  // The sidebar's Account entry names who is signed in on its second line.
+  labelAccount() {
     const user = this.currentUser;
-    const label = I18n.get( "nav.account" );
-    const who = user.display_name + " (" + user.role + ")";
-    const link = Dom.get( "profile-link" );
-    link.setAttribute( "title" , label ? label + " · " + who : who );
-    link.setAttribute( "aria-label" , link.getAttribute( "title" ) );
+    Dom.text( Dom.get( "sidebar-user" ) , user.display_name + " (" + user.role + ")" );
   },
 
   // A fresh one-time link for this account, to open on another device. The

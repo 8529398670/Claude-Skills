@@ -24,20 +24,19 @@
   -->
   <nav class="navbar app-navbar border-bottom sticky-top">
     <div class="container-fluid gap-2">
-      <!-- Opens the sidebar on a phone; on a wide screen it is always there. -->
-      <button id="sidebar-toggle" class="btn btn-link app-icon-button d-lg-none" type="button"
-              data-bs-toggle="offcanvas" data-bs-target="#sidebar" aria-controls="sidebar"
-              data-i18n-attr="aria-label:nav.menu,title:nav.menu" hidden>
+      <!-- The menu button, left, beside the sidebar it controls: on a phone it
+           slides the sidebar in, on a wide screen it collapses and expands it
+           (remembered in this browser). See Nav.toggleSidebar. -->
+      <button id="sidebar-toggle" class="btn btn-link app-icon-button" type="button"
+              aria-controls="sidebar" data-i18n-attr="aria-label:nav.menu,title:nav.menu" hidden>
         <i class="bi bi-list" aria-hidden="true"></i>
       </button>
       <!-- The app's name is the way home, from any screen. -->
       <a href="/" class="navbar-brand fw-semibold me-auto" data-i18n="app.title"></a>
       <span class="navbar-text small d-none d-md-inline" data-i18n="app.tagline"></span>
       <div id="app-nav" class="d-flex align-items-center gap-2" hidden>
-        <!-- The app's own top-level links go here, before the profile icon. -->
-        <!-- Your account, behind the usual profile icon. Its title says who
-             is signed in; see App.labelProfile. -->
-        <a href="#account" id="profile-link" class="btn btn-link app-icon-button"><i class="bi bi-person-circle" aria-hidden="true"></i></a>
+        <!-- The app's own top-level links go here. Your account is in the
+             sidebar, not up here. -->
       </div>
     </div>
   </nav>
@@ -57,7 +56,8 @@
       </div>
       <div class="offcanvas-body">
         <nav id="sidebar-nav" class="nav nav-pills flex-column w-100 gap-1">
-          <a class="nav-link" href="#account" data-nav="account"><i class="bi bi-person" aria-hidden="true"></i><span data-i18n="nav.account"></span></a>
+          <!-- Account, first: its second line names who is signed in (App.labelAccount). -->
+          <a class="nav-link" href="#account" data-nav="account"><i class="bi bi-person-circle" aria-hidden="true"></i><span class="nav-link-text"><span data-i18n="nav.account"></span><span id="sidebar-user" class="nav-link-sub"></span></span></a>
           <a class="nav-link" href="#appearance" data-nav="appearance"><i class="bi bi-palette" aria-hidden="true"></i><span data-i18n="nav.appearance"></span></a>
           <a class="nav-link" href="#pin" data-nav="pin"><i class="bi bi-key" aria-hidden="true"></i><span data-i18n="nav.pin"></span></a>
           <a class="nav-link" href="#api-keys" data-nav="api-keys"><i class="bi bi-code-square" aria-hidden="true"></i><span data-i18n="nav.api_keys"></span></a>

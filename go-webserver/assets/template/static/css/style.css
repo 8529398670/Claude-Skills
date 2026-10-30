@@ -98,8 +98,10 @@ a:not([class]):hover { color: var(--bs-link-hover-color); }
 .app-icon-button { font-size: 1.5rem; line-height: 1; padding: 0.25rem 0.5rem; color: var(--bs-body-color); }
 .app-icon-button:hover, .app-icon-button:focus-visible { color: var(--app-accent); }
 
-/* The shell: navbar on top, then sidebar + content. On a phone the sidebar
-   is an offcanvas panel and the content is the whole width. */
+/* The shell: navbar on top, then sidebar + content. The content column is
+   centred in whatever space is left -- beside the sidebar when signed in, the
+   whole width when signed out. On a phone the sidebar is an offcanvas panel
+   and the content is the whole width. */
 .app-main {
   display: flex;
   flex-direction: column;
@@ -112,6 +114,9 @@ a:not([class]):hover { color: var(--bs-link-hover-color); }
 }
 .app-sidebar .nav-link { display: flex; align-items: center; gap: 0.6rem; }
 .app-sidebar .nav-link .bi { font-size: 1.1rem; }
+.nav-link-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.nav-link-sub { font-size: 0.8rem; opacity: 0.75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-link-sub:empty { display: none; }
 .sidebar-heading {
   margin: 1rem 0 0.25rem;
   padding: 0 var(--bs-nav-link-padding-x);
@@ -138,9 +143,9 @@ a:not([class]):hover { color: var(--bs-link-hover-color); }
     border-right: 1px solid var(--app-border);
   }
   .app-main { padding: 1.5rem; }
-  /* Signed in, the content sits beside the sidebar; signed out (no
-     sidebar), it stays centred. */
-  .app-sidebar:not([hidden]) + .app-main { margin: 0; }
+  /* The menu button folds the sidebar away; the content re-centres in the
+     full width. nav.js sets the class on <html>. */
+  .sidebar-collapsed .app-sidebar { display: none; }
 }
 
 /* One signed-in screen at a time; nav.js marks the one the hash names. */
