@@ -86,8 +86,14 @@ const Dom = {
   toast( message , kind ) {
     const banner = this.get( "toast" );
     if ( !banner || !message ) return;
-    banner.className = "notice toast " + ( kind === "error" ? "notice-error" : "notice-ok" );
-    this.text( banner , message );
-    this.flash( banner , 4000 );
+    banner.className = "toast border-0 " + ( kind === "error" ? "text-bg-danger" : "text-bg-success" );
+    this.text( this.get( "toast-body" ) , message );
+    bootstrap.Toast.getOrCreateInstance( banner ).show();
+  },
+
+  // A status pill for a table cell. tone is a Bootstrap colour name:
+  // "success", "secondary", "warning", "danger".
+  badge( text , tone ) {
+    return this.el( "span" , { class: "badge text-bg-" + ( tone || "secondary" ) , text: text } );
   },
 };

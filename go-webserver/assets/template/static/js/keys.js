@@ -81,6 +81,11 @@ const Keys = {
     return I18n.get( "api_keys.status_active" );
   },
 
+  statusBadge( key ) {
+    const tone = key.revoked ? "secondary" : key.expired ? "warning" : "success";
+    return Dom.badge( Keys.statusText( key ) , tone );
+  },
+
   // revokeButton and deleteButton are shared by both tables: the only
   // difference is which endpoint acts on the key, so that is the parameter.
   // Revoking keeps the row, marked dead; deleting removes it. Revoke is only
@@ -88,7 +93,7 @@ const Keys = {
   revokeButton( key , revoke ) {
     if ( !key.live ) return null;
     return Dom.el( "button" , {
-      class: "secondary small",
+      class: "btn btn-sm btn-outline-danger",
       text: I18n.get( "api_keys.revoke_button" ),
       on: { click: async function () {
         // An empty confirm message means "do not ask", following the same
@@ -106,7 +111,7 @@ const Keys = {
 
   deleteButton( key , remove ) {
     return Dom.el( "button" , {
-      class: "secondary small",
+      class: "btn btn-sm btn-outline-danger",
       text: I18n.get( "api_keys.delete_button" ),
       on: { click: async function () {
         const question = I18n.get( "api_keys.delete_confirm" );
@@ -137,7 +142,7 @@ const Keys = {
       body.appendChild( Dom.el( "tr" , { children: [
         Dom.el( "td" , { text: key.name } ),
         Dom.el( "td" , { text: key.role } ),
-        Dom.el( "td" , { text: Keys.statusText( key ) } ),
+        Dom.el( "td" , { children: [ Keys.statusBadge( key ) ] } ),
         Dom.el( "td" , { text: Keys.formatWhen( key.last_used_at ) } ),
         Dom.el( "td" , { text: Keys.formatWhen( key.expires_at ) } ),
         Dom.el( "td" , { children: [
@@ -166,7 +171,7 @@ const Keys = {
         Dom.el( "td" , { text: key.display_name || ( "#" + key.user_id ) } ),
         Dom.el( "td" , { text: key.name } ),
         Dom.el( "td" , { text: key.role } ),
-        Dom.el( "td" , { text: Keys.statusText( key ) } ),
+        Dom.el( "td" , { children: [ Keys.statusBadge( key ) ] } ),
         Dom.el( "td" , { text: Keys.formatWhen( key.last_used_at ) } ),
         Dom.el( "td" , { children: [
           Dom.el( "div" , { class: "row-actions" , children: [

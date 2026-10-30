@@ -36,6 +36,13 @@ var alwaysFreshExtensions = map[string]bool{
 
 const binaryCacheSeconds = 60 * 60 * 24 * 7 // 7 days
 
+// Go's built-in MIME table has no web fonts, and the OS one it consults (if
+// any) varies by machine. The vendored icon font needs these.
+func init() {
+	mime.AddExtensionType( ".woff2" , "font/woff2" )
+	mime.AddExtensionType( ".woff" , "font/woff" )
+}
+
 type Server struct {
 	fsys      fs.FS
 	indexFile string

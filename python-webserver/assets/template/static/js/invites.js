@@ -33,11 +33,11 @@ const Invites = {
   },
 
   status( link ) {
-    if ( link.revoked ) return I18n.get( "invite_links.status_revoked" );
-    if ( new Date( link.expires_at ) <= new Date() ) return I18n.get( "invite_links.status_expired" );
-    if ( !link.live ) return I18n.get( "invite_links.status_orphaned" );
-    if ( link.remaining <= 0 ) return I18n.get( "invite_links.status_full" );
-    return I18n.get( "invite_links.status_live" );
+    if ( link.revoked ) return Dom.badge( I18n.get( "invite_links.status_revoked" ) , "secondary" );
+    if ( new Date( link.expires_at ) <= new Date() ) return Dom.badge( I18n.get( "invite_links.status_expired" ) , "warning" );
+    if ( !link.live ) return Dom.badge( I18n.get( "invite_links.status_orphaned" ) , "warning" );
+    if ( link.remaining <= 0 ) return Dom.badge( I18n.get( "invite_links.status_full" ) , "secondary" );
+    return Dom.badge( I18n.get( "invite_links.status_live" ) , "success" );
   },
 
   async refresh() {
@@ -53,7 +53,7 @@ const Invites = {
     Dom.clear( body );
     links.forEach( function ( link ) {
       const revokeButton = !link.live ? null : Dom.el( "button" , {
-        class: "secondary small",
+        class: "btn btn-sm btn-outline-danger",
         text: I18n.get( "invite_links.revoke_button" ),
         on: { click: async function () {
           const question = I18n.get( "invite_links.revoke_confirm" );
@@ -66,7 +66,7 @@ const Invites = {
       } );
 
       const deleteButton = Dom.el( "button" , {
-        class: "secondary small",
+        class: "btn btn-sm btn-outline-danger",
         text: I18n.get( "invite_links.delete_button" ),
         on: { click: async function () {
           const question = I18n.get( "invite_links.delete_confirm" );
@@ -87,7 +87,7 @@ const Invites = {
       body.appendChild( Dom.el( "tr" , { children: [
         Dom.el( "td" , { text: link.label } ),
         Dom.el( "td" , { text: joined } ),
-        Dom.el( "td" , { text: Invites.status( link ) } ),
+        Dom.el( "td" , { children: [ Invites.status( link ) ] } ),
         Dom.el( "td" , { text: new Date( link.expires_at ).toLocaleDateString() } ),
         Dom.el( "td" , { children: [
           Dom.el( "div" , { class: "row-actions" , children: [ revokeButton , deleteButton ].filter( Boolean ) } ),

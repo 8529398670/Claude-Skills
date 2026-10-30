@@ -100,6 +100,7 @@ Plain scripts, loaded in dependency order, each adding one global:
 | `dom.js` | Element helpers, `Dom.copy`, `Dom.toast`. No app logic. |
 | `i18n.js` | Loads and applies `language.yaml`. |
 | `api.js` | Every call to the server. Attaches cookies and the CSRF token. |
+| `nav.js` | The sidebar: which screen the URL hash shows. |
 | `app.js` | The account + admin screen. |
 | `keys.js` | The API keys screen. An example of the rule below. |
 
@@ -108,7 +109,7 @@ that page's HTML. Do not keep appending to `app.js` -- the whole layout exists
 to avoid a monolith, and the frontend is the easiest place to accidentally
 build one.
 
-`keys.js` is the worked example: it owns its own card, its own tables, and its
+`keys.js` is the worked example: it owns its own screen, its own tables, and its
 own refresh, and `app.js` knows it exists in exactly one line
 (`await Keys.init( me )`). Copy that shape rather than the alternative.
 
@@ -128,33 +129,64 @@ literal characters. The same row assembled with `innerHTML` executes it.
 There is deliberately no escaping helper in `dom.js` -- the safe path should
 be the only path.
 
+## Bootstrap
+
+The UI is [Bootstrap 5](https://getbootstrap.com/docs/5.3/) plus [Bootstrap
+Icons](https://icons.getbootstrap.com/), vendored like any other library --
+`static/vendor/README.md` lists the files and versions. Use its components
+and utility classes (`card`, `btn`, `form-control`, `table`, `alert`, `badge`,
+`d-flex`, `gap-2`, `mt-3`, ...) before writing CSS, and an icon is
+`<i class="bi bi-<name>" aria-hidden="true"></i>`.
+
+Two things to know when mixing it with this frontend's rules:
+
+- **`data-i18n` replaces an element's text**, icons included. Where an icon
+  sits beside a label, the key goes on an inner `<span>`:
+  `<a class="nav-link"><i class="bi bi-people"></i><span data-i18n="nav.users"></span></a>`.
+- **`hidden` must beat Bootstrap's display utilities.** `.d-flex` and friends
+  are `!important`, so `style.css` restates `[hidden] { display: none
+  !important; }` after Bootstrap. Keep that rule; the app shows and hides
+  whole sections with the attribute.
+
+To upgrade, delete the old files from `static/vendor/` and re-run
+`misc/vendor.sh` for the new version (the commands are in the vendor README).
+
 ## The shell every page shares
 
-- **The app's name in the header is the home link** (`a.brand-link` to `/`).
+- **Navbar on top, sidebar on the left, one screen at a time.** The app's
+  name in the navbar is the home link. The sidebar is a Bootstrap
+  `offcanvas-lg`: a fixed column from the `lg` breakpoint up, a slide-in panel
+  behind the navbar's menu button on a phone.
+- **A screen is a `<section class="card view" data-view="name">` in `<main>`
+  plus a sidebar link `<a class="nav-link" href="#name" data-nav="name">`.**
+  `nav.js` shows the one the URL hash names, so back/forward, reload and a
+  pasted link all work with no router. The screen's own JS decides whether it
+  exists for this user by un-hiding its section; `Nav.init()` (called last in
+  `App.renderSignedIn`) offers only the sections that were un-hidden, and a
+  hash for one that wasn't falls back to `#account`. Admin-only links go
+  inside `#sidebar-admin`, whose heading disappears when it has nothing left.
 - **A profile icon, not "Name (role)" text.** `#app-nav` on the right of the
-  header is shown once signed in; it holds the round `.profile-link` icon
-  (jumps to the `#account` card; its `title`/`aria-label` say who is signed
-  in -- `App.labelProfile`). The app's own top-level links go in the same
-  `<nav>`, before the icon.
-- **Secondary cards fold.** `<details class="card collapsible">` with the
-  `h2` and a one-line `.muted` summary inside `<summary>` (Appearance, PIN,
-  API keys, invite links, all keys). `<details>` does the opening, so it
-  works by keyboard with no script, and toggling `hidden` on it still works.
-  Keep the cards someone uses every visit as plain open `.card`s.
+  navbar holds the `bi-person-circle` link to `#account`; its
+  `title`/`aria-label` say who is signed in (`App.labelProfile`). The app's
+  own top-level links go in the same `<div>`, before the icon.
+- **Signed-out pages have no sidebar.** The signed-out, login-confirm and
+  join cards sit in `<main>` on their own.
 - **Confirmations are toasts.** `Dom.toast( I18n.get( "ui.saved" ) , "ok" )`
-  shows a short line pinned to the bottom (`#toast`) for four seconds;
+  shows a Bootstrap toast (`#toast`) bottom right for four seconds;
   `Dom.copy( element )` toasts `ui.copied` itself. A message that must stay
-  (a key shown once) gets its own box on the page instead, and page-level
-  errors stay in `#error-banner`.
+  (a key shown once) gets its own `alert` on the screen instead, and
+  page-level errors go in `#error-banner` at the top of `<main>`.
+- **Statuses are badges.** `Dom.badge( text , "success" )` for a table cell.
 
 ### Themes
 
 `static/js/theme.js` is loaded in `<head>`, before the stylesheet paints, and
 applies the saved theme at once, so a dark choice never flashes light.
 `Theme.presets` lists light, dark and eight ready-made themes -- ocean, forest, sepia, grape, pink, midnight, slate, dark pink -- (each a mode plus
-optional `accent`, `background`, `surface` colours -> `--accent`, `--bg`,
-`--card-bg`, set inline on `<html>`; `--accent-fg` is picked for contrast).
-The Appearance card is `Theme.render( root , summary )`; names come from
+optional `accent`, `background`, `surface` colours -> `--app-accent`,
+`--app-bg`, `--app-surface`, set inline on `<html>`; `--app-accent-fg` is
+picked for contrast). A dark mode sets Bootstrap's `data-bs-theme="dark"` on
+`<html>`. The Appearance screen is `Theme.render( root )`; names come from
 `theme.preset_<key>` in language.yaml.
 
 The choice lives in this browser's `localStorage` only -- no server state.
@@ -164,29 +196,30 @@ load is always light.
 
 ## CSS structure
 
-`static/css/style.css` is mobile-first: base rules describe a narrow screen,
-and `@media (min-width: 40rem)` adds what a wider one can afford. Written the
-other way round, phones download desktop layout and then override it, which is
-the usual reason a "responsive" page still feels wrong on a phone.
+`static/css/style.css` loads after Bootstrap and holds only what Bootstrap
+does not: this app's colours, the sidebar shell, and touch rules. If a
+utility class can do it, use the class instead of adding a rule.
 
 Things worth preserving when editing:
 
-- **Light mode is the default and stays it.** Dark is opt-in via
-  `<html data-theme="dark">`, deliberately *not* `prefers-color-scheme`, so
-  the app looks the same for everyone unless someone chooses otherwise.
-  `:root, [data-theme="light"]` carries the light tokens; `theme.js` sets
-  `data-theme` and any preset colours.
-- **Colors are custom properties on `:root`.** Change a token, not a rule.
-- **16px base font size.** Smaller makes iOS Safari zoom in on a focused
+- **Light mode is the default and stays it.** Dark is Bootstrap's opt-in
+  `<html data-bs-theme="dark">`, set only by `theme.js`. Bootstrap's own
+  colour-mode script, which follows `prefers-color-scheme`, is deliberately
+  not included, so the app looks the same for everyone unless someone
+  chooses otherwise.
+- **Colors are the `--app-*` tokens at the top of `style.css`.** Change a
+  token, not a rule. The block under them hands the tokens to Bootstrap's
+  `--bs-*` variables; components Bootstrap compiles colours into
+  (`.btn-primary`, `.nav-pills`, focus rings) are re-pointed explicitly.
+- **16px input font size.** Smaller makes iOS Safari zoom in on a focused
   input.
 - **44px minimum button height** -- the usual floor for a reliable touch
-  target.
-- **`.field` wraps each label+input pair** so they move together when the
-  layout switches from column to row. Its `flex: 1 1 12rem` lives only in the
-  wide-screen block: in the mobile column layout a flex basis applies to
-  *height*, which stretches each field to 12rem tall.
-- **Wide content scrolls in its own box** (`.table-scroll`), so a table never
-  makes the page itself scroll sideways.
+  target. `.btn-sm` (table row actions) is the exception.
+- **Forms are a Bootstrap grid:** `form.row.g-3.align-items-end` with a
+  `.col-md` per label+input and a `.col-md-auto` for the button, so fields
+  stack on a phone and line up from `md` up.
+- **Wide content scrolls in its own box** (`.table-responsive`), so a table
+  never makes the page itself scroll sideways.
 
 Labels stay visible at every width. A placeholder disappears the moment
 someone types and is not a substitute for a label.

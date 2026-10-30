@@ -14,7 +14,9 @@ const Pin = {
   },
 
   render() {
-    Dom.text( Dom.get( "pin-status" ) , I18n.get( this.me.has_pin ? "pin.status_set" : "pin.status_none" ) );
+    const status = Dom.get( "pin-status" );
+    Dom.text( status , I18n.get( this.me.has_pin ? "pin.status_set" : "pin.status_none" ) );
+    status.className = "badge " + ( this.me.has_pin ? "text-bg-success" : "text-bg-secondary" );
     Dom.show( Dom.get( "pin-clear-button" ) , this.me.has_pin && I18n.get( "pin.clear_button" ) !== "" );
   },
 

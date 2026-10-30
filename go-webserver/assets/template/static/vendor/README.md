@@ -28,3 +28,21 @@ Then reference it from your HTML:
 ```
 
 Commit what lands here. It is part of the app, not a build artifact.
+
+## What is here
+
+| File | From |
+|---|---|
+| `bootstrap.min.css`, `bootstrap.bundle.min.js` | Bootstrap 5.3.8 (the bundle includes Popper) |
+| `bootstrap-icons.min.css`, `fonts/bootstrap-icons.woff2`, `fonts/bootstrap-icons.woff` | Bootstrap Icons 1.13.1 |
+
+The icon stylesheet loads its font from `fonts/` next to it, so keep that
+layout. To upgrade, delete these files and fetch the new version:
+
+```bash
+misc/vendor.sh https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.8/css/bootstrap.min.css
+misc/vendor.sh https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.8/js/bootstrap.bundle.min.js
+misc/vendor.sh https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.13.1/font/bootstrap-icons.min.css
+misc/vendor.sh https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.13.1/font/fonts/bootstrap-icons.woff2 fonts/bootstrap-icons.woff2
+misc/vendor.sh https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.13.1/font/fonts/bootstrap-icons.woff fonts/bootstrap-icons.woff
+```

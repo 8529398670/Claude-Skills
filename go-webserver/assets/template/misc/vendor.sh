@@ -21,7 +21,7 @@ if [ -e "$DESTINATION" ]; then
   exit 1
 fi
 
-mkdir -p static/vendor
+mkdir -p "$( dirname "$DESTINATION" )"
 echo "Downloading $URL"
 curl -fsSL --proto '=https' --tlsv1.2 -o "$DESTINATION" "$URL"
 

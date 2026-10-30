@@ -112,7 +112,7 @@ const App = {
     Dom.show( Dom.get( "signed-in" ) , true );
     Dom.show( Dom.get( "app-nav" ) , true );
     this.labelProfile();
-    Theme.render( Dom.get( "theme-picker" ) , Dom.get( "theme-summary" ) );
+    Theme.render( Dom.get( "theme-picker" ) );
     Dom.get( "display-name" ).value = me.display_name;
 
     Dom.get( "rename-form" ).addEventListener( "submit" , this.onRename.bind( this ) );
@@ -125,13 +125,16 @@ const App = {
     Pin.init( me );
     await Keys.init( me );
 
-    if ( me.role !== "admin" ) return;
+    if ( me.role === "admin" ) {
+      Dom.show( Dom.get( "admin-panel" ) , true );
+      Dom.get( "create-user-form" ).addEventListener( "submit" , this.onCreateUser.bind( this ) );
+      Dom.get( "copy-link-button" ).addEventListener( "click" , this.onCopyLink.bind( this ) );
+      await this.refreshUsers();
+      await Invites.init( me );
+    }
 
-    Dom.show( Dom.get( "admin-panel" ) , true );
-    Dom.get( "create-user-form" ).addEventListener( "submit" , this.onCreateUser.bind( this ) );
-    Dom.get( "copy-link-button" ).addEventListener( "click" , this.onCopyLink.bind( this ) );
-    await this.refreshUsers();
-    await Invites.init( me );
+    // Last, so the sidebar offers exactly the screens the lines above un-hid.
+    Nav.init();
   },
 
   async onRename( event ) {
@@ -147,7 +150,7 @@ const App = {
     }
   },
 
-  // The header's profile icon jumps to the Account card; its tooltip and
+  // The header's profile icon opens the Account screen; its tooltip and
   // accessible name say who is signed in, which the header used to spell out.
   labelProfile() {
     const user = this.currentUser;
@@ -218,9 +221,10 @@ const App = {
     Dom.clear( body );
     users.forEach( function ( user ) {
       const statusKey = user.disabled ? "admin.status_disabled" : "admin.status_active";
+      const statusTone = user.disabled ? "secondary" : "success";
 
       const reissueButton = Dom.el( "button" , {
-        class: "secondary small",
+        class: "btn btn-sm btn-outline-secondary",
         text: I18n.get( "admin.reissue_button" ),
         on: { click: async function () {
           try {
@@ -241,7 +245,7 @@ const App = {
       // account enabled. Not offered on your own row -- the server refuses
       // that, since it would sign you out with no way back in.
       const revokeButton = isProtected ? null : Dom.el( "button" , {
-        class: "secondary small",
+        class: "btn btn-sm btn-outline-danger",
         text: I18n.get( "admin.revoke_button" ),
         on: { click: async function () {
           const question = I18n.get( "admin.revoke_confirm" ).replace( "{name}" , user.display_name );
@@ -254,7 +258,7 @@ const App = {
       } );
 
       const toggleButton = isProtected ? null : Dom.el( "button" , {
-        class: "secondary small",
+        class: "btn btn-sm btn-outline-secondary",
         text: I18n.get( user.disabled ? "admin.enable_button" : "admin.disable_button" ),
         on: { click: async function () {
           try {
@@ -268,7 +272,7 @@ const App = {
       // admin may delete a user; only the owner may delete another admin.
       const canDelete = !isProtected && ( user.role !== "admin" || App.currentUser.is_owner );
       const deleteButton = !canDelete ? null : Dom.el( "button" , {
-        class: "secondary small",
+        class: "btn btn-sm btn-outline-danger",
         text: I18n.get( "admin.delete_button" ),
         on: { click: async function () {
           const question = I18n.get( "admin.delete_confirm" ).replace( "{name}" , user.display_name );
@@ -289,7 +293,7 @@ const App = {
       body.appendChild( Dom.el( "tr" , { children: [
         Dom.el( "td" , { text: user.display_name } ),
         Dom.el( "td" , { text: roleText } ),
-        Dom.el( "td" , { text: I18n.get( statusKey ) } ),
+        Dom.el( "td" , { children: [ Dom.badge( I18n.get( statusKey ) , statusTone ) ] } ),
         Dom.el( "td" , { children: [
           Dom.el( "div" , { class: "row-actions" , children: [ reissueButton , revokeButton , toggleButton , deleteButton ].filter( Boolean ) } ),
         ] } ),

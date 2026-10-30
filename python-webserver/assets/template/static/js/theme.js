@@ -5,14 +5,19 @@
 // the server. Move it onto the account if a theme should follow a person to
 // every device.
 //
+// Dark is Bootstrap's own dark mode (<html data-bs-theme="dark">). Light is
+// the attribute being absent, and Bootstrap's colour-mode script, which would
+// follow prefers-color-scheme, is deliberately not included.
+//
 // This file is loaded in <head>, before the stylesheet's first paint, so a
 // saved dark theme never flashes light on the way in.
 const Theme = {
   storageKey: "theme",
 
   // Each preset sets the mode plus, optionally, its own colours. Field ->
-  // custom property in style.css: accent -> --accent, background -> --bg,
-  // surface -> --card-bg. Names come from language.yaml (theme.preset_<key>).
+  // custom property in style.css, which hands them on to Bootstrap: accent ->
+  // --app-accent, background -> --app-bg, surface -> --app-surface. Names
+  // come from language.yaml (theme.preset_<key>).
   presets: [
     { key: "light" , mode: "light" },
     { key: "dark" , mode: "dark" },
@@ -26,7 +31,7 @@ const Theme = {
     { key: "dark_pink" , mode: "dark" , accent: "#f06595" , background: "#1f0d16" , surface: "#2a1220" },
   ],
 
-  vars: { accent: "--accent" , background: "--bg" , surface: "--card-bg" },
+  vars: { accent: "--app-accent" , background: "--app-bg" , surface: "--app-surface" },
 
   current: "light",
 
@@ -58,18 +63,18 @@ const Theme = {
 
   apply( preset ) {
     const root = document.documentElement;
-    if ( preset.mode === "dark" ) root.setAttribute( "data-theme" , "dark" );
-    else root.removeAttribute( "data-theme" );
+    if ( preset.mode === "dark" ) root.setAttribute( "data-bs-theme" , "dark" );
+    else root.removeAttribute( "data-bs-theme" );
     Object.keys( this.vars ).forEach( ( field ) => {
       if ( preset[ field ] ) root.style.setProperty( this.vars[ field ] , preset[ field ] );
       else root.style.removeProperty( this.vars[ field ] );
     } );
     // Text on the accent has to stay readable whatever the accent is.
-    if ( preset.accent ) root.style.setProperty( "--accent-fg" , this.contrast( preset.accent , "#ffffff" ) >= this.contrast( preset.accent , "#0b0d10" ) ? "#ffffff" : "#0b0d10" );
-    else root.style.removeProperty( "--accent-fg" );
+    if ( preset.accent ) root.style.setProperty( "--app-accent-fg" , this.contrast( preset.accent , "#ffffff" ) >= this.contrast( preset.accent , "#0b0d10" ) ? "#ffffff" : "#0b0d10" );
+    else root.style.removeProperty( "--app-accent-fg" );
     // A custom page colour gets borders drawn from it rather than the mode's.
-    if ( preset.background ) root.style.setProperty( "--border" , "color-mix(in srgb, var(--fg) 14%, " + preset.background + ")" );
-    else root.style.removeProperty( "--border" );
+    if ( preset.background ) root.style.setProperty( "--app-border" , "color-mix(in srgb, var(--bs-body-color) 14%, " + preset.background + ")" );
+    else root.style.removeProperty( "--app-border" );
   },
 
   // The picker on the Appearance card: one button per preset, drawn in its
@@ -88,7 +93,7 @@ const Theme = {
       if ( preset.background ) swatch.style.setProperty( "--swatch-bg" , preset.background );
       if ( preset.accent ) swatch.style.setProperty( "--swatch-accent" , preset.accent );
       const button = Dom.el( "button" , {
-        class: "secondary theme-choice",
+        class: "btn btn-outline-secondary theme-choice",
         attrs: { type: "button" , "data-theme-key": preset.key },
         children: [ swatch , Dom.el( "span" , { text: I18n.get( "theme.preset_" + preset.key ) } ) ],
         on: { click: () => {

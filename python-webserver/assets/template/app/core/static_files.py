@@ -40,6 +40,8 @@ mimetypes.add_type("application/json", ".map")
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 mimetypes.add_type("application/yaml", ".yaml")
 mimetypes.add_type("application/yaml", ".yml")
+mimetypes.add_type("font/woff2", ".woff2")
+mimetypes.add_type("font/woff", ".woff")
 
 
 def has_dot_dot(request_path: str) -> bool:

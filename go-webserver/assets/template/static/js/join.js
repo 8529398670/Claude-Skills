@@ -94,12 +94,12 @@ const Join = {
     Dom.clear( list );
     found.matches.forEach( function ( user ) {
       const pinTag = user.has_pin && I18n.get( "join.has_pin" ) !== ""
-        ? Dom.el( "span" , { class: "muted" , text: I18n.get( "join.has_pin" ) } )
+        ? Dom.el( "span" , { class: "badge text-bg-secondary ms-2" , text: I18n.get( "join.has_pin" ) } )
         : null;
-      list.appendChild( Dom.el( "div" , { class: "choice" , children: [
+      list.appendChild( Dom.el( "div" , { class: "list-group-item d-flex justify-content-between align-items-center gap-2" , children: [
         Dom.el( "span" , { children: [ Dom.el( "strong" , { text: user.display_name } ) , pinTag ].filter( Boolean ) } ),
         Dom.el( "button" , {
-          class: "secondary small",
+          class: "btn btn-sm btn-outline-primary",
           text: I18n.get( "join.this_is_me" ),
           on: { click: function () { Join.onPick( user ); } },
         } ),

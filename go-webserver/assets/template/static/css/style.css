@@ -1,333 +1,180 @@
 /*
-  Mobile-first: the base rules describe a narrow screen, and the min-width
-  blocks at the bottom add what a wider one can afford. Writing it the other
-  way round means phones download and then override desktop layout, which is
-  the common cause of a "responsive" page that still feels wrong on a phone.
+  Bootstrap 5 (/vendor/bootstrap.min.css) does the layout, components and
+  utilities. This file is only what Bootstrap does not: this app's colours,
+  the sidebar shell, and a few touch-friendliness rules. Reach for a utility
+  class in the markup before adding a rule here.
 
-  Light is the default and stays the default. Dark is opt-in via
-  <html data-theme="dark"> rather than prefers-color-scheme, so the app looks
-  the same for everyone unless someone deliberately switches it. A theme's
-  own colours are set over these as inline variables on <html> (theme.js).
+  Light is the default and stays the default. Dark is Bootstrap's opt-in
+  <html data-bs-theme="dark">, set only by theme.js when someone picks it --
+  never prefers-color-scheme, so the app looks the same for everyone unless
+  they deliberately switch.
+
+  Colours: the --app-* tokens below are the only place to change them. A
+  theme preset overrides them as inline variables on <html> (theme.js), and
+  the block after them hands them on to Bootstrap's own variables. Bootstrap
+  compiles some colours straight into components (.btn-primary, focus rings),
+  so those are re-pointed explicitly further down.
 */
 
-:root, [data-theme="light"] {
-  color-scheme: light;
-
-  --fg: #16191d;
-  --fg-muted: #5b6472;
-  --bg: #f7f8fa;
-  --card-bg: #ffffff;
-  --border: #dfe3e8;
-  --accent: #1f5fd6;
-  --accent-fg: #ffffff;
-  --ok-bg: #e7f6ec;
-  --ok-fg: #14562c;
-  --warn-bg: #fdf3e2;
-  --warn-fg: #7a4b06;
-  --error-bg: #fdecec;
-  --error-fg: #8a1c1c;
-
-  --radius: 10px;
-  --gap: 1rem;
+:root {
+  --app-accent: #1f5fd6;
+  --app-accent-fg: #ffffff;
+  --app-bg: #f7f8fa;
+  --app-surface: #ffffff;
+  --app-border: #dfe3e8;
+  --app-sidebar-width: 15rem;
+  --app-navbar-height: 4rem;
 }
 
-[data-theme="dark"] {
-  color-scheme: dark;
-
-  --fg: #e8eaed;
-  --fg-muted: #9aa3b0;
-  --bg: #101215;
-  --card-bg: #191c21;
-  --border: #2c3138;
-  --accent: #6ea0ff;
-  --accent-fg: #0b0d10;
-  --ok-bg: #12301d;
-  --ok-fg: #94d9ab;
-  --warn-bg: #33270f;
-  --warn-fg: #e8c37a;
-  --error-bg: #351717;
-  --error-fg: #f0a3a3;
+:root[data-bs-theme="dark"] {
+  --app-accent: #6ea0ff;
+  --app-accent-fg: #0b0d10;
+  --app-bg: #101215;
+  --app-surface: #191c21;
+  --app-border: #2c3138;
 }
 
-*, *::before, *::after { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  padding: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: 16px; /* 16px avoids iOS Safari zooming in on focused inputs */
-  line-height: 1.5;
-  color: var(--fg);
-  background: var(--bg);
-  -webkit-text-size-adjust: 100%;
+/* Both selectors, because Bootstrap sets these on [data-bs-theme=dark] too. */
+:root, :root[data-bs-theme="dark"] {
+  --bs-primary: var(--app-accent);
+  --bs-link-color: var(--app-accent);
+  --bs-link-hover-color: color-mix(in srgb, var(--app-accent) 80%, var(--bs-body-color));
+  --bs-body-bg: var(--app-bg);
+  --bs-border-color: var(--app-border);
+  --bs-border-color-translucent: var(--app-border);
 }
 
-h1 { font-size: 1.35rem; margin: 0; }
-h2 { font-size: 1.1rem; margin: 0 0 0.75rem; }
-p  { margin: 0 0 0.75rem; }
+/* Bootstrap draws links from an -rgb triple, which a hex token cannot fill. */
+a:not([class]) { color: var(--app-accent); }
+a:not([class]):hover { color: var(--bs-link-hover-color); }
 
-.muted { color: var(--fg-muted); font-size: 0.9rem; }
-
-.app-header {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 1rem;
-  background: var(--card-bg);
-  border-bottom: 1px solid var(--border);
+.btn-primary {
+  --bs-btn-color: var(--app-accent-fg);
+  --bs-btn-bg: var(--app-accent);
+  --bs-btn-border-color: var(--app-accent);
+  --bs-btn-hover-color: var(--app-accent-fg);
+  --bs-btn-hover-bg: color-mix(in srgb, var(--app-accent) 85%, #000);
+  --bs-btn-hover-border-color: color-mix(in srgb, var(--app-accent) 85%, #000);
+  --bs-btn-active-color: var(--app-accent-fg);
+  --bs-btn-active-bg: color-mix(in srgb, var(--app-accent) 75%, #000);
+  --bs-btn-active-border-color: color-mix(in srgb, var(--app-accent) 75%, #000);
+  --bs-btn-disabled-color: var(--app-accent-fg);
+  --bs-btn-disabled-bg: var(--app-accent);
+  --bs-btn-disabled-border-color: var(--app-accent);
 }
-
-/* The app's name doubles as the home link. */
-.brand-link { color: inherit; text-decoration: none; }
-.brand-link:hover, .brand-link:focus-visible { color: var(--accent); }
-
-.header-side { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
-.app-nav { display: flex; align-items: center; gap: 1rem; font-weight: 600; }
-.app-nav a { color: var(--accent); text-decoration: none; }
-
-/* The profile icon that opens the Account card, on every signed-in header. */
-.app-nav .profile-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  color: var(--fg-muted);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 50%;
+.btn-outline-primary {
+  --bs-btn-color: var(--app-accent);
+  --bs-btn-border-color: var(--app-accent);
+  --bs-btn-hover-color: var(--app-accent-fg);
+  --bs-btn-hover-bg: var(--app-accent);
+  --bs-btn-hover-border-color: var(--app-accent);
+  --bs-btn-active-color: var(--app-accent-fg);
+  --bs-btn-active-bg: var(--app-accent);
+  --bs-btn-active-border-color: var(--app-accent);
 }
-.app-nav .profile-link:hover, .app-nav .profile-link:focus-visible { color: var(--accent); border-color: var(--accent); }
-.profile-link svg { width: 22px; height: 22px; fill: currentColor; }
-
-main {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap);
-  padding: var(--gap);
-  max-width: 46rem;
-  margin: 0 auto;
-  width: 100%;
+.btn { --bs-btn-focus-box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--app-accent) 40%, transparent); }
+.form-control:focus, .form-select:focus {
+  border-color: color-mix(in srgb, var(--app-accent) 50%, var(--app-border));
+  box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--app-accent) 25%, transparent);
 }
-
-.card {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem;
+.nav-pills {
+  --bs-nav-pills-link-active-bg: var(--app-accent);
+  --bs-nav-pills-link-active-color: var(--app-accent-fg);
 }
+.card { --bs-card-bg: var(--app-surface); --bs-card-border-color: var(--app-border); }
+.offcanvas-lg { --bs-offcanvas-bg: var(--app-surface); }
+.app-navbar { background: var(--app-surface); }
 
-/* Stacked by default so every control is full width and comfortably tappable
-   on a phone; the wide-screen block below turns this into a row. Each
-   label+input pair is wrapped in .field so the two move together when the
-   layout changes -- labels stay visible at every width, since a placeholder
-   disappears the moment someone starts typing and is not a label. */
-/* The hidden attribute loses to any rule that sets display (form, .field,
-   .row-actions below all do), so make it win: app code shows and hides
-   whole sections with it. */
+/* The hidden attribute loses to Bootstrap's display utilities (.d-flex and
+   friends are !important and come later), so make it win again: app code
+   shows and hides whole sections with it. */
 [hidden] { display: none !important; }
 
-form {
+/* Touch: 44px is the usual floor for a reliable tap target, and a 16px input
+   font stops iOS Safari zooming in on focus. Small buttons in table rows are
+   the one exception, or every row would be twice as tall. */
+.btn:not(.btn-sm) { min-height: 44px; }
+.form-control, .form-select { font-size: 1rem; min-height: 44px; background-color: var(--app-surface); }
+.app-icon-button { font-size: 1.5rem; line-height: 1; padding: 0.25rem 0.5rem; color: var(--bs-body-color); }
+.app-icon-button:hover, .app-icon-button:focus-visible { color: var(--app-accent); }
+
+/* The shell: navbar on top, then sidebar + content. On a phone the sidebar
+   is an offcanvas panel and the content is the whole width. */
+.app-main {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  margin: 0 0 0.75rem;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-label {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--fg-muted);
-}
-
-input, select {
+  gap: 1rem;
+  padding: 1rem;
   width: 100%;
-  padding: 0.6rem 0.7rem;
-  font: inherit;
-  color: var(--fg);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  max-width: 60rem;
+  margin: 0 auto;
+  min-width: 0;
 }
-
-input:focus-visible, select:focus-visible, button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-button {
-  /* 44px is the usual floor for a reliable touch target. */
-  min-height: 44px;
-  padding: 0.6rem 1rem;
-  font: inherit;
+.app-sidebar .nav-link { display: flex; align-items: center; gap: 0.6rem; }
+.app-sidebar .nav-link .bi { font-size: 1.1rem; }
+.sidebar-heading {
+  margin: 1rem 0 0.25rem;
+  padding: 0 var(--bs-nav-link-padding-x);
+  font-size: 0.75rem;
   font-weight: 600;
-  color: var(--accent-fg);
-  background: var(--accent);
-  border: 1px solid transparent;
-  border-radius: 8px;
-  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--bs-secondary-color);
 }
+.sidebar-group { display: flex; flex-direction: column; gap: 0.25rem; }
 
-button.secondary {
-  color: var(--fg);
-  background: transparent;
-  border-color: var(--border);
-}
+/* A fixed height, so the sticky sidebar below knows where to start. */
+.app-navbar { height: var(--app-navbar-height); flex-wrap: nowrap; }
 
-button.small {
-  min-height: 36px;
-  padding: 0.35rem 0.6rem;
-  font-size: 0.85rem;
-}
-
-.notice {
-  padding: 0.6rem 0.75rem;
-  border-radius: 8px;
-  font-size: 0.9rem;
-}
-
-.notice-ok    { background: var(--ok-bg);    color: var(--ok-fg); }
-.notice-warn  { background: var(--warn-bg);  color: var(--warn-fg); }
-.notice-error { background: var(--error-bg); color: var(--error-fg); }
-
-.notice-link {
-  background: var(--bg);
-  border: 1px dashed var(--accent);
-  padding: 0.75rem;
-  border-radius: 8px;
-}
-
-.notice-link code {
-  display: block;
-  margin: 0.5rem 0;
-  padding: 0.5rem;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 0.8rem;
-  /* A login link is long and unbreakable; without this it forces the whole
-     page to scroll sideways on a phone. */
-  word-break: break-all;
-}
-
-/* Tables do not reflow. Rather than fight that, let this one scroll inside
-   its own box so it never widens the page itself. */
-.table-scroll {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-
-th, td {
-  text-align: left;
-  padding: 0.5rem 0.6rem;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-th { color: var(--fg-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
-
-td .row-actions { display: flex; gap: 0.4rem; }
-
-@media (min-width: 40rem) {
-  .app-header {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem 1.5rem;
+@media (min-width: 992px) {
+  .app-shell { display: flex; align-items: flex-start; }
+  .app-sidebar {
+    flex: 0 0 var(--app-sidebar-width);
+    position: sticky;
+    top: var(--app-navbar-height);
+    height: calc(100vh - var(--app-navbar-height));
+    overflow-y: auto;
+    padding: 1rem 0.75rem;
+    border-right: 1px solid var(--app-border);
   }
-
-  h1 { font-size: 1.5rem; }
-
-  /* Enough room now to put a short form on one line. align-items: end keeps
-     the button's baseline with the inputs rather than their labels. */
-  form {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: end;
-    gap: 0.75rem;
-  }
-
-  /* Only now that the form is a row does a horizontal flex basis mean
-     anything -- setting it on the column layout would stretch each field to
-     12rem tall instead of wide. */
-  .field { flex: 1 1 12rem; }
-
-  form > button { flex: 0 0 auto; }
-
-  td, th { white-space: normal; }
+  .app-main { padding: 1.5rem; }
+  /* Signed in, the content sits beside the sidebar; signed out (no
+     sidebar), it stays centred. */
+  .app-sidebar:not([hidden]) + .app-main { margin: 0; }
 }
 
-/* The "did you mean" list on the join page: one full-width row per name. */
-.choice-list { display: flex; flex-direction: column; gap: 0.4rem; margin: 0 0 0.75rem; }
-.choice-list .choice {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
-  padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 6px;
-}
-.choice-list .choice .muted { margin-left: 0.5rem; }
-.card .row-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+/* One signed-in screen at a time; nav.js marks the one the hash names. */
+.view:not(.view-active) { display: none; }
 
-/* A card folded to its heading and a one-line summary; <details> does the
-   opening and closing, so it works by keyboard with no script. */
-.collapsible > summary {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  list-style: none;
-  cursor: pointer;
-  border-radius: 6px;
-}
-.collapsible > summary::-webkit-details-marker { display: none; }
-.collapsible > summary::after {
-  content: "";
-  flex: 0 0 auto;
-  width: 0.55rem;
-  height: 0.55rem;
-  margin-left: auto;
-  border-right: 2px solid var(--fg-muted);
-  border-bottom: 2px solid var(--fg-muted);
-  transform: rotate(45deg);
-  transition: transform 0.15s;
-}
-.collapsible[open] > summary::after { transform: rotate(-135deg); }
-.collapsible > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
-.collapsible[open] > summary { margin-bottom: 0.75rem; }
-.collapsible-head { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
-.collapsible-head h2 { margin: 0; }
+/* Tables sit on a card, so they take its colour, not the page's. */
+.table { --bs-table-bg: transparent; }
+.row-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+td .row-actions { flex-wrap: nowrap; }
+th { color: var(--bs-secondary-color); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; }
 
-/* The Appearance card's presets, each drawn in its own colours. */
+/* A login link or API key, with its copy button. The value wraps rather
+   than widening the page. */
+.link-box { display: flex; align-items: flex-start; gap: 0.5rem; }
+.link-box code { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; color: inherit; font-size: 0.85rem; }
+
+/* The Appearance screen's presets, each drawn in its own colours. */
 .theme-picker { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.theme-choice { display: inline-flex; align-items: center; gap: 0.5rem; }
-.theme-choice.active { border-color: var(--accent); color: var(--accent); }
+.theme-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  --bs-btn-active-bg: transparent;
+  --bs-btn-active-color: var(--app-accent);
+  --bs-btn-active-border-color: var(--app-accent);
+}
+.theme-choice.active { border-width: 2px; }
 .theme-swatch {
   --swatch-bg: #f7f8fa;
   --swatch-accent: #1f5fd6;
   width: 1.1rem;
   height: 1.1rem;
   border-radius: 50%;
-  border: 1px solid var(--border);
+  border: 1px solid var(--app-border);
   background: linear-gradient(135deg, var(--swatch-bg) 50%, var(--swatch-accent) 50%);
 }
 .theme-swatch-dark { --swatch-bg: #101215; --swatch-accent: #6ea0ff; }
-
-/* Dom.toast: pinned to the bottom, full width on a phone. */
-.toast {
-  position: fixed;
-  left: 1rem;
-  right: 1rem;
-  bottom: 1rem;
-  z-index: 1000;
-  margin: 0;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
-}
-
-@media (min-width: 40rem) {
-  .toast { left: auto; right: 1.5rem; bottom: 1.5rem; max-width: 26rem; }
-}

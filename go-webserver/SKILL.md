@@ -58,7 +58,9 @@ project.
   runtime.
 - **All UI text lives in `language.yaml`.** No user-facing string is
   hardcoded in HTML or JS.
-- **Mobile-first and light-mode by default.**
+- **Bootstrap 5 + Bootstrap Icons, light mode by default.** Vendored in
+  `static/vendor/`; a sidebar of screens, one shown at a time. Use its
+  components and utility classes before writing CSS.
 - **Docker, never compose.** One hardened Alpine image, one `docker/run.sh`.
 - **`scripts/run.sh` just makes it run** outside Docker, from the checkout:
   it stops the copy it started last and starts a fresh one in the foreground
@@ -192,12 +194,13 @@ network or on disk that the user did not ask for.
     manage/manage.go          # the admin CLI commands
   static/
     index.html                # placeholder account + admin UI, fully data-i18n'd;
-                              #   brand = home link, profile icon, folding cards, toasts
-    css/style.css             # mobile-first, light default
+                              #   Bootstrap navbar + sidebar, one screen per view, toasts
+    css/style.css             # overrides on top of Bootstrap: colour tokens, shell
     js/theme.js               # light/dark/preset themes, applied before first paint
+    js/nav.js                 # sidebar: shows the screen the URL hash names
     js/dom.js, i18n.js, api.js, app.js, keys.js,
       join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
-    vendor/                   # self-hosted third-party libs (see its README)
+    vendor/                   # self-hosted libs: Bootstrap 5, Bootstrap Icons (see its README)
   scripts/
     run.sh, run.bat           # local run: (re)starts the server; with args, the CLI
     login.sh, login.bat       # the owner's login link, from whatever is live
@@ -217,9 +220,10 @@ network or on disk that the user did not ask for.
 This is the part specific to what the user asked for, so use judgment --
 but stay consistent with the patterns already there:
 
-- **New pages** are static files under `static/`. Give each screen its own
-  file in `static/js/` with its own `init()`, included from that page's
-  HTML. Do not keep appending to `app.js`.
+- **New screens** are a `<section class="card view" data-view="name">` in
+  `index.html` plus a sidebar link to `#name` (see `references/frontend.md`).
+  Give each its own file in `static/js/` with its own `init()`, included
+  from the HTML. Do not keep appending to `app.js`.
 - **New text** goes in `config/language.yaml` and is referenced with
   `data-i18n="section.key"` (or `data-i18n-attr="placeholder:section.key"`).
   Never hardcode a user-facing string in HTML or JS. A missing or empty
@@ -516,4 +520,4 @@ Read these when the task goes past "scaffold and build features":
   to back up. Read before adding a setting or writing a file anywhere.
 - `references/frontend.md` -- the language.yaml contract in detail, the
   no-build-step rule and how to vendor a library, the JS file conventions,
-  and the mobile-first/light-mode CSS structure.
+  Bootstrap, the sidebar/screen shell, and the light-mode CSS structure.

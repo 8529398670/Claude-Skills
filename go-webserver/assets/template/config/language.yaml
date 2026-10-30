@@ -16,9 +16,19 @@ app:
   title: "{{PROJECT_NAME}}"
   tagline: "Sign in with a one-time link."
 
-# The header: the profile icon's label (it also names who is signed in).
+# The sidebar, one entry per signed-in screen. account is also the header's
+# profile icon label (it also names who is signed in).
 nav:
+  menu: "Menu"
+  close: "Close"
   account: "Account"
+  appearance: "Appearance"
+  pin: "PIN"
+  api_keys: "API keys"
+  admin_heading: "Admin"
+  users: "Users"
+  invite_links: "Invite links"
+  all_keys: "All API keys"
 
 # Short confirmations shown as a toast at the bottom of the screen.
 ui:
@@ -119,8 +129,6 @@ admin:
 
 api_keys:
   heading: "API keys"
-  # The one line shown while the card is folded.
-  summary: "For scripts and other services."
   description: "For scripts, cron jobs, and other services. A key does exactly what your account can do -- send it as an Authorization: Bearer header. It is shown once."
   name_label: "What is it for"
   name_placeholder: "deploy bot"
@@ -163,7 +171,6 @@ pin:
 
 invite_links:
   heading: "Invite links"
-  summary: "One link a whole group can join through."
   description: "One link for a group: post it in a group chat and each person who opens it joins as a new user, until the places run out. People who joined through it can sign back in on a new device with the same link."
   label_label: "What is it for"
   label_placeholder: "Group-1"
@@ -194,7 +201,6 @@ invite_links:
 
 admin_keys:
   heading: "All API keys"
-  summary: "Every key in this app, whoever owns it."
   description: "Every key in this app and who owns it. Revoke or delete one to cut off whatever is using it, right away."
   table_owner: "Owner"
 
