@@ -31,7 +31,16 @@ const Nav = {
     toggle.addEventListener( "click" , () => this.toggleSidebar() );
     Dom.show( toggle , true );
 
+    // Moving between screens is not an undo step: Back and Forward already
+    // are that, and an undo that only changed the screen would get in the way
+    // of undoing what was done on it.
     window.addEventListener( "hashchange" , () => this.render() );
+    this.render();
+  },
+
+  // Undo uses this to go back to the screen an action happened on.
+  show( name ) {
+    window.location.hash = "#" + name;
     this.render();
   },
 
@@ -49,6 +58,7 @@ const Nav = {
 
   render() {
     const name = this.current();
+    Track.nav( name );
     Dom.all( ".view" ).forEach( function ( view ) {
       view.classList.toggle( "view-active" , view.getAttribute( "data-view" ) === name );
     } );
@@ -62,15 +72,17 @@ const Nav = {
   },
 
   // The menu button: on a wide screen it folds the sidebar column away and
-  // back; on a phone it slides the panel in and out.
+  // back; on a phone it slides the panel in and out. Only the folding is
+  // undoable: the phone panel is gone again as soon as a screen is picked.
   toggleSidebar() {
     if ( this.wide.matches ) {
       const collapsed = !document.documentElement.classList.contains( "sidebar-collapsed" );
-      this.setCollapsed( collapsed );
-      try {
-        if ( collapsed ) window.localStorage.setItem( this.storageKey , "1" );
-        else window.localStorage.removeItem( this.storageKey );
-      } catch ( error ) { /* storage blocked: it just is not remembered */ }
+      Undo.run( {
+        label: I18n.get( "undo.sidebar" ),
+        screen: null,
+        do: () => this.saveCollapsed( collapsed ),
+        undo: () => this.saveCollapsed( !collapsed ),
+      } );
     } else if ( window.bootstrap ) {
       bootstrap.Offcanvas.getOrCreateInstance( Dom.get( "sidebar" ) ).toggle();
     }
@@ -79,6 +91,14 @@ const Nav = {
   setCollapsed( collapsed ) {
     document.documentElement.classList.toggle( "sidebar-collapsed" , collapsed );
     Dom.get( "sidebar-toggle" ).setAttribute( "aria-expanded" , String( !collapsed ) );
+  },
+
+  saveCollapsed( collapsed ) {
+    this.setCollapsed( collapsed );
+    try {
+      if ( collapsed ) window.localStorage.setItem( this.storageKey , "1" );
+      else window.localStorage.removeItem( this.storageKey );
+    } catch ( error ) { /* storage blocked: it just is not remembered */ }
   },
 
   savedCollapsed() {

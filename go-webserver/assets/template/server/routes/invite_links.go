@@ -5,6 +5,7 @@ import (
 
 	fiber "github.com/gofiber/fiber/v3"
 
+	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 )
@@ -87,6 +88,7 @@ func ( handlers *Handlers ) CreateInviteLink( c fiber.Ctx ) ( err error ) {
 	}
 	row := handlers.inviteLinkRow( link )
 	row[ "join_path" ] = "/join/" + credential
+	handlers.audit( c , logs.KindAdmin , "invite link created" , fiber.Map{ "link_id": link.ID , "label": link.Label , "max_uses": link.MaxUses } )
 	err = c.Status( fiber.StatusCreated ).JSON( row )
 	return
 }
@@ -106,12 +108,14 @@ func ( handlers *Handlers ) RevokeInviteLink( c fiber.Ctx ) ( err error ) {
 		err = notFound( c , "no such invite link" )
 		return
 	}
+	handlers.audit( c , logs.KindAdmin , "invite link revoked" , fiber.Map{ "link_id": c.Params( "link_id" ) } )
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }
 
-// DeleteInviteLink drops a link from the list for good. The accounts it made
-// stay; they just can no longer sign in on a new device through it.
+// DeleteInviteLink drops a link from the list. The accounts it made stay;
+// they just can no longer sign in on a new device through it.
+// RestoreInviteLink undoes it for a few minutes.
 func ( handlers *Handlers ) DeleteInviteLink( c fiber.Ctx ) ( err error ) {
 	var body csrfOnlyRequest
 	if c.Bind().JSON( &body ) != nil {
@@ -122,10 +126,34 @@ func ( handlers *Handlers ) DeleteInviteLink( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	if models.DeleteInviteLink( handlers.Store , c.Params( "link_id" ) ) != nil {
+	if models.DeleteInviteLink( handlers.Store , c.Params( "link_id" ) , security.UserFrom( c ).ID ) != nil {
 		err = notFound( c , "no such invite link" )
 		return
 	}
+	handlers.audit( c , logs.KindAdmin , "invite link deleted" , fiber.Map{ "link_id": c.Params( "link_id" ) } )
 	err = c.JSON( fiber.Map{ "ok": true } )
+	return
+}
+
+// RestoreInviteLink undoes DeleteInviteLink, within models.RestoreWindow. The
+// link works again exactly as before, uses and expiry included.
+func ( handlers *Handlers ) RestoreInviteLink( c fiber.Ctx ) ( err error ) {
+	var body csrfOnlyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	actor := security.UserFrom( c )
+	link , restore_err := models.RestoreInviteLink( handlers.Store , c.Params( "link_id" ) , actor.ID , actor.IsAdmin() )
+	if restore_err != nil {
+		err = restoreRefused( c , restore_err )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "invite link restored" , fiber.Map{ "link_id": c.Params( "link_id" ) } )
+	err = c.JSON( handlers.inviteLinkRow( link ) )
 	return
 }

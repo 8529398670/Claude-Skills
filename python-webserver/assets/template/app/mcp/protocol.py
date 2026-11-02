@@ -131,7 +131,7 @@ class Server:
         """The client's revision if we know it, otherwise our newest, and the
         client decides whether it can live with that."""
         asked = params.get("protocolVersion")
-        cfg = request.app.state.config
+        cfg = request.app.state.settings.get()
         return {
             "protocolVersion": asked if asked in SUPPORTED_VERSIONS else SUPPORTED_VERSIONS[0],
             # listChanged False: the tool list is fixed at startup. It differs
@@ -155,7 +155,7 @@ class Server:
             raise RpcError(INVALID_PARAMS, f"unknown tool: {name}")
 
         state = request.app.state
-        call = Call(actor=actor, store=state.store, config=state.config, request=request, args=args)
+        call = Call(actor=actor, store=state.store, config=state.settings.get(), request=request, args=args)
         try:
             # Tools are synchronous and touch SQLite -- the threadpool rule.
             value = await run_in_threadpool(tool.call, call)

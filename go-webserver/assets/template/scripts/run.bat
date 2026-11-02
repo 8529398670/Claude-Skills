@@ -6,6 +6,9 @@ rem
 rem   scripts\run.bat                    rebuild if anything changed, stop the
 rem                                      copy this checkout started last, start
 rem                                      a fresh one here
+rem   scripts\run.bat stop               stop the copy this checkout started
+rem                                      (in this window, another, or the
+rem                                      hidden one scripts\login.bat starts)
 rem   scripts\run.bat manage <command>   run an admin command against it
 rem   scripts\run.bat <anything else>    same: passed straight to the binary
 rem
@@ -69,6 +72,13 @@ set "BUILT=%RUN_DIR%\{{PROJECT_SLUG}}.exe"
 
 if not exist "%RUN_DIR%" mkdir "%RUN_DIR%"
 
+if /i not "%~1"=="stop" goto not_stop
+if not "%~2"=="" goto not_stop
+set "RUN_EXE=%BINARY%"
+powershell -NoProfile -Command "$old = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:RUN_EXE }); if (-not $old) { Write-Host 'No server started by this checkout is running.'; exit }; foreach ($p in $old) { Write-Host ('Stopping the server this checkout started (pid ' + $p.ProcessId + ', running since ' + $p.CreationDate + ')...'); Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }; foreach ($p in $old) { Wait-Process -Id $p.ProcessId -Timeout 15 -ErrorAction SilentlyContinue }; Write-Host 'Stopped.'"
+exit /b 0
+:not_stop
+
 rem Rebuild every time and let Go decide whether that means anything: its build
 rem cache makes an unchanged tree a near-instant no-op, and catches every input
 rem that matters -- .go files, go.mod, and the embedded static\ and config\ --
@@ -110,13 +120,14 @@ rem clone has none. Without one here the binary would quietly create
 rem %USERPROFILE%\.config\{{PROJECT_SLUG}}\config.yaml instead, which is the
 rem right thing for a portable binary and the wrong one for a checkout. Write it
 rem here and stop, like docker\run.sh, so it gets looked at before the first start.
-if "%config_exists%"=="true" goto stop_old
+if "%config_exists%"=="true" goto migrate
 "%BUILT%" config init -file .\config\config.yaml >nul
 if errorlevel 1 exit /b 1
 call :read_config
 echo First run: wrote %config_file%
-echo   (with a new secret key -- back it up with the database; it is the only
-echo   thing that can read it).
+echo   and %secret_file%
+echo   (secret.key holds a new key -- back it up with the database; it is the
+echo   only thing that can read it).
 echo.
 echo It will serve %url%
 echo   (from %url_source%).
@@ -131,8 +142,21 @@ echo.
 echo     secure_cookies: true   -^>   secure_cookies: false
 :first_done
 echo.
-echo Then run scripts\run.bat again.
+echo Most settings can be changed later while the server runs, from the owner's
+echo Settings screen or by editing config.yaml. Then run scripts\run.bat again.
 exit /b 0
+
+:migrate
+rem A config.yaml from before secret.key existed has the key inside it. Move it
+rem out now, before anything starts, so the window says so. Silent otherwise.
+"%BUILT%" config migrate -file .\config\config.yaml
+if errorlevel 1 exit /b 1
+call :read_config
+if "%secret_exists%"=="true" goto stop_old
+if not "%database_exists%"=="true" goto stop_old
+echo ERROR: %secret_file% is missing, and %database% exists.
+echo        Restore secret.key from your backup: a new key cannot read the database.
+exit /b 1
 
 :stop_old
 rem Stop the copy this checkout started last: any process whose image is this

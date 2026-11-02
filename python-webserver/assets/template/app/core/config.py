@@ -15,6 +15,14 @@ ships with the code, documents every key, and is what `config init` writes out.
 A config.yaml is decoded on top of it, strictly: an unknown key is an error,
 because a typo that is silently ignored is a setting that silently is not
 applied.
+
+The secret key is not in config.yaml. It is in secret.key beside it (see
+config_secret.py), which is what lets config.yaml be edited while the server
+runs -- from the owner's Settings screen or by hand -- without either path
+ever touching the key. config_live.py holds the running configuration and
+applies those edits; yaml_edit.py rewrites single values in place so the
+file's comments survive; config_schema.py reads which keys can change live
+from the tags in defaults.yaml.
 """
 from __future__ import annotations
 
@@ -22,7 +30,7 @@ import ipaddress
 import os
 import re
 from urllib.parse import urlsplit
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +52,13 @@ CONFIG_DIR_NAME = "config"
 CONFIG_FILE_NAME = "config.yaml"
 DATABASE_FILE_NAME = "app.db"
 STORAGE_DIR_NAME = "storage"
+LOGS_DIR_NAME = "logs"
 LANGUAGE_FILE_NAME = "language.yaml"
+# Beside config.yaml. See config_secret.secret_path_for.
+SECRET_FILE_NAME = "secret.key"
+# The previous config.yaml, kept in the app directory whenever the container
+# rewrites its mounted copy in place. See config_live.write_config_file.
+BACKUP_FILE_NAME = "config.yaml.bak"
 
 # The folder holding app/ -- the project root in a checkout, /app in the image.
 CODE_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -60,6 +74,17 @@ EXAMPLE_FILE_NAME = "config.example.yaml"
 class ConfigError(Exception):
     """config.yaml is missing, malformed, or holds a value that would fail
     later in a confusing way. The message is meant to be shown as-is."""
+
+
+class ValidationError(ConfigError):
+    """Everything wrong with a config.yaml at once. Each problem starts with
+    the key it is about ("server.port must be ..."), which is how the
+    Settings screen puts it under the right field."""
+
+    def __init__(self, problems: list[str], label: str = "") -> None:
+        self.problems = list(problems)
+        text = "; ".join(self.problems)
+        super().__init__(f"{label}: {text}" if label else text)
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +111,6 @@ class ServerSection:
     app_dir: str
     static_dir: str
     language_file: str
-    secret_key: str
     encrypt_at_rest: bool
     secure_cookies: bool
     cookie_name: str
@@ -97,6 +121,11 @@ class ServerSection:
     rate_limit_max: int
     rate_limit_window_seconds: int
     mcp: bool
+    # Deprecated: the key lives in secret.key. This is read only so that a
+    # config.yaml from before the move can be migrated
+    # (config_secret.migrate_legacy_secret); defaults.yaml has no such key,
+    # so nothing else ever sees it.
+    secret_key: str = ""
 
 
 @dataclass
@@ -105,6 +134,18 @@ class AuthSection:
     login_token_ttl_seconds: int
     api_keys: bool
     api_key_ttl_seconds: int
+
+
+@dataclass
+class LogsSection:
+    enabled: bool
+    retention_days: int
+    max_total_mb: int
+    max_file_mb: int
+    compress_after_days: int
+    static_assets: bool
+    ui_clicks: bool
+    echo: bool
 
 
 @dataclass
@@ -126,13 +167,19 @@ class File:
     app: AppSection
     server: ServerSection
     auth: AuthSection
+    logs: LogsSection
     docker: DockerSection
 
+
+# Fields that may be absent from defaults.yaml: kept only so an older
+# config.yaml still decodes.
+DEPRECATED = {"server": {"secret_key"}}
 
 SECTIONS: dict[str, type] = {
     "app": AppSection,
     "server": ServerSection,
     "auth": AuthSection,
+    "logs": LogsSection,
     "docker": DockerSection,
 }
 
@@ -140,6 +187,23 @@ SECTIONS: dict[str, type] = {
 # ---------------------------------------------------------------------------
 # the resolved configuration the server runs on
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LogsConfig:
+    """config.yaml's logs section, resolved: sizes in bytes, and the directory
+    the day files go in (<app_dir>/logs, created 0700 by load). See
+    app/core/logs.py."""
+
+    enabled: bool = True
+    dir: Path = Path(LOGS_DIR_NAME)
+    retention_days: int = 30
+    max_total_bytes: int = 500 * 1024 * 1024
+    max_file_bytes: int = 50 * 1024 * 1024
+    compress_after_days: int = 1
+    static_assets: bool = False
+    ui_clicks: bool = True
+    echo: bool = True
 
 
 @dataclass(frozen=True)
@@ -161,15 +225,14 @@ class Config:
     url: str
     url_source: str
 
-    # The config.yaml this was loaded from. It also holds the secret key,
-    # which is why it is reported wherever backups are mentioned.
+    # The config.yaml this was loaded from.
     config_file: Path
-    # True when this run wrote config_file because none existed. The startup
-    # log says so, since a fresh key was generated.
+    # True when this run wrote config_file because none existed.
     config_created: bool
-    # Non-empty when config_file is readable by other users. A warning rather
-    # than an error so a misconfigured mode never stops a server that was
-    # working, but it does get logged on every start.
+    # Non-empty when secret.key is readable by other users, or config.yaml
+    # writable by them. A warning rather than an error so a misconfigured
+    # mode never stops a server that was working, but it does get logged on
+    # every start.
     config_warning: str
 
     # The one directory this application owns: the database and any uploaded
@@ -232,6 +295,21 @@ class Config:
     # Whether POST /mcp exists. It answers only API keys, so with
     # api_keys_enabled off it is not registered either.
     mcp_enabled: bool = True
+
+    # The activity log's settings; see app/core/logs.py.
+    logs: LogsConfig = field(default_factory=LogsConfig)
+
+    # secret.key, beside config_file: the one file besides the app directory
+    # that a backup must include. secret_created is true when this run
+    # generated the key, secret_migrated when it moved server.secret_key out
+    # of config.yaml into it. The startup log says so either way.
+    secret_file: Path = Path(SECRET_FILE_NAME)
+    secret_created: bool = False
+    secret_migrated: bool = False
+
+    # What this was built from, for config_live.Holder.
+    file: Any = field(default=None, repr=False, compare=False)
+    raw: str = field(default="", repr=False, compare=False)
 
     @property
     def listen_address(self) -> str:
@@ -392,7 +470,7 @@ def _build(values: dict[str, dict[str, Any]]) -> File:
     sections = {}
     for name, schema in SECTIONS.items():
         given = values.get(name, {})
-        missing = [f.name for f in fields(schema) if f.name not in given]
+        missing = [f.name for f in fields(schema) if f.name not in given and f.name not in DEPRECATED.get(name, set())]
         if missing:
             raise ConfigError(f"defaults.yaml is missing {', '.join(f'{name}.{key}' for key in missing)}")
         sections[name] = schema(**given)
@@ -408,16 +486,22 @@ def defaults() -> File:
         raise ConfigError(f"the shipped defaults.yaml is invalid: {error}") from None
 
 
-def parse(raw: str, label: str) -> File:
-    """Decode a config.yaml over the defaults and validate the result. It does
-    not require a secret key; load() and `config check` do."""
+def decode_over_defaults(raw: str, label: str) -> File:
+    """parse() without validate(): the file's values over the defaults,
+    strictly decoded. The secret-key migration uses it because moving the key
+    must not depend on every other setting being right."""
     merged = decode_strict(DEFAULTS_PATH.read_text(encoding="utf-8"), "defaults.yaml")
     for section, values in decode_strict(raw, label).items():
         merged.setdefault(section, {}).update(values)
-    file = _build(merged)
+    return _build(merged)
+
+
+def parse(raw: str, label: str) -> File:
+    """Decode a config.yaml over the defaults and validate the result."""
+    file = decode_over_defaults(raw, label)
     problems = validate(file)
     if problems:
-        raise ConfigError(f"{label}: " + "; ".join(problems))
+        raise ValidationError(problems, label)
     return file
 
 
@@ -538,6 +622,12 @@ def validate(file: File) -> list[str]:
     check(auth.login_token_ttl_seconds > 0, "auth.login_token_ttl_seconds must be positive")
     check(auth.api_key_ttl_seconds > 0, "auth.api_key_ttl_seconds must be positive")
 
+    logs = file.logs
+    check(1 <= logs.retention_days <= 3650, f"logs.retention_days must be 1-3650, got {logs.retention_days}")
+    check(logs.max_total_mb >= 1, "logs.max_total_mb must be positive")
+    check(1 <= logs.max_file_mb <= logs.max_total_mb, "logs.max_file_mb must be positive and no more than logs.max_total_mb")
+    check(logs.compress_after_days >= 0, "logs.compress_after_days must be 0 (never) or more")
+
     docker = file.docker
     check(bool(_IMAGE.match(docker.image)), f"docker.image {docker.image!r} is not a valid lowercase image name")
     check(bool(_CONTAINER.match(docker.container)), f"docker.container {docker.container!r} is not a valid container name")
@@ -553,71 +643,76 @@ def validate(file: File) -> list[str]:
     return problems
 
 
-def check_secret_key(file: File, path: Path) -> None:
+def check_secret_key(key: str, label: str) -> None:
     """Separate from validate() because only a process that will actually use
-    the key needs one.
+    the key needs one. label says where the key came from, for the message.
 
-    An empty key is refused rather than filled in. A file that already exists
-    was created with a key, so an empty one means it was removed -- and
+    An empty key is refused rather than filled in. A secret.key that exists
+    was written with a key, so an empty one means it was emptied -- and
     quietly generating a replacement would make every existing record
     permanently unreadable."""
-    key = file.server.secret_key.strip()
+    key = key.strip()
     if key == "":
         raise ConfigError(
-            f"server.secret_key is empty in {path}\n"
+            f"{label} is empty\n"
             "  If this app already has data, put back the key it was written with -- a new key cannot read it.\n"
-            "  For a fresh install, generate one with: openssl rand -hex 32"
+            "  For a fresh install, delete the empty file and the server writes a new one."
         )
     if not _SECRET.match(key):
-        raise ConfigError(f"server.secret_key in {path} must be 64 hex characters (32 bytes), got {len(key)} characters")
+        raise ConfigError(f"{label} must hold 64 hex characters (32 bytes), got {len(key)} characters")
 
 
-def permission_warning(path: Path) -> str:
-    """Flag a config.yaml anyone on the machine can read. The file holds the
-    secret key, so that is everyone's copy of it."""
+def permission_warning(config_path: Path, secret_path: Path) -> str:
+    """Flag a secret.key other users can read or anyone but its owner can
+    change, and a config.yaml anyone on the machine can write -- the server
+    applies an edit to that within seconds. Group read on secret.key is
+    allowed: it is how the container's user reads it (see docker/run.sh)."""
     if os.name == "nt":
         return ""
+    problems = []
     try:
-        mode = path.stat().st_mode & 0o777
+        mode = secret_path.stat().st_mode & 0o777
+        if mode & 0o027:
+            problems.append(f"{secret_path} is open to other users (mode {mode:04o}) and holds the secret key -- chmod 600 it")
     except OSError:
-        return ""
-    if mode & 0o004:
-        return f"{path} is readable by every user (mode {mode:04o}) and holds the secret key -- chmod 600 it"
-    return ""
+        pass
+    try:
+        mode = config_path.stat().st_mode & 0o777
+        if mode & 0o002:
+            problems.append(f"{config_path} is writable by every user (mode {mode:04o}), and the server applies edits to it -- chmod 600 it")
+    except OSError:
+        pass
+    return "; ".join(problems)
 
 
 # ---------------------------------------------------------------------------
 # creating a config.yaml
 # ---------------------------------------------------------------------------
 
-_SECRET_KEY_LINE = re.compile(r'^(\s*secret_key:\s*)""', re.MULTILINE)
+_SECRET_KEY_IN_DEFAULTS = re.compile(r"^\s*secret_key:", re.MULTILINE)
+
+
+def _defaults_without_secret() -> str:
+    """defaults.yaml, checked to hold no key: every config.yaml and the
+    committed example are copies of it."""
+    text = DEFAULTS_PATH.read_text(encoding="utf-8")
+    if _SECRET_KEY_IN_DEFAULTS.search(text):
+        raise ConfigError("defaults.yaml must not contain server.secret_key -- the key lives in secret.key")
+    return text
 
 
 def new_file_content() -> str:
-    """defaults.yaml with a freshly generated secret key -- the whole file,
-    comments included, so the result documents itself."""
-    from app.core import encryption  # imported here so `health` stays light
-
-    text = DEFAULTS_PATH.read_text(encoding="utf-8")
-    matches = _SECRET_KEY_LINE.findall(text)
-    if len(matches) != 1:
-        raise ConfigError(f'defaults.yaml must contain exactly one `secret_key: ""` line, found {len(matches)}')
-    key = encryption.generate_key_hex()
-    return _SECRET_KEY_LINE.sub(lambda match: f'{match.group(1)}"{key}"', text)
+    """defaults.yaml as it is -- the whole file, comments included, so the
+    result documents itself. It holds no secret: that is written to
+    secret.key separately."""
+    return _defaults_without_secret()
 
 
 def example_file_content() -> str:
-    """defaults.yaml with a header explaining how to copy it into place, and
-    the secret key left empty. Generated rather than kept by hand so that it
-    cannot drift from the defaults it documents, and the empty key is
-    deliberate: a key in a committed file is everyone's key. A copy that never
-    gets one fails at startup with the line to run (see check_secret_key)
-    instead of running on a shared key."""
-    text = DEFAULTS_PATH.read_text(encoding="utf-8")
-    matches = _SECRET_KEY_LINE.findall(text)
-    if len(matches) != 1:
-        raise ConfigError(f'defaults.yaml must contain exactly one `secret_key: ""` line, found {len(matches)}')
-    return EXAMPLE_HEADER_PATH.read_text(encoding="utf-8") + text
+    """defaults.yaml with a header explaining how to copy it into place.
+    Generated rather than kept by hand so that it cannot drift from the
+    defaults it documents."""
+    return EXAMPLE_HEADER_PATH.read_text(encoding="utf-8") + _defaults_without_secret()
 
 
 def write_example(path: Path) -> None:
@@ -629,28 +724,46 @@ def write_example(path: Path) -> None:
         raise ConfigError(f"could not write {path}: {error.strerror}") from None
 
 
-def write_new(path: Path) -> None:
-    """Create path from new_file_content(), refusing to overwrite: an existing
-    config.yaml holds a key that existing data depends on."""
+def write_new(path: Path) -> bool:
+    """Create path from new_file_content(), refusing to overwrite: an
+    existing config.yaml is someone's settings. A secret.key is written
+    beside it unless one is already there -- an existing key is what existing
+    data depends on, so it is never replaced. Returns whether it wrote one."""
+    from app.core import config_secret
+
     content = new_file_content()
     try:
-        # 0700 because the secret key lives in here.
+        # 0700 because secret.key lives in here too.
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except OSError as error:
         raise ConfigError(f"could not create {path}: {error.strerror}") from None
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(content)
+    secret_path = config_secret.secret_path_for(path)
+    if secret_path.is_file():
+        return False
+    config_secret.write_secret(secret_path, config_secret.generate_secret())
+    return True
 
 
 # ---------------------------------------------------------------------------
 
 
 def load() -> Config:
-    """Find config.yaml (creating it with a fresh key if there is none),
-    validate it, and make sure the app directory exists. The server and the
-    manage CLI both start here."""
+    """Find config.yaml (creating it, and secret.key, if there is none), move
+    a secret key out of an older config.yaml (see
+    config_secret.resolve_secret), validate it, and make sure the app
+    directory exists. The server and the manage CLI both start here."""
     path, exists = locate()
+    return load_path(path, exists)
+
+
+def load_path(path: Path, exists: bool) -> Config:
+    """load() for a config.yaml whose path is already known: the one locate()
+    found, or a test's."""
+    from app.core import config_secret
+
     created = False
     if not exists:
         if in_container():
@@ -659,25 +772,52 @@ def load() -> Config:
         created = True
 
     file = read_file(path)
-    check_secret_key(file, path)
-
     paths = resolve_paths(file, path)
-    for directory, purpose in ((paths.app_dir, "app directory"), (paths.app_dir / STORAGE_DIR_NAME, "storage directory")):
+    secret = config_secret.resolve_secret(file, path, paths.database_path)
+    if secret.rewrote:
+        # The migration took the key's line out of config.yaml: build from
+        # the file as it now is, which is also what the Holder starts from.
+        file = read_file(path)
+    raw = path.read_bytes().decode("utf-8")
+
+    for directory, purpose in (
+        (paths.app_dir, "app directory"),
+        (paths.app_dir / STORAGE_DIR_NAME, "storage directory"),
+        (paths.app_dir / LOGS_DIR_NAME, "logs directory"),
+    ):
         try:
             # 0700 because the database lives in here.
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         except OSError as error:
             raise ConfigError(f"could not create {purpose} {str(directory)!r}: {error.strerror}") from None
-    url, url_source = server_url(file)
 
+    secret_path = config_secret.secret_path_for(path)
+    warning = "; ".join(part for part in (permission_warning(path, secret_path), secret.warning) if part)
+    return replace(
+        build_config(file, path, paths, secret.key),
+        config_created=created,
+        config_warning=warning,
+        secret_created=secret.created,
+        secret_migrated=secret.migrated,
+        raw=raw,
+    )
+
+
+def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Config:
+    """config.yaml resolved into the Config the server runs on. It creates
+    nothing, which is what lets the Holder rebuild the live part of it on
+    every edit (see config_live.live_config)."""
+    from app.core import config_secret
+
+    url, url_source = server_url(file)
     return Config(
         project_name=file.app.name,
         project_dir=paths.project_dir,
         url=url,
         url_source=url_source,
         config_file=path,
-        config_created=created,
-        config_warning=permission_warning(path),
+        config_created=False,
+        config_warning="",
         app_dir=paths.app_dir,
         database_path=paths.database_path,
         storage_dir=paths.app_dir / STORAGE_DIR_NAME,
@@ -691,7 +831,7 @@ def load() -> Config:
         login_token_ttl_seconds=file.auth.login_token_ttl_seconds,
         api_keys_enabled=file.auth.api_keys,
         api_key_ttl_seconds=file.auth.api_key_ttl_seconds,
-        secret_key=file.server.secret_key.strip(),
+        secret_key=secret_key,
         encrypt_at_rest=file.server.encrypt_at_rest,
         rate_limit_max=file.server.rate_limit_max,
         rate_limit_window_seconds=file.server.rate_limit_window_seconds,
@@ -700,6 +840,19 @@ def load() -> Config:
         trusted_proxies=tuple(entry.strip() for entry in file.server.trusted_proxies),
         proxy_header=file.server.proxy_header,
         mcp_enabled=file.server.mcp,
+        logs=LogsConfig(
+            enabled=file.logs.enabled,
+            dir=paths.app_dir / LOGS_DIR_NAME,
+            retention_days=file.logs.retention_days,
+            max_total_bytes=file.logs.max_total_mb * 1024 * 1024,
+            max_file_bytes=file.logs.max_file_mb * 1024 * 1024,
+            compress_after_days=file.logs.compress_after_days,
+            static_assets=file.logs.static_assets,
+            ui_clicks=file.logs.ui_clicks,
+            echo=file.logs.echo,
+        ),
+        secret_file=config_secret.secret_path_for(path),
+        file=file,
     )
 
 

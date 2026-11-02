@@ -7,13 +7,17 @@ rem   scripts\login.bat               the owner (user 1)
 rem   scripts\login.bat 3             user 3
 rem   scripts\login.bat --docker      the docker container, even if a local
 rem                                   server is running too
-rem   scripts\login.bat --local       this checkout's local database
+rem   scripts\login.bat --local       this checkout's local server
+rem   scripts\login.bat --no-start    never start a server: with none running,
+rem                                   write the link into the database offline
 rem
 rem Where the link comes from: the local server (scripts\run.bat) when it is
 rem running, otherwise the docker container (docker/run.sh) when it is running,
-rem otherwise the local database directly, offline -- the link waits there
-rem until the server is started. The two keep separate databases, so a link
-rem from one does nothing in the other. This says which one it used.
+rem otherwise this starts the local server in the background (hidden, log in
+rem .run\server.log, stop it with scripts\run.bat stop) and gets the link from
+rem it, so the link works as soon as it is printed. The two keep separate
+rem databases, so a link from one does nothing in the other. This says which
+rem one it used.
 setlocal
 cd /d "%~dp0.."
 
@@ -32,13 +36,15 @@ rem <<< template demo
 
 set "USER_ID=1"
 set "MODE=auto"
+set "START=true"
 :args
 if "%~1"=="" goto args_done
 if /i "%~1"=="--docker" (set "MODE=docker" & shift & goto args)
 if /i "%~1"=="--local" (set "MODE=local" & shift & goto args)
+if /i "%~1"=="--no-start" (set "START=false" & shift & goto args)
 echo %~1| findstr /r "^[0-9][0-9]*$" >nul
 if errorlevel 1 (
-  echo ERROR: expected a numeric user id, --docker or --local; got "%~1".
+  echo ERROR: expected a numeric user id, --docker, --local or --no-start; got "%~1".
   exit /b 1
 )
 set "USER_ID=%~1"
@@ -104,17 +110,67 @@ echo Accounts in the container: docker exec %docker_container% python -m app man
 exit /b 1
 
 :local
-if exist "%database%" goto have_database
+if not defined LOCAL_PID goto not_running
+echo Local server (pid %LOCAL_PID%), served at %url%
+echo   database %database%
+echo.
+call :issue_link
+exit /b %errorlevel%
+
+:not_running
+if "%START%"=="true" goto start_server
+if exist "%database%" goto offline
 echo ERROR: there is no database yet at %database%.
 echo        Start the server with scripts\run.bat -- its first start creates the owner
 echo        and prints their login link.
 exit /b 1
-:have_database
-if defined LOCAL_PID echo Local server (pid %LOCAL_PID%), served at %url%
-if not defined LOCAL_PID echo No server is running for this checkout, so the link goes straight into
-if not defined LOCAL_PID echo the database. It works once you start it: scripts\run.bat
+:offline
+echo No server is running for this checkout, so the link goes straight into
+echo the database. It works once you start it: scripts\run.bat
 echo   database %database%
 echo.
+call :issue_link
+exit /b %errorlevel%
+
+:start_server
+if not "%secure_cookies%"=="true" goto cookies_ok
+if not "%url:~0,7%"=="http://" goto cookies_ok
+echo WARNING: server.secure_cookies is true but the URL is %url%.
+echo          The browser will drop the session cookie and this link will seem to do
+echo          nothing. Set it to false in %config_file%
+echo          for local use, or set server.public_url to the https:// address in front.
+echo.
+:cookies_ok
+
+rem scripts\run.bat in a hidden window of its own, so closing this one does
+rem not take the server with it. It is up once this venv's python is running
+rem -m app and answers its health check; this gives up after 20 seconds, or as
+rem soon as run.bat exits. [char]34 is a double quote: a literal one would end
+rem this line's quoting for cmd.
+echo No server was running for this checkout; starting one in the background...
+set "RUN_DIR=%CD%\.run"
+if not exist "%RUN_DIR%" mkdir "%RUN_DIR%"
+set "RUN_BAT=%CD%\scripts\run.bat"
+set "LOG_FILE=%RUN_DIR%\server.log"
+set "BACKGROUND_PID="
+for /f "delims=" %%p in ('powershell -NoProfile -Command "$q = [char]34; $cmd = Start-Process -FilePath cmd.exe -ArgumentList ('/c ' + $q + $q + $env:RUN_BAT + $q + ' > ' + $q + $env:LOG_FILE + $q + ' 2>&1' + $q) -WindowStyle Hidden -PassThru; for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 500; $p = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:RUN_EXE -and $_.CommandLine -match '\s-m\s+app\s*$' })[0]; if ($p) { & $env:RUN_EXE -m app health *> $null; if ($LASTEXITCODE -eq 0) { $p.ProcessId; exit } }; if ($cmd.HasExited) { break } }" 2^>nul') do set "BACKGROUND_PID=%%p"
+if defined BACKGROUND_PID goto started
+echo ERROR: the server did not come up. The end of %LOG_FILE%:
+echo.
+powershell -NoProfile -Command "Get-Content -Tail 20 -LiteralPath $env:LOG_FILE | ForEach-Object { '    ' + $_ }"
+exit /b 1
+
+:started
+echo Local server (pid %BACKGROUND_PID%), served at %url%
+echo   database %database%
+echo   log      %LOG_FILE%
+echo   stop it  scripts\run.bat stop
+echo.
+call :issue_link
+exit /b %errorlevel%
+
+rem ---------------------------------------------------------------------------
+:issue_link
 "%PYTHON%" -m app manage reissue-login --user-id %USER_ID%
 if not errorlevel 1 exit /b 0
 echo.

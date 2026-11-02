@@ -73,7 +73,11 @@ project.
   server alone (`scripts/run.sh manage list-users`). **`scripts/login.sh`**
   prints a clickable login link for the owner (user 1) from whichever
   deployment is live -- the local server or the docker container -- and says
-  which. `run.bat` / `login.bat` are the same on Windows.
+  which. With neither running it starts the local server in the background
+  (log in `.run/server.log`, `scripts/run.sh stop` stops it) and waits until
+  it answers, so the link works the moment it is printed; `--no-start` writes
+  it into the database offline instead. `run.bat` / `login.bat` are the same
+  on Windows.
   Run inside the skill's own `assets/template/`, they stamp a demo project
   into `~/.cache/python-webserver-demo/` (via `scripts/demo.py`) and runs
   that, so the template can be tried without scaffolding anything.
@@ -86,8 +90,31 @@ project.
   container gets no `-e` flags and the image no `ENV`. The scripts ask the
   app for their values (`python -m app config shell server|docker`), so there is one
   YAML parser and one set of validation rules, and an unknown key is an error
-  rather than a silently ignored typo. The file holds the secret key, so it is
-  mode 0600, gitignored, and never baked into an image.
+  rather than a silently ignored typo. It holds no secret: the key that
+  encrypts the database is in `config/secret.key` beside it (0600, gitignored,
+  never baked into an image, mounted read-only into the container).
+- **Settings change while the server runs.** The owner gets a **Settings**
+  screen: config.yaml as a form, one field per key, with the help text taken
+  from the comments in `defaults.yaml` and a badge saying when a change takes
+  effect -- **Live** (at once), **Restart**, or **Scripts** (read by
+  `docker/run.sh`). Saving rewrites only the changed values in place, so every
+  comment in the file survives, and is refused if the file changed since it
+  was loaded. The server also polls config.yaml every two seconds and applies
+  a hand edit (or `python -m app config set key value`); an edit that does not
+  validate is reported and ignored, and the server keeps running on the last
+  good version. Each key's apply mode is a `[live]` / `[restart]` /
+  `[scripts]` tag in `defaults.yaml`'s comments.
+- **Everything is logged, and only the owner reads it.** Every request
+  (who, from where, what, status, time), every sign-in and admin action, and
+  what people do on the page (screens, clicks, form submits by field name,
+  undo/redo, JS errors, failed calls, device details at sign-in) go to an
+  activity log under `<app dir>/logs/`, one file per UTC day, encrypted with
+  the database's key. The owner gets a **Logs** screen: one collapsible block
+  per day, a search box with `kind:` `user:` `status:5xx` filters, live
+  tail, download, delete. Other admins, API keys and the signed out get 404.
+  Retention is `logs:` in config.yaml (days kept, total size with oldest-day
+  recycling, part size, gzip after N days), applied hourly. Login links, key
+  secrets, PINs and anything typed are never written.
 - **One directory holds all state.** The database and app storage live in
   `~/.config/<slug>/` (move it with `server.app_dir`; the container always
   uses `/app/data`). Never write state relative to the working directory.
@@ -143,8 +170,9 @@ python3 <skill_dir>/scripts/scaffold.py <target-dir> "<project-name>"
 
 This copies `assets/template/`, replacing `{{PROJECT_NAME}}` and
 `{{PROJECT_SLUG}}`, and writes the project's `config/config.yaml` (the
-documented defaults plus a freshly generated secret key, mode 0600) and
-`config/config.example.yaml` (the same defaults with no key, for committing). It installs
+documented defaults, mode 0600), `config/secret.key` (a freshly generated key,
+mode 0600), and `config/config.example.yaml` (the same defaults, for
+committing). It installs
 nothing, starts nothing, and creates no users -- so nothing happens on the
 network or on disk that the user did not ask for.
 
@@ -161,12 +189,16 @@ ports they ran on. Do not reset either to a shared value.
 ```
 <target-dir>/
   config/
-    config.yaml               # THE config: server, docker + secret key
-                              #   (written by scaffold.py; gitignored, 0600)
-    config.example.yaml       # every default, no secret key -- commit this; a
-                              #   fresh clone copies it to config/config.yaml
+    config.yaml               # THE config: server, docker -- no secret
+                              #   (written by scaffold.py; gitignored, 0600;
+                              #   editable live from the Settings screen)
+    secret.key                # the key that encrypts the database (written by
+                              #   scaffold.py; gitignored, 0600) -- back it up
+    config.example.yaml       # every default -- commit this; a fresh clone
+                              #   copies it to config/config.yaml
                               #   (`python -m app config example` regenerates it)
-    defaults.yaml             # every config key, documented -- the defaults
+    defaults.yaml             # every config key, documented and tagged
+                              #   [live] / [restart] / [scripts] -- the defaults
     example_header.yaml       # the note config.example.yaml starts with
     language.yaml             # every user-facing string in the app
   app/
@@ -177,13 +209,23 @@ ports they ran on. Do not reset either to a shared value.
     manage.py                 # the admin CLI (opens the database directly)
     core/
       config.py               # locate, strict-parse, validate, resolve paths/URL
-      config_command.py       # `config init|example|check|shell server|docker`
+      config_secret.py        # secret.key, and moving an old key out
+      config_live.py          # the running config, Settings saves, and the
+                              #   2-second watcher -- one validate-then-apply
+      yaml_edit.py            # rewrite one value, keep the comments
+      config_schema.py        # keys, types, help, [live] tags
+      config_command.py       # `config init|example|secret|migrate|check|set|
+                              #   shell server|docker`
       layout.py               # the container image's pinned paths
       encryption.py           # the ONLY module that touches crypto
       db.py                   # SQLite record store, encrypt-on-write
       security.py             # sessions + API keys -> one Actor, guards
-                              #   (incl. RequireAPIKey for /mcp), CSRF
+                              #   (incl. RequireAPIKey for /mcp, RequireOwner
+                              #   for the logs), CSRF
       middleware.py           # CSP + security headers, rate limit, JSON errors
+      logs.py                 # the activity log: entries, redaction, the
+                              #   rotating writer thread, read/search/prune
+      request_log.py          # one activity-log entry per request
       static_files.py         # gzip-always-fresh text, long-cached images
       assets.py               # configured static dir/language file, or bundled
       language.py             # loads language.yaml, serves it as JSON
@@ -194,19 +236,25 @@ ports they ran on. Do not reset either to a shared value.
     mcp/                      # protocol.py: the /mcp JSON-RPC protocol
                               # registry.py: Tool, Call.bind, Refusal
     routes/                   # __init__.py (the URL map) + one module per group,
-                              #   including mcp_tools.py (the MCP tools)
+                              #   including mcp_tools.py (the MCP tools) and
+                              #   logs.py (the owner's log API, page events, audit())
+    tests/                    # stdlib unittest: python -m unittest discover app/tests
   static/
     index.html                # placeholder account + admin UI, fully data-i18n'd;
                               #   Bootstrap navbar + sidebar, one screen per view, toasts
     css/style.css             # overrides on top of Bootstrap: colour tokens, shell
     js/theme.js               # light/dark/preset themes, applied before first paint
     js/nav.js                 # sidebar: shows the screen the URL hash names
+    js/undo.js                # Ctrl+Z / Ctrl+Y history every screen records into
+    js/track.js               # sends what people do on the page to the log
+    js/logs.js                # the owner's Logs screen
     js/dom.js, i18n.js, api.js, app.js, keys.js,
       join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
     vendor/                   # self-hosted libs: Bootstrap 5, Bootstrap Icons (see its README)
   scripts/
     run.sh, run.bat           # local run: (re)starts the server; with args, the CLI
     login.sh, login.bat       # the owner's login link, from whatever is live
+                              # (starts the server in the background if nothing is)
     lib.sh                    # shared by run.sh and login.sh (sourced)
   docker/
     Dockerfile                # built with the project root as context
@@ -226,6 +274,14 @@ but stay consistent with the patterns already there:
   Give each its own file in `static/js/` with its own `init()`, included
   from the HTML. Do not keep appending to `app.js` -- `keys.js` is the
   worked example.
+- **New user actions are undoable.** Anything that changes what the page
+  shows or stores goes through `Undo.run( { label , do , undo } )` (or
+  `Undo.record` once it has happened), so Ctrl+Z / Ctrl+Y cover it. Deletes
+  and other changes not obvious on screen add `toast: true` (a toast with an
+  Undo button); a form calls `Undo.saved( form )` after saving. Deletes are
+  soft and restorable on the server, so they need no confirm dialog; revokes,
+  logout and issuing a link or key stay out. See "Undo and redo" in
+  `references/frontend.md`.
 - **New text** goes in `config/language.yaml` and is referenced with
   `data-i18n="section.key"` (or `data-i18n-attr="placeholder:section.key"`).
   Never hardcode a user-facing string in HTML or JS. A missing or empty
@@ -263,6 +319,14 @@ but stay consistent with the patterns already there:
   deletes something -- `/mcp` takes only keys, and those routes need a
   session. Set `read_only`/`destructive` honestly; clients use them to decide
   when to ask the person first.
+- **Log what matters, never what is secret.** Requests and page activity are
+  logged for free. A new action worth an audit line (something changed,
+  someone was let in or refused) calls
+  `audit(request, KIND_ADMIN, "thing deleted", {"thing_id": thing_id})` (from
+  `app.routes.logs`) where it succeeds -- ids and names in the detail, never a
+  credential, a body or a typed value. It never blocks, so no `await run`.
+  Part of the page that should not be tracked (it shows secrets, or reading
+  it would fill the log) gets `data-no-track`.
 - **New data** gets a bucket constant in `app/core/db.py` (added to
   `BUCKETS` so its table is created at startup) and a new module in
   `app/models/` with a dataclass and plain functions, matching `users.py`. Go
@@ -311,7 +375,10 @@ scripts/run.sh
 scripts/login.sh   # from another terminal: a fresh owner login link
 ```
 
-`scaffold.py` already wrote `config/config.yaml` with a generated secret key.
+(`scripts/login.sh` on its own also works: with no server running it starts
+one in the background and prints a link that is ready to click.)
+
+`scaffold.py` already wrote `config/config.yaml` and `config/secret.key`.
 `scripts/run.sh` creates `.venv` and installs `app/requirements.txt` when needed (again
 whenever that file changes), stops the server it started last
 (`.run/server.pid`), and runs `python -m app` in the foreground, reading that
@@ -400,6 +467,47 @@ private window:
 - `python -m app manage create-invite --user-id 1 --label "Test"` prints a
   working `/join/...` path.
 
+Then the logs, because the point of them is that nobody but the owner sees
+them and nothing secret is in them:
+
+- signed in as the owner, **Logs** is in the sidebar; today is open and
+  shows your sign-in (`Sign-in`), the requests behind it, and `Page` entries
+  for the screens you opened and buttons you clicked,
+- `status:4xx`, `kind:auth,admin`, `user:<name>` and free words narrow the
+  list; a day folds and unfolds; clicking a row shows its JSON,
+- signed in as a second admin there is no Logs entry, and
+  `curl -b <their cookie> /api/owner/logs/days` is 404 -- as is any API key,
+  the owner's admin key included, and a signed-out request,
+- with `server.encrypt_at_rest: false`, `grep` the login link's secret in
+  `<app dir>/logs/*.jsonl`: it is not there (the path is `/login/…`),
+- `scripts/run.sh manage logs` lists the days and
+  `scripts/run.sh manage logs --day <today> --q kind:auth` prints entries, and
+- "Prune now" with `logs.retention_days: 1` removes an older day file
+  (copy today's to an older date to have one) and never today.
+
+Then the Settings screen, because it writes a file the server runs on
+(`app/tests/test_settings_routes.py` covers the routes, and needs `httpx`;
+without it that module is skipped):
+
+- signed in as the owner, **Settings** is in the sidebar; another admin and
+  any API key get 404 from `/api/owner/settings`, and the response never
+  contains the key in `config/secret.key`,
+- changing `server.rate_limit_max` and saving applies at once, and
+  `git diff --no-index config/defaults.yaml config/config.yaml` shows only
+  that value changed -- every comment kept,
+- changing `server.port` shows "Saved. The server keeps running with ..."
+  until `scripts/run.sh` restarts it on the new port,
+- editing `config.yaml` by hand (or `scripts/run.sh config set logs.echo
+  false`) is picked up within a few seconds, and a hand edit made while the
+  form is open makes its Save answer "changed while you were editing" instead
+  of overwriting it,
+- `server.port: 0` written by hand is reported on the Settings screen and the
+  log, and the server keeps running; Ctrl+Z after a save puts the old values
+  back, and
+- a `config.yaml` with `server.secret_key` in it (an older project) has the
+  key moved into `secret.key` by the next `scripts/run.sh`, which says so, and
+  the existing accounts still sign in.
+
 `server.secure_cookies: false` matters locally: a `Secure` cookie is
 silently dropped over plain http, so login appears to succeed and then does
 nothing. That symptom is almost always this setting. Set it back to `true`
@@ -415,12 +523,16 @@ scripts/login.sh --docker      # a fresh owner login link from the container
 
 Every flag on the `docker run` comes from the `docker:` section of
 `config/config.yaml` (plus `server.port` for the container side of the
-published port), and the container reads the same file mounted read-only at
-`/app/config/config.yaml`. `docker/run.sh` waits for the healthcheck, prints
+published port), and the container reads the same file, mounted writable at
+`/app/config/config.yaml` so the Settings screen can save it (in place --
+the previous version goes to `<data_dir>/config.yaml.bak`), with
+`config/secret.key` mounted read-only beside it. Inside the container the
+`docker:` keys are read-only on the Settings screen -- they decide what
+`docker/run.sh` mounts and chowns on the host, so they are edited there. `docker/run.sh` waits for the healthcheck, prints
 `Ready: <url>` (or the container's last log lines if it fails), and on a fresh
 database prints the owner's first login link straight from the log. On a fresh
 clone there is no `config/config.yaml` (it is gitignored), so the first
-`docker/run.sh` writes one with a new key and
+`docker/run.sh` writes it and a new `secret.key`, and
 stops, asking for a review of `server.secure_cookies`, `server.trust_proxy`
 (with `server.trusted_proxies`), and the published port before anything
 starts.
@@ -431,7 +543,7 @@ pid limits, restart policy. Use it for anything internet-facing or
 long-running.
 
 Before starting anything, `docker/run.sh` also proves the container can read
-`config.yaml` and write the data directory, and that both are really the
+`secret.key` and `config.yaml` and write the data directory, and that both are really the
 host's files -- a project outside the paths the Docker VM shares (colima
 shares only your home directory) is refused with a clear message instead of
 silently keeping its database inside the VM. Where the platform enforces host
@@ -473,9 +585,11 @@ Read these when the task goes past "scaffold and build features":
   threadpool rule, the static caching policy, and the known limits. Read
   before changing the template's structure rather than building on it.
 - `references/configuration.md` -- the single `config.yaml`: where it is
-  found, how it is validated, the secret key and what keeping it there trades
-  away, the app directory convention, storage for application files, the
-  container's pinned layout, and what to back up. Read before adding a
+  found, how it is validated, `secret.key` and the migration out of older
+  config files, changing settings while the server runs (the Settings screen,
+  the watcher, apply-mode tags, the in-place editor and its limits), the app
+  directory convention, storage for application files, the container's
+  pinned layout, and what to back up. Read before adding a
   setting or writing a file anywhere.
 - `references/docker-and-deployment.md` -- what each Dockerfile and
   `docker/run.sh` choice is protecting against, how the scripts read

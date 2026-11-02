@@ -34,6 +34,7 @@ import (
 	db "{{MODULE_PATH}}/server/db"
 	healthcheck "{{MODULE_PATH}}/server/healthcheck"
 	language "{{MODULE_PATH}}/server/language"
+	logs "{{MODULE_PATH}}/server/logs"
 	manage "{{MODULE_PATH}}/server/manage"
 	middleware "{{MODULE_PATH}}/server/middleware"
 	models "{{MODULE_PATH}}/server/models"
@@ -154,17 +155,48 @@ func run() ( err error ) {
 
 	if err = bootstrap.EnsureFirstAdmin( store , cfg , "Admin" ); err != nil { return }
 
+	// The running configuration. config.yaml can change while the server
+	// runs -- from the owner's Settings screen, or by hand -- and everything
+	// that reads a setting per request reads it from here. cfg stays what
+	// the server started with: the listener, the database, the control
+	// socket and every [restart] setting.
+	settings := config.NewHolder( cfg )
+
 	// The control socket is what lets `manage` run against a live server.
 	// bolt hands the database to exactly one process, so without it every
 	// admin command would need the server stopped first. It is started after
 	// the database opens, which means the socket existing is itself proof
 	// that a live process holds the lock.
-	control_server , err := control.Listen( store , cfg )
+	control_server , err := control.Listen( store , settings )
 	if err != nil { return }
 	defer control_server.Close()
 
-	guard := security.New( store , cfg )
-	handlers := routes.New( store , cfg , guard , lang , static_server , version )
+	// The activity log writes from its own goroutine; Close, deferred here,
+	// runs after the server has stopped, so the last requests make it to disk.
+	logger := logs.New( cfg.Logs , cfg.SecretKey , cfg.EncryptAtRest )
+	logger.Start()
+	defer logger.Close()
+	logger.System( logs.LevelInfo , "server started" , map[string]any{ "version": version } )
+	defer logger.System( logs.LevelInfo , "server stopped" , nil )
+	if cfg.SecretMigrated {
+		logger.System( logs.LevelWarn , "secret key moved to secret.key" , map[string]any{ "config": cfg.ConfigFile , "secret": cfg.SecretFile } )
+	}
+
+	// A change to config.yaml reaches the activity log's own settings, and
+	// is reported on stdout and in the log itself.
+	settings.OnChange( func( _ *config.Config , next *config.Config ) {
+		logger.Apply( next.Logs )
+	} )
+	settings.Report = func( level string , message string , detail map[string]any ) {
+		log.Printf( "[config] %s" , message )
+		logger.System( level , message , detail )
+	}
+	stop_watching := settings.Watch( 2 * time.Second )
+	defer close( stop_watching )
+
+	guard := security.New( store , settings )
+	handlers := routes.New( store , settings , guard , lang , static_server , version )
+	handlers.Logs = logger
 
 	app := fiber.New( fiber.Config{
 		AppName: cfg.ProjectName,
@@ -200,13 +232,14 @@ func run() ( err error ) {
 		},
 	} )
 
-	app.Use( middleware.Recover( cfg ) )
-	app.Use( middleware.SecurityHeaders( cfg ) )
-	app.Use( middleware.RateLimit( cfg ) )
+	app.Use( middleware.Recover( settings ) )
+	app.Use( middleware.SecurityHeaders( settings ) )
+	app.Use( middleware.RateLimit( settings ) )
+	app.Use( middleware.RequestLog( logger ) )
 
 	handlers.Register( app )
 
-	stop_purging := startPurgeLoop( store )
+	stop_purging := startPurgeLoop( store , logger )
 	defer close( stop_purging )
 
 	// Shut down on a signal rather than being killed, so in-flight requests
@@ -226,14 +259,30 @@ func run() ( err error ) {
 	log.Printf( "[start] %s %s listening on %s (secure cookies: %v)" , cfg.ProjectName , version , cfg.ListenAddress() , cfg.SecureCookies )
 	log.Printf( "[url]    %s  (from %s)" , cfg.URL , cfg.URLSource )
 	if cfg.ConfigCreated {
-		log.Printf( "[config] %s (created, with a new secret key -- back it up)" , cfg.ConfigFile )
+		log.Printf( "[config] %s (created; edits apply while the server runs)" , cfg.ConfigFile )
 	} else {
-		log.Printf( "[config] %s" , cfg.ConfigFile )
+		log.Printf( "[config] %s (edits apply while the server runs)" , cfg.ConfigFile )
+	}
+	switch {
+	case cfg.SecretMigrated:
+		log.Printf( "[secret] %s" , cfg.SecretFile )
+		log.Printf( "[secret] ================================================================" )
+		log.Printf( "[secret] MOVED server.secret_key out of %s" , cfg.ConfigFile )
+		log.Printf( "[secret] into %s (mode 0600). config.yaml holds no secret now." , cfg.SecretFile )
+		log.Printf( "[secret] Back secret.key up with the database: nothing else can read it." )
+		log.Printf( "[secret] ================================================================" )
+	case cfg.SecretCreated:
+		log.Printf( "[secret] %s (created, with a new key -- back it up)" , cfg.SecretFile )
+	default:
+		log.Printf( "[secret] %s" , cfg.SecretFile )
 	}
 	if cfg.ConfigWarning != "" {
 		log.Printf( "[config] warning: %s" , cfg.ConfigWarning )
 	}
 	log.Printf( "[state]  %s" , cfg.AppDir )
+	if logger.Enabled() {
+		log.Printf( "[logs]   %s (keeping %d days, up to %d MB)" , cfg.Logs.Dir , cfg.Logs.RetentionDays , cfg.Logs.MaxTotalBytes / 1024 / 1024 )
+	}
 	log.Printf( "[assets] %s" , bundle.Source )
 	log.Printf( "[control] %s" , control_server.Path() )
 	err = app.Listen( cfg.ListenAddress() , fiber.ListenConfig{ DisableStartupMessage: true } )
@@ -278,7 +327,7 @@ func statusText( code int ) ( result string ) {
 // listing. None of it is a correctness issue -- every one of those is
 // already refused on read -- so this runs quietly in the background purely to
 // keep the bolt file from growing forever.
-func startPurgeLoop( store *db.Store ) ( stop chan struct{} ) {
+func startPurgeLoop( store *db.Store , logger *logs.Logger ) ( stop chan struct{} ) {
 	stop = make( chan struct{} )
 	go func() {
 		ticker := time.NewTicker( time.Hour )
@@ -294,6 +343,16 @@ func startPurgeLoop( store *db.Store ) ( stop chan struct{} ) {
 				invites , _ := models.PurgeDeadInviteLinks( store )
 				if sessions > 0 || tokens > 0 || keys > 0 || invites > 0 {
 					fmt.Printf( "[purge] removed %d expired sessions, %d expired login tokens, %d dead api keys, %d dead invite links\n" , sessions , tokens , keys , invites )
+				}
+				// The activity log's retention: compress, expire, recycle.
+				if logger.Enabled() {
+					pruned , prune_err := logger.Prune()
+					if prune_err != nil {
+						log.Printf( "[purge] logs: %v" , prune_err )
+					} else if pruned.Deleted > 0 || pruned.Compressed > 0 {
+						fmt.Printf( "[purge] logs: %d days deleted, %d compressed\n" , pruned.Deleted , pruned.Compressed )
+						logger.System( logs.LevelInfo , "logs pruned" , map[string]any{ "deleted": pruned.Deleted , "compressed": pruned.Compressed } )
+					}
 				}
 			}
 		}

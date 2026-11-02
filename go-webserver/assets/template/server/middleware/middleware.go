@@ -5,6 +5,8 @@
 package middleware
 
 import (
+	time "time"
+
 	fiber "github.com/gofiber/fiber/v3"
 	helmet "github.com/gofiber/fiber/v3/middleware/helmet"
 	limiter "github.com/gofiber/fiber/v3/middleware/limiter"
@@ -19,7 +21,24 @@ import (
 // lets the CSP stay this tight, and it is why adding a <script src> pointing
 // at some other origin will visibly break -- the fix is to vendor the file,
 // not to loosen the policy.
-func SecurityHeaders( cfg *config.Config ) ( handler fiber.Handler ) {
+//
+// server.secure_cookies decides HSTS and can change while the server runs,
+// so both variants are built here and the current setting picks one per
+// request.
+func SecurityHeaders( settings *config.Holder ) ( handler fiber.Handler ) {
+	secure , plain := securityHeaders( true ) , securityHeaders( false )
+	handler = func( c fiber.Ctx ) ( err error ) {
+		if settings.Get().SecureCookies {
+			err = secure( c )
+			return
+		}
+		err = plain( c )
+		return
+	}
+	return
+}
+
+func securityHeaders( secure_cookies bool ) ( handler fiber.Handler ) {
 	content_security_policy := "default-src 'self'; " +
 		"script-src 'self'; " +
 		"style-src 'self'; " +
@@ -32,7 +51,7 @@ func SecurityHeaders( cfg *config.Config ) ( handler fiber.Handler ) {
 		"frame-ancestors 'none'"
 
 	hsts_max_age := 0
-	if cfg.SecureCookies {
+	if secure_cookies {
 		// Only claim HTTPS-only when the deployment actually is. Sending HSTS
 		// from a local http:// run would pin the browser to https for
 		// localhost and break every other project on that port.
@@ -59,10 +78,19 @@ func SecurityHeaders( cfg *config.Config ) ( handler fiber.Handler ) {
 // counters stop being shared, so each replica would allow the full budget --
 // move to a shared store (limiter.Config.Storage) at that point rather than
 // assuming the limit still holds.
-func RateLimit( cfg *config.Config ) ( handler fiber.Handler ) {
+//
+// The budget and the window are read per request, so an edit to
+// server.rate_limit_max or rate_limit_window_seconds applies at once.
+func RateLimit( settings *config.Holder ) ( handler fiber.Handler ) {
 	handler = limiter.New( limiter.Config{
-		Max:        cfg.RateLimitMax,
-		Expiration: cfg.RateLimitWindow,
+		MaxFunc: func( fiber.Ctx ) ( result int ) {
+			result = settings.Get().RateLimitMax
+			return
+		},
+		ExpirationFunc: func( fiber.Ctx ) ( result time.Duration ) {
+			result = settings.Get().RateLimitWindow
+			return
+		},
 		KeyGenerator: func( c fiber.Ctx ) ( result string ) {
 			result = c.IP()
 			return
@@ -78,7 +106,16 @@ func RateLimit( cfg *config.Config ) ( handler fiber.Handler ) {
 // Recover keeps one panicking handler from taking the process down with it.
 // Stack traces stay off by default: they are enormously useful in a terminal
 // and a gift to an attacker if they ever reach a response body.
-func Recover( cfg *config.Config ) ( handler fiber.Handler ) {
-	handler = recoverer.New( recoverer.Config{ EnableStackTrace: cfg.SecureCookies == false } )
+func Recover( settings *config.Holder ) ( handler fiber.Handler ) {
+	traced := recoverer.New( recoverer.Config{ EnableStackTrace: true } )
+	quiet := recoverer.New( recoverer.Config{ EnableStackTrace: false } )
+	handler = func( c fiber.Ctx ) ( err error ) {
+		if settings.Get().SecureCookies {
+			err = quiet( c )
+			return
+		}
+		err = traced( c )
+		return
+	}
 	return
 }

@@ -15,10 +15,12 @@ from __future__ import annotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.core.logs import KIND_AUTH, LEVEL_INFO, LEVEL_WARN, anonymous
 from app.core.security import set_session_cookie
 from app.models import login_tokens
 from app.routes.account import destroy_cookie_session
 from app.routes.helpers import bad_request, forbidden, get_config, get_store, read_json, run
+from app.routes.logs import audit_as, user_actor
 
 
 def same_origin_json(request: Request) -> bool:
@@ -53,8 +55,10 @@ async def redeem_login_link(request: Request) -> Response:
     # probe which links are real.
     redeemed = await run(login_tokens.redeem_login_token, store, credential, cfg.session_ttl_seconds) if credential else None
     if redeemed is None:
+        audit_as(request, anonymous(), KIND_AUTH, LEVEL_WARN, "login link refused")
         return bad_request("invalid login link")
-    session_credential, _ = redeemed
+    session_credential, user_id = redeemed
+    audit_as(request, await run(user_actor, store, user_id, "session"), KIND_AUTH, LEVEL_INFO, "signed in with a login link")
 
     # Switching accounts: the session this browser had is ended server-side,
     # not merely replaced in the cookie jar.

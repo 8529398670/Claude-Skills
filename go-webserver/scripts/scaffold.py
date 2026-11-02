@@ -3,7 +3,7 @@
 project name and module path into it.
 
 This is only the mechanical part of scaffolding -- copy plus find/replace, and
-writing the project's config.yaml with a freshly generated secret key. It
+writing the project's config.yaml and a freshly generated secret.key. It
 deliberately does not run `go mod tidy`, build anything, start a server, or
 create any users, so nothing touches the network or the outside world until
 the person running it decides to.
@@ -62,35 +62,36 @@ def stamp(path: Path, replacements: dict[str, str]) -> None:
         path.write_bytes(text.encode("utf-8"))
 
 
-# The one line in defaults.yaml that config.yaml must differ on. Mirrors
-# NewFileContent in server/config/config.go, which does the same thing for
-# `config init` and for a binary's first run.
-SECRET_KEY_LINE = re.compile(r'^(\s*secret_key:\s*)""', re.MULTILINE)
+# defaults.yaml must not carry a key: every config.yaml and the committed
+# example are copies of it. Mirrors checkNoSecretInDefaults in
+# server/config/config.go.
+SECRET_KEY_LINE = re.compile(r"^\s*secret_key:", re.MULTILINE)
 
 
-def write_config(target_dir: Path) -> Path:
-    """Write <target>/config/config.yaml: the stamped defaults plus a fresh key.
+def write_config(target_dir: Path) -> tuple[Path, Path]:
+    """Write <target>/config/config.yaml (the stamped defaults) and
+    <target>/config/secret.key (a fresh key), as `config init` does.
 
     config.yaml is the project's one configuration file -- server, Docker,
-    and build -- and it holds the secret key, so it is created at 0600 and is
+    and build. It holds no secret, so the server can edit it while running;
+    the key is in secret.key beside it. Both are created at 0600, and both are
     already in the template's .gitignore and .dockerignore.
     """
     defaults = (target_dir / "config" / "defaults.yaml").read_text(encoding="utf-8")
-    content, count = SECRET_KEY_LINE.subn(
-        lambda match: f'{match.group(1)}"{secrets.token_hex(32)}"', defaults
-    )
-    if count != 1:
-        raise SystemExit(f"defaults.yaml must contain exactly one `secret_key: \"\"` line, found {count}")
+    if SECRET_KEY_LINE.search(defaults):
+        raise SystemExit("defaults.yaml must not contain server.secret_key -- the key lives in secret.key")
     config_path = target_dir / "config" / "config.yaml"
-    descriptor = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(content)
-    return config_path
+    secret_path = target_dir / "config" / "secret.key"
+    for path, content in ((config_path, defaults), (secret_path, secrets.token_hex(32) + "\n")):
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+    return config_path, secret_path
 
 
 def write_example(target_dir: Path) -> Path:
     """Write <target>/config/config.example.yaml: the example header plus the stamped
-    defaults, secret key left empty.
+    defaults.
 
     It is the committed counterpart of config.yaml -- every setting with its
     default, nothing secret -- so a fresh clone has something to copy. It is
@@ -144,11 +145,11 @@ def stamp_port(target_dir: Path, port: int) -> None:
 
 
 # What a scripts/run.sh or docker/run.sh run inside the template itself can
-# leave behind: runtime state, build output, and the secret-bearing
-# config/config.yaml. None of it belongs in a new project. Paths are relative
+# leave behind: runtime state, build output, config/config.yaml and the
+# secret.key beside it. None of it belongs in a new project. Paths are relative
 # to the template root.
 RUN_LEFTOVERS = {
-    "config/config.yaml", ".run", ".venv", "data", "dist",
+    "config/config.yaml", "config/secret.key", "config/config.yaml.bak", ".run", ".venv", "data", "dist",
     "{{PROJECT_SLUG}}", "{{PROJECT_SLUG}}.exe",
 }
 CRUFT = shutil.ignore_patterns(".DS_Store", "Thumbs.db", "*.swp", "__pycache__")
@@ -227,15 +228,16 @@ def main() -> None:
 
     port = pick_port()
     stamp_port(target_dir, port)
-    config_path = write_config(target_dir)
+    config_path, secret_path = write_config(target_dir)
     example_path = write_example(target_dir)
 
     print(f"Scaffolded '{project_name}' into {target_dir}")
     print(f"  module {module_path}")
     print(f"  docker image/container name: {slugify(project_name)}")
     print(f"  port: {port} (random per project, so local projects never collide)")
-    print(f"  config: {config_path} (mode 0600, fresh secret key, gitignored)")
-    print(f"  example: {example_path} (no secret key, commit it -- `cp` it to config/config.yaml on a fresh clone)")
+    print(f"  config: {config_path} (mode 0600, gitignored; editable while the server runs)")
+    print(f"  secret: {secret_path} (mode 0600, fresh key, gitignored -- back it up with the database)")
+    print(f"  example: {example_path} (commit it -- `cp` it to config/config.yaml on a fresh clone)")
     print("")
     print("Next:")
     print(f"  cd {target_dir}")

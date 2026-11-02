@@ -10,9 +10,11 @@ from starlette.responses import JSONResponse, Response
 from app.core.config import Config
 from app.core.db import Store
 from app.core.encryption import BadKeyError, CipherTextError
+from app.core.logs import KIND_AUTH
 from app.core.security import Actor, actor_from, check_csrf, clear_session_cookie, decrypt_cookie
 from app.models import login_tokens, pins, sessions, users
-from app.routes.helpers import bad_request, forbidden, get_config, get_store, read_json, run, server_error
+from app.routes.helpers import bad_request, conflict, forbidden, get_config, get_store, read_json, run, server_error
+from app.routes.logs import audit
 
 
 async def me(request: Request) -> Response:
@@ -45,6 +47,9 @@ def me_row(store: Store, cfg: Config, actor: Actor) -> dict[str, Any]:
         "has_pin": pins.has_pin(actor.user),
         "auth": actor.method,
         "api_keys_enabled": cfg.api_keys_enabled,
+        # Whether track.js sends anything, and whether it sends clicks.
+        "logs_enabled": cfg.logs.enabled,
+        "logs_ui_clicks": cfg.logs.enabled and cfg.logs.ui_clicks,
     }
     # Only a session has a CSRF token. A key-authenticated request has no
     # ambient credential to protect, so there is nothing to hand back -- see
@@ -66,9 +71,19 @@ async def rename(request: Request) -> Response:
     display_name = body.get("display_name")
     if not users.valid_display_name(display_name):
         return bad_request("display name must be 1-80 characters")
+    # Optional: the name the caller expects to replace. The frontend always
+    # sends it, so its undo cannot overwrite a rename made elsewhere.
+    expect = body.get("expect")
+    if expect is not None and not isinstance(expect, str):
+        return bad_request("expect must be a string")
 
-    if not await run(users.rename_user, get_store(request), actor_from(request).user.id, display_name):
+    try:
+        renamed = await run(users.rename_user, get_store(request), actor_from(request).user.id, display_name, expect)
+    except users.RenameConflictError as refusal:
+        return conflict(str(refusal), display_name=refusal.current)
+    if not renamed:
         return server_error()
+    audit(request, KIND_AUTH, "renamed own account", {"name": display_name.strip()})
     return JSONResponse({"ok": True, "display_name": display_name.strip()})
 
 
@@ -88,6 +103,7 @@ async def set_pin(request: Request) -> Response:
             return server_error()
     except pins.BadPinError:
         return bad_request("bad_pin")
+    audit(request, KIND_AUTH, "pin changed", {"has_pin": pin != ""})
     return JSONResponse({"ok": True, "has_pin": pin != ""})
 
 
@@ -109,6 +125,7 @@ async def create_my_login_link(request: Request) -> Response:
     credential = await run(
         login_tokens.issue_login_token, store, actor_from(request).user.id, cfg.login_token_ttl_seconds
     )
+    audit(request, KIND_AUTH, "own login link created")
     return JSONResponse({"login_path": f"/login/{credential}", "expires_in_seconds": cfg.login_token_ttl_seconds})
 
 
@@ -129,6 +146,7 @@ async def logout(request: Request) -> Response:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
+    audit(request, KIND_AUTH, "signed out")
     await destroy_cookie_session(request)
     response = JSONResponse({"ok": True})
     clear_session_cookie(response, get_config(request))

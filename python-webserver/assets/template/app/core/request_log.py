@@ -1,0 +1,125 @@
+"""One activity-log entry per request: who (LoadActor has run by the time
+this does -- it sits inside it in main.build_app), from where, what was
+asked, how it ended and how long it took. A 5xx is logged as kind "error"
+with the exception's text, which never reaches the client (see
+middleware.server_error) but is what the owner needs.
+
+It sits inside RateLimit, so a flood of refused requests costs a 429 and
+nothing else. Skipped: the log's own endpoints (reading the log would fill
+it; page events arrive as kind "ui" entries of their own), /api/health (a
+container healthcheck every few seconds is noise), and, unless
+logs.static_assets is on, the page's scripts, styles and images.
+
+The settings are read on every request, not once at startup:
+logs.static_assets, logs.echo and the proxy settings can change while the
+server runs (see config_live.Holder).
+"""
+from __future__ import annotations
+
+import posixpath
+import time
+from urllib.parse import urlsplit
+
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from app.core import logs
+from app.core.config import Config
+from app.core.config_live import Holder
+from app.core.middleware import client_ip, trusted_for
+from app.core.security import log_actor
+
+
+class RequestLog:
+    def __init__(self, app: ASGIApp, settings: Holder, logger: logs.Logger) -> None:
+        self.app = app
+        self.settings = settings
+        self.logger = logger
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not self.logger.enabled:
+            await self.app(scope, receive, send)
+            return
+        cfg = self.settings.get()
+        if self._skip(scope, cfg):
+            await self.app(scope, receive, send)
+            return
+
+        started = time.perf_counter()
+        status = 500
+        bytes_out = 0
+
+        async def send_and_measure(message: Message) -> None:
+            nonlocal status, bytes_out
+            if message["type"] == "http.response.start":
+                status = message["status"]
+            elif message["type"] == "http.response.body":
+                bytes_out += len(message.get("body", b""))
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_and_measure)
+        except Exception as error:
+            # Logged on its way to server_error, which answers the client.
+            self._record(scope, cfg, started, 500, 0, repr(error))
+            raise
+        self._record(scope, cfg, started, status, bytes_out, "")
+
+    def _skip(self, scope: Scope, cfg: Config) -> bool:
+        path = scope.get("path", "")
+        if path in ("/api/logs/events", "/api/health") or path.startswith("/api/owner/logs"):
+            return True
+        return not cfg.logs.static_assets and _static_asset(scope.get("method", ""), path)
+
+    def _record(self, scope: Scope, cfg: Config, started: float, status: int, bytes_out: int, message: str) -> None:
+        headers = Headers(scope=scope)
+        state = scope.get("state") or {}
+        record = logs.entry(
+            logs.KIND_REQUEST,
+            logs.LEVEL_INFO,
+            actor=log_actor(state.get("actor")),
+            ip=client_ip(scope, cfg, trusted_for(cfg)),
+            ua=logs.truncate(headers.get("user-agent", ""), 300),
+            request={
+                "method": scope.get("method", ""),
+                "path": logs.redact(scope.get("path", ""), scope.get("query_string", b"").decode("latin-1")),
+                "status": status,
+                "ms": round((time.perf_counter() - started) * 1000, 2),
+                "bytes_out": bytes_out,
+                **({"referer": referer} if (referer := _redact_referer(headers.get("referer", ""))) else {}),
+            },
+            msg=logs.truncate(message, 500),
+        )
+        if status >= 500:
+            record["kind"] = logs.KIND_ERROR
+            record["level"] = logs.LEVEL_ERROR
+        elif status >= 400:
+            record["level"] = logs.LEVEL_WARN
+        self.logger.log(record)
+        if cfg.logs.echo:
+            request = record["request"]
+            name = record["actor"].get("name") or "-"
+            print(f"[req] {request['method']} {request['path']} {status} {request['ms']:.1f}ms {record.get('ip', '')} {name}", flush=True)
+
+
+def _static_asset(method: str, path: str) -> bool:
+    """A file the page loads (/js/app.js, /vendor/...), as opposed to the page
+    itself, an API call, or a login or invite link -- whose credential can
+    contain a dot, which is why those are ruled out first."""
+    if method not in ("GET", "HEAD"):
+        return False
+    if path.startswith(("/api/", "/login/", "/join/", "/mcp")):
+        return False
+    return posixpath.splitext(path)[1] != ""
+
+
+def _redact_referer(value: str) -> str:
+    """Where a visitor came from, without a login or invite link they came
+    from."""
+    if not value:
+        return ""
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return ""
+    return logs.truncate(f"{parts.scheme}://{parts.netloc}{logs.redact(parts.path, parts.query)}", 300)

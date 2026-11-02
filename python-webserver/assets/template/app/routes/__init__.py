@@ -18,14 +18,30 @@ from __future__ import annotations
 from typing import Callable, Sequence
 
 from starlette.middleware import Middleware
+from starlette.requests import Request
+from starlette.responses import Response
 from starlette.routing import BaseRoute, Route
 
 from app.core.config import Config
-from app.core.security import RequireAdmin, RequireAPIKey, RequireLogin, RequireSession
+from app.core.security import Guard, RequireAdmin, RequireAPIKey, RequireLogin, RequireOwner, RequireSession
 from app.core.static_files import StaticServer
 from app.mcp.protocol import Server as MCPServer
-from app.routes import account, admin, api_keys, auth, invite_links, join, mcp_tools, meta, team
+from app.routes import account, admin, api_keys, auth, invite_links, join, logs, mcp_tools, meta, settings, team
 from app.routes.api_keys import RequireAPIKeys
+from app.routes.helpers import get_config, not_found
+
+
+class RequireMCP(Guard):
+    """Makes /mcp answer 404 while server.mcp or auth.api_keys is off --
+    exactly what an unregistered route would say. Checked per request rather
+    than by registering /mcp or not, because both can be switched while the
+    server runs."""
+
+    def refuse(self, request: Request) -> Response | None:
+        cfg = get_config(request)
+        if not cfg.mcp_enabled or not cfg.api_keys_enabled:
+            return not_found("not found")
+        return None
 
 
 def group(*guards: type) -> Callable[..., Route]:
@@ -40,6 +56,9 @@ def group(*guards: type) -> Callable[..., Route]:
 
 
 def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
+    """cfg is the configuration the server started with: it decides only
+    what is set up once (the activity log's routes). Everything a request
+    reads, it reads from the running configuration."""
     public = group()
     signed_in = group(RequireLogin)
     sessions_only = group(RequireLogin, RequireSession)
@@ -63,6 +82,10 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
     # Admin view of every key in the app -- "who has standing access" -- and
     # the ability to revoke or delete someone else's.
     admin_keys = group(RequireAPIKeys, RequireAdmin, RequireSession)
+    # The activity log and the Settings screen: the owner only, from a
+    # browser session -- not other admins, not any API key, not the signed
+    # out; all of them get 404 (see RequireOwner).
+    owner = group(RequireOwner)
 
     routes: list[BaseRoute] = [
         # Public: the login link's page and the call it makes, the UI's text
@@ -95,6 +118,7 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         my_keys("/api/keys", api_keys.create_my_key, ["POST"]),
         my_keys("/api/keys/{key_id}/revoke", api_keys.revoke_my_key, ["POST"]),
         my_keys("/api/keys/{key_id}/delete", api_keys.delete_my_key, ["POST"]),
+        my_keys("/api/keys/{key_id}/restore", api_keys.restore_my_key, ["POST"]),
         admins("/api/admin/users", admin.list_users),
         admin_sessions("/api/admin/users", admin.create_user, ["POST"]),
         admin_sessions("/api/admin/users/{user_id}/reissue-login", admin.reissue_login, ["POST"]),
@@ -110,22 +134,43 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         admin_sessions("/api/admin/invite-links", invite_links.create_invite_link, ["POST"]),
         admins("/api/admin/invite-links/{link_id}/revoke", invite_links.revoke_invite_link, ["POST"]),
         admin_sessions("/api/admin/invite-links/{link_id}/delete", invite_links.delete_invite_link, ["POST"]),
+        admin_sessions("/api/admin/invite-links/{link_id}/restore", invite_links.restore_invite_link, ["POST"]),
         admin_keys("/api/admin/keys", api_keys.list_all_keys),
         admin_keys("/api/admin/keys/{key_id}/revoke", api_keys.revoke_any_key, ["POST"]),
         admin_keys("/api/admin/keys/{key_id}/delete", api_keys.delete_any_key, ["POST"]),
+        admin_keys("/api/admin/keys/{key_id}/restore", api_keys.restore_any_key, ["POST"]),
+        # config.yaml, as the owner's Settings screen. See settings.py.
+        owner("/api/owner/settings", settings.get_settings),
+        owner("/api/owner/settings", settings.save_settings, ["POST"]),
     ]
+
+    # The activity log (app/core/logs.py). Switched off in config.yaml, none
+    # of it exists and track.js sends nothing.
+    if cfg.logs.enabled:
+        routes += [
+            # What someone did on the page, sent by track.js. Theirs to send,
+            # the owner's to read.
+            signed_in("/api/logs/events", logs.record_ui_events, ["POST"]),
+            owner("/api/owner/logs/days", logs.list_log_days),
+            owner("/api/owner/logs/days/{date}", logs.get_log_day),
+            owner("/api/owner/logs/days/{date}/download", logs.download_log_day),
+            owner("/api/owner/logs/days/{date}/delete", logs.delete_log_day, ["POST"]),
+            owner("/api/owner/logs/prune", logs.prune_logs, ["POST"]),
+        ]
 
     # MCP: agents calling the app with an API key (see app/mcp and
     # mcp_tools.py). Keys only -- RequireAPIKey turns a browser session away --
     # and every tool runs at the key's effective role, so this is the API above
-    # in another shape, not a wider one. Without API keys nothing could
-    # authenticate to it, so it is not registered either.
-    if cfg.mcp_enabled and cfg.api_keys_enabled:
-        mcp = MCPServer(mcp_tools.build_registry())
-        routes += [
-            group(RequireAPIKey)("/mcp", mcp.endpoint, ["POST"]),
-            public("/mcp", mcp.method_not_allowed, ["GET", "DELETE"]),
-        ]
+    # in another shape, not a wider one.
+    #
+    # Always registered: server.mcp and auth.api_keys can be switched while
+    # the server runs, so RequireMCP checks them per request and answers 404
+    # when either is off -- without API keys nothing could authenticate to it.
+    mcp = MCPServer(mcp_tools.build_registry())
+    routes += [
+        group(RequireMCP, RequireAPIKey)("/mcp", mcp.endpoint, ["POST"]),
+        group(RequireMCP)("/mcp", mcp.method_not_allowed, ["GET", "DELETE"]),
+    ]
 
     return routes + [
         # Any other /api/ path is a JSON 404, not the index.html fallback.

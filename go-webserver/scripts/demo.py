@@ -8,9 +8,11 @@ cache directory and prints that directory's path. run.sh then hands over to
 the demo's own run.sh, so what runs is exactly what a scaffold produces.
 
 Every call re-scaffolds, so template edits show up on the next scripts/run.sh. What
-a scaffold does not produce is kept: config/config.yaml (and with it the secret key
+a scaffold does not produce is kept: config/config.yaml, config/secret.key (the key
 that reads the database), the .run/ pid file, and the built binary. The demo
-therefore keeps its accounts between runs, like any other project would.
+therefore keeps its accounts between runs, like any other project would. A demo
+from before secret.key existed has its key inside config.yaml; its next run moves
+it out (scripts/run.sh runs `config migrate`), like any other project.
 
 The first scaffold also sets server.secure_cookies to false, because the demo
 is only ever opened at plain http://localhost, where a Secure cookie is
@@ -34,9 +36,9 @@ DEMO_NAME = "Go Webserver Demo"
 DEMO_SLUG = "go-webserver-demo"
 
 # Everything a running demo owns that a fresh scaffold must not replace,
-# relative to the demo root. config/config.yaml holds the secret key that
-# reads the demo's database, so losing it would lose every account.
-KEEP = {"config/config.yaml", ".run", "data", "dist", DEMO_SLUG, DEMO_SLUG + ".exe"}
+# relative to the demo root. config/secret.key is the key that reads the
+# demo's database, so losing it would lose every account.
+KEEP = {"config/config.yaml", "config/secret.key", ".run", "data", "dist", DEMO_SLUG, DEMO_SLUG + ".exe"}
 
 SECURE_COOKIES_LINE = re.compile(r"^(\s*secure_cookies:\s*)true\b", re.MULTILINE)
 
@@ -110,6 +112,12 @@ def main() -> None:
         if result.returncode != 0:
             sys.stderr.write(result.stdout + result.stderr)
             sys.exit(result.returncode)
+
+        # An existing demo keeps its key. Copying the scaffold's fresh one in
+        # beside a config.yaml from before secret.key existed would leave two
+        # different keys, and the migration rightly refuses to pick one.
+        if not first_run:
+            (fresh / "config" / "secret.key").unlink(missing_ok=True)
 
         # Sync in place rather than swapping directories: a running server's
         # working directory has to stay the same directory for run.sh to

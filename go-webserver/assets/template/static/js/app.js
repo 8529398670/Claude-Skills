@@ -122,6 +122,7 @@ const App = {
 
     // Each screen owns its own file and its own init(). This is the one line
     // that knows the API keys screen exists.
+    Track.init( me );
     Pin.init( me );
     await Keys.init( me );
 
@@ -131,6 +132,10 @@ const App = {
       Dom.get( "copy-link-button" ).addEventListener( "click" , this.onCopyLink.bind( this ) );
       await this.refreshUsers();
       await Invites.init( me );
+      // Only the owner gets the Logs and Settings screens; each init checks
+      // is_owner.
+      await Logs.init( me );
+      await Settings.init( me );
     }
 
     // Last, so the sidebar offers exactly the screens the lines above un-hid.
@@ -140,14 +145,34 @@ const App = {
   async onRename( event ) {
     event.preventDefault();
     const value = Dom.get( "display-name" ).value.trim();
+    const previous = this.currentUser.display_name;
+    if ( value === previous ) return;
     try {
-      await Api.rename( value );
-      this.currentUser.display_name = value;
-      this.labelAccount();
-      Dom.toast( I18n.get( "ui.saved" ) , "ok" );
+      await this.applyRename( value , previous );
     } catch ( error ) {
       this.showError( error.message );
+      return;
     }
+    // Let go of the field, so the next Ctrl+Z undoes the rename rather than
+    // the typing.
+    Undo.saved( event.target );
+    // The server-backed undo example: both directions go through the API, so
+    // Ctrl+Z puts the old name back on the account, not just on the screen.
+    // Each says which name it expects to find, so a rename made in another
+    // tab since is refused (409) rather than overwritten.
+    Undo.record( {
+      label: I18n.get( "undo.rename" ),
+      toast: true,
+      undo: () => this.applyRename( previous , value ),
+      redo: () => this.applyRename( value , previous ),
+    } );
+  },
+
+  async applyRename( value , expect ) {
+    await Api.rename( value , expect );
+    this.currentUser.display_name = value;
+    Dom.get( "display-name" ).value = value;
+    this.labelAccount();
   },
 
   // The sidebar's Account entry names who is signed in on its second line.

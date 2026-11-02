@@ -63,7 +63,7 @@ const maxSocketPathLength = 103
 // so its existence is itself the signal that a live server holds the lock.
 type Server struct {
 	store    *db.Store
-	cfg      *config.Config
+	settings *config.Holder
 	http     *http.Server
 	listener net.Listener
 	path     string
@@ -74,7 +74,11 @@ type Server struct {
 // A socket file left behind by a crashed process is removed first. That is
 // safe precisely because bolt already granted us the database lock: if this
 // process holds the lock, no live server is using that stale socket.
-func Listen( store *db.Store , cfg *config.Config ) ( server *Server , err error ) {
+// The socket itself is set up from the configuration the server started
+// with; what a request may do (API keys on or off, link lifetimes) is read
+// from the running one, so it follows edits to config.yaml.
+func Listen( store *db.Store , settings *config.Holder ) ( server *Server , err error ) {
+	cfg := settings.Boot()
 	if cfg.ControlSocketEnabled == false {
 		return
 	}
@@ -115,7 +119,7 @@ func Listen( store *db.Store , cfg *config.Config ) ( server *Server , err error
 
 	server = &Server{
 		store:    store,
-		cfg:      cfg,
+		settings: settings,
 		listener: listener,
 		path:     cfg.ControlSocketPath,
 	}
@@ -377,7 +381,7 @@ func ( server *Server ) handleListAPIKeys( w http.ResponseWriter , r *http.Reque
 // that a key cannot outrank its owner is enforced here too: this endpoint
 // cannot mint an admin key for a non-admin account.
 func ( server *Server ) handleCreateAPIKey( w http.ResponseWriter , r *http.Request ) {
-	if server.cfg.APIKeysEnabled == false {
+	if server.cfg().APIKeysEnabled == false {
 		writeError( w , http.StatusForbidden , "api keys are disabled on this server (auth.api_keys: false)" )
 		return
 	}
@@ -397,7 +401,7 @@ func ( server *Server ) handleCreateAPIKey( w http.ResponseWriter , r *http.Requ
 		writeError( w , http.StatusBadRequest , "role must be admin or user" )
 		return
 	}
-	ttl , ok := models.APIKeyTTLFromDays( body.ExpiresInDays , server.cfg.APIKeyTTL )
+	ttl , ok := models.APIKeyTTLFromDays( body.ExpiresInDays , server.cfg().APIKeyTTL )
 	if ok == false {
 		writeError( w , http.StatusBadRequest , "expires_in_days must be 0 (never) or up to 3650" )
 		return
@@ -503,7 +507,8 @@ func ( server *Server ) handleDeleteAPIKey( w http.ResponseWriter , r *http.Requ
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
 	}
-	if err = models.DeleteAPIKey( server.store , key.ID ); err != nil {
+	// The CLI has no undo, so its delete is the hard one (see PurgeAPIKey).
+	if err = models.PurgeAPIKey( server.store , key.ID ); err != nil {
 		if errors.Is( err , db.ErrNotFound ) {
 			writeError( w , http.StatusNotFound , fmt.Sprintf( "no api key with id %s" , key_id ) )
 			return
@@ -516,8 +521,8 @@ func ( server *Server ) handleDeleteAPIKey( w http.ResponseWriter , r *http.Requ
 
 func ( server *Server ) handleHealth( w http.ResponseWriter , r *http.Request ) {
 	writeJSON( w , http.StatusOK , HealthResponse{
-		ProjectName: server.cfg.ProjectName,
-		AppDir:      server.cfg.AppDir,
+		ProjectName: server.cfg().ProjectName,
+		AppDir:      server.cfg().AppDir,
 	} )
 }
 
@@ -560,7 +565,7 @@ func ( server *Server ) handleCreateUser( w http.ResponseWriter , r *http.Reques
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
 	}
-	credential , err := models.IssueLoginToken( server.store , user.ID , server.cfg.LoginTokenTTL )
+	credential , err := models.IssueLoginToken( server.store , user.ID , server.cfg().LoginTokenTTL )
 	if err != nil {
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
@@ -577,7 +582,7 @@ func ( server *Server ) handleReissueLogin( w http.ResponseWriter , r *http.Requ
 		writeError( w , http.StatusNotFound , fmt.Sprintf( "no user with id %d" , user_id ) )
 		return
 	}
-	credential , err := models.IssueLoginToken( server.store , user.ID , server.cfg.LoginTokenTTL )
+	credential , err := models.IssueLoginToken( server.store , user.ID , server.cfg().LoginTokenTTL )
 	if err != nil {
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
@@ -675,4 +680,9 @@ func ( server *Server ) handleTransferOwner( w http.ResponseWriter , r *http.Req
 	default:
 		writeError( w , http.StatusInternalServerError , err.Error() )
 	}
+}
+
+func ( server *Server ) cfg() ( cfg *config.Config ) {
+	cfg = server.settings.Get()
+	return
 }

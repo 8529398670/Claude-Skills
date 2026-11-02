@@ -16,11 +16,12 @@ account that owns it.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from app.core import bootstrap, config, db
+from app.core import bootstrap, config, db, logs
 from app.models import api_keys, credentials, invite_links, login_tokens, users
 
 USAGE = """manage -- account administration for {{PROJECT_NAME}}
@@ -41,6 +42,9 @@ Usage:
   create-invite   --user-id 1 --label "Book club" [--uses 10] [--days 30]
                                         one link a group can join through
   paths                                 where this app keeps its state
+  logs            [--day 2026-11-02] [--q "status:5xx"] [--limit 50]
+                                        the activity log: days, or one day's
+                                        entries newest first, as JSON lines
 
 The owner is the first admin, and the one account that can delete other
 admins from the web UI. Nothing deletes or disables the owner -- move it with
@@ -54,9 +58,9 @@ the server's configured default.
 These work whether or not the server is running: the database is opened
 directly, which SQLite's WAL mode makes safe alongside a live server.
 
-Every command reads the same config.yaml as the server (see "paths" for which
-one). Its server.secret_key in particular must be the one the data was written
-with, or the stored records cannot be decrypted.
+Every command reads the same config.yaml and secret.key as the server (see
+"paths" for which). secret.key in particular must hold the key the data was
+written with, or the stored records cannot be decrypted.
 """
 
 
@@ -120,6 +124,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--days", type=int, default=30, help="days until it stops working (1-365)")
 
     commands.add_parser("paths", help="where this app keeps its state")
+
+    p = commands.add_parser("logs", help="the activity log: days, or one day's entries")
+    p.add_argument("--day", default="", help="a UTC date, YYYY-MM-DD; without it, list the days")
+    p.add_argument("--q", default="", help="a search, as typed on the Logs screen")
+    p.add_argument("--limit", type=int, default=50, help="entries to print, newest first (1-1000)")
     return parser
 
 
@@ -129,11 +138,18 @@ def run(arguments: list[str]) -> None:
         cfg = config.load()
     except config.ConfigError as error:
         raise ManageError(f"config error: {error}") from None
+    if cfg.secret_migrated:
+        print(f"MOVED server.secret_key out of {cfg.config_file} into {cfg.secret_file} -- back it up with the database.", file=sys.stderr)
 
     # "paths" reports configuration only, so it never needs the database and
     # stays useful when everything else is failing.
     if args.command == "paths":
         command_paths(cfg)
+        return
+    # "logs" reads the log files, never the database, so it works the same
+    # with the server up or down -- the files are only ever appended to.
+    if args.command == "logs":
+        command_logs(cfg, args)
         return
 
     store = db.open_store(cfg.database_path, cfg.secret_key, cfg.encrypt_at_rest)
@@ -349,11 +365,36 @@ def command_revoke_key(store: db.Store, cfg: config.Config, args: argparse.Names
 
 
 def command_delete_key(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
-    """revoke-key without the record left behind."""
+    """revoke-key without the record left behind. Unlike deleting in the web
+    UI there is no undo here, so the row goes at once (purge_api_key)."""
     key = api_keys.get_api_key(store, args.key_id)
-    if key is None or not api_keys.delete_api_key(store, key.id):
+    if key is None or not api_keys.purge_api_key(store, key.id):
         raise ManageError(f"no api key with id {args.key_id}")
     print(f"api key {key.id} ({key.name!r}, owner #{key.user_id}) deleted -- it stops working immediately")
+
+
+def command_logs(cfg: config.Config, args: argparse.Namespace) -> None:
+    reader = logs.Logger(cfg.logs, cfg.secret_key, cfg.encrypt_at_rest)
+    query = logs.Query(args.q)
+    if not args.day:
+        days, total = reader.days(query)
+        for row in days:
+            line = f"{row['date']}  {row['entries']:7d} entries  {row['errors']:5d} errors  {row['bytes']:9d} bytes"
+            if "matches" in row:
+                line += f"  {row['matches']} matches"
+            if row["compressed"]:
+                line += "  (gzipped)"
+            print(line)
+        print(f"{total} bytes in {cfg.logs.dir}")
+        return
+    if not 1 <= args.limit <= 1000:
+        raise ManageError("--limit must be 1-1000")
+    try:
+        records, _ = reader.read_day(args.day, query, -1, args.limit)
+    except logs.BadDayError:
+        raise ManageError("--day must be a date like 2026-11-02") from None
+    for record in records:
+        print(json.dumps(record, ensure_ascii=False))
 
 
 def command_paths(cfg: config.Config) -> None:
@@ -363,12 +404,14 @@ def command_paths(cfg: config.Config) -> None:
     def note(path: str) -> str:
         return "" if Path(path).exists() else "  (absent -- the bundled copy is used)"
 
-    print(f"{'config':<14} {cfg.config_file}  (holds the secret key)")
+    print(f"{'config':<14} {cfg.config_file}")
+    print(f"{'secret':<14} {cfg.secret_file}  (the secret key: back it up with the database)")
     print(f"{'project dir':<14} {cfg.project_dir}  (relative paths in the config start here)")
     print(f"{'url':<14} {cfg.url}  (from {cfg.url_source})")
     print(f"{'app dir':<14} {cfg.app_dir}")
     print(f"{'database':<14} {cfg.database_path}  (plus -wal and -shm files while in use)")
     print(f"{'storage':<14} {cfg.storage_dir}")
+    print(f"{'logs':<14} {cfg.logs.dir}")
     print(f"{'static':<14} {cfg.static_dir}{note(cfg.static_dir)}")
     print(f"{'language':<14} {cfg.language_file}{note(cfg.language_file)}")
     if cfg.config_warning:
@@ -379,9 +422,9 @@ def command_paths(cfg: config.Config) -> None:
     # from the paths above.
     print("")
     print(f"Change any of these in {cfg.config_file} (server.app_dir moves the app dir).")
-    if cfg.config_file.parent == cfg.app_dir:
-        print("Back up the app dir as a unit -- app.db is unreadable without the key in config.yaml.")
+    if cfg.secret_file.parent == cfg.app_dir:
+        print("Back up the app dir as a unit -- app.db is unreadable without secret.key.")
     else:
-        print("config.yaml is NOT in the app dir. Back up both; app.db is unreadable without")
-        print("the key in config.yaml, and either one alone is useless.")
+        print("secret.key is NOT in the app dir. Back up config.yaml, secret.key and the app")
+        print("dir together; app.db is unreadable without secret.key.")
     print("Stop the server before copying app.db, or the copy can miss writes still in app.db-wal.")

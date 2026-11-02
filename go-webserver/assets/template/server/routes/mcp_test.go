@@ -60,7 +60,8 @@ func newMCPFixture( t *testing.T ) ( fixture *mcpFixture ) {
 	if err != nil { t.Fatal( err ) }
 
 	static_server , _ := static.New( fstest.MapFS{ "index.html": { Data: []byte( "index" ) } } )
-	handlers := New( store , cfg , security.New( store , cfg ) , nil , static_server , "test" )
+	settings := config.NewStaticHolder( cfg )
+	handlers := New( store , settings , security.New( store , settings ) , nil , static_server , "test" )
 	app := fiber.New()
 	handlers.Register( app )
 

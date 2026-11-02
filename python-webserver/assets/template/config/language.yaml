@@ -29,11 +29,34 @@ nav:
   users: "Users"
   invite_links: "Invite links"
   all_keys: "All API keys"
+  logs: "Logs"
+  settings: "Settings"
 
 # Short confirmations shown as a toast at the bottom of the screen.
 ui:
   saved: "Saved."
   copied: "Copied."
+
+# Ctrl+Z / Ctrl+Y (static/js/undo.js). The toast reads "<undone> <label>",
+# e.g. "Undone: theme change", with a Redo button. Actions that announce
+# themselves ("Name changed · Undo") use the label alone, capitalised, so a
+# label is a phrase that reads after "Undone:". "nothing" is shown when there
+# is nothing left to undo or redo; it is empty, so that toast is off. Empty
+# button keys drop the button and keep the toast.
+undo:
+  undone: "Undone:"
+  redone: "Redone:"
+  nothing: ""
+  failed: "That could not be undone."
+  conflict: "It was changed somewhere else in the meantime, so it was left as it is."
+  button: "Undo"
+  redo_button: "Redo"
+  theme: "theme change"
+  sidebar: "sidebar"
+  rename: "name changed"
+  deleted_key: "API key deleted"
+  deleted_invite: "invite link deleted"
+  settings: "settings change"
 
 # The Appearance card. Light is always the default; a pick is remembered in
 # this browser only. Names for the presets in static/js/theme.js.
@@ -133,7 +156,7 @@ api_keys:
   heading: "API keys"
   description: "For scripts, cron jobs, and other services. A key does exactly what your account can do -- send it as an Authorization: Bearer header. It is shown once."
   name_label: "What is it for"
-  name_placeholder: "deploy bot"
+  name_placeholder: "Bot-1"
   role_label: "Permission"
   role_user: "user"
   role_admin: "admin (can manage accounts)"
@@ -157,7 +180,6 @@ api_keys:
   revoke_confirm: "Revoke this key? Anything using it stops working immediately."
   delete_button: "Delete"
   # Empty this string to stop asking for confirmation before deleting.
-  delete_confirm: "Delete this key permanently? Anything using it stops working immediately, and it disappears from the list."
 
 # Only offered to non-admin accounts: an admin can never be signed in to
 # through an invite link, so a PIN would protect nothing.
@@ -199,12 +221,89 @@ invite_links:
   revoke_confirm: "Switch off this link? Nobody can join or sign back in through it any more. Accounts it made keep working."
   delete_button: "Delete"
   # Empty this string to stop asking for confirmation.
-  delete_confirm: "Delete this link from the list? It stops working if it has not already. Accounts it made stay."
 
 admin_keys:
   heading: "All API keys"
   description: "Every key in this app and who owns it. Revoke or delete one to cut off whatever is using it, right away."
   table_owner: "Owner"
+
+# The Logs screen (owner only; static/js/logs.js). Placeholders in {braces}
+# are filled in by the page. Days are UTC dates; times are the viewer's own.
+# kind_* label both the filter buttons and each row's badge.
+logs:
+  heading: "Logs"
+  description: "Everything this app has recorded: every request, every sign-in and admin action, and what people did on the page. Only you, the owner, can see this. Typed values, passwords and links are never recorded."
+  search_label: "Search"
+  search_placeholder: "Search, e.g. status:5xx user:ana -kind:request"
+  search_help: "Words match anywhere. Narrow with kind: user: status: path: ip: level: action: — commas mean or (kind:auth,admin), a leading minus excludes."
+  kinds_label: "Show only"
+  kind_request: "Request"
+  kind_ui: "Page"
+  kind_auth: "Sign-in"
+  kind_admin: "Admin"
+  kind_error: "Error"
+  kind_system: "System"
+  live_button: "Live"
+  prune_button: "Prune now"
+  # Empty this string to stop asking for confirmation.
+  prune_confirm: "Apply the retention rules from config.yaml now? Old days are compressed or deleted."
+  # {deleted} and {compressed} are counts of days.
+  pruned: "Pruned: {deleted} days deleted, {compressed} compressed."
+  # {days} {used} {max} {gzip} come from config.yaml's logs section.
+  settings_line: "Keeping {days} days, up to {max} (now {used}). Days older than {gzip} are compressed."
+  encrypted: "Encrypted on disk."
+  not_encrypted: "Not encrypted on disk."
+  dropped: "{count} entries dropped under load since start."
+  empty: "Nothing has been logged yet."
+  no_matches: "Nothing matches."
+  entries: "entries: {count}"
+  matches: "matches: {count}"
+  errors: "errors: {count}"
+  compressed: "compressed"
+  download_button: "Download"
+  delete_button: "Delete day"
+  # {date} is the day. Empty this string to stop asking for confirmation.
+  delete_confirm: "Delete every entry from {date}? This cannot be undone."
+  load_more: "Load more"
+  table_time: "Time"
+  table_kind: "Kind"
+  table_user: "Who"
+  table_what: "What"
+  table_ip: "IP"
+  anonymous: "signed out"
+  via_key: "(API key)"
+
+# The Settings screen (owner only; static/js/settings.js): config.yaml, one
+# field per setting. Placeholders in {braces} are filled in by the page. The
+# help text under each field is the comment above that key in
+# config/defaults.yaml, not something set here.
+settings:
+  heading: "Settings"
+  description: "This is config.yaml, the file that configures this app. Saving writes only what you changed into the file, keeping its comments. Each setting says when a change takes effect. The file can also be edited by hand: the server notices within a few seconds."
+  file: "{file}"
+  secret_note: "The secret key is in {path}. It is never shown here; back it up with the database."
+  apply_live: "Live"
+  apply_live_help: "Takes effect as soon as it is saved."
+  apply_restart: "Restart"
+  apply_restart_help: "Saved now; takes effect when the server restarts."
+  apply_scripts: "Scripts"
+  apply_scripts_help: "Read by docker/run.sh the next time it runs."
+  # {running} is the value the server started with.
+  pending_restart: "Saved. The server keeps running with {running} until it restarts."
+  default: "Default: {value}"
+  empty: "(empty)"
+  list_help: "One per line."
+  locked: "Fixed inside the container. Change it in config/config.yaml on the host."
+  save_button: "Save changes"
+  reload_button: "Reload from file"
+  unsaved: "{count} unsaved"
+  saved: "Saved."
+  saved_restart: "Saved. Some changes take effect when the server restarts."
+  changed_on_disk: "config.yaml was changed while you were editing (by hand, or in another tab), so nothing was saved. Reload from file to see it."
+  # {error} says what is wrong with it.
+  invalid_file: "config.yaml does not validate, so the server is running on the last good version. {error}"
+  read_only: "The server cannot write config.yaml, so it can only be changed by editing the file by hand."
+  stale: "config.yaml was replaced on the host since this container started. Restart the container to see and change the new version."
 
 errors:
   generic: "Something went wrong. Please try again."
@@ -217,3 +316,12 @@ errors:
   pin_wrong: "That PIN is not right."
   pin_locked: "Too many wrong PINs. Try again in 15 minutes."
   bad_pin: "A PIN is 4 to 8 digits."
+  logs_today: "Today's log is still being written, so it cannot be deleted."
+  # The Settings screen's save, by code.
+  settings_changed: "config.yaml was changed while you were editing. Reload from file to see it."
+  settings_stale: "config.yaml was replaced on the host. Restart the container first."
+  settings_read_only: "The server cannot write config.yaml."
+  settings_locked: "That setting cannot be changed from inside the container."
+  invalid_settings: "That value is not allowed."
+  unknown_setting: "There is no such setting."
+  settings_hand_edit: "config.yaml is written in a way this screen cannot change. Edit the file by hand."

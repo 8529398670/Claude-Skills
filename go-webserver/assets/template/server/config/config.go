@@ -15,6 +15,14 @@
 // config.yaml is decoded on top of it, strictly: an unknown key is an error,
 // because a typo that is silently ignored is a setting that silently is not
 // applied.
+//
+// The secret key is not in config.yaml. It is in secret.key beside it (see
+// secret.go), which is what lets config.yaml be edited while the server runs
+// -- from the owner's Settings screen or by hand -- without either path ever
+// touching the key. live.go holds the running configuration and applies those
+// edits; yamledit.go rewrites single values in place so the file's comments
+// survive; schema.go reads which keys can change live from the tags in
+// defaults.yaml.
 package config
 
 import (
@@ -32,8 +40,6 @@ import (
 	time "time"
 
 	yaml "gopkg.in/yaml.v3"
-
-	encryption "{{MODULE_PATH}}/server/encryption"
 )
 
 // AppSlug names the application on disk. It is what turns into
@@ -52,7 +58,16 @@ const (
 	DatabaseFileName  = "app.db"
 	ControlSocketName = "control.sock"
 	StorageDirName    = "storage"
+	LogsDirName       = "logs"
 	LanguageFileName  = "language.yaml"
+
+	// SecretFileName sits beside config.yaml. See SecretPathFor.
+	SecretFileName = "secret.key"
+
+	// BackupFileName is the previous config.yaml, kept in the app directory
+	// whenever the container rewrites its mounted copy in place. See
+	// writeConfigFile.
+	BackupFileName = "config.yaml.bak"
 )
 
 // defaultsYAML and exampleHeader are config/defaults.yaml and
@@ -87,6 +102,7 @@ type File struct {
 	App    AppSection    `yaml:"app"`
 	Server ServerSection `yaml:"server"`
 	Auth   AuthSection   `yaml:"auth"`
+	Logs   LogsSection   `yaml:"logs"`
 	Docker DockerSection `yaml:"docker"`
 	Build  BuildSection  `yaml:"build"`
 }
@@ -102,6 +118,9 @@ type ServerSection struct {
 	AppDir                 string `yaml:"app_dir"`
 	StaticDir              string `yaml:"static_dir"`
 	LanguageFile           string `yaml:"language_file"`
+	// Deprecated: the key lives in secret.key. This is read only so that a
+	// config.yaml from before the move can be migrated (MigrateLegacySecret);
+	// defaults.yaml has no such key, so nothing else ever sees it.
 	SecretKey              string `yaml:"secret_key"`
 	EncryptAtRest          bool   `yaml:"encrypt_at_rest"`
 	SecureCookies          bool   `yaml:"secure_cookies"`
@@ -121,6 +140,17 @@ type AuthSection struct {
 	LoginTokenTTLSeconds int  `yaml:"login_token_ttl_seconds"`
 	APIKeys              bool `yaml:"api_keys"`
 	APIKeyTTLSeconds     int  `yaml:"api_key_ttl_seconds"`
+}
+
+type LogsSection struct {
+	Enabled           bool `yaml:"enabled"`
+	RetentionDays     int  `yaml:"retention_days"`
+	MaxTotalMB        int  `yaml:"max_total_mb"`
+	MaxFileMB         int  `yaml:"max_file_mb"`
+	CompressAfterDays int  `yaml:"compress_after_days"`
+	StaticAssets      bool `yaml:"static_assets"`
+	UIClicks          bool `yaml:"ui_clicks"`
+	Echo              bool `yaml:"echo"`
 }
 
 type DockerSection struct {
@@ -163,17 +193,27 @@ type Config struct {
 	URL       string
 	URLSource string
 
-	// ConfigFile is the config.yaml this was loaded from. It also holds the
-	// secret key, which is why it is reported wherever backups are mentioned.
+	// ConfigFile is the config.yaml this was loaded from.
 	ConfigFile string
 
 	// ConfigCreated is true when this run wrote ConfigFile because none
-	// existed. The startup log says so, since a fresh key was generated.
+	// existed.
 	ConfigCreated bool
 
-	// ConfigWarning is non-empty when ConfigFile is readable by other users.
-	// It is a warning rather than an error so a misconfigured mode never
-	// stops a server that was working, but it does get logged on every start.
+	// SecretFile is secret.key, beside ConfigFile: the one file besides the
+	// app directory that a backup must include.
+	SecretFile string
+
+	// SecretCreated is true when this run generated the key, SecretMigrated
+	// when it moved server.secret_key out of config.yaml into SecretFile.
+	// The startup log says so either way.
+	SecretCreated  bool
+	SecretMigrated bool
+
+	// ConfigWarning is non-empty when secret.key is readable by other users,
+	// or config.yaml writable by them. It is a warning rather than an error
+	// so a misconfigured mode never stops a server that was working, but it
+	// does get logged on every start.
 	ConfigWarning string
 
 	// AppDir is the one directory this application owns: the database, the
@@ -262,6 +302,27 @@ type Config struct {
 	TrustProxy     bool
 	TrustedProxies []string
 	ProxyHeader    string
+
+	// Logs is the activity log's settings; see server/logs.
+	Logs LogsConfig
+
+	// file and raw are what this was built from, for NewHolder.
+	file *File
+	raw  []byte
+}
+
+// LogsConfig is config.yaml's logs section, resolved: sizes in bytes, and the
+// directory the day files go in (<app_dir>/logs, created 0700 by Load).
+type LogsConfig struct {
+	Enabled           bool
+	Dir               string
+	RetentionDays     int
+	MaxTotalBytes     int64
+	MaxFileBytes      int64
+	CompressAfterDays int
+	StaticAssets      bool
+	UIClicks          bool
+	Echo              bool
 }
 
 // layout is what the container image pins, regardless of config.yaml. See
@@ -472,6 +533,12 @@ func ( file *File ) Validate() ( err error ) {
 	check( auth.LoginTokenTTLSeconds > 0 , "auth.login_token_ttl_seconds must be positive" )
 	check( auth.APIKeyTTLSeconds > 0 , "auth.api_key_ttl_seconds must be positive" )
 
+	logs := file.Logs
+	check( logs.RetentionDays >= 1 && logs.RetentionDays <= 3650 , "logs.retention_days must be 1-3650, got %d" , logs.RetentionDays )
+	check( logs.MaxTotalMB >= 1 , "logs.max_total_mb must be positive" )
+	check( logs.MaxFileMB >= 1 && logs.MaxFileMB <= logs.MaxTotalMB , "logs.max_file_mb must be positive and no more than logs.max_total_mb" )
+	check( logs.CompressAfterDays >= 0 , "logs.compress_after_days must be 0 (never) or more" )
+
 	docker := file.Docker
 	check( imagePattern.MatchString( docker.Image ) , "docker.image %q is not a valid lowercase image name" , docker.Image )
 	check( containerPattern.MatchString( docker.Container ) , "docker.container %q is not a valid container name" , docker.Container )
@@ -493,8 +560,20 @@ func ( file *File ) Validate() ( err error ) {
 	}
 
 	if len( problems ) > 0 {
-		err = errors.New( strings.Join( problems , "; " ) )
+		err = &ValidationError{ Problems: problems }
 	}
+	return
+}
+
+// ValidationError lists everything wrong with a config.yaml at once. Each
+// problem starts with the key it is about ("server.port must be ..."), which
+// is how the Settings screen puts it under the right field.
+type ValidationError struct {
+	Problems []string
+}
+
+func ( validation *ValidationError ) Error() ( result string ) {
+	result = strings.Join( validation.Problems , "; " )
 	return
 }
 
@@ -525,38 +604,45 @@ func validBindAddress( value string ) ( result bool ) {
 }
 
 // CheckSecretKey is separate from Validate because only a process that will
-// actually use the key needs one.
+// actually use the key needs one. label says where the key came from, for
+// the message.
 //
-// An empty key is refused rather than filled in. A file that already exists
-// was created with a key, so an empty one means it was removed -- and
+// An empty key is refused rather than filled in. A secret.key that exists
+// was written with a key, so an empty one means it was emptied -- and
 // quietly generating a replacement would make every existing record
 // permanently unreadable.
-func CheckSecretKey( file *File , path string ) ( err error ) {
-	key := strings.TrimSpace( file.Server.SecretKey )
+func CheckSecretKey( key string , label string ) ( err error ) {
+	key = strings.TrimSpace( key )
 	if key == "" {
 		err = fmt.Errorf(
-			"server.secret_key is empty in %s\n"+
+			"%s is empty\n"+
 				"  If this app already has data, put back the key it was written with -- a new key cannot read it.\n"+
-				"  For a fresh install, generate one with: openssl rand -hex 32" , path )
+				"  For a fresh install, delete the empty file and the server writes a new one." , label )
 		return
 	}
 	if secretPattern.MatchString( key ) == false {
-		err = fmt.Errorf( "server.secret_key in %s must be 64 hex characters (32 bytes), got %d characters" , path , len( key ) )
+		err = fmt.Errorf( "%s must hold 64 hex characters (32 bytes), got %d characters" , label , len( key ) )
 	}
 	return
 }
 
-// permissionWarning flags a config.yaml anyone on the machine can read. The
-// file holds the secret key, so that is everyone's copy of it.
-func permissionWarning( path string ) ( warning string ) {
+// permissionWarning flags a secret.key other users can read or anyone but
+// its owner can change, and a config.yaml anyone on the machine can write --
+// the server applies an edit to that within seconds. Group read on
+// secret.key is allowed: it is how the container's user reads it (see
+// docker/run.sh).
+func permissionWarning( config_path string , secret_path string ) ( warning string ) {
 	if runtime.GOOS == "windows" {
 		return
 	}
-	info , err := os.Stat( path )
-	if err != nil { return }
-	if info.Mode().Perm() & 0o004 != 0 {
-		warning = fmt.Sprintf( "%s is readable by every user (mode %04o) and holds the secret key -- chmod 600 it" , path , info.Mode().Perm() )
+	var problems []string
+	if info , err := os.Stat( secret_path ); err == nil && info.Mode().Perm() & 0o027 != 0 {
+		problems = append( problems , fmt.Sprintf( "%s is open to other users (mode %04o) and holds the secret key -- chmod 600 it" , secret_path , info.Mode().Perm() ) )
 	}
+	if info , err := os.Stat( config_path ); err == nil && info.Mode().Perm() & 0o002 != 0 {
+		problems = append( problems , fmt.Sprintf( "%s is writable by every user (mode %04o), and the server applies edits to it -- chmod 600 it" , config_path , info.Mode().Perm() ) )
+	}
+	warning = strings.Join( problems , "; " )
 	return
 }
 
@@ -564,33 +650,32 @@ func permissionWarning( path string ) ( warning string ) {
 // creating a config.yaml
 // ---------------------------------------------------------------------------
 
-var secretKeyLine = regexp.MustCompile( `(?m)^(\s*secret_key:\s*)""` )
-
-// NewFileContent is defaults.yaml with a freshly generated secret key -- the
-// whole file, comments included, so the result documents itself.
+// NewFileContent is defaults.yaml as it is -- the whole file, comments
+// included, so the result documents itself. It holds no secret: that is
+// written to secret.key separately.
 func NewFileContent() ( content []byte , err error ) {
-	matches := secretKeyLine.FindAllIndex( defaultsYAML , -1 )
-	if len( matches ) != 1 {
-		err = fmt.Errorf( "embedded defaults.yaml must contain exactly one `secret_key: \"\"` line, found %d" , len( matches ) )
-		return
-	}
-	key := encryption.GenerateKeyHex()
-	content = secretKeyLine.ReplaceAll( defaultsYAML , []byte( `${1}"` + key + `"` ) )
+	if err = checkNoSecretInDefaults(); err != nil { return }
+	content = append( []byte{} , defaultsYAML... )
 	return
 }
 
 // ExampleFileContent is defaults.yaml with a header explaining how to copy
-// it into place, and the secret key left empty. It is generated rather than
-// kept by hand so that it cannot drift from the defaults it documents, and
-// the empty key is deliberate: a key in a committed file is everyone's key.
-// A copy that never gets one fails at startup with the line to run (see
-// CheckSecretKey) instead of running on a shared key.
+// it into place. It is generated rather than kept by hand so that it cannot
+// drift from the defaults it documents.
 func ExampleFileContent() ( content []byte , err error ) {
-	if matches := secretKeyLine.FindAllIndex( defaultsYAML , -1 ); len( matches ) != 1 {
-		err = fmt.Errorf( "embedded defaults.yaml must contain exactly one `secret_key: \"\"` line, found %d" , len( matches ) )
-		return
-	}
+	if err = checkNoSecretInDefaults(); err != nil { return }
 	content = append( append( []byte{} , exampleHeader... ) , defaultsYAML... )
+	return
+}
+
+// checkNoSecretInDefaults keeps a key from creeping back into defaults.yaml,
+// where every config.yaml and the committed example would copy it.
+func checkNoSecretInDefaults() ( err error ) {
+	defaults , err := Defaults()
+	if err != nil { return }
+	if defaults.Server.SecretKey != "" || bytes.Contains( defaultsYAML , []byte( "\n  secret_key:" ) ) {
+		err = errors.New( "embedded defaults.yaml must not contain server.secret_key -- the key lives in secret.key" )
+	}
 	return
 }
 
@@ -604,11 +689,13 @@ func WriteExample( path string ) ( err error ) {
 }
 
 // WriteNew creates path from NewFileContent, refusing to overwrite: an
-// existing config.yaml holds a key that existing data depends on.
-func WriteNew( path string ) ( err error ) {
+// existing config.yaml is someone's settings. A secret.key is written beside
+// it unless one is already there -- an existing key is what existing data
+// depends on, so it is never replaced. secret_created says which.
+func WriteNew( path string ) ( secret_created bool , err error ) {
 	content , err := NewFileContent()
 	if err != nil { return }
-	// 0700 because the secret key lives in here.
+	// 0700 because secret.key lives in here too.
 	if err = os.MkdirAll( filepath.Dir( path ) , 0o700 ); err != nil {
 		err = fmt.Errorf( "could not create %s: %w" , filepath.Dir( path ) , err )
 		return
@@ -618,33 +705,58 @@ func WriteNew( path string ) ( err error ) {
 		err = fmt.Errorf( "could not create %s: %w" , path , err )
 		return
 	}
-	defer handle.Close()
 	_ , err = handle.Write( content )
+	if close_err := handle.Close(); err == nil {
+		err = close_err
+	}
+	if err != nil { return }
+	secret_path := SecretPathFor( path )
+	if isFile( secret_path ) {
+		return
+	}
+	if err = WriteSecret( secret_path , GenerateSecret() ); err != nil { return }
+	secret_created = true
 	return
 }
 
 // ---------------------------------------------------------------------------
 
-// Load finds config.yaml (creating it with a fresh key if there is none),
+// Load finds config.yaml (creating it, and secret.key, if there is none),
+// moves a secret key out of an older config.yaml (see resolveSecret),
 // validates it, and makes sure the app directory exists. The server and the
 // manage CLI both start here.
 func Load() ( cfg *Config , err error ) {
 	path , exists := Locate()
+	cfg , err = LoadPath( path , exists )
+	return
+}
+
+// LoadPath is Load for a config.yaml whose path is already known: the one
+// Locate found, or a test's.
+func LoadPath( path string , exists bool ) ( cfg *Config , err error ) {
 	created := false
 	if exists == false {
 		if InContainer() {
 			err = fmt.Errorf( "no config at %s -- docker/run.sh mounts the project's config/config.yaml there" , path )
 			return
 		}
-		if err = WriteNew( path ); err != nil { return }
+		if _ , err = WriteNew( path ); err != nil { return }
 		created = true
 	}
 
 	file , err := ReadFile( path )
 	if err != nil { return }
-	if err = CheckSecretKey( file , path ); err != nil { return }
 
 	paths := ResolvePaths( file , path )
+	secret , err := resolveSecret( file , path , paths.DatabasePath )
+	if err != nil { return }
+	if secret.Rewrote {
+		// The migration took the key's line out of config.yaml: build from
+		// the file as it now is, which is also what the Holder starts from.
+		if file , err = ReadFile( path ); err != nil { return }
+	}
+	raw , err := os.ReadFile( path )
+	if err != nil { return }
 
 	// 0700 because the database lives in here.
 	if mkdir_err := os.MkdirAll( paths.AppDir , 0o700 ); mkdir_err != nil {
@@ -657,6 +769,28 @@ func Load() ( cfg *Config , err error ) {
 		return
 	}
 
+	logs_dir := filepath.Join( paths.AppDir , LogsDirName )
+	if mkdir_err := os.MkdirAll( logs_dir , 0o700 ); mkdir_err != nil {
+		err = fmt.Errorf( "could not create logs directory %q: %w" , logs_dir , mkdir_err )
+		return
+	}
+
+	cfg = build( file , path , paths , secret.Key )
+	cfg.ConfigCreated = created
+	cfg.SecretCreated = secret.Created
+	cfg.SecretMigrated = secret.Migrated
+	cfg.ConfigWarning = permissionWarning( path , cfg.SecretFile )
+	if secret.Warning != "" {
+		cfg.ConfigWarning = strings.TrimPrefix( cfg.ConfigWarning + "; " + secret.Warning , "; " )
+	}
+	cfg.raw = raw
+	return
+}
+
+// build is config.yaml resolved into the Config the server runs on. It
+// creates nothing, which is what lets the Holder rebuild the live part of it
+// on every edit (see liveConfig).
+func build( file *File , path string , paths Paths , secret_key string ) ( cfg *Config ) {
 	host := file.Server.Host
 	if pinned.Host != "" {
 		host = pinned.Host
@@ -669,16 +803,15 @@ func Load() ( cfg *Config , err error ) {
 		URL:         link_url,
 		URLSource:   link_source,
 
-		ConfigFile:    path,
-		ConfigCreated: created,
-		ConfigWarning: permissionWarning( path ),
+		ConfigFile: path,
+		SecretFile: SecretPathFor( path ),
 
 		AppDir:       paths.AppDir,
 		DatabasePath: paths.DatabasePath,
 
 		ControlSocketPath:    filepath.Join( paths.AppDir , ControlSocketName ),
 		ControlSocketEnabled: file.Server.ControlSocket,
-		StorageDir:           storage_dir,
+		StorageDir:           filepath.Join( paths.AppDir , StorageDirName ),
 
 		StaticDir:    paths.StaticDir,
 		LanguageFile: paths.LanguageFile,
@@ -696,7 +829,7 @@ func Load() ( cfg *Config , err error ) {
 		APIKeyTTL:      seconds( file.Auth.APIKeyTTLSeconds ),
 		MCPEnabled:     file.Server.MCP,
 
-		SecretKey:     strings.TrimSpace( file.Server.SecretKey ),
+		SecretKey:     secret_key,
 		EncryptAtRest: file.Server.EncryptAtRest,
 
 		RateLimitMax:    file.Server.RateLimitMax,
@@ -706,6 +839,20 @@ func Load() ( cfg *Config , err error ) {
 		TrustProxy:     file.Server.TrustProxy,
 		TrustedProxies: file.Server.TrustedProxies,
 		ProxyHeader:    file.Server.ProxyHeader,
+
+		Logs: LogsConfig{
+			Enabled:           file.Logs.Enabled,
+			Dir:               filepath.Join( paths.AppDir , LogsDirName ),
+			RetentionDays:     file.Logs.RetentionDays,
+			MaxTotalBytes:     int64( file.Logs.MaxTotalMB ) * 1024 * 1024,
+			MaxFileBytes:      int64( file.Logs.MaxFileMB ) * 1024 * 1024,
+			CompressAfterDays: file.Logs.CompressAfterDays,
+			StaticAssets:      file.Logs.StaticAssets,
+			UIClicks:          file.Logs.UIClicks,
+			Echo:              file.Logs.Echo,
+		},
+
+		file: file,
 	}
 	return
 }

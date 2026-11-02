@@ -20,10 +20,11 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core import encryption
 from app.core.config import Config
+from app.core.config_live import Holder
 from app.core.db import Store
 from app.models.api_keys import APIKey, load_api_key, narrow_role
 from app.models.sessions import Session, load_session
-from app.models.users import ROLE_ADMIN, User
+from app.models.users import ROLE_ADMIN, User, get_owner_id
 
 # Auth method names, as reported by /api/me. Worth exposing so a client can
 # tell a browser session from a key without guessing.
@@ -154,18 +155,21 @@ class LoadActor:
     guards' job -- because plenty of routes are fine for anonymous visitors.
 
     The lookup touches SQLite, so it runs in a worker thread rather than on
-    the event loop."""
+    the event loop.
 
-    def __init__(self, app: ASGIApp, store: Store, cfg: Config) -> None:
+    It reads the running configuration per request: whether API keys are
+    believed at all (auth.api_keys) can change while the server runs."""
+
+    def __init__(self, app: ASGIApp, store: Store, settings: Holder) -> None:
         self.app = app
         self.store = store
-        self.cfg = cfg
+        self.settings = settings
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
             request = Request(scope)
             actor = await run_in_threadpool(
-                resolve_actor, self.store, self.cfg, dict(request.cookies), request.headers.get("authorization", "")
+                resolve_actor, self.store, self.settings.get(), dict(request.cookies), request.headers.get("authorization", "")
             )
             request.state.actor = actor
         await self.app(scope, receive, send)
@@ -273,6 +277,45 @@ class RequireAPIKey(Guard):
         if not actor.via_api_key:
             return _refuse(403, "this endpoint requires an API key, not a signed-in session")
         return None
+
+
+class RequireOwner(Guard):
+    """Lets through only the owner, signed in from a browser. It guards the
+    activity log (app/routes/logs.py), which shows what every account did --
+    including the other admins, which is exactly why they cannot read it.
+    Everyone else, any API key included, gets the 404 an unknown route gets:
+    the Logs screen is not something to advertise.
+
+    A session, not a key: the log holds every account's IP addresses and
+    activity, and a key is a credential that lives in files. An app that
+    wants the log readable by a script should add a narrow export,
+    knowingly.
+
+    Finding the owner reads SQLite, so unlike the guards above this one runs
+    its check in a worker thread."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        request = Request(scope)
+        actor = actor_from(request)
+        allowed = actor is not None and not actor.via_api_key and actor.is_admin
+        if allowed:
+            owner_id = await run_in_threadpool(get_owner_id, request.app.state.store)
+            allowed = owner_id is not None and owner_id == actor.user.id
+        if not allowed:
+            await _refuse(404, "not_found")(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+def log_actor(actor: Actor | None) -> dict:
+    """Who an activity-log entry belongs to: the account, the role it acted
+    with, and which door it came through (a key by its public id only)."""
+    if actor is None:
+        return {"method": "anon"}
+    result = {"user_id": actor.user.id, "name": actor.user.display_name, "role": actor.role, "method": actor.method}
+    if actor.api_key is not None:
+        result["key_id"] = actor.api_key.id
+    return result
 
 
 # ---------------------------------------------------------------------------

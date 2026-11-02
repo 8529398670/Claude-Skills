@@ -17,7 +17,8 @@ section (image and container names, `bind_address`, `host_port`, `data_dir`,
 `restart`, `memory`, `cpus`, `pids_limit`, `tmpfs_size`) and `server.port` for
 the container side of the published port. Neither reads an environment
 variable, and the container is started with no `-e` flags -- it reads the
-same `config.yaml`, mounted read-only.
+same `config.yaml`, mounted writable so the owner's Settings screen can save
+it, and the key in `config/secret.key`, mounted read-only.
 
 The scripts do not parse YAML themselves. `build_image` builds the image,
 then runs *its* binary (`config shell docker`) in a throwaway container with
@@ -62,13 +63,14 @@ reconsider -- not before.
   the builder stage. The shipped image contains a single static binary and
   nothing else -- the frontend is compiled into it by `go:embed`, and account
   administration is the `manage` subcommand rather than a second executable.
-- **No `static/`, `language.yaml`, or `config.yaml` in the image.**
-  `server.static_dir` (`./static` beside the config, so `/app/static`) does
-  not exist, so the embedded frontend is used; a `language.yaml` in the data
-  directory overrides the embedded wording. `config.yaml` is kept out by
-  `.dockerignore` because it holds the secret key and an image layer is
-  forever -- it is mounted at run time instead, so one image serves any
-  deployment and a config change needs a restart, not a rebuild.
+- **No `static/`, `language.yaml`, `config.yaml` or `secret.key` in the
+  image.** `server.static_dir` (`./static` beside the config, so
+  `/app/static`) does not exist, so the embedded frontend is used; a
+  `language.yaml` in the data directory overrides the embedded wording.
+  `config.yaml` and `secret.key` are kept out by `.dockerignore` -- an image
+  layer is forever, and a key in one is everyone's -- and mounted at run time
+  instead, so one image serves any deployment. Most settings apply while it
+  runs; the rest need a restart, never a rebuild.
 - **No `ENV`, no `EXPOSE`.** `-tags container` pins the image's fixed
   layout into the binary instead (config at `/app/config/config.yaml`, state in
   `/app/data`, listen on `0.0.0.0`; see `configuration.md`). The port is
@@ -119,15 +121,21 @@ and the dependencies before a release -- and scan the built image too, which
 
 - **Stops on first run for review.** A fresh clone has no `config/config.yaml` (it
   is gitignored), so the first `docker/run.sh` writes one from the image's
-  defaults with a new key and exits, naming the settings that depend on what
+  defaults, and `config/secret.key` with a new key, and exits, naming the settings that depend on what
   sits in front of this. Starting on unreviewed defaults would mean guessing
   at `secure_cookies` and `trust_proxy`.
+- **Moves the key out of an older `config.yaml`** before anything else
+  (`config migrate`, run through the image with `config/` mounted, as you).
+  It is silent unless there was a `server.secret_key` to move. A missing
+  `secret.key` with no database yet gets a new one; with a database it stops
+  and says to restore it from backup.
 - **Checks that Docker can see the project at all.** Docker Desktop and
   colima run the daemon in a VM that shares only some host paths (colima
   shares your home directory). Mount anything outside those and Docker
   silently mounts an empty directory from inside the VM: `config.yaml` arrives
   as a directory, and the database would live in the VM where no host backup
-  ever finds it. The script checks that `config.yaml` arrives as a file and
+  ever finds it. The script checks that `config.yaml` and `secret.key` arrive
+  as files and
   that a probe written to the data directory appears on the host, and stops
   with an explanation if not.
 - **Names whatever holds the host port.** With its own old container
@@ -163,11 +171,33 @@ and the dependencies before a release -- and scan the built image too, which
   defaults to off because it is only correct when a proxy you control really
   is in front and clients cannot reach the backend any other way.
   `docker/run.sh` reminds you while it is off.
-- **`config.yaml` is mounted read-only, separately from the data
-  directory,** so the secret key is never inside `docker.data_dir`. The
-  script makes the file readable by the container's group (0640, you stay the
-  owner) and tests that it worked, the same way it handles the data
-  directory below.
+- **`config.yaml` is mounted writable and `secret.key` read-only, both
+  separately from the data directory,** so the key is never inside
+  `docker.data_dir`. The script gives the container's group read-write on
+  `config.yaml` (0660) and read on `secret.key` (0640) -- you stay the owner
+  of both -- and tests that it worked, the same way it handles the data
+  directory below. If the container can read `config.yaml` but not write it,
+  it still starts, and the Settings screen is read-only.
+- **`config.yaml` is rewritten in place inside the container.** A single file
+  bind-mounted into a container cannot be replaced by renaming a new file over
+  it, and `/app/config` is root's and read-only anyway. So a save from the
+  Settings screen (or `docker exec <name> /app/server config set ...`) copies
+  the previous version to `<data_dir>/config.yaml.bak` and then writes the
+  file from the start, truncating the tail last, so it is never empty. On the
+  host, edit it with something that saves in place too (vi, nano, VS Code
+  do). An editor that writes a new file and renames it over the old one
+  leaves the container holding the old file, because a bind mount follows the
+  file, not the name. The server notices (the file's link count drops to 0),
+  the Settings screen says to restart the container, and saves are refused
+  until then.
+- **Guards `docker.data_dir`.** `config.yaml` is writable from inside the
+  container now, and the script hands `data_dir` to the container's user
+  (`chown -R`). So the Settings screen refuses to change `docker:` (and
+  `build:`) from inside the container, and the script refuses a `data_dir`
+  of `/` or a home directory, or one that is not empty and is not this app's
+  (no `app.db`, no `.<slug>-data` marker, which it leaves in every data
+  directory it sets up). It also prints any `docker:` setting that changed
+  since the last run (`.run/docker.last`).
 - **`--read-only`** plus a `noexec,nosuid` tmpfs for `/tmp`: the container
   cannot write to its own filesystem. This is what turns the Dockerfile's
   ownership choices into an actual guarantee.
@@ -182,15 +212,17 @@ and the dependencies before a release -- and scan the built image too, which
 ## Paths inside the container
 
 The binary in the image is built with `-tags container`, which pins the app
-directory to `/app/data` and the config file to `/app/config/config.yaml`,
+directory to `/app/data` and the config file to `/app/config/config.yaml`
+(with `secret.key` beside it),
 overriding `server.app_dir` and the `~/.config/<slug>` default that apply
 outside a container. A container has no meaningful home directory, and the
 point of the mounts is that state lives on the host.
 
 Everything the app persists is therefore in the mounted data directory --
-database and `storage/`. The exception is the secret key, which lives in
-`config.yaml` in the project directory and is mounted separately, so the key
-stays *outside* the data volume. See `configuration.md` for why that
+database, `storage/`, and the `config.yaml.bak` a Settings save leaves. The
+exception is the secret key, which lives in `config/secret.key` in the project
+directory and is mounted separately, so the key stays *outside* the data
+volume. See `configuration.md` for why that
 distinction is worth keeping.
 
 ## The data directory and container ownership
@@ -198,7 +230,8 @@ distinction is worth keeping.
 `docker/run.sh` bind-mounts `docker.data_dir` (`./data`) so the database stays
 visible on the host for backups. A bind mount ignores the image's ownership,
 though, so the script makes sure the container's unprivileged user can
-actually write there -- and read `config.yaml` -- before starting anything.
+actually write there -- and read `secret.key` and `config.yaml` -- before
+starting anything.
 
 It has to, because platforms disagree:
 
@@ -208,7 +241,7 @@ It has to, because platforms disagree:
 - **Docker Desktop on macOS**: the file-sharing layer usually ignores guest
   ownership -- any uid can read and write -- and the chown fails harmlessly.
 - **colima with sshfs mounts**: host file modes are enforced *and* root in the
-  container cannot change them. A 0600 `config.yaml` is unreadable to uid
+  container cannot change them. A 0600 `secret.key` is unreadable to uid
   10001, and the script stops with the exact `sudo chgrp`/`sudo chown` to run.
 
 So the changes are attempted, their failure is tolerated, and the result is
@@ -218,16 +251,18 @@ denied" -- which looks like a bug in the app and is not.
 
 ## The secret key
 
-`server.secret_key` is generated once, when `config.yaml` is created
-(`scaffold.py`, `config init`, or the first `docker/run.sh` on a fresh
-clone), and read from there on every run. It must stay stable:
+The key is `config/secret.key`, generated once (`scaffold.py`, `config
+init`, or the first `docker/run.sh` on a fresh clone) and mounted read-only
+into the container on every run. An older project's `server.secret_key` is
+moved into it by `docker/run.sh` before the container starts; the container
+itself never writes `config/`. It must stay stable:
 
 - It encrypts session cookie payloads -- rotating it logs everyone out.
 - With `server.encrypt_at_rest: true` (default) it encrypts every value in
   the database -- **rotating or losing it makes the data permanently
   unreadable.**
 
-So `config.yaml` is as important as `data/` for backups. Back up both
+So `secret.key` is as important as `data/` for backups. Back up both
 together or neither is useful. If the user is setting up backups, say this
 explicitly; it is the kind of thing discovered at the worst possible time.
 
@@ -283,8 +318,9 @@ docker exec -it <name> /app/server manage revoke-key -key-id <id>
 The key is printed once and is not recoverable -- capture it where the script
 needs it, or revoke and mint another. `list-keys` is the standing answer to
 "what has programmatic access to this deployment", and worth reading before
-assuming the answer is nothing. Set `auth.api_keys: false` in `config.yaml`
-and restart to close that surface entirely.
+assuming the answer is nothing. Set `auth.api_keys: false` (Settings screen,
+or `config.yaml` on the host) to close that surface entirely -- it applies at
+once.
 
 For a login link, `scripts/login.sh --docker` does the `docker exec` for you
 and says which container and address the link is for.
@@ -296,12 +332,13 @@ If the container is stopped, or it was started with
 docker stop <name>
 docker run --rm -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/config/config.yaml:/app/config/config.yaml:ro" \
+  -v "$(pwd)/config/secret.key:/app/config/secret.key:ro" \
   <image> manage reissue-login -user-id 1
 docker start <name>
 ```
 
-The `config.yaml` mount is what carries the secret key; without it the
-stored records cannot be decrypted.
+The `secret.key` mount is what carries the key; without it the stored
+records cannot be decrypted.
 
 The socket lives inside the mounted data directory, so it is covered by the
 volume's permissions and never crosses the container boundary. Nothing about
@@ -324,8 +361,11 @@ happens before anything is stopped, so a compile error leaves the old server
 up. With no arguments it then reads `config shell server` -- every path and
 the URL, resolved by the binary exactly as the server will -- and:
 
-- on a fresh clone with no `config/config.yaml`, writes one (`config init`)
-  and stops, as `docker/run.sh` does, saying which URL it will serve and,
+- moves `server.secret_key` out of an older `config/config.yaml` into
+  `config/secret.key` (`config migrate`; silent when there is nothing to move),
+  and refuses to start when `secret.key` is missing but the database exists;
+- on a fresh clone with no `config/config.yaml`, writes it and
+  `config/secret.key` (`config init`) and stops, as `docker/run.sh` does, saying which URL it will serve and,
   when that is plain `http://`, the line to change so `secure_cookies` does
   not silently break sign-in;
 - stops the server it started last: it records its own pid in
@@ -335,7 +375,7 @@ the URL, resolved by the binary exactly as the server will -- and:
 - refuses to start, naming the process (via `lsof`), when anything else is
   listening on `server.port` -- including this project's docker container;
 - warns when `secure_cookies` is on but the URL is plain `http://`;
-- prints the URL and where it came from, the config file, the app dir, the
+- prints the URL and where it came from, the config file and secret.key, the app dir, the
   database (existing, or new with the first login link to follow), and
   whether static/ and language come from disk or the embedded copies;
 - runs the server in the foreground and prints `Ready: <url>` once
@@ -408,8 +448,8 @@ host on the assumption that it is equally protected.
 
 Two things to pass on with any binary you hand over:
 
-- **Its `config.yaml` is the key.** On first run the binary writes
-  `~/.config/<slug>/config.yaml` with a fresh `server.secret_key`, which
+- **Its `secret.key` is the key.** On first run the binary writes
+  `~/.config/<slug>/config.yaml` and a `secret.key` with a fresh key, which
   encrypts session cookies and, with `server.encrypt_at_rest` on, the
   database. Whoever runs the binary owns backing that file up with the data.
 - **`server.secure_cookies` must be true anywhere real.** Only `false` for
@@ -421,8 +461,9 @@ got is what you built.
 
 ## Backups
 
-The entire state is the `data/` directory plus `config.yaml`, and you need
-both -- `app.db` without the key in `config.yaml` is unreadable. bolt is a single file, so a
+The entire state is the `data/` directory plus `config/secret.key` and
+`config/config.yaml`, and you need the first two together -- `app.db` without
+the key in `secret.key` is unreadable. bolt is a single file, so a
 copy taken while the server is stopped is complete and consistent; copying
 from under a running server can catch a write in progress. Use `docker stop`,
 copy, `docker start`.

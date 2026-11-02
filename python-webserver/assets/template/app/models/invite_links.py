@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 
 from app.core import encryption
 from app.core.db import BUCKET_INVITE_LINKS, BUCKET_SESSIONS, BUCKET_USERS, Record, Store, Transaction
-from app.models import from_iso, to_iso, utc_now
+from app.models import RestoreGoneError, deleted_long_ago, from_iso, mark_deleted, to_iso, unmark_deleted, utc_now
 from app.models.pins import name_closeness
 from app.models.sessions import new_session, split_credential
 from app.models.users import ROLE_USER, User, create_user_tx, get_user
@@ -73,6 +73,9 @@ class InviteLink:
     expires_at: datetime
     accounts: list[int] = field(default_factory=list)
     revoked_at: datetime | None = None
+    # Set by delete_invite_link; restorable for RESTORE_WINDOW, like a key.
+    deleted_at: datetime | None = None
+    deleted_by: int | None = None
 
     @property
     def remaining(self) -> int:
@@ -80,7 +83,7 @@ class InviteLink:
 
     @property
     def live(self) -> bool:
-        return self.revoked_at is None and utc_now() < self.expires_at
+        return self.revoked_at is None and self.deleted_at is None and utc_now() < self.expires_at
 
     def owns(self, user_id: int) -> bool:
         return user_id in self.accounts
@@ -96,6 +99,8 @@ class InviteLink:
             "created_at": to_iso(self.created_at),
             "expires_at": to_iso(self.expires_at),
             "revoked_at": to_iso(self.revoked_at),
+            "deleted_at": to_iso(self.deleted_at),
+            "deleted_by": self.deleted_by,
         }
 
     @classmethod
@@ -110,6 +115,8 @@ class InviteLink:
             created_at=from_iso(record["created_at"]),
             expires_at=from_iso(record["expires_at"]),
             revoked_at=from_iso(record.get("revoked_at")),
+            deleted_at=from_iso(record.get("deleted_at")),
+            deleted_by=record.get("deleted_by"),
         )
 
 
@@ -262,8 +269,9 @@ def invite_matches(store: Store, link: InviteLink, typed: str) -> list[User]:
 
 
 def list_invite_links(store: Store) -> list[InviteLink]:
-    """Every link, newest first."""
+    """Every link, newest first, leaving out deleted ones."""
     links = [InviteLink.from_record(record) for _, record in store.all(BUCKET_INVITE_LINKS)]
+    links = [link for link in links if link.deleted_at is None]
     links.sort(key=lambda link: link.created_at, reverse=True)
     return links
 
@@ -286,23 +294,49 @@ def revoke_invite_link(store: Store, link_id: str) -> bool:
     return store.update_value(BUCKET_INVITE_LINKS, link_id, mutate) is not None
 
 
-def delete_invite_link(store: Store, link_id: str) -> bool:
-    """Remove a link for good. The accounts it made stay; they just can no
-    longer sign in on a new device through it."""
-    if store.get(BUCKET_INVITE_LINKS, link_id) is None:
-        return False
-    store.delete(BUCKET_INVITE_LINKS, link_id)
-    return True
+def delete_invite_link(store: Store, link_id: str, actor_id: int | None) -> bool:
+    """Take a link off the list and stop it working; False if there is no
+    such link or it is already deleted. The accounts it made stay; they just
+    can no longer sign in on a new device through it.
+
+    Like delete_api_key, it only marks the row, so restore_invite_link can
+    bring it back for RESTORE_WINDOW. Revoking stays the one-way switch."""
+    found = False
+
+    def mutate(record: Record) -> None:
+        nonlocal found
+        found = record.get("deleted_at") is None
+        mark_deleted(record, actor_id)
+
+    return store.update_value(BUCKET_INVITE_LINKS, link_id, mutate) is not None and found
+
+
+def restore_invite_link(store: Store, link_id: str, actor_id: int, actor_is_admin: bool) -> InviteLink:
+    """Undo delete_invite_link. Raises a RestoreError when the window has
+    passed or the actor may not. Only admins reach this today, so in practice
+    any admin may restore any link."""
+
+    def mutate(record: Record) -> None:
+        unmark_deleted(record, actor_id, actor_is_admin)
+
+    record = store.update_value(BUCKET_INVITE_LINKS, link_id, mutate)
+    if record is None:
+        raise RestoreGoneError()
+    return InviteLink.from_record(record)
 
 
 def purge_dead_invite_links(store: Store) -> int:
-    """Drop links revoked or expired longer than INVITE_LINK_RETENTION ago.
-    Dead links are already refused by load_invite_link, so this is only
+    """Drop links revoked or expired longer than INVITE_LINK_RETENTION ago,
+    and deleted ones past their RESTORE_WINDOW. Dead links are already refused by load_invite_link, so this is only
     housekeeping."""
     cutoff = utc_now() - INVITE_LINK_RETENTION
 
     def dead(_key: object, record: Record) -> bool:
         revoked_at = from_iso(record.get("revoked_at"))
-        return (revoked_at is not None and revoked_at < cutoff) or from_iso(record["expires_at"]) < cutoff
+        return (
+            (revoked_at is not None and revoked_at < cutoff)
+            or from_iso(record["expires_at"]) < cutoff
+            or deleted_long_ago(record)
+        )
 
     return store.delete_where(BUCKET_INVITE_LINKS, dead)

@@ -101,9 +101,12 @@ Plain scripts, loaded in dependency order, each adding one global:
 | `dom.js` | Element helpers, `Dom.copy`, `Dom.toast`. No app logic. |
 | `i18n.js` | Loads and applies `language.yaml`. |
 | `api.js` | Every call to the server. Attaches cookies and the CSRF token. |
+| `undo.js` | Ctrl+Z / Ctrl+Y: the undo/redo history every screen records into. |
 | `nav.js` | The sidebar: which screen the URL hash shows. |
 | `app.js` | The account + admin screen. |
 | `keys.js` | The API keys screen. An example of the rule below. |
+| `logs.js` | The owner's Logs screen. |
+| `settings.js` | The owner's Settings screen: config.yaml as a form. |
 
 **Give each new screen its own file with its own `init()`**, included from
 that page's HTML. Do not keep appending to `app.js` -- the whole layout exists
@@ -182,6 +185,133 @@ To upgrade, delete the old files from `static/vendor/` and re-run
   (a key shown once) gets its own `alert` on the screen instead, and
   page-level errors go in `#error-banner` at the top of `<main>`.
 - **Statuses are badges.** `Dom.badge( text , "success" )` for a table cell.
+
+### Undo and redo
+
+Ctrl+Z (Cmd+Z on a Mac) undoes the last thing done on the page; Ctrl+Y or
+Ctrl+Shift+Z redoes it. Actions that matter -- a delete, a rename -- also
+show a toast with an **Undo** button, which is how a phone or anyone who does
+not know the shortcut gets the same thing. `static/js/undo.js` owns the
+history, the keys and the button; screens only hand it their actions. Out of
+the box it covers theme picks, folding the sidebar, renaming the account, and
+deleting an API key or invite link.
+
+```js
+const previous = this.current;
+Undo.run( {
+  label: I18n.get( "undo.theme" ),          // "Undone: theme change"
+  merge: "theme",                           // clicking through five is one step
+  do: () => this.pick( next ),
+  undo: () => this.pick( previous ),
+} );
+```
+
+- **`Undo.run`** performs `do` and records it. **`Undo.record( { label ,
+  undo , redo } )`** is for a change that has already happened -- a form that
+  saved to the server first (`App.onRename`), a delete (`Keys.deleteButton`).
+- **`toast: true`** announces the action with an Undo button ("API key
+  deleted · Undo", 8 seconds, held open while hovered or focused). Use it
+  for deletes and anything whose effect is not obvious on screen; leave it
+  off for things the person just watched happen (a theme, the sidebar).
+  Undo and redo themselves always toast, with the opposite button.
+- **`merge: "key"`** folds quick repeats of the same kind (within 1.5s) into
+  one step that undoes back to where the run started. Sliders, drags and
+  pickers want it.
+- **Screens are not steps.** Moving between screens is Back and Forward, not
+  Ctrl+Z. Each action remembers the screen it happened on, and undoing it
+  from elsewhere goes back there first, so the person sees what came back.
+  `screen: null` opts out (the sidebar looks the same everywhere).
+- **Text fields keep their own undo.** While an `input`, `textarea`,
+  `select` or `contenteditable` has focus the shortcuts are left to the
+  browser. So a form that has saved calls **`Undo.saved( form )`**, which
+  lets go of the focus -- without it, Ctrl+Z after pressing Enter would undo
+  the typing, not the save.
+- **Steps may be async.** An undo that calls `Api` is awaited before the
+  next key is taken, and one that throws is dropped with an error toast.
+  Undoing a server change means calling the server, not repainting the old
+  value: `App.applyRename` is the example.
+- **Server-backed undo checks before it writes.** Each direction sends the
+  value it expects to find (`Api.rename( name , expect )`); the server
+  answers 409 when someone changed it in the meantime, and the step is
+  dropped with "it was changed somewhere else" instead of overwriting their
+  change. Give any new server-backed undo the same `expect`.
+- **A step must not record itself.** `Undo.replaying` is set while a step
+  runs, so UI code it triggers does not add to the history.
+- **Deletes are soft, revokes are final.** The server only marks a deleted
+  key or invite link and can restore it for 10 minutes (to whoever deleted
+  it, or an admin), so delete asks no confirmation and offers Undo; the
+  undo calls the `.../restore` endpoint. A revoke says "stop trusting this",
+  so it keeps its confirm dialog and is never undoable -- an undo would
+  quietly trust a possibly leaked credential again. Logout and issuing a
+  login link, invite or key stay out too. A new deletable thing follows the
+  same soft-delete + restore pattern (`references/architecture.md`).
+- History is in memory: a reload (including logout) starts it fresh.
+  `Undo.canUndo()` / `canRedo()` are there for toolbar buttons.
+
+Labels and the toast prefixes are the `undo:` block in `language.yaml`.
+A label is a phrase that reads after "Undone:" ("name changed"); every new
+undoable action adds its label there.
+
+### Activity tracking and the Logs screen
+
+`track.js` reports what people do on the page to the activity log; the
+server logs requests on its own. `Track.init( me )` runs for every signed-in
+user (when `me.logs_enabled`), and from then on records, with the current
+screen:
+
+- `session_start` once per tab: time zone, language, screen and viewport
+  size, platform, touch points, theme. A random per-tab id rides on every
+  event, so two tabs of one person read apart.
+- `nav` from `Nav.render`, `undo`/`redo` from `Undo.step`, and `fetch_fail`
+  from `Api.request` (no answer, or a 5xx).
+- `click` on any button, link, `summary`, checkbox or radio (when
+  `me.logs_ui_clicks`), named by its `data-i18n` key, else `#id`, else
+  `aria-label`, else the first words of its label. Only `#hash` hrefs are
+  kept: any other href could be a login link.
+- `submit` with the form's id and its field **names**.
+- `error` from `window.onerror` and unhandled promise rejections.
+
+**Never send a value.** That one rule is what keeps login links, keys and
+PINs out of the log, since they only ever live in fields and in `<code>`
+boxes. A new event follows it: `Track.event( "click" , { target , detail } )`
+with names and ids only. Mark a part of the page that should not be tracked
+with `data-no-track` (the Logs screen is, or reading the log would fill it).
+
+Events go in batches every 5 seconds, at 50, and when the tab is hidden,
+straight to `fetch` with `keepalive` so the last batch outlives a closing
+tab. A failed send is dropped, not retried.
+
+`logs.js` is the owner's screen (`Logs.init( me )` returns at once unless
+`me.is_owner`). Days are `<details>` blocks, newest first and the newest open;
+a day's rows load when it is first opened, 200 at a time with "Load more".
+The search box goes to the server as typed (debounced), and the kind buttons
+add a `kind:` term. Rows are built with `Dom.el` like everything else, and a
+row's JSON shows in a `<pre>` via `textContent`. Its text is the `logs:`
+block in `language.yaml`.
+
+### The Settings screen
+
+`settings.js` is the owner's other screen (`Settings.init( me )` returns at
+once unless `me.is_owner`): `config.yaml` as a form, one field per key, built
+entirely from `GET /api/owner/settings`. The server works out each key's type,
+value, default, help (the comment above it in `defaults.yaml`) and apply mode
+(`[live]` / `[restart]` / `[scripts]`), so `settings.js` knows nothing about
+any one setting -- a key added to `defaults.yaml` appears on the screen with no
+frontend change. Bool is a switch, int a number field, a list a textarea with
+one item per line.
+
+Save sends only the changed fields plus the `version` the form was loaded
+from. A 409 `settings_changed` means the file changed in the meantime (a hand
+edit, another tab) and shows a "Reload from file" prompt instead of
+overwriting; a 400 `invalid_settings` puts each problem under the field it
+names (every problem starts with its `section.key`). The save is recorded in
+`Undo` as a server-backed step whose undo posts the old values, expecting the
+version the save produced -- so an undo after a hand edit is refused rather
+than clobbering it. While the screen is showing and nothing is typed in it, it
+re-reads the file every 10 seconds, which is how a hand edit or a reload error
+appears without a refresh. Its text is the `settings:` block in
+`language.yaml`; the help under each field is not, since it comes from
+`defaults.yaml`.
 
 ### Themes
 

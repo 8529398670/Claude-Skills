@@ -25,6 +25,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.config import Config, trusted_proxy_networks
+from app.core.config_live import Holder
 
 IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
 
@@ -51,9 +52,14 @@ CONTENT_SECURITY_POLICY = "; ".join(
 
 
 class SecurityHeaders:
-    def __init__(self, app: ASGIApp, cfg: Config) -> None:
+    """server.secure_cookies decides HSTS and can change while the server
+    runs, so both header sets are built here and the current setting picks
+    one per request."""
+
+    def __init__(self, app: ASGIApp, settings: Holder) -> None:
         self.app = app
-        self.headers = {
+        self.settings = settings
+        self.plain = {
             "content-security-policy": CONTENT_SECURITY_POLICY,
             "x-frame-options": "DENY",
             "x-content-type-options": "nosniff",
@@ -63,23 +69,24 @@ class SecurityHeaders:
             "cross-origin-resource-policy": "same-origin",
             "x-dns-prefetch-control": "off",
         }
-        if cfg.secure_cookies:
-            # Only claim HTTPS-only when the deployment actually is. Sending
-            # HSTS from a local http:// run would pin the browser to https for
-            # localhost and break every other project on that port.
-            self.headers["strict-transport-security"] = "max-age=63072000; includeSubDomains"
+        # Only claim HTTPS-only when the deployment actually is. Sending HSTS
+        # from a local http:// run would pin the browser to https for
+        # localhost and break every other project on that port.
+        self.secure = dict(self.plain, **{"strict-transport-security": "max-age=63072000; includeSubDomains"})
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
+        chosen = self.secure if self.settings.get().secure_cookies else self.plain
+
         async def send_with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(scope=message)
                 # setdefault, so a route that needs a stricter value (the
                 # login page's Referrer-Policy: no-referrer) keeps it.
-                for name, value in self.headers.items():
+                for name, value in chosen.items():
                     headers.setdefault(name, value)
             await send(message)
 
@@ -118,6 +125,21 @@ def client_ip(scope: Scope, cfg: Config, trusted: Sequence[IPNetwork]) -> str:
     return hop
 
 
+# server.trusted_proxies parsed, for the Config it was parsed from. The list
+# can change while the server runs, so it is worked out per request -- but
+# only once per Config, not once per request.
+_trusted_cache: tuple[Config | None, list[IPNetwork]] = (None, [])
+
+
+def trusted_for(cfg: Config) -> list[IPNetwork]:
+    global _trusted_cache
+    cached_cfg, networks = _trusted_cache
+    if cached_cfg is not cfg:
+        networks = trusted_proxy_networks(cfg)
+        _trusted_cache = (cfg, networks)
+    return networks
+
+
 def _is_trusted(address: str, trusted: Sequence[IPNetwork]) -> bool:
     try:
         parsed = ipaddress.ip_address(address)
@@ -134,40 +156,43 @@ class RateLimit:
     rather than assuming the limit still holds.
 
     It runs before the request is authenticated, which is what keeps an
-    unauthenticated flood cheap to refuse."""
+    unauthenticated flood cheap to refuse.
 
-    def __init__(self, app: ASGIApp, cfg: Config) -> None:
+    The budget, the window and who counts as a proxy are read per request,
+    so an edit to server.rate_limit_max, rate_limit_window_seconds or the
+    proxy settings applies at once."""
+
+    def __init__(self, app: ASGIApp, settings: Holder) -> None:
         self.app = app
-        self.cfg = cfg
-        self.trusted = trusted_proxy_networks(cfg)
-        self.max_requests = cfg.rate_limit_max
-        self.window = float(cfg.rate_limit_window_seconds)
+        self.settings = settings
         self._hits: dict[str, deque[float]] = {}
         self._last_sweep = time.monotonic()
 
-    def _sweep(self, now: float) -> None:
+    def _sweep(self, now: float, window: float) -> None:
         # Forget clients with nothing inside the window, so the table does not
         # grow forever with every address that ever made one request.
-        if now - self._last_sweep < self.window:
+        if now - self._last_sweep < window:
             return
         self._last_sweep = now
-        for key in [key for key, hits in self._hits.items() if not hits or now - hits[-1] > self.window]:
+        for key in [key for key, hits in self._hits.items() if not hits or now - hits[-1] > window]:
             del self._hits[key]
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        cfg = self.settings.get()
+        window = float(cfg.rate_limit_window_seconds)
         now = time.monotonic()
-        self._sweep(now)
-        hits = self._hits.setdefault(client_ip(scope, self.cfg, self.trusted), deque())
-        while hits and now - hits[0] > self.window:
+        self._sweep(now, window)
+        hits = self._hits.setdefault(client_ip(scope, cfg, trusted_for(cfg)), deque())
+        while hits and now - hits[0] > window:
             hits.popleft()
-        if len(hits) >= self.max_requests:
+        if len(hits) >= cfg.rate_limit_max:
             response = JSONResponse(
                 {"error": "too many requests"},
                 status_code=429,
-                headers={"retry-after": str(int(self.window))},
+                headers={"retry-after": str(int(window))},
             )
             await response(scope, receive, send)
             return

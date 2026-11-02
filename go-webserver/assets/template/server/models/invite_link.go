@@ -55,6 +55,8 @@ type InviteLink struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  time.Time  `json:"expires_at"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	// Set by DeleteInviteLink; restorable for RestoreWindow, like a key.
+	SoftDelete
 }
 
 func ( link *InviteLink ) Remaining() ( result int ) {
@@ -64,7 +66,7 @@ func ( link *InviteLink ) Remaining() ( result int ) {
 }
 
 func ( link *InviteLink ) Live() ( result bool ) {
-	result = link.RevokedAt == nil && time.Now().UTC().Before( link.ExpiresAt )
+	result = link.RevokedAt == nil && link.Deleted() == false && time.Now().UTC().Before( link.ExpiresAt )
 	return
 }
 
@@ -256,13 +258,15 @@ func InviteMatches( store *db.Store , link *InviteLink , typed string ) ( matche
 	return
 }
 
-// ListInviteLinks is every link, newest first.
+// ListInviteLinks is every link, newest first, leaving out deleted ones.
 func ListInviteLinks( store *db.Store ) ( links []*InviteLink , err error ) {
 	links = []*InviteLink{}
 	err = store.ForEach( db.BucketInviteLinks ,
 		func() any { return &InviteLink{} } ,
 		func( key []byte , item any ) bool {
-			links = append( links , item.( *InviteLink ) )
+			if link := item.( *InviteLink ); link.Deleted() == false {
+				links = append( links , link )
+			}
 			return true
 		} )
 	sort.Slice( links , func( i int , j int ) bool { return links[ i ].CreatedAt.After( links[ j ].CreatedAt ) } )
@@ -292,16 +296,44 @@ func RevokeInviteLink( store *db.Store , link_id string ) ( err error ) {
 	return
 }
 
-// DeleteInviteLink removes a link for good. The accounts it made stay; they
-// just can no longer sign in on a new device through it.
-func DeleteInviteLink( store *db.Store , link_id string ) ( err error ) {
-	if _ , err = GetInviteLink( store , link_id ); err != nil { return }
-	err = store.Delete( db.BucketInviteLinks , []byte( link_id ) )
+// DeleteInviteLink takes a link off the list and stops it working;
+// db.ErrNotFound when there is no such link or it is already deleted. The
+// accounts it made stay; they just can no longer sign in on a new device
+// through it.
+//
+// Like DeleteAPIKey it only marks the row, so RestoreInviteLink can bring it
+// back for RestoreWindow. Revoking stays the one-way switch.
+func DeleteInviteLink( store *db.Store , link_id string , actor_id uint64 ) ( err error ) {
+	err = store.UpdateValue( db.BucketInviteLinks , []byte( link_id ) ,
+		func() any { return &InviteLink{} } ,
+		func( item any ) ( mutate_err error ) {
+			if item.( *InviteLink ).markDeleted( actor_id ) == false {
+				mutate_err = db.ErrNotFound
+			}
+			return
+		} )
+	return
+}
+
+// RestoreInviteLink undoes DeleteInviteLink, or returns ErrRestoreGone,
+// ErrRestoreForbidden or ErrRestoreExpired. Only admins reach it today, so
+// in practice any admin may restore any link.
+func RestoreInviteLink( store *db.Store , link_id string , actor_id uint64 , actor_is_admin bool ) ( link *InviteLink , err error ) {
+	err = store.UpdateValue( db.BucketInviteLinks , []byte( link_id ) ,
+		func() any { return &InviteLink{} } ,
+		func( item any ) ( mutate_err error ) {
+			link = item.( *InviteLink )
+			mutate_err = link.unmarkDeleted( actor_id , actor_is_admin )
+			return
+		} )
+	if errors.Is( err , db.ErrNotFound ) { err = ErrRestoreGone }
+	if err != nil { link = nil }
 	return
 }
 
 // PurgeDeadInviteLinks drops links that have been revoked or expired for
-// longer than inviteLinkRetention. Dead links are already refused by
+// longer than inviteLinkRetention, and deleted ones past RestoreWindow. Dead
+// links are already refused by
 // LoadInviteLink, so this is only housekeeping.
 func PurgeDeadInviteLinks( store *db.Store ) ( removed int , err error ) {
 	cutoff := time.Now().UTC().Add( -inviteLinkRetention )
@@ -310,6 +342,9 @@ func PurgeDeadInviteLinks( store *db.Store ) ( removed int , err error ) {
 		func( key []byte , item any ) bool {
 			link := item.( *InviteLink )
 			if link.RevokedAt != nil && link.RevokedAt.Before( cutoff ) {
+				return true
+			}
+			if link.deletedLongAgo() {
 				return true
 			}
 			return link.ExpiresAt.Before( cutoff )

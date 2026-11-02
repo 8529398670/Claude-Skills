@@ -183,3 +183,54 @@ th { color: var(--bs-secondary-color); font-size: 0.8rem; text-transform: upperc
   background: linear-gradient(135deg, var(--swatch-bg) 50%, var(--swatch-accent) 50%);
 }
 .theme-swatch-dark { --swatch-bg: #101215; --swatch-accent: #6ea0ff; }
+
+/* The Logs screen: one <details> per day, a compact table inside. */
+.log-days { display: flex; flex-direction: column; gap: 0.5rem; }
+.log-day { border: 1px solid var(--app-border); border-radius: var(--bs-border-radius); background: var(--app-surface); }
+.log-day-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  padding: 0.6rem 0.9rem;
+  min-height: 44px;
+  cursor: pointer;
+}
+.log-day[open] > .log-day-summary { border-bottom: 1px solid var(--app-border); }
+.log-day-date { font-weight: 600; }
+.log-day-meta { color: var(--bs-secondary-color); font-size: 0.875rem; }
+.log-day-body { padding: 0.75rem 0.9rem; }
+.log-table { font-size: 0.85rem; }
+.log-row { cursor: pointer; }
+.log-what { overflow-wrap: anywhere; font-family: var(--bs-font-monospace); }
+.log-json {
+  margin: 0;
+  max-height: 24rem;
+  overflow: auto;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: inherit;
+}
+
+/* The Settings screen: one fieldset per config.yaml section. The help text
+   is defaults.yaml's comments; pre-wrap keeps the indentation of examples. */
+.settings-section { border-top: 1px solid var(--app-border); padding-top: 1rem; margin-bottom: 1.25rem; }
+.settings-section legend { font-family: var(--bs-font-monospace); }
+.settings-key { margin-bottom: 1.1rem; max-width: 46rem; }
+.settings-label { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.settings-label code { color: inherit; font-size: 0.95rem; }
+.settings-help { white-space: pre-wrap; overflow-wrap: anywhere; }
+.settings-key .form-text code { color: inherit; }
+.settings-dirty { border-color: var(--app-accent); box-shadow: inset 3px 0 0 var(--app-accent); }
+.form-check-input.settings-dirty { box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--app-accent) 35%, transparent); }
+.settings-key .invalid-feedback { display: block; }
+.settings-key .invalid-feedback:empty { display: none; }
+.settings-actions {
+  position: sticky;
+  bottom: 0;
+  align-items: center;
+  padding: 0.75rem 0;
+  background: var(--app-surface);
+  border-top: 1px solid var(--app-border);
+}

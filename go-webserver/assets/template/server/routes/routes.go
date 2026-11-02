@@ -9,11 +9,14 @@
 package routes
 
 import (
+	errors "errors"
+
 	fiber "github.com/gofiber/fiber/v3"
 
 	config "{{MODULE_PATH}}/server/config"
 	db "{{MODULE_PATH}}/server/db"
 	language "{{MODULE_PATH}}/server/language"
+	logs "{{MODULE_PATH}}/server/logs"
 	mcp "{{MODULE_PATH}}/server/mcp"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
@@ -24,20 +27,27 @@ import (
 // rather than reaching for package-level globals is what makes the handlers
 // testable and keeps the wiring visible in main.go.
 type Handlers struct {
-	Store    *db.Store
-	Config   *config.Config
+	Store *db.Store
+	// Settings is the running configuration: read it through cfg(), once per
+	// request, since config.yaml can change while the server runs.
+	Settings *config.Holder
 	Guard    *security.Guard
 	Language *language.Language
 	Static   *static.Server
 	Pins     *models.PinGuard
 	// Version is reported to MCP clients as serverInfo.version.
 	Version string
+	// Logs is the activity log (server/logs), set by main.go after New. Nil
+	// or switched off, nothing is logged and its routes are not registered.
+	Logs *logs.Logger
+
+	uiEventBudget eventBudget
 }
 
-func New( store *db.Store , cfg *config.Config , guard *security.Guard , lang *language.Language , static_server *static.Server , version string ) ( handlers *Handlers ) {
+func New( store *db.Store , settings *config.Holder , guard *security.Guard , lang *language.Language , static_server *static.Server , version string ) ( handlers *Handlers ) {
 	handlers = &Handlers{
 		Store:    store,
-		Config:   cfg,
+		Settings: settings,
 		Guard:    guard,
 		Language: lang,
 		Static:   static_server,
@@ -83,6 +93,11 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	account.Post( "/account/login-link" , handlers.Guard.RequireSession , handlers.CreateMyLoginLink )
 	account.Post( "/logout" , handlers.Logout )
 	account.Get( "/team" , handlers.ListTeam )
+	// What someone did on the page, sent by track.js. Theirs to send, the
+	// owner's to read (below).
+	if handlers.Logs.Enabled() {
+		account.Post( "/logs/events" , handlers.RecordUIEvents )
+	}
 
 	// API keys: any signed-in user manages their own.
 	//
@@ -99,6 +114,7 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	keys.Post( "" , handlers.CreateMyAPIKey )
 	keys.Post( "/:key_id/revoke" , handlers.RevokeMyAPIKey )
 	keys.Post( "/:key_id/delete" , handlers.DeleteMyAPIKey )
+	keys.Post( "/:key_id/restore" , handlers.RestoreMyAPIKey )
 
 	// Admin only: deciding who gets in. Note this is the *only* thing admin
 	// rights gate in the base template -- see architecture.md on defaulting
@@ -133,6 +149,7 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	admin.Post( "/invite-links" , handlers.Guard.RequireSession , handlers.CreateInviteLink )
 	admin.Post( "/invite-links/:link_id/revoke" , handlers.RevokeInviteLink )
 	admin.Post( "/invite-links/:link_id/delete" , handlers.Guard.RequireSession , handlers.DeleteInviteLink )
+	admin.Post( "/invite-links/:link_id/restore" , handlers.Guard.RequireSession , handlers.RestoreInviteLink )
 
 	// Admin view of every key in the app -- "who has standing access" -- and
 	// the ability to revoke or delete someone else's. Its own prefix for the
@@ -142,23 +159,60 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	admin_keys.Get( "" , handlers.ListAllAPIKeys )
 	admin_keys.Post( "/:key_id/revoke" , handlers.RevokeAnyAPIKey )
 	admin_keys.Post( "/:key_id/delete" , handlers.DeleteAnyAPIKey )
+	admin_keys.Post( "/:key_id/restore" , handlers.RestoreAnyAPIKey )
+
+	// config.yaml, as the owner's Settings screen: the owner only, from a
+	// browser session, like the activity log below. See settings.go.
+	owner_settings := app.Group( "/api/owner/settings" , handlers.Guard.RequireOwner )
+	owner_settings.Get( "" , handlers.GetSettings )
+	owner_settings.Post( "" , handlers.SaveSettings )
+
+	// The activity log: the owner only, from a browser session -- not other
+	// admins, not any API key (see Guard.RequireOwner). Its own prefix, so
+	// nothing else picks up RequireOwner by sharing the string.
+	if handlers.Logs.Enabled() {
+		owner_logs := app.Group( "/api/owner/logs" , handlers.Guard.RequireOwner )
+		owner_logs.Get( "/days" , handlers.ListLogDays )
+		owner_logs.Get( "/days/:date" , handlers.GetLogDay )
+		owner_logs.Get( "/days/:date/download" , handlers.DownloadLogDay )
+		owner_logs.Post( "/days/:date/delete" , handlers.DeleteLogDay )
+		owner_logs.Post( "/prune" , handlers.PruneLogs )
+	}
 
 	// MCP: agents calling the app with an API key (see server/mcp and
 	// mcp_tools.go). Keys only -- RequireAPIKey turns a browser session away
 	// -- and every tool runs at the key's effective role, so this is the API
 	// above in another shape, not a wider one. One exact path, not a group:
 	// a group on "/mcp" would also catch any later "/mcp..." route.
-	if handlers.Config.MCPEnabled && handlers.Config.APIKeysEnabled {
-		mcp_server := mcp.New( handlers.Config.ProjectName , handlers.Version )
-		handlers.registerMCPTools( mcp_server )
-		app.Post( "/mcp" , handlers.Guard.RequireAPIKey , mcp_server.Handle )
-		app.Get( "/mcp" , mcp_server.MethodNotAllowed )
-		app.Delete( "/mcp" , mcp_server.MethodNotAllowed )
-	}
+	//
+	// Always registered: server.mcp and auth.api_keys can be switched while
+	// the server runs, so RequireMCP checks them per request and answers 404
+	// when either is off -- exactly what an unregistered route would say.
+	mcp_server := mcp.New( handlers.Settings.Boot().ProjectName , handlers.Version )
+	handlers.registerMCPTools( mcp_server )
+	app.Post( "/mcp" , handlers.RequireMCP , handlers.Guard.RequireAPIKey , mcp_server.Handle )
+	app.Get( "/mcp" , handlers.RequireMCP , mcp_server.MethodNotAllowed )
+	app.Delete( "/mcp" , handlers.RequireMCP , mcp_server.MethodNotAllowed )
 
 	// Catch-all static serving. Must be registered last -- it matches every
 	// remaining path, so anything added after this line never runs.
 	app.Get( "/*" , handlers.Static.Handler )
+}
+
+func ( handlers *Handlers ) cfg() ( cfg *config.Config ) {
+	cfg = handlers.Settings.Get()
+	return
+}
+
+// RequireMCP makes /mcp answer 404 while server.mcp or auth.api_keys is off.
+func ( handlers *Handlers ) RequireMCP( c fiber.Ctx ) ( err error ) {
+	cfg := handlers.cfg()
+	if cfg.MCPEnabled == false || cfg.APIKeysEnabled == false {
+		err = notFound( c , "not found" )
+		return
+	}
+	err = c.Next()
+	return
 }
 
 // badRequest / notFound keep error bodies uniform, so the frontend has one
@@ -175,6 +229,36 @@ func notFound( c fiber.Ctx , message string ) ( err error ) {
 
 func forbidden( c fiber.Ctx , message string ) ( err error ) {
 	err = c.Status( fiber.StatusForbidden ).JSON( fiber.Map{ "error": message } )
+	return
+}
+
+// conflict is 409: the request was fine but the record has moved on -- an
+// undo whose window has passed, or a rename that expected a name someone else
+// has since changed. extra carries the current state, so the caller can show
+// it.
+func conflict( c fiber.Ctx , message string , extra fiber.Map ) ( err error ) {
+	body := fiber.Map{ "error": message }
+	for name , value := range extra {
+		body[ name ] = value
+	}
+	err = c.Status( fiber.StatusConflict ).JSON( body )
+	return
+}
+
+// restoreRefused answers each way a restore can be refused.
+func restoreRefused( c fiber.Ctx , refusal error ) ( err error ) {
+	switch {
+	case errors.Is( refusal , models.ErrRestoreGone ):
+		err = notFound( c , refusal.Error() )
+	case errors.Is( refusal , models.ErrRestoreForbidden ):
+		err = forbidden( c , refusal.Error() )
+	case errors.Is( refusal , models.ErrRestoreExpired ):
+		err = conflict( c , refusal.Error() , nil )
+	case errors.Is( refusal , models.ErrAPIKeyLimit ):
+		err = conflict( c , "its owner already has the maximum number of live API keys" , nil )
+	default:
+		err = serverError( c )
+	}
 	return
 }
 

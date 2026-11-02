@@ -14,7 +14,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from app.core.config import Config
+from app.core.config_live import Holder
 from app.core.db import Store
+from app.models import RestoreError, RestoreForbiddenError, RestoreGoneError
 
 run = run_in_threadpool
 
@@ -23,8 +25,15 @@ def get_store(request: Request) -> Store:
     return request.app.state.store
 
 
+def get_settings(request: Request) -> Holder:
+    return request.app.state.settings
+
+
 def get_config(request: Request) -> Config:
-    return request.app.state.config
+    """The running configuration. config.yaml can change while the server
+    runs (see app/core/config_live.py), so read it once per request and use
+    that copy throughout -- never keep one from an earlier request."""
+    return request.app.state.settings.get()
 
 
 async def read_json(request: Request) -> dict[str, Any] | None:
@@ -56,6 +65,23 @@ def forbidden(message: str) -> JSONResponse:
 
 def not_found(message: str) -> JSONResponse:
     return error(404, message)
+
+
+def conflict(message: str, **extra: Any) -> JSONResponse:
+    """409: the request was fine but the record has moved on -- an undo whose
+    window has passed, or a rename that expected a name someone else has
+    since changed. extra carries the current state, so the caller can show
+    it."""
+    return JSONResponse({"error": message, **extra}, status_code=409)
+
+
+def restore_refused(refusal: RestoreError) -> JSONResponse:
+    """The answer for each way a restore can be refused."""
+    if isinstance(refusal, RestoreGoneError):
+        return not_found(str(refusal))
+    if isinstance(refusal, RestoreForbiddenError):
+        return forbidden(str(refusal))
+    return conflict(str(refusal))
 
 
 def server_error() -> JSONResponse:

@@ -44,6 +44,9 @@ type APIKey struct {
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	// Set by DeleteAPIKey. A deleted key is dead and out of every listing,
+	// but RestoreAPIKey can bring it back for RestoreWindow.
+	SoftDelete
 }
 
 var (
@@ -120,7 +123,7 @@ func ( key *APIKey ) Expired() ( result bool ) {
 // is concerned. Whether its owner is still enabled is a separate question,
 // asked in LoadAPIKey.
 func ( key *APIKey ) Live() ( result bool ) {
-	result = key.Revoked() == false && key.Expired() == false
+	result = key.Revoked() == false && key.Expired() == false && key.Deleted() == false
 	return
 }
 
@@ -296,15 +299,17 @@ func GetAPIKey( store *db.Store , key_id string ) ( key *APIKey , err error ) {
 	return
 }
 
-// ListAPIKeys returns every key in the database, newest last. Only the admin
-// endpoint and the CLI use it; a user asking for "my keys" goes through
-// ListAPIKeysForUser.
+// ListAPIKeys returns every key in the database, newest last, leaving out
+// deleted ones. Only the admin endpoint and the CLI use it; a user asking for
+// "my keys" goes through ListAPIKeysForUser.
 func ListAPIKeys( store *db.Store ) ( keys []*APIKey , err error ) {
 	keys = []*APIKey{}
 	err = store.ForEach( db.BucketAPIKeys ,
 		func() any { return &APIKey{} } ,
 		func( key []byte , item any ) bool {
-			keys = append( keys , item.( *APIKey ) )
+			if stored := item.( *APIKey ); stored.Deleted() == false {
+				keys = append( keys , stored )
+			}
 			return true
 		} )
 	return
@@ -316,7 +321,7 @@ func ListAPIKeysForUser( store *db.Store , user_id uint64 ) ( keys []*APIKey , e
 		func() any { return &APIKey{} } ,
 		func( key []byte , item any ) bool {
 			stored := item.( *APIKey )
-			if stored.UserID == user_id {
+			if stored.UserID == user_id && stored.Deleted() == false {
 				keys = append( keys , stored )
 			}
 			return true
@@ -357,15 +362,70 @@ func RevokeAPIKey( store *db.Store , key_id string ) ( err error ) {
 	return
 }
 
-// DeleteAPIKey removes a key's row outright. Where RevokeAPIKey leaves a
-// record that the key existed and when it died, this leaves nothing: the key
-// stops working immediately (LoadAPIKey finds no row) and drops out of every
-// listing. That is the owner's call to make about their own keys, and an
-// admin's about anyone's -- the routes decide who may ask.
+// DeleteAPIKey takes a key off every listing and stops it working, now.
+// db.ErrNotFound when there is no such key or it is already deleted.
+//
+// Unlike revoking, this can be undone: the row is only marked, and
+// RestoreAPIKey brings it back -- working again -- for RestoreWindow, after
+// which the purge removes it. Revoke is the one-way switch for a key that
+// may have leaked; delete is tidying up, and tidying up the wrong row is the
+// mistake an undo exists for. The routes decide who may ask.
+func DeleteAPIKey( store *db.Store , key_id string , actor_id uint64 ) ( err error ) {
+	err = store.UpdateValue( db.BucketAPIKeys , []byte( key_id ) ,
+		func() any { return &APIKey{} } ,
+		func( item any ) ( mutate_err error ) {
+			if item.( *APIKey ).markDeleted( actor_id ) == false {
+				mutate_err = db.ErrNotFound
+			}
+			return
+		} )
+	return
+}
+
+// RestoreAPIKey undoes DeleteAPIKey. ErrRestoreGone, ErrRestoreForbidden or
+// ErrRestoreExpired when it may not happen, and ErrAPIKeyLimit when bringing
+// it back would put its owner over the live key cap -- the same cap
+// IssueAPIKey keeps, checked in the same transaction for the same reason.
+func RestoreAPIKey( store *db.Store , key_id string , actor_id uint64 , actor_is_admin bool ) ( key *APIKey , err error ) {
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		found := &APIKey{}
+		if tx_err = tx.Get( db.BucketAPIKeys , []byte( key_id ) , found ); tx_err != nil {
+			if errors.Is( tx_err , db.ErrNotFound ) { tx_err = ErrRestoreGone }
+			return
+		}
+		if tx_err = found.unmarkDeleted( actor_id , actor_is_admin ); tx_err != nil { return }
+		if found.Live() {
+			live := 0
+			tx_err = tx.ForEach( db.BucketAPIKeys ,
+				func() any { return &APIKey{} } ,
+				func( key []byte , item any ) bool {
+					if stored := item.( *APIKey ); stored.UserID == found.UserID && stored.Live() {
+						live += 1
+					}
+					return true
+				} )
+			if tx_err != nil { return }
+			if live >= APIKeyMaxPerUser {
+				tx_err = ErrAPIKeyLimit
+				return
+			}
+		}
+		tx_err = tx.Put( db.BucketAPIKeys , []byte( key_id ) , found )
+		key = found
+		return
+	} )
+	if err != nil { key = nil }
+	return
+}
+
+// PurgeAPIKey removes a key's row outright, with no way back. Only the CLI
+// uses it (directly or through the control socket): an operator at a shell
+// has no Undo button, so a soft delete there would only leave the row lying
+// around.
 //
 // Get and delete share one transaction so a missing key is reported as
 // db.ErrNotFound rather than silently succeeding, which bolt's Delete would.
-func DeleteAPIKey( store *db.Store , key_id string ) ( err error ) {
+func PurgeAPIKey( store *db.Store , key_id string ) ( err error ) {
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
 		if tx_err = tx.Get( db.BucketAPIKeys , []byte( key_id ) , &APIKey{} ); tx_err != nil { return }
 		tx_err = tx.Delete( db.BucketAPIKeys , []byte( key_id ) )
@@ -375,7 +435,7 @@ func DeleteAPIKey( store *db.Store , key_id string ) ( err error ) {
 }
 
 // PurgeDeadAPIKeys drops rows for keys that have been revoked or expired for
-// longer than apiKeyRetention. Dead keys are already refused by LoadAPIKey, so
+// longer than apiKeyRetention, and deleted ones past RestoreWindow. Dead keys are already refused by LoadAPIKey, so
 // this is only housekeeping -- one transaction, for the same reason as
 // PurgeExpiredSessions.
 func PurgeDeadAPIKeys( store *db.Store ) ( removed int , err error ) {
@@ -385,6 +445,9 @@ func PurgeDeadAPIKeys( store *db.Store ) ( removed int , err error ) {
 		func( key []byte , item any ) bool {
 			stored := item.( *APIKey )
 			if stored.RevokedAt != nil && stored.RevokedAt.Before( cutoff ) {
+				return true
+			}
+			if stored.deletedLongAgo() {
 				return true
 			}
 			return stored.ExpiresAt != nil && stored.ExpiresAt.Before( cutoff )

@@ -5,7 +5,9 @@ import (
 
 	fiber "github.com/gofiber/fiber/v3"
 
+	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
+	security "{{MODULE_PATH}}/server/security"
 )
 
 // Joining through an invite link (see models/invite_link.go; managing links
@@ -105,6 +107,7 @@ func ( handlers *Handlers ) JoinClaim( c fiber.Ctx ) ( err error ) {
 		ok := user.CheckPin( body.Pin )
 		handlers.Pins.Record( user.ID , ok )
 		if ok == false {
+			handlers.auditAs( c , handlers.logUser( user.ID , "anon" ) , logs.KindAuth , logs.LevelWarn , "wrong pin on an invite link" , fiber.Map{ "link_id": link.ID } )
 			code := "pin_wrong"
 			if body.Pin == "" { code = "pin_needed" }
 			err = forbidden( c , code )
@@ -112,7 +115,7 @@ func ( handlers *Handlers ) JoinClaim( c fiber.Ctx ) ( err error ) {
 		}
 	}
 
-	session_credential , _ , claim_err := models.ClaimInviteAccount( handlers.Store , body.Credential , user.ID , handlers.Config.SessionTTL )
+	session_credential , _ , claim_err := models.ClaimInviteAccount( handlers.Store , body.Credential , user.ID , handlers.cfg().SessionTTL )
 	switch {
 	case errors.Is( claim_err , models.ErrInviteLinkInvalid ):
 		err = notFound( c , "invite_link_invalid" )
@@ -128,6 +131,7 @@ func ( handlers *Handlers ) JoinClaim( c fiber.Ctx ) ( err error ) {
 		err = serverError( c )
 		return
 	}
+	handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , "signed back in through an invite link" , fiber.Map{ "link_id": link.ID } )
 	err = c.JSON( fiber.Map{ "ok": true , "display_name": user.DisplayName } )
 	return
 }
@@ -143,7 +147,7 @@ func ( handlers *Handlers ) JoinCreate( c fiber.Ctx ) ( err error ) {
 		return
 	}
 
-	session_credential , user , join_err := models.JoinInviteLink( handlers.Store , body.Credential , body.DisplayName , handlers.Config.SessionTTL )
+	session_credential , user , join_err := models.JoinInviteLink( handlers.Store , body.Credential , body.DisplayName , handlers.cfg().SessionTTL )
 	switch {
 	case errors.Is( join_err , models.ErrInviteLinkInvalid ):
 		err = notFound( c , "invite_link_invalid" )
@@ -159,6 +163,7 @@ func ( handlers *Handlers ) JoinCreate( c fiber.Ctx ) ( err error ) {
 		err = serverError( c )
 		return
 	}
+	handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , "joined through an invite link" , fiber.Map{ "link_id": link.ID } )
 	err = c.Status( fiber.StatusCreated ).JSON( fiber.Map{ "ok": true , "display_name": user.DisplayName } )
 	return
 }

@@ -67,6 +67,8 @@
             <a class="nav-link" href="#users" data-nav="users"><i class="bi bi-people" aria-hidden="true"></i><span data-i18n="nav.users"></span></a>
             <a class="nav-link" href="#invite-links" data-nav="invite-links"><i class="bi bi-link-45deg" aria-hidden="true"></i><span data-i18n="nav.invite_links"></span></a>
             <a class="nav-link" href="#all-keys" data-nav="all-keys"><i class="bi bi-shield-lock" aria-hidden="true"></i><span data-i18n="nav.all_keys"></span></a>
+            <a class="nav-link" href="#logs" data-nav="logs"><i class="bi bi-journal-text" aria-hidden="true"></i><span data-i18n="nav.logs"></span></a>
+            <a class="nav-link" href="#settings" data-nav="settings"><i class="bi bi-sliders" aria-hidden="true"></i><span data-i18n="nav.settings"></span></a>
           </div>
         </nav>
       </div>
@@ -388,14 +390,72 @@
             </div>
           </div>
         </section>
+
+        <!-- The activity log, owner only; see logs.js. data-no-track keeps
+             reading the log from writing to it (track.js). -->
+        <section class="card view" data-view="logs" id="logs-panel" data-no-track hidden>
+          <div class="card-body">
+            <h2 class="h4 card-title" data-i18n="logs.heading"></h2>
+            <p class="text-body-secondary" data-i18n="logs.description"></p>
+
+            <form id="logs-search-form" class="row g-2 align-items-end" role="search" autocomplete="off">
+              <div class="col-md">
+                <label for="logs-query" class="form-label" data-i18n="logs.search_label"></label>
+                <input id="logs-query" class="form-control" type="search" name="q" maxlength="200"
+                       data-i18n-attr="placeholder:logs.search_placeholder" />
+              </div>
+              <div class="col-md-auto row-actions">
+                <button type="button" id="logs-live" class="btn btn-outline-secondary" aria-pressed="false">
+                  <i class="bi bi-broadcast" aria-hidden="true"></i> <span data-i18n="logs.live_button"></span>
+                </button>
+                <button type="button" id="logs-prune" class="btn btn-outline-secondary" data-i18n="logs.prune_button"></button>
+              </div>
+            </form>
+            <p class="form-text" data-i18n="logs.search_help"></p>
+            <div id="logs-kinds" class="row-actions mb-3" role="group" data-i18n-attr="aria-label:logs.kinds_label"></div>
+            <p id="logs-settings" class="small text-body-secondary"></p>
+            <p id="logs-empty" class="text-body-secondary" hidden></p>
+            <div id="logs-days" class="log-days"></div>
+          </div>
+        </section>
+
+        <!-- Owner only: config.yaml, one field per setting. See js/settings.js. -->
+        <section class="card view" data-view="settings" id="settings-panel" hidden>
+          <div class="card-body">
+            <h2 class="h4 card-title" data-i18n="settings.heading"></h2>
+            <p class="text-body-secondary" data-i18n="settings.description"></p>
+            <p class="small text-body-secondary mb-1"><code id="settings-file"></code></p>
+            <p id="settings-secret" class="small text-body-secondary"></p>
+
+            <div id="settings-invalid" class="alert alert-danger settings-help" role="alert" hidden></div>
+            <div id="settings-stale" class="alert alert-warning" role="alert" data-i18n="settings.stale" hidden></div>
+            <div id="settings-read-only" class="alert alert-secondary" role="status" data-i18n="settings.read_only" hidden></div>
+
+            <form id="settings-form" autocomplete="off" novalidate>
+              <div id="settings-sections"></div>
+              <div id="settings-problems" class="alert alert-danger settings-help" role="alert" hidden></div>
+              <div id="settings-changed" class="alert alert-warning d-flex align-items-center gap-2" role="alert" hidden>
+                <span class="me-auto" data-i18n="settings.changed_on_disk"></span>
+              </div>
+              <div class="settings-actions row-actions">
+                <button type="submit" id="settings-save" class="btn btn-primary" data-i18n="settings.save_button" disabled></button>
+                <button type="button" id="settings-reload" class="btn btn-outline-secondary" data-i18n="settings.reload_button"></button>
+                <span id="settings-unsaved" class="small text-body-secondary"></span>
+              </div>
+            </form>
+          </div>
+        </section>
       </section>
     </main>
   </div>
 
-  <!-- "Saved.", "Copied.": see Dom.toast. -->
+  <!-- "Saved.", "Copied.", "API key deleted · Undo": see Dom.toast. -->
   <div class="toast-container position-fixed bottom-0 end-0 p-3">
-    <div id="toast" class="toast border-0" role="status" aria-live="polite" aria-atomic="true" data-bs-delay="4000">
-      <div id="toast-body" class="toast-body"></div>
+    <div id="toast" class="toast border-0" role="status" aria-live="polite" aria-atomic="true">
+      <div id="toast-body" class="toast-body d-flex align-items-center gap-2">
+        <span id="toast-text" class="me-auto"></span>
+        <button id="toast-action" type="button" class="btn btn-sm btn-light" hidden></button>
+      </div>
     </div>
   </div>
 
@@ -408,12 +468,16 @@
   <script src="/vendor/bootstrap.bundle.min.js"></script>
   <script src="/js/dom.js"></script>
   <script src="/js/i18n.js"></script>
+  <script src="/js/undo.js"></script>
   <script src="/js/api.js"></script>
+  <script src="/js/track.js"></script>
   <script src="/js/nav.js"></script>
   <script src="/js/keys.js"></script>
   <script src="/js/join.js"></script>
   <script src="/js/pin.js"></script>
   <script src="/js/invites.js"></script>
+  <script src="/js/logs.js"></script>
+  <script src="/js/settings.js"></script>
   <script src="/js/app.js"></script>
 </body>
 </html>

@@ -6,6 +6,7 @@ import (
 	fiber "github.com/gofiber/fiber/v3"
 
 	db "{{MODULE_PATH}}/server/db"
+	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 )
@@ -45,7 +46,7 @@ type createAPIKeyRequest struct {
 // is enforced in server/security, not here, because it has to hold for every
 // route rather than only these.
 func ( handlers *Handlers ) RequireAPIKeys( c fiber.Ctx ) ( err error ) {
-	if handlers.Config.APIKeysEnabled == false {
+	if handlers.cfg().APIKeysEnabled == false {
 		err = notFound( c , "api keys are disabled on this server" )
 		return
 	}
@@ -131,7 +132,7 @@ func ( handlers *Handlers ) CreateMyAPIKey( c fiber.Ctx ) ( err error ) {
 		return
 	}
 
-	ttl , ok := models.APIKeyTTLFromDays( body.ExpiresInDays , handlers.Config.APIKeyTTL )
+	ttl , ok := models.APIKeyTTLFromDays( body.ExpiresInDays , handlers.cfg().APIKeyTTL )
 	if ok == false {
 		err = badRequest( c , "expires_in_days must be 0 (never) or up to 3650" )
 		return
@@ -159,6 +160,7 @@ func ( handlers *Handlers ) CreateMyAPIKey( c fiber.Ctx ) ( err error ) {
 	// The credential appears here and nowhere else, ever.
 	row := apiKeyRow( key , "" )
 	row[ "credential" ] = credential
+	handlers.audit( c , logs.KindAdmin , "api key created" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role } )
 	err = c.Status( fiber.StatusCreated ).JSON( row )
 	return
 }
@@ -179,7 +181,7 @@ func ( handlers *Handlers ) RevokeMyAPIKey( c fiber.Ctx ) ( err error ) {
 
 	user := security.UserFrom( c )
 	key , get_err := models.GetAPIKey( handlers.Store , c.Params( "key_id" ) )
-	if get_err != nil || key.UserID != user.ID {
+	if get_err != nil || key.Deleted() || key.UserID != user.ID {
 		err = notFound( c , "no such api key" )
 		return
 	}
@@ -187,12 +189,14 @@ func ( handlers *Handlers ) RevokeMyAPIKey( c fiber.Ctx ) ( err error ) {
 		err = serverError( c )
 		return
 	}
+	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": c.Params( "key_id" ) } )
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }
 
-// DeleteMyAPIKey removes one of your own keys outright -- live or already
-// dead. Someone else's key is "no such api key", for the same reason as in
+// DeleteMyAPIKey deletes one of your own keys -- live or already dead. It
+// stops working at once, and RestoreMyAPIKey can bring it back for a few
+// minutes. Someone else's key is "no such api key", for the same reason as in
 // RevokeMyAPIKey.
 func ( handlers *Handlers ) DeleteMyAPIKey( c fiber.Ctx ) ( err error ) {
 	var body csrfOnlyRequest
@@ -211,17 +215,67 @@ func ( handlers *Handlers ) DeleteMyAPIKey( c fiber.Ctx ) ( err error ) {
 		err = notFound( c , "no such api key" )
 		return
 	}
-	if delete_err := models.DeleteAPIKey( handlers.Store , key.ID ); delete_err != nil {
+	if delete_err := models.DeleteAPIKey( handlers.Store , key.ID , user.ID ); delete_err != nil {
 		err = deleteKeyError( c , delete_err )
 		return
 	}
+	handlers.audit( c , logs.KindAdmin , "api key deleted" , fiber.Map{ "key_id": c.Params( "key_id" ) } )
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }
 
-// deleteKeyError maps a DeleteAPIKey failure. A key that vanished between the
-// lookup and the delete -- deleted by its owner and an admin at once -- is
-// reported as missing, not as a server fault.
+// RestoreMyAPIKey undoes DeleteMyAPIKey, within models.RestoreWindow. A key
+// an admin deleted is the admin's to restore, not its owner's.
+func ( handlers *Handlers ) RestoreMyAPIKey( c fiber.Ctx ) ( err error ) {
+	var body csrfOnlyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+
+	user := security.UserFrom( c )
+	key , get_err := models.GetAPIKey( handlers.Store , c.Params( "key_id" ) )
+	if get_err != nil || key.UserID != user.ID {
+		err = notFound( c , "no such api key" )
+		return
+	}
+	err = handlers.restoreKey( c , key.ID , user )
+	return
+}
+
+// RestoreAnyAPIKey undoes a delete, any key's, within models.RestoreWindow.
+func ( handlers *Handlers ) RestoreAnyAPIKey( c fiber.Ctx ) ( err error ) {
+	var body csrfOnlyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	err = handlers.restoreKey( c , c.Params( "key_id" ) , security.UserFrom( c ) )
+	return
+}
+
+func ( handlers *Handlers ) restoreKey( c fiber.Ctx , key_id string , actor *models.User ) ( err error ) {
+	key , restore_err := models.RestoreAPIKey( handlers.Store , key_id , actor.ID , actor.IsAdmin() )
+	if restore_err != nil {
+		err = restoreRefused( c , restore_err )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "api key restored" , fiber.Map{ "key_id": key_id } )
+	err = c.JSON( apiKeyRow( key , "" ) )
+	return
+}
+
+// deleteKeyError maps a DeleteAPIKey failure. A key that is already deleted,
+// or vanished between the lookup and the delete -- deleted by its owner and
+// an admin at once -- is reported as missing, not as a server fault.
 func deleteKeyError( c fiber.Ctx , delete_err error ) ( err error ) {
 	if errors.Is( delete_err , db.ErrNotFound ) {
 		err = notFound( c , "no such api key" )
@@ -284,12 +338,14 @@ func ( handlers *Handlers ) RevokeAnyAPIKey( c fiber.Ctx ) ( err error ) {
 		err = serverError( c )
 		return
 	}
+	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": c.Params( "key_id" ) } )
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }
 
-// DeleteAnyAPIKey is RevokeAnyAPIKey without the record left behind: the key
-// stops working and disappears from every listing, its owner's included.
+// DeleteAnyAPIKey stops the key working and takes it off every listing, its
+// owner's included. Unlike RevokeAnyAPIKey it can be undone, by
+// RestoreAnyAPIKey.
 func ( handlers *Handlers ) DeleteAnyAPIKey( c fiber.Ctx ) ( err error ) {
 	var body csrfOnlyRequest
 	if c.Bind().JSON( &body ) != nil {
@@ -301,10 +357,11 @@ func ( handlers *Handlers ) DeleteAnyAPIKey( c fiber.Ctx ) ( err error ) {
 		return
 	}
 
-	if delete_err := models.DeleteAPIKey( handlers.Store , c.Params( "key_id" ) ); delete_err != nil {
+	if delete_err := models.DeleteAPIKey( handlers.Store , c.Params( "key_id" ) , security.UserFrom( c ).ID ); delete_err != nil {
 		err = deleteKeyError( c , delete_err )
 		return
 	}
+	handlers.audit( c , logs.KindAdmin , "api key deleted" , fiber.Map{ "key_id": c.Params( "key_id" ) } )
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }

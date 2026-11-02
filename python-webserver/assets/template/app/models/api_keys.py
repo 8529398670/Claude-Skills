@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 
 from app.core import encryption
 from app.core.db import BUCKET_API_KEYS, BUCKET_USERS, Record, Store
-from app.models import from_iso, to_iso, utc_now
+from app.models import RestoreGoneError, deleted_long_ago, from_iso, mark_deleted, to_iso, unmark_deleted, utc_now
 from app.models.sessions import split_credential
 from app.models.users import ROLE_ADMIN, ROLE_USER, User, get_user, valid_role
 
@@ -98,10 +98,18 @@ class APIKey:
     expires_at: datetime | None = None
     last_used_at: datetime | None = None
     revoked_at: datetime | None = None
+    # Set by delete_api_key. A deleted key is dead and out of every listing,
+    # but restore_api_key can bring it back for RESTORE_WINDOW.
+    deleted_at: datetime | None = None
+    deleted_by: int | None = None
 
     @property
     def revoked(self) -> bool:
         return self.revoked_at is not None
+
+    @property
+    def deleted(self) -> bool:
+        return self.deleted_at is not None
 
     @property
     def expired(self) -> bool:
@@ -112,7 +120,7 @@ class APIKey:
         """Whether the key would authenticate right now, as far as the key
         itself is concerned. Whether its owner is still enabled is a separate
         question, asked in load_api_key."""
-        return not self.revoked and not self.expired
+        return not self.revoked and not self.expired and not self.deleted
 
     def to_record(self) -> Record:
         return {
@@ -125,6 +133,8 @@ class APIKey:
             "expires_at": to_iso(self.expires_at),
             "last_used_at": to_iso(self.last_used_at),
             "revoked_at": to_iso(self.revoked_at),
+            "deleted_at": to_iso(self.deleted_at),
+            "deleted_by": self.deleted_by,
         }
 
     @classmethod
@@ -139,6 +149,8 @@ class APIKey:
             expires_at=from_iso(record.get("expires_at")),
             last_used_at=from_iso(record.get("last_used_at")),
             revoked_at=from_iso(record.get("revoked_at")),
+            deleted_at=from_iso(record.get("deleted_at")),
+            deleted_by=record.get("deleted_by"),
         )
 
 
@@ -293,9 +305,11 @@ def get_api_key(store: Store, key_id: str) -> APIKey | None:
 
 
 def list_api_keys(store: Store) -> list[APIKey]:
-    """Every key, oldest first. Only the admin endpoint and the CLI use it; a
-    user asking for "my keys" goes through list_api_keys_for_user."""
+    """Every key, oldest first, leaving out deleted ones. Only the admin
+    endpoint and the CLI use it; a user asking for "my keys" goes through
+    list_api_keys_for_user."""
     keys = [APIKey.from_record(record) for _, record in store.all(BUCKET_API_KEYS)]
+    keys = [key for key in keys if not key.deleted]
     return sorted(keys, key=lambda key: key.created_at)
 
 
@@ -324,14 +338,49 @@ def revoke_api_key(store: Store, key_id: str) -> APIKey | None:
     return None if record is None else APIKey.from_record(record)
 
 
-def delete_api_key(store: Store, key_id: str) -> bool:
-    """Remove a key's row outright; False if there is no such key.
+def delete_api_key(store: Store, key_id: str, actor_id: int | None) -> bool:
+    """Take a key off every listing and stop it working, now; False if there
+    is no such key or it is already deleted.
 
-    Where revoke_api_key leaves a record that the key existed and when it
-    died, this leaves nothing: the key stops working immediately
-    (load_api_key finds no row) and drops out of every listing. That is the
-    owner's call to make about their own keys, and an admin's about anyone's
-    -- the routes decide who may ask."""
+    Unlike revoking, this can be undone: the row is only marked, and
+    restore_api_key brings it back -- working again -- for RESTORE_WINDOW,
+    after which the purge removes it. Revoke is the one-way switch for a key
+    that may have leaked; delete is tidying up, and tidying up the wrong row
+    is the mistake an undo exists for. The routes decide who may ask."""
+    found = False
+
+    def mutate(record: Record) -> None:
+        nonlocal found
+        found = record.get("deleted_at") is None
+        mark_deleted(record, actor_id)
+
+    return store.update_value(BUCKET_API_KEYS, key_id, mutate) is not None and found
+
+
+def restore_api_key(store: Store, key_id: str, actor_id: int, actor_is_admin: bool) -> APIKey:
+    """Undo delete_api_key. Raises a RestoreError when the window has passed
+    or the actor is neither whoever deleted it nor an admin, and
+    APIKeyLimitError when bringing it back would put its owner over the live
+    key cap -- the same cap issue_api_key keeps, checked in the same
+    transaction for the same reason."""
+    with store.transaction() as tx:
+        record = tx.get(BUCKET_API_KEYS, key_id)
+        if record is None:
+            raise RestoreGoneError()
+        unmark_deleted(record, actor_id, actor_is_admin)
+        key = APIKey.from_record(record)
+        if key.live:
+            owned = (APIKey.from_record(other) for _, other in tx.all(BUCKET_API_KEYS) if other["user_id"] == key.user_id)
+            if sum(1 for other in owned if other.live) >= API_KEY_MAX_PER_USER:
+                raise APIKeyLimitError()
+        tx.put(BUCKET_API_KEYS, key_id, record)
+    return key
+
+
+def purge_api_key(store: Store, key_id: str) -> bool:
+    """Remove a key's row outright, with no way back; False if there is no
+    such key. Only the CLI uses it: an operator at a shell has no Undo
+    button, so a soft delete there would only leave the row lying around."""
     with store.transaction() as tx:
         if tx.get(BUCKET_API_KEYS, key_id) is None:
             return False
@@ -341,13 +390,17 @@ def delete_api_key(store: Store, key_id: str) -> bool:
 
 def purge_dead_api_keys(store: Store) -> int:
     """Drop rows for keys revoked or expired longer than API_KEY_RETENTION
-    ago. Dead keys are already refused by load_api_key, so this is only
-    housekeeping."""
+    ago, and deleted ones past their RESTORE_WINDOW. Dead keys are already
+    refused by load_api_key, so this is only housekeeping."""
     cutoff = utc_now() - API_KEY_RETENTION
 
     def dead(_key: object, record: Record) -> bool:
         revoked_at = from_iso(record.get("revoked_at"))
         expires_at = from_iso(record.get("expires_at"))
-        return (revoked_at is not None and revoked_at < cutoff) or (expires_at is not None and expires_at < cutoff)
+        return (
+            (revoked_at is not None and revoked_at < cutoff)
+            or (expires_at is not None and expires_at < cutoff)
+            or deleted_long_ago(record)
+        )
 
     return store.delete_where(BUCKET_API_KEYS, dead)

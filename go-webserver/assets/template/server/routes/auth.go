@@ -6,7 +6,9 @@ import (
 
 	fiber "github.com/gofiber/fiber/v3"
 
+	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
+	security "{{MODULE_PATH}}/server/security"
 )
 
 type loginRequest struct {
@@ -59,12 +61,13 @@ func ( handlers *Handlers ) RedeemLoginLink( c fiber.Ctx ) ( err error ) {
 	}
 
 	credential := strings.Trim( strings.TrimSpace( body.Credential ) , "/" )
-	session_credential , _ , redeem_err := models.RedeemLoginToken( handlers.Store , credential , handlers.Config.SessionTTL )
+	session_credential , user_id , redeem_err := models.RedeemLoginToken( handlers.Store , credential , handlers.cfg().SessionTTL )
 	if redeem_err != nil {
 		// Expired, already spent, never existed, wrong secret, or a disabled
 		// account all get the same answer. Telling them apart would let
 		// someone probe which links are real.
 		if errors.Is( redeem_err , models.ErrLoginTokenInvalid ) {
+			handlers.auditAs( c , logs.Anonymous() , logs.KindAuth , logs.LevelWarn , "login link refused" , nil )
 			err = badRequest( c , "invalid login link" )
 			return
 		}
@@ -79,6 +82,7 @@ func ( handlers *Handlers ) RedeemLoginLink( c fiber.Ctx ) ( err error ) {
 		err = serverError( c )
 		return
 	}
+	handlers.auditAs( c , handlers.logUser( user_id , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , "signed in with a login link" , nil )
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }
@@ -97,7 +101,7 @@ func sameOriginJSON( c fiber.Ctx ) ( ok bool ) {
 // if any. Deleting the record rather than only the cookie is what matters: a
 // copy of the cookie taken earlier is then dead too.
 func ( handlers *Handlers ) destroyCookieSession( c fiber.Ctx ) {
-	raw := c.Cookies( handlers.Config.CookieName )
+	raw := c.Cookies( handlers.cfg().CookieName )
 	if raw == "" { return }
 	if credential , decrypt_err := handlers.Guard.DecryptCookie( raw ); decrypt_err == nil {
 		models.DestroySession( handlers.Store , credential )

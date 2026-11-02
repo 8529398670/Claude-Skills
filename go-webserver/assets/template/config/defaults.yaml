@@ -4,8 +4,19 @@
 # portable build. Nothing reads environment variables. Every key is optional;
 # a key you leave out takes the value shown in this file.
 #
-# This file holds the secret key, so treat it like one: mode 0600, never
-# committed (it is in .gitignore), never baked into an image (.dockerignore).
+# It holds no secret. The secret key is in secret.key, beside this file: 64
+# hex characters, mode 0600, never committed (.gitignore), never baked into an
+# image (.dockerignore). Back the two up together with the app directory.
+#
+# It can be changed while the server runs -- by hand, or from the owner's
+# Settings screen, which edits only the values it changes and leaves every
+# comment where it is. The server checks this file every two seconds; an
+# edit that does not validate is reported and ignored, and the server keeps
+# running on the last good version. Each key is tagged:
+#
+#   [live]      takes effect within seconds of saving
+#   [restart]   saved now, takes effect when the server restarts
+#   [scripts]   read by docker/run.sh or scripts/build.sh, not the server
 #
 # Where it is read from, first match wins:
 #
@@ -13,9 +24,9 @@
 #                                      script in scripts/ and docker/ reads
 #   ~/.config/{{PROJECT_SLUG}}/config.yaml   a portable binary run anywhere else
 #
-# If neither exists the server writes the second one, with a fresh secret key,
-# on first run. `{{PROJECT_SLUG}} config init` writes ./config/config.yaml the
-# same way, and `{{PROJECT_SLUG}} config check` validates whichever file is in use.
+# If neither exists the server writes the second one, and a secret.key beside
+# it, on first run. `{{PROJECT_SLUG}} config init` writes both into ./config/
+# the same way, and `{{PROJECT_SLUG}} config check` validates whichever is in use.
 #
 # Relative paths resolve against the project directory: the folder that holds
 # config/ (in a checkout, and /app in the container), or the folder holding
@@ -24,7 +35,7 @@
 # An unknown key is an error, not a silently ignored typo.
 
 app:
-  # Shown in the page title and the startup log.
+  # Shown in the page title and the startup log. [restart]
   name: "{{PROJECT_NAME}}"
 
 server:
@@ -33,10 +44,10 @@ server:
   # to listen on every interface -- and then put TLS in front, because login
   # links, cookies, and API keys all cross the wire. Ignored inside the
   # container, which always listens on 0.0.0.0 (what is reachable from
-  # outside is docker.bind_address).
+  # outside is docker.bind_address). [restart]
   host: 127.0.0.1
   # scaffold.py replaces 8080 with a random free port, different per project,
-  # so several projects can run on this machine at once.
+  # so several projects can run on this machine at once. [restart]
   port: 8080
 
   # The address people open this at, e.g. https://app.example.com -- just the
@@ -44,31 +55,31 @@ server:
   # Empty means the links use http://host:port above (inside the container,
   # docker.bind_address:docker.host_port), which is right on this machine
   # and wrong behind a reverse proxy: the server cannot see what is in front.
+  # [live]
   public_url: ""
 
   # Where the database, the control socket and app storage live. Empty means
   # ~/.config/{{PROJECT_SLUG}}/. Ignored inside the container, which always
-  # uses /app/data (mounted from docker.data_dir).
+  # uses /app/data (mounted from docker.data_dir). [restart]
   app_dir: ""
 
   # Checked on disk first, embedded copy otherwise. Empty language_file means
   # <app_dir>/language.yaml if it exists, else language.yaml beside this file
-  # (config/language.yaml in a checkout).
+  # (config/language.yaml in a checkout). [restart]
   static_dir: ./static
   language_file: ""
 
-  # Encrypts session cookies and, with encrypt_at_rest, every database value.
-  # 64 hex characters. Generated when this file is created. It must never
-  # change: a different key cannot read anything written with this one, so
-  # back this file up together with the app directory.
-  secret_key: ""
+  # Encrypt every database value and every activity-log line with the key in
+  # secret.key. Session cookies are always encrypted with it. [restart]
   encrypt_at_rest: true
 
   # false ONLY for plain http://localhost. A Secure cookie is silently dropped
-  # over http, so login appears to succeed and then does nothing.
+  # over http, so login appears to succeed and then does nothing. Also turns
+  # HSTS on. [live]
   secure_cookies: true
   # Named per project: browsers share cookies across every port on a host,
   # so two local projects both using "session" would log each other out.
+  # Changing it signs everyone out. [restart]
   cookie_name: {{PROJECT_SLUG}}_session
 
   # Turn on when a reverse proxy you control is in front (the Docker setup
@@ -87,25 +98,30 @@ server:
   # This only holds if clients cannot reach this server except through the
   # proxy. With a single-value header (X-Real-IP, CF-Connecting-IP) the proxy
   # must also overwrite whatever the client sent rather than pass it on.
+  # [restart]
   trust_proxy: false
   trusted_proxies: []
   proxy_header: X-Forwarded-For
 
-  body_limit_bytes: 1048576        # 1 MiB
-  rate_limit_max: 120
-  rate_limit_window_seconds: 60
+  # The largest request body accepted, and how many requests one address may
+  # make per window before getting 429s.
+  body_limit_bytes: 1048576        # 1 MiB [restart]
+  rate_limit_max: 120              # [live]
+  rate_limit_window_seconds: 60    # [live]
 
   # Lets `manage` and other processes reach the database through the running
   # server, over a unix socket in the app directory (bolt allows only one
   # process to open the file). Off means `manage` needs the server stopped.
+  # [restart]
   control_socket: true
 
   # POST /mcp: the Model Context Protocol, so an agent (Claude Code, any MCP
   # client that can send a header) can use this app with an API key, at that
   # key's role. Only keys are accepted there, never a browser session. Needs
-  # auth.api_keys; false removes /mcp.
+  # auth.api_keys; false makes /mcp answer 404. [live]
   mcp: true
 
+# How long a sign-in lasts, and a login link stays usable. [live]
 auth:
   session_ttl_seconds: 1209600     # 14 days
   login_token_ttl_seconds: 1800    # 30 minutes
@@ -114,12 +130,30 @@ auth:
   # role of the account that owns them, never higher. false closes the surface
   # completely: the Authorization header stops being believed, existing keys
   # stop working (the rows survive), and the endpoints that mint keys 404.
+  # [live]
   api_keys: true
 
   # Lifetime of a new key when the request does not say. A key that never
-  # expires has to be asked for (expires_in_days: 0, or `-days 0`).
+  # expires has to be asked for (expires_in_days: 0, or `-days 0`). [live]
   api_key_ttl_seconds: 7776000     # 90 days
 
+# The activity log: every request, every sign-in and admin action, and what
+# people do on the page (see static/js/track.js). Only the owner can read it,
+# on the Logs screen. It is written as one file per UTC day under
+# <app_dir>/logs/, each line encrypted when server.encrypt_at_rest is on.
+# Login links, keys, PINs and anything typed are never written. [live]
+logs:
+  enabled: true                    # [restart]
+  retention_days: 30               # days older than this are deleted
+  max_total_mb: 500                # past this the oldest days are recycled, never today
+  max_file_mb: 50                  # a day past this continues in a new part file
+  compress_after_days: 1           # finished days older than this are gzipped; 0 = never
+  static_assets: false             # also log requests for /js, /css, /vendor files
+  ui_clicks: true                  # log every click; screen changes, submits and errors always are
+  echo: true                       # print a one-line summary of each request to stdout
+
+# [scripts] Read by docker/run.sh, which applies a change the next time it
+# runs. Edit these on the host: inside the container they are read-only.
 docker:
   image: {{PROJECT_SLUG}}
   container: {{PROJECT_SLUG}}
@@ -131,8 +165,8 @@ docker:
   host_port: 8080
 
   # Host directory mounted at /app/data: the database and app storage. This
-  # file is mounted separately (read-only), so a backup of data_dir alone does
-  # not carry the key.
+  # file and secret.key are mounted separately (secret.key read-only), so a
+  # backup of data_dir alone does not carry the key.
   data_dir: ./data
 
   restart: unless-stopped          # no | always | unless-stopped | on-failure[:N]
@@ -143,6 +177,7 @@ docker:
   pids_limit: 128
   tmpfs_size: 16m                  # the only writable path besides data_dir
 
+# [scripts] Read by scripts/build.sh.
 build:
   binary_name: {{PROJECT_SLUG}}
   output_dir: dist

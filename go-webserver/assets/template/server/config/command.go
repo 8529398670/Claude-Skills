@@ -9,16 +9,26 @@ import (
 	strings "strings"
 )
 
-const commandUsage = `config -- create, check, or read config.yaml
+const commandUsage = `config -- create, check, change, or read config.yaml
 
 Usage:
-  init  [-file ./config/config.yaml] write a new config.yaml with a fresh
-                                     secret key (-file - prints it instead)
+  init  [-file ./config/config.yaml | -dir DIR]
+                                     write a new config.yaml, and a secret.key
+                                     beside it unless one is there (-file -
+                                     prints config.yaml instead)
   example [-file ./config/config.example.yaml]
                                      write the committed example: every
-                                     default, no secret key (-file - prints it)
-  check [-file path]                 validate the config in use and say which
-                                     file it is
+                                     default (-file - prints it)
+  secret [-file ./config/secret.key] write a new secret.key; never replaces
+                                     one (-file - prints a fresh key)
+  migrate [-file path | -dir DIR]    move server.secret_key out of an older
+                                     config.yaml into secret.key; silent when
+                                     there is nothing to do
+  check [-file path]                 validate the config in use and its
+                                     secret.key, and say which files they are
+  set [-file path] section.key value change one setting in place, keeping
+                                     every comment; a running server applies
+                                     it within seconds. Lists: [a, b] or a,b
   shell [-file path] [-format sh|bat] server|docker|build
                                      print one section as assignments for the
                                      scripts to read: sh (quoted, for eval) or
@@ -54,8 +64,14 @@ func RunCommand( arguments []string ) ( err error ) {
 		err = commandInit( rest )
 	case "example":
 		err = commandExample( rest )
+	case "secret":
+		err = commandSecret( rest )
+	case "migrate":
+		err = commandMigrate( rest )
 	case "check":
 		err = commandCheck( rest )
+	case "set":
+		err = commandSet( rest )
 	case "shell":
 		err = commandShell( rest )
 	default:
@@ -65,21 +81,131 @@ func RunCommand( arguments []string ) ( err error ) {
 	return
 }
 
+// configPathFlags adds -file and -dir, and resolves them: -dir DIR means
+// DIR/config.yaml (and so DIR/secret.key). docker/lib.sh uses -dir with the
+// project's config/ folder mounted, which lets the files be created as the
+// invoking user.
+func configPathFlags( set *flag.FlagSet , default_file string ) ( resolve func() string ) {
+	file := set.String( "file" , default_file , "config.yaml to use" )
+	dir := set.String( "dir" , "" , "folder for config.yaml and secret.key" )
+	resolve = func() ( path string ) {
+		path = *file
+		if *dir != "" {
+			path = filepath.Join( *dir , ConfigFileName )
+		}
+		return
+	}
+	return
+}
+
 func commandInit( arguments []string ) ( err error ) {
 	set := flag.NewFlagSet( "config init" , flag.ExitOnError )
-	path := set.String( "file" , filepath.Join( ConfigDirName , ConfigFileName ) , "where to write it; - for stdout" )
+	resolve := configPathFlags( set , filepath.Join( ConfigDirName , ConfigFileName ) )
 	set.Parse( arguments )
+	path := resolve()
 
-	if *path == "-" {
+	if path == "-" {
 		var content []byte
 		content , err = NewFileContent()
 		if err != nil { return }
 		_ , err = os.Stdout.Write( content )
 		return
 	}
-	if err = WriteNew( *path ); err != nil { return }
-	fmt.Printf( "wrote %s (mode 0600, fresh secret key)\n" , *path )
-	fmt.Println( "Review it, then keep it out of version control and back it up with the app's data." )
+	secret_created , err := WriteNew( path )
+	if err != nil { return }
+	fmt.Printf( "wrote %s (mode 0600)\n" , path )
+	if secret_created {
+		fmt.Printf( "wrote %s (mode 0600, fresh secret key)\n" , SecretPathFor( path ) )
+	} else {
+		fmt.Printf( "kept  %s (already there)\n" , SecretPathFor( path ) )
+	}
+	fmt.Println( "Keep both out of version control, and back secret.key up with the app's data." )
+	return
+}
+
+// commandSecret writes secret.key on its own: for a config.yaml copied from
+// config.example.yaml, or a fresh install whose config came from elsewhere.
+func commandSecret( arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "config secret" , flag.ExitOnError )
+	path := set.String( "file" , filepath.Join( ConfigDirName , SecretFileName ) , "where to write it; - prints a fresh key" )
+	set.Parse( arguments )
+	if *path == "-" {
+		fmt.Println( GenerateSecret() )
+		return
+	}
+	if err = WriteSecret( *path , GenerateSecret() ); err != nil { return }
+	fmt.Printf( "wrote %s (mode 0600, fresh secret key -- back it up with the app's data)\n" , *path )
+	return
+}
+
+// commandMigrate is MigrateLegacySecret from the command line. scripts/run.sh
+// and docker/run.sh run it before every start, so it says nothing unless it
+// did something.
+func commandMigrate( arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "config migrate" , flag.ExitOnError )
+	resolve := configPathFlags( set , "" )
+	set.Parse( arguments )
+	path := resolve()
+	if path == "" {
+		path , _ = Locate()
+	}
+	if isFile( path ) == false { return }
+	result , err := MigrateLegacySecret( path )
+	if err != nil { return }
+	if result.Moved {
+		fmt.Printf( "MOVED server.secret_key out of %s into %s (mode 0600).\n" , path , result.SecretFile )
+		fmt.Println( "  config.yaml holds no secret now; back secret.key up with the app's data." )
+	} else if result.Removed {
+		fmt.Printf( "Removed server.secret_key from %s; %s already held the same key.\n" , path , result.SecretFile )
+	}
+	return
+}
+
+// commandSet changes one setting the way the Settings screen does: the value
+// is checked against the schema, written in place, and the whole file
+// validated before anything is written.
+func commandSet( arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "config set" , flag.ExitOnError )
+	explicit := set.String( "file" , "" , "config file to change (default: the one in use)" )
+	set.Parse( arguments )
+	if set.NArg() != 2 {
+		err = fmt.Errorf( "config set needs a key and a value, e.g. config set server.public_url https://app.example.com" )
+		return
+	}
+	path := *explicit
+	if path == "" {
+		path , _ = Locate()
+	}
+	key , found , err := SchemaKey( set.Arg( 0 ) )
+	if err != nil { return }
+	if found == false {
+		err = &UnknownSettingError{ Key: set.Arg( 0 ) }
+		return
+	}
+	value , err := ParseValue( key , set.Arg( 1 ) )
+	if err != nil { return }
+	raw , err := os.ReadFile( path )
+	if err != nil { return }
+	edited , unchanged , err := EditChanges( raw , map[string]any{ key.Path: value } , path , false )
+	if err != nil { return }
+	if len( unchanged ) > 0 {
+		fmt.Printf( "%s is already %v in %s\n" , key.Path , value , path )
+		return
+	}
+	in_place := InContainer() && path == pinned.ConfigFile
+	backup := ""
+	if in_place {
+		backup = filepath.Join( pinned.AppDir , BackupFileName )
+	}
+	if err = writeConfigFile( path , edited , in_place , backup ); err != nil { return }
+	switch key.Mode {
+	case ModeLive:
+		fmt.Printf( "set %s in %s -- a running server applies it within seconds\n" , key.Path , path )
+	case ModeScripts:
+		fmt.Printf( "set %s in %s -- used the next time the scripts run\n" , key.Path , path )
+	default:
+		fmt.Printf( "set %s in %s -- takes effect when the server restarts\n" , key.Path , path )
+	}
 	return
 }
 
@@ -135,10 +261,23 @@ func commandCheck( arguments []string ) ( err error ) {
 		fmt.Printf( "no config.yaml yet -- the server will create %s on first run (scripts/run.sh writes ./config/config.yaml instead)\n" , path )
 		return
 	}
-	if err = CheckSecretKey( file , path ); err != nil { return }
+	secret_path := SecretPathFor( path )
+	if legacy := file.Server.SecretKey; legacy != "" {
+		fmt.Printf( "warning: %s still holds server.secret_key -- `config migrate` moves it into %s\n" , path , secret_path )
+	} else if _ , err = ReadSecret( secret_path ); err != nil {
+		return
+	}
 	fmt.Printf( "ok  %s\n" , path )
-	if warning := permissionWarning( path ); warning != "" {
+	if isFile( secret_path ) {
+		fmt.Printf( "ok  %s\n" , secret_path )
+	}
+	if warning := permissionWarning( path , secret_path ); warning != "" {
 		fmt.Printf( "warning: %s\n" , warning )
+	}
+	if info , stat_err := os.Stat( path ); stat_err == nil {
+		if links , ok := linkCount( info ); ok && links == 0 {
+			fmt.Println( "warning: config.yaml was replaced on the host since this container started; restart it to see the new file" )
+		}
 	}
 	return
 }
@@ -174,6 +313,8 @@ func commandShell( arguments []string ) ( err error ) {
 		lines = [][2]string{
 			{ "config_file" , path },
 			{ "config_exists" , strconv.FormatBool( found ) },
+			{ "secret_file" , SecretPathFor( path ) },
+			{ "secret_exists" , strconv.FormatBool( isFile( SecretPathFor( path ) ) ) },
 			{ "project_dir" , paths.ProjectDir },
 			{ "app_dir" , paths.AppDir },
 			{ "database" , paths.DatabasePath },
@@ -230,7 +371,7 @@ func commandShell( arguments []string ) ( err error ) {
 		return
 	}
 
-	// Never the secret key: nothing a script does needs it, and this output
+	// Never the secret key, only where it is: nothing a script does needs it, and this output
 	// tends to end up in terminal scrollback and CI logs.
 	for _ , line := range lines {
 		if *format == "bat" {

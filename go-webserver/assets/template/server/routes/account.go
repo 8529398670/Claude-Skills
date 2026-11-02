@@ -5,6 +5,7 @@ import (
 
 	fiber "github.com/gofiber/fiber/v3"
 
+	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 )
@@ -16,7 +17,11 @@ type pinRequest struct {
 
 type renameRequest struct {
 	DisplayName string `json:"display_name"`
-	CSRFToken   string `json:"csrf_token"`
+	// Expect is optional: the name the caller expects to replace. The
+	// frontend always sends it, so its undo cannot overwrite a rename made
+	// elsewhere.
+	Expect    *string `json:"expect"`
+	CSRFToken string  `json:"csrf_token"`
 }
 
 // GetMe is the frontend's first call on every page load: it answers "who am
@@ -58,7 +63,10 @@ func ( handlers *Handlers ) meRow( actor *security.Actor ) ( payload fiber.Map ,
 		"is_owner":         user.ID == owner_id,
 		"has_pin":          user.HasPin(),
 		"auth":             actor.Method(),
-		"api_keys_enabled": handlers.Config.APIKeysEnabled,
+		"api_keys_enabled": handlers.cfg().APIKeysEnabled,
+		// Whether track.js sends anything, and whether it sends clicks.
+		"logs_enabled":   handlers.Logs.Enabled(),
+		"logs_ui_clicks": handlers.Logs.Enabled() && handlers.cfg().Logs.UIClicks,
 	}
 	// Only a session has a CSRF token. A key-authenticated request has no
 	// ambient credential to protect, so there is nothing to hand back -- see
@@ -89,10 +97,17 @@ func ( handlers *Handlers ) RenameAccount( c fiber.Ctx ) ( err error ) {
 	}
 
 	user := security.UserFrom( c )
-	if models.RenameUser( handlers.Store , user.ID , body.DisplayName ) != nil {
+	rename_err := models.RenameUser( handlers.Store , user.ID , body.DisplayName , body.Expect )
+	var refusal *models.RenameConflictError
+	if errors.As( rename_err , &refusal ) {
+		err = conflict( c , refusal.Error() , fiber.Map{ "display_name": refusal.Current } )
+		return
+	}
+	if rename_err != nil {
 		err = serverError( c )
 		return
 	}
+	handlers.audit( c , logs.KindAuth , "renamed own account" , fiber.Map{ "name": body.DisplayName } )
 	err = c.JSON( fiber.Map{ "ok": true , "display_name": body.DisplayName } )
 	return
 }
@@ -118,6 +133,7 @@ func ( handlers *Handlers ) SetPin( c fiber.Ctx ) ( err error ) {
 		err = serverError( c )
 		return
 	}
+	handlers.audit( c , logs.KindAuth , "pin changed" , fiber.Map{ "has_pin": body.Pin != "" } )
 	err = c.JSON( fiber.Map{ "ok": true , "has_pin": body.Pin != "" } )
 	return
 }
@@ -140,14 +156,15 @@ func ( handlers *Handlers ) CreateMyLoginLink( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	credential , token_err := models.IssueLoginToken( handlers.Store , security.UserFrom( c ).ID , handlers.Config.LoginTokenTTL )
+	credential , token_err := models.IssueLoginToken( handlers.Store , security.UserFrom( c ).ID , handlers.cfg().LoginTokenTTL )
 	if token_err != nil {
 		err = serverError( c )
 		return
 	}
+	handlers.audit( c , logs.KindAuth , "own login link created" , nil )
 	err = c.JSON( fiber.Map{
 		"login_path":         "/login/" + credential,
-		"expires_in_seconds": int( handlers.Config.LoginTokenTTL.Seconds() ),
+		"expires_in_seconds": int( handlers.cfg().LoginTokenTTL.Seconds() ),
 	} )
 	return
 }
@@ -172,6 +189,7 @@ func ( handlers *Handlers ) Logout( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
+	handlers.audit( c , logs.KindAuth , "signed out" , nil )
 	handlers.destroyCookieSession( c )
 	handlers.Guard.ClearSessionCookie( c )
 	err = c.JSON( fiber.Map{ "ok": true } )

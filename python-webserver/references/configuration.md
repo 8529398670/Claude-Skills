@@ -11,10 +11,12 @@ adding a setting or writing a file anywhere.
 - [Defaults and strict validation](#defaults-and-strict-validation)
 - [How the scripts read it](#how-the-scripts-read-it)
 - [The secret key](#the-secret-key)
+- [Changing settings while the server runs](#changing-settings-while-the-server-runs)
 - [The app directory](#the-app-directory)
 - [Why one directory, and why ~/.config](#why-one-directory-and-why-config)
 - [Reaching the database from another process](#reaching-the-database-from-another-process)
 - [Storage for application files](#storage-for-application-files)
+- [The activity log's settings](#the-activity-logs-settings)
 - [In containers](#in-containers)
 - [Backups](#backups)
 - [Adding a setting](#adding-a-setting)
@@ -23,12 +25,14 @@ adding a setting or writing a file anywhere.
 
 ```yaml
 app:     name
-server:  host, port, public_url, app_dir, static_dir, language_file, secret_key,
+server:  host, port, public_url, app_dir, static_dir, language_file,
          encrypt_at_rest, secure_cookies, cookie_name, trust_proxy,
          trusted_proxies, proxy_header, body_limit_bytes, rate_limit_max,
          rate_limit_window_seconds, mcp
 auth:    session_ttl_seconds, login_token_ttl_seconds, api_keys,
          api_key_ttl_seconds
+logs:    enabled, retention_days, max_total_mb, max_file_mb,
+         compress_after_days, static_assets, ui_clicks, echo
 docker:  image, container, bind_address, host_port, data_dir, restart,
          memory, cpus, pids_limit, tmpfs_size
 ```
@@ -69,7 +73,8 @@ First match wins (`app.core.config.locate`):
 3. `~/.config/<slug>/config.yaml` -- anywhere else
 
 If none exists, the server (and `manage`) **create the third one** from the
-defaults with a fresh secret key at mode 0600, and say so in the startup log.
+defaults at mode 0600, with a `secret.key` holding a fresh key beside it, and
+say so in the startup log.
 
 `scaffold.py` writes `config/config.yaml` for a new project. A fresh clone has
 none, because it is gitignored: `python -m app config init` writes one, and
@@ -82,20 +87,19 @@ the one beside the code.)
 
 ### config.example.yaml
 
-`config.yaml` holds the secret key, so it is never committed. What is
-committed is `config.example.yaml`: every default, the comments that document
-them, and an empty `secret_key`. Someone on a fresh clone can read it to see
-every setting, or copy it into place:
+`config.yaml` is this deployment's settings, so it is not committed. What is
+committed is `config.example.yaml`: every default and the comments that
+document them. Someone on a fresh clone can read it to see every setting, or
+copy it into place:
 
 ```bash
 cp config/config.example.yaml config/config.yaml && chmod 600 config/config.yaml
-openssl rand -hex 32        # paste into server.secret_key
 ```
 
-The empty key is deliberate. A key in a committed file is everyone's key,
-and a copy that never gets one refuses to start with the line to run, rather
-than running on a shared secret. `config init` is still the one-step way --
-it writes the same file with a key already in it.
+There is no key in it to fill in: the server writes `config/secret.key` on its
+first start, as long as there is no database yet (see
+[The secret key](#the-secret-key)). `config init` is the one-step way -- it
+writes both files.
 
 The example is generated, never edited by hand: it is
 `config/example_header.yaml` (the copy-me note) followed by
@@ -158,7 +162,7 @@ python -m app manage paths        # the config file, app dir, database, storage
 
 Defaults are not written in Python. They live in `config/defaults.yaml`,
 which ships with the code, documents every key, and is exactly what
-`config init` writes out (with the key filled in). A `config.yaml` is decoded
+`config init` writes out. A `config.yaml` is decoded
 *on top of* it, so a key you leave out takes the value shown there, and a
 `config.yaml` holding only the keys you changed is valid.
 
@@ -189,7 +193,7 @@ python -m app config shell docker     # docker_image='myapp'  docker_publish=...
 
 `config shell` validates the *whole* file, then prints the docker section as
 single-quoted shell assignments that the script `eval`s. It never prints the
-secret key. So the script gets the same defaults, the same strict decoding,
+secret key -- only where `secret.key` is. So the script gets the same defaults, the same strict decoding,
 and the same validation as the server, and a typo in the `docker:` section
 fails the deploy before anything starts.
 
@@ -201,37 +205,167 @@ else -- is applied as a tag after the build.
 
 ## The secret key
 
-`server.secret_key` encrypts session cookie payloads and, with
+The key that encrypts session cookie payloads and, with
 `server.encrypt_at_rest` on (the default), every record written to the
-database. It is 64 hex characters, generated whenever a `config.yaml` is
-created (`scaffold.py`, `config init`, a first run with no config anywhere, a
-first `scripts/run.sh` or `docker/run.sh`).
+database and every activity-log line, is **not in `config.yaml`**. It is in
+`secret.key`, beside it:
 
-That makes **`config.yaml` itself a secret**: it is written at mode 0600, it
-is in `.gitignore` and `.dockerignore`, and the server logs a warning on every
-start if it is readable by every user. Never commit it and never bake it into
-an image.
+| config.yaml | secret.key |
+|---|---|
+| `./config/config.yaml` (a checkout) | `./config/secret.key` |
+| `~/.config/<slug>/config.yaml` (anywhere else) | `~/.config/<slug>/secret.key` |
+| `/app/config/config.yaml` (the container) | `/app/config/secret.key`, mounted read-only |
 
-An empty `secret_key` in an existing file is refused, not filled in. A file
-that exists was created with a key, so an empty one means it was removed --
-and quietly generating a replacement would make every existing record
-permanently unreadable. The error says how to generate one for a genuinely
-fresh install (`openssl rand -hex 32`). A key that is present but wrong is
-caught on the first read, with a message naming the likely cause.
+One rule -- the folder `config.yaml` is in -- so there is nothing to
+configure (`config_secret.secret_path_for`). The file is 64 hex characters and
+a newline, mode 0600, in `.gitignore` and `.dockerignore`. It is written once,
+with `O_EXCL` so nothing ever replaces it, and read back before anything
+trusts it: by `scaffold.py`, `config init`, `config secret`, a first run with
+no config anywhere, and the first `scripts/run.sh` or `docker/run.sh`.
+
+It is separate so that `config.yaml` can be changed while the server runs --
+from the owner's Settings screen, by hand, by `config set` -- and mounted
+writable into the container, without any of those paths being able to read
+or replace the key. The Settings screen only ever says where the file is.
+
+When it is missing:
+
+- **no database yet** (`cp config.example.yaml config.yaml` on a fresh clone):
+  the server writes a new one and says so;
+- **a database exists**: the server refuses to start and says to restore
+  `secret.key` from the backup. Quietly generating a replacement would make
+  every existing record permanently unreadable;
+- **inside the container**: it refuses, since `docker/run.sh` mounts it.
+
+A key that is present but wrong is caught on the first read, with a message
+naming the likely cause. The server also warns on every start if
+`secret.key` is open to other users (group read is allowed -- it is how the
+container's user reads it).
+
+### Moving the key out of an older config.yaml
+
+Projects scaffolded before `secret.key` existed have the key as
+`server.secret_key` in `config.yaml`. The first `scripts/run.sh` or
+`docker/run.sh` after updating, or the server or `manage` starting, moves it
+(`config migrate`, `config_secret.migrate_legacy_secret`):
+
+1. `secret.key` is written with the key and read back;
+2. only then is the `secret_key:` line -- and the comment above it that
+   described it -- replaced in `config.yaml` by a two-line note saying where
+   the key went. Nothing else in the file changes.
+
+Interrupted between the two, the next run finds both holding the same key and
+just removes the line. Finding them holding *different* keys, it stops: which
+one encrypted the data is not something to guess. Inside the container nothing
+is written -- `config/` belongs to the host -- so a legacy `config.yaml` there
+is an error that says to run `docker/run.sh`, which does the move on the host
+first. `server.secret_key` still decodes only for this; it is not in
+`defaults.yaml`, the schema, or the Settings screen, and a hand edit that puts
+a different key back is rejected.
 
 **Be clear about the trade this makes outside Docker.** When the app created
-its own `config.yaml` in `~/.config/<slug>/`, the key sits beside `app.db`, so
-at-rest encryption protects a database that leaks *on its own* -- a stray copy
-of `app.db`, a backup that captured only the database file -- but not someone
-who takes the whole directory. Docker keeps them apart: `config.yaml` stays in
-the project directory and is mounted separately from the data directory, so a
-leaked backup of `./data` is not enough to read it. Outside Docker you get the
-same separation by keeping `config/config.yaml` in the project (or setting
-`server.app_dir` to somewhere other than the directory holding it).
+its own `config.yaml` in `~/.config/<slug>/`, `secret.key` sits beside
+`app.db`, so at-rest encryption protects a database that leaks *on its own* --
+a stray copy of `app.db`, a backup that captured only the database file -- but
+not someone who takes the whole directory. Docker keeps them apart:
+`secret.key` stays in the project's `config/` and is mounted separately from
+the data directory, so a leaked backup of `./data` is not enough to read it.
+Outside Docker you get the same separation by keeping `config/` in the
+project (or setting `server.app_dir` to somewhere other than the directory
+holding it).
 
 Losing the key loses the data. There is no recovery, and no in-place
 re-encryption in the template -- rotating means exporting, changing the key,
 and re-importing.
+
+## Changing settings while the server runs
+
+`config.yaml` can change under a running server three ways, and all three end
+in the same place (the `Holder` in `app/core/config_live.py`): the whole file
+is parsed over the defaults and validated, and then either the running
+configuration is swapped for the new one or nothing changes at all.
+
+- **The Settings screen** (owner only, from a browser session; `GET` and
+  `POST /api/owner/settings`). One field per key, grouped by section, with the
+  key's comment from `defaults.yaml` as its help text. Saving sends only the
+  changed keys plus the `version` (a hash of the file) the form was loaded
+  from; if the file changed since, the save is refused with a 409 rather than
+  overwriting a hand edit. Each save is audited in the activity log
+  (`settings changed`, with every key's old and new value) and can be undone.
+- **A hand edit.** An asyncio task started in the lifespan checks the file
+  every two seconds (mtime, size, then a hash, in the threadpool) and applies
+  a change once two checks in a row see the same content, so an editor caught
+  half-way through a save is never applied.
+- **`python -m app config set section.key value`** -- the same in-place edit
+  from a shell (or `docker exec <name> python -m app config set ...`), which
+  the running server then picks up as a hand edit. Lists are `[a, b]` or
+  `a,b`.
+
+An edit that does not validate -- a typo, `server.port: 0`, broken YAML -- is
+reported on stdout, in the activity log (once per distinct content), and as a
+banner on the Settings screen, and **ignored**: the server keeps running on
+the last version that validated. Fixing the file clears it.
+
+### When a change takes effect
+
+Every key in `defaults.yaml` carries a tag in its comments:
+
+| tag | meaning | keys |
+|---|---|---|
+| `[live]` | the next request sees it | `server.public_url`, `secure_cookies`, `trust_proxy`, `trusted_proxies`, `proxy_header`, `rate_limit_max`, `rate_limit_window_seconds`, `mcp`; all of `auth:`; `logs:` except `enabled` |
+| `[restart]` | saved now, read at startup | `app.name`, `server.host`, `port`, `app_dir`, `static_dir`, `language_file`, `encrypt_at_rest`, `cookie_name`, `body_limit_bytes`, `logs.enabled` |
+| `[scripts]` | read by `docker/run.sh` only | `docker:` |
+
+A tag at the end of a key's line wins; then one in the comment above the key
+(or above the run of keys it belongs to); then one above its section. The
+Settings screen shows the tag as a badge, and for a `[restart]` key whose
+saved value differs from the running one, says what the server is still
+running with. `[restart]` keys are restart-only because something is built
+from them once: the listener, the database, the cookie name every browser
+holds, Starlette's body-size limit. (Proxy trust is `[live]` here and
+`[restart]` in the Go template, whose framework fixes it at startup; here the
+client-IP check is app code.)
+
+"Live" is literal: everything that reads a setting per request reads
+`request.app.state.settings.get()` (via `helpers.get_config`), never a
+`Config` captured at startup -- the guard, the routes, the rate limiter and
+its trusted-proxy list, the security headers (HSTS follows
+`secure_cookies`), `/mcp` (always routed, 404 while switched off), and the
+activity log's own settings. `live_config` copies the startup `Config` and
+overwrites only the live fields, so a `[restart]` key can never leak in
+half-applied.
+
+### How the file is edited
+
+Re-encoding YAML would lose every comment, and the comments are the
+documentation. So `yaml_edit.edit_yaml` parses the file only to find where
+each value is (PyYAML node marks) and replaces that text, leaving the rest
+byte for byte:
+
+- a scalar on its key's line is replaced in place, keeping its quoting style
+  where that is still safe and any comment after it;
+- an empty value (`public_url:`) gets the value written after the colon;
+- a flow list (`[a, b]`) is rewritten as a flow list, a block list (`- a`
+  lines) as block lines at the same indentation, and an emptied block list
+  becomes `[]`;
+- a key the file lacks is added at the end of its section with the comment
+  `defaults.yaml` has above it; a missing section is added at the end;
+- CRLF line endings and a UTF-8 BOM are kept.
+
+It refuses -- "edit it by hand" -- anchors and aliases, explicit tags, `|` and
+`>` block scalars, a value spread over several lines, and a section written as
+a `{flow: mapping}`. None appear in a file that started from `defaults.yaml`.
+After editing, the result is parsed back and every key compared: the changed
+ones must read back as exactly what was asked, every other one as exactly what
+it was. Anything else is a bug in the editor, and nothing is written. The Go
+template's editor is the same algorithm, and both are tested against the same
+cases (`app/tests/yaml_edit_cases.json`).
+
+The file is replaced by writing a temporary file beside it and renaming it
+over the old one (keeping its mode and group), so a crash leaves one version
+or the other. The container cannot rename over its bind-mounted file, so there
+it is rewritten in place, after the previous version is copied to
+`<app dir>/config.yaml.bak`.
 
 ## The app directory
 
@@ -241,6 +375,7 @@ and re-importing.
   app.db-wal       SQLite's write-ahead log, while the database is in use
   app.db-shm       its shared-memory index, likewise
   storage/         application files (uploads, exports, generated artifacts)
+  logs/            the activity log, one file per UTC day (see below)
   language.yaml    optional; overrides the bundled UI text
   config.yaml      when the app created it here (see above)
 ```
@@ -302,6 +437,28 @@ separately at backup time. Use `cfg.storage_dir / ...` and never a path
 relative to the working directory, which changes depending on how the process
 was started.
 
+## The activity log's settings
+
+The `logs:` section decides what is logged and how long it is kept. The log
+itself is described in `architecture.md` ("The activity log").
+
+| key | default | meaning |
+|---|---|---|
+| `enabled` | `true` | false logs nothing, removes the Logs screen and its routes, and stops `track.js` |
+| `retention_days` | `30` | days older than this are deleted (1-3650) |
+| `max_total_mb` | `500` | while the logs directory is bigger, the oldest day is deleted -- never today |
+| `max_file_mb` | `50` | a day past this continues in a new part file; at most `max_total_mb` |
+| `compress_after_days` | `1` | finished days at least this old are gzipped; `0` never compresses |
+| `static_assets` | `false` | also log requests for `/js`, `/css`, `/vendor` and other files with an extension |
+| `ui_clicks` | `true` | log every click; screen changes, submits, undo and errors are logged either way |
+| `echo` | `true` | print `[req] GET /path 200 1.2ms ip name` for each request to stdout (and so `docker logs`); uvicorn's own access line is off |
+
+Retention runs from the hourly purge and from "Prune now" on the Logs
+screen. Every key but `enabled` is `[live]`: a change from the Settings screen
+or a hand edit applies to the next request and the next prune.
+`logs.enabled` needs a restart, since the writer and the log's routes are set
+up once at startup.
+
 ## In containers
 
 The Dockerfile copies `app/core/layout_container.py` to
@@ -312,7 +469,7 @@ template's `-tags container`. That file exists nowhere else (it is in
 
 | Pinned | Why |
 |---|---|
-| config file `/app/config/config.yaml` | where `docker/run.sh` mounts `./config/config.yaml`, read-only; its folder makes `/app` the project directory, so `./static` resolves as in a checkout |
+| config file `/app/config/config.yaml` | where `docker/run.sh` mounts `./config/config.yaml`, writable (the Settings screen saves it in place); its folder makes `/app` the project directory, so `./static` resolves as in a checkout, and puts `secret.key` (mounted read-only) beside it |
 | app dir `/app/data` | where `docker/run.sh` mounts `docker.data_dir`, the only writable mount |
 | listen host `0.0.0.0` | inside the container's own network namespace; exposure is `docker.bind_address` |
 
@@ -324,20 +481,28 @@ database as the server with nothing extra to type, and stops a host-oriented
 that is not mounted. Everything else -- `server.port`, cookies, proxy trust,
 TTLs -- comes from the mounted `config.yaml` as usual.
 
+Inside the container the Settings screen shows `docker:` (and the pinned
+`server.host` and `server.app_dir`) read-only. The `docker:` section decides
+what `docker/run.sh` mounts and hands to the container's user on the host, so
+a compromised container must not be able to choose it; edit those on the
+host. `docker/run.sh` also refuses a `data_dir` that is `/`, a home
+directory, or a non-empty directory that is not this app's.
+
 To reword the UI in a container without rebuilding, put a `language.yaml` in
 the data directory (`/app/data/language.yaml`).
 
 ## Backups
 
-Back up **`config.yaml` and the app directory together**:
+Back up **`secret.key`, `config.yaml` and the app directory together**:
 
 - Outside Docker: the whole `~/.config/<slug>/` directory, plus
-  `config/config.yaml` if that is the one in use (`manage paths` says which).
-- Docker: `config/config.yaml` **and** `docker.data_dir` (`./data` by default) --
-  deliberately separate.
+  `config/config.yaml` and `config/secret.key` if those are the ones in use
+  (`manage paths` says which).
+- Docker: `config/secret.key`, `config/config.yaml` **and** `docker.data_dir`
+  (`./data` by default) -- deliberately separate.
 
-Either half alone is useless: `app.db` without the key is unreadable, and the
-key without the database is nothing. Stop the server before copying: while it
+`app.db` without the key is unreadable, and the key without the database is
+nothing; `config.yaml` is only settings, but they are this deployment's. Stop the server before copying: while it
 runs, recent writes can still be in `app.db-wal` rather than `app.db`, and a
 copy of one without the other can be missing them. With the server stopped,
 SQLite folds the log back in and `app.db` alone is complete.
@@ -346,16 +511,22 @@ SQLite folds the log back in and `app.db` alone is complete.
 
 1. Add the key to `config/defaults.yaml`, with its default and a one-line
    comment on what it does and, where it matters, what goes wrong if it is
-   set incorrectly. This file is the documentation.
+   set incorrectly. This file is the documentation -- and the Settings
+   screen's help text. Tag it `[live]`, `[restart]` or `[scripts]`
+   (`test_every_key_is_tagged` fails until you do).
 2. Add the field to the matching section dataclass (`ServerSection`,
    `AuthSection`, ...) in `app/core/config.py`, typed `str`, `int`, or
    `bool`. Strict decoding rejects a key the dataclass does not have, and a
    field missing from `defaults.yaml` fails at startup, so the two cannot
    drift.
 3. If the value needs checking, add it to `validate()`.
-4. If the server reads it, add a field to `Config` and fill it in `load()`.
-   If a script reads it, add it to `config shell` in
-   `app/core/config_command.py` (the `server` or `docker` section).
+4. If the server reads it, add a field to `Config`, fill it in
+   `build_config()`, and read it per request through `get_config(request)`.
+   If it is `[live]`, also copy it in `live_config`
+   (`app/core/config_live.py`) -- `test_live_tags_match_live_config` fails if
+   the tag and `live_config` disagree. If a script reads it, add it to
+   `config shell` in `app/core/config_command.py` (the `server` or `docker`
+   section).
 5. Regenerate the committed example: `python -m app config example`. It is
    `config/defaults.yaml` plus a header, and is never edited by hand.
 

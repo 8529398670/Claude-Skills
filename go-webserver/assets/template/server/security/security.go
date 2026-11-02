@@ -18,6 +18,7 @@ import (
 	config "{{MODULE_PATH}}/server/config"
 	db "{{MODULE_PATH}}/server/db"
 	encryption "{{MODULE_PATH}}/server/encryption"
+	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
 )
 
@@ -67,12 +68,20 @@ func ( actor *Actor ) Method() ( result string ) {
 }
 
 type Guard struct {
-	Store  *db.Store
-	Config *config.Config
+	Store *db.Store
+	// Settings is the running configuration. Cookie lifetime and the
+	// Secure flag, and whether API keys are believed, can change while the
+	// server runs, so they are read from it per request.
+	Settings *config.Holder
 }
 
-func New( store *db.Store , cfg *config.Config ) ( guard *Guard ) {
-	guard = &Guard{ Store: store , Config: cfg }
+func New( store *db.Store , settings *config.Holder ) ( guard *Guard ) {
+	guard = &Guard{ Store: store , Settings: settings }
+	return
+}
+
+func ( guard *Guard ) cfg() ( cfg *config.Config ) {
+	cfg = guard.Settings.Get()
 	return
 }
 
@@ -82,14 +91,14 @@ func New( store *db.Store , cfg *config.Config ) ( guard *Guard ) {
 // is opaque to anyone reading it out of a browser profile or a proxy log, and
 // that a tampered cookie fails to decrypt instead of reaching the lookup.
 func ( guard *Guard ) SetSessionCookie( c fiber.Ctx , credential string ) ( err error ) {
-	sealed , err := encryption.ChaChaEncryptString( guard.Config.SecretKey , credential )
+	sealed , err := encryption.ChaChaEncryptString( guard.cfg().SecretKey , credential )
 	if err != nil { return }
 	c.Cookie( &fiber.Cookie{
-		Name:     guard.Config.CookieName,
+		Name:     guard.cfg().CookieName,
 		Value:    sealed,
 		Path:     "/",
-		MaxAge:   int( guard.Config.SessionTTL.Seconds() ),
-		Secure:   guard.Config.SecureCookies,
+		MaxAge:   int( guard.cfg().SessionTTL.Seconds() ),
+		Secure:   guard.cfg().SecureCookies,
 		HTTPOnly: true,
 		SameSite: "Strict",
 	} )
@@ -100,22 +109,22 @@ func ( guard *Guard ) ClearSessionCookie( c fiber.Ctx ) {
 	// Overwrite before clearing: some browsers hold on to a cookie whose
 	// attributes do not match exactly, and an empty value is harmless either way.
 	c.Cookie( &fiber.Cookie{
-		Name:     guard.Config.CookieName,
+		Name:     guard.cfg().CookieName,
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
-		Secure:   guard.Config.SecureCookies,
+		Secure:   guard.cfg().SecureCookies,
 		HTTPOnly: true,
 		SameSite: "Strict",
 	} )
-	c.ClearCookie( guard.Config.CookieName )
+	c.ClearCookie( guard.cfg().CookieName )
 }
 
 // DecryptCookie turns the stored cookie back into a session credential.
 // Exposed because logging out has to destroy the server-side record, not just
 // drop the cookie -- otherwise a copy of the cookie taken earlier still works.
 func ( guard *Guard ) DecryptCookie( raw string ) ( credential string , err error ) {
-	credential , err = encryption.ChaChaDecryptBase64String( guard.Config.SecretKey , raw )
+	credential , err = encryption.ChaChaDecryptBase64String( guard.cfg().SecretKey , raw )
 	return
 }
 
@@ -142,10 +151,10 @@ func ( guard *Guard ) LoadUser( c fiber.Ctx ) ( err error ) {
 }
 
 func ( guard *Guard ) resolveSession( c fiber.Ctx ) ( actor *Actor ) {
-	raw := c.Cookies( guard.Config.CookieName )
+	raw := c.Cookies( guard.cfg().CookieName )
 	if raw == "" { return }
 
-	credential , decrypt_err := encryption.ChaChaDecryptBase64String( guard.Config.SecretKey , raw )
+	credential , decrypt_err := encryption.ChaChaDecryptBase64String( guard.cfg().SecretKey , raw )
 	if decrypt_err != nil { return }
 
 	session , user := models.LoadSession( guard.Store , credential )
@@ -165,7 +174,7 @@ func ( guard *Guard ) resolveSession( c fiber.Ctx ) ( actor *Actor ) {
 // keys, so turning the feature off actually closes the door: the header stops
 // being believed at all, and existing keys stop authenticating.
 func ( guard *Guard ) resolveAPIKey( c fiber.Ctx ) ( actor *Actor ) {
-	if guard.Config.APIKeysEnabled == false { return }
+	if guard.cfg().APIKeysEnabled == false { return }
 
 	header := strings.TrimSpace( c.Get( fiber.HeaderAuthorization ) )
 	if header == "" { return }
@@ -265,6 +274,49 @@ func ( guard *Guard ) RequireAPIKey( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	err = c.Next()
+	return
+}
+
+// RequireOwner lets through only the owner, signed in from a browser. It
+// guards the activity log (routes/logs.go), which shows what every account
+// did -- including the other admins, which is exactly why they cannot read
+// it. Everyone else, any API key included, gets the 404 an unknown route
+// gets: the Logs screen is not something to advertise.
+//
+// A session, not a key: the log holds every account's IP addresses and
+// activity, and a key is a credential that lives in files. An app that wants
+// the log readable by a script should add a narrow export, knowingly.
+func ( guard *Guard ) RequireOwner( c fiber.Ctx ) ( err error ) {
+	actor := ActorFrom( c )
+	allowed := actor != nil && actor.ViaAPIKey() == false && actor.IsAdmin()
+	if allowed {
+		owner_id , owner_err := models.OwnerID( guard.Store )
+		allowed = owner_err == nil && owner_id != 0 && actor.User.ID == owner_id
+	}
+	if allowed == false {
+		err = c.Status( fiber.StatusNotFound ).JSON( fiber.Map{ "error": "not_found" } )
+		return
+	}
+	err = c.Next()
+	return
+}
+
+// LogActor is who an activity-log entry belongs to: the account, the role it
+// acted with, and which door it came through (a key by its public id only).
+func LogActor( actor *Actor ) ( result *logs.Actor ) {
+	if actor == nil || actor.User == nil {
+		result = logs.Anonymous()
+		return
+	}
+	result = &logs.Actor{
+		UserID: actor.User.ID,
+		Name:   actor.User.DisplayName,
+		Role:   actor.Role,
+		Method: actor.Method(),
+	}
+	if actor.APIKey != nil {
+		result.KeyID = actor.APIKey.ID
+	}
 	return
 }
 

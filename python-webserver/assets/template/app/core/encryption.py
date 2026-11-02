@@ -113,7 +113,7 @@ def bcrypt_compare(hashed: str, plain_text: str) -> bool:
 
 def generate_key_hex() -> str:
     """A fresh 256-bit key as 64 hex characters -- the shape of
-    server.secret_key in config.yaml."""
+    the key in secret.key."""
     return secrets.token_hex(32)
 
 

@@ -122,13 +122,34 @@ func SaveUser( store *db.Store , user *User ) ( err error ) {
 // by SaveUser. That is what stops two concurrent admin requests from each
 // reading the old row and the slower one silently discarding the other's
 // change.
-func RenameUser( store *db.Store , user_id uint64 , display_name string ) ( err error ) {
+//
+// expect, when not nil, is the name the caller believes is stored, checked in
+// the same transaction: a *RenameConflictError if it is not. It is what makes
+// an undo of a rename safe -- putting the old name back must not overwrite
+// one somebody chose in another tab since.
+func RenameUser( store *db.Store , user_id uint64 , display_name string , expect *string ) ( err error ) {
 	err = store.UpdateValue( db.BucketUsers , encryption.Uint64ToBytes( user_id ) ,
 		func() any { return &User{} } ,
 		func( item any ) ( mutate_err error ) {
-			item.( *User ).DisplayName = strings.TrimSpace( display_name )
+			user := item.( *User )
+			if expect != nil && user.DisplayName != strings.TrimSpace( *expect ) {
+				mutate_err = &RenameConflictError{ Current: user.DisplayName }
+				return
+			}
+			user.DisplayName = strings.TrimSpace( display_name )
 			return
 		} )
+	return
+}
+
+// RenameConflictError is RenameUser's answer when the name was not what the
+// caller expected: someone changed it since. Current is the name it has now.
+type RenameConflictError struct {
+	Current string
+}
+
+func ( conflict *RenameConflictError ) Error() ( result string ) {
+	result = "the name was changed somewhere else in the meantime"
 	return
 }
 

@@ -22,6 +22,7 @@
 package manage
 
 import (
+	json "encoding/json"
 	errors "errors"
 	flag "flag"
 	fmt "fmt"
@@ -33,6 +34,7 @@ import (
 	config "{{MODULE_PATH}}/server/config"
 	control "{{MODULE_PATH}}/server/control"
 	db "{{MODULE_PATH}}/server/db"
+	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
 )
 
@@ -54,6 +56,9 @@ Usage:
   create-invite   -user-id 1 -label "Book club" [-uses 10] [-days 30]
                                      one link a group can join through
   paths                              where this app keeps its state
+  logs            [-day 2026-11-02] [-q "status:5xx"] [-limit 50]
+                                     the activity log: days, or one day's
+                                     entries newest first, as JSON lines
 
 The owner is the first admin, and the one account that can delete other
 admins from the web UI. Nothing deletes or disables the owner -- move it with
@@ -72,9 +77,9 @@ These work whether or not the server is running. With the server up the
 command is sent to it over the control socket in the app directory; with the
 server stopped the database is opened directly.
 
-Every command reads the same config.yaml as the server (see "paths" for
-which one). Its server.secret_key in particular must be the one the data
-was written with, or the stored records cannot be decrypted.
+Every command reads the same config.yaml and secret.key as the server (see
+"paths" for which). secret.key in particular must hold the key the data was
+written with, or the stored records cannot be decrypted.
 `
 
 // Usage prints the command list. Exported so an entry point can show it for
@@ -121,6 +126,9 @@ func Run( arguments []string ) ( err error ) {
 		err = fmt.Errorf( "config error: %w" , err )
 		return
 	}
+	if cfg.SecretMigrated {
+		fmt.Fprintf( os.Stderr , "MOVED server.secret_key out of %s into %s -- back it up with the database.\n" , cfg.ConfigFile , cfg.SecretFile )
+	}
 
 	// "paths" reports configuration only, so it never needs the database and
 	// stays useful when everything else is failing.
@@ -128,6 +136,12 @@ func Run( arguments []string ) ( err error ) {
 	rest := arguments[ 1: ]
 	if command == "paths" {
 		err = commandPaths( cfg )
+		return
+	}
+	// "logs" reads the log files, never the database, so it works the same
+	// with the server up or down -- the files are only ever appended to.
+	if command == "logs" {
+		err = commandLogs( cfg , rest )
 		return
 	}
 
@@ -519,7 +533,8 @@ func ( b *directBackend ) DeleteAPIKey( key_id string ) ( key control.APIKeyResp
 	}
 	names , err := b.displayNames()
 	if err != nil { return }
-	if err = models.DeleteAPIKey( b.store , found.ID ); err != nil { return }
+	// The CLI has no undo, so its delete is the hard one (see PurgeAPIKey).
+	if err = models.PurgeAPIKey( b.store , found.ID ); err != nil { return }
 	key = fromKeyModel( found , names[ found.UserID ] , "" )
 	return
 }
@@ -607,13 +622,57 @@ func existsNote( path string ) ( note string ) {
 
 // commandPaths answers "where did it put my data", which is otherwise a
 // question you can only settle by reading the source or the startup log.
+func commandLogs( cfg *config.Config , arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "logs" , flag.ExitOnError )
+	day := set.String( "day" , "" , "a UTC date, YYYY-MM-DD; without it, list the days" )
+	query := set.String( "q" , "" , "a search, as typed on the Logs screen" )
+	limit := set.Int( "limit" , 50 , "entries to print, newest first (1-1000)" )
+	set.Parse( arguments )
+
+	reader := logs.New( cfg.Logs , cfg.SecretKey , cfg.EncryptAtRest )
+	parsed := logs.ParseQuery( *query )
+	if *day == "" {
+		days , total , list_err := reader.Days( parsed )
+		if list_err != nil {
+			err = list_err
+			return
+		}
+		for _ , row := range days {
+			line := fmt.Sprintf( "%s  %7d entries  %5d errors  %9d bytes" , row.Date , row.Entries , row.Errors , row.Bytes )
+			if row.Matches != nil {
+				line += fmt.Sprintf( "  %d matches" , *row.Matches )
+			}
+			if row.Compressed {
+				line += "  (gzipped)"
+			}
+			fmt.Println( line )
+		}
+		fmt.Printf( "%d bytes in %s\n" , total , cfg.Logs.Dir )
+		return
+	}
+	if *limit < 1 || *limit > 1000 {
+		err = fmt.Errorf( "-limit must be 1-1000" )
+		return
+	}
+	records , _ , err := reader.ReadDay( *day , parsed , -1 , *limit )
+	if err != nil { return }
+	encoder := json.NewEncoder( os.Stdout )
+	encoder.SetEscapeHTML( false )
+	for _ , record := range records {
+		encoder.Encode( record )
+	}
+	return
+}
+
 func commandPaths( cfg *config.Config ) ( err error ) {
-	fmt.Printf( "%-14s %s  (holds the secret key)\n" , "config" , cfg.ConfigFile )
+	fmt.Printf( "%-14s %s\n" , "config" , cfg.ConfigFile )
+	fmt.Printf( "%-14s %s  (the secret key: back it up with the database)\n" , "secret" , cfg.SecretFile )
 	fmt.Printf( "%-14s %s  (relative paths in the config start here)\n" , "project dir" , cfg.ProjectDir )
 	fmt.Printf( "%-14s %s  (from %s)\n" , "url" , cfg.URL , cfg.URLSource )
 	fmt.Printf( "%-14s %s\n" , "app dir" , cfg.AppDir )
 	fmt.Printf( "%-14s %s\n" , "database" , cfg.DatabasePath )
 	fmt.Printf( "%-14s %s\n" , "storage" , cfg.StorageDir )
+	fmt.Printf( "%-14s %s\n" , "logs" , cfg.Logs.Dir )
 	fmt.Printf( "%-14s %s%s\n" , "static" , cfg.StaticDir , existsNote( cfg.StaticDir ) )
 	fmt.Printf( "%-14s %s%s\n" , "language" , cfg.LanguageFile , existsNote( cfg.LanguageFile ) )
 
@@ -637,11 +696,11 @@ func commandPaths( cfg *config.Config ) ( err error ) {
 	// out from the paths above.
 	fmt.Println( "" )
 	fmt.Printf( "Change any of these in %s (server.app_dir moves the app dir).\n" , cfg.ConfigFile )
-	if filepath.Dir( cfg.ConfigFile ) == cfg.AppDir {
-		fmt.Println( "Back up the app dir as a unit -- app.db is unreadable without the key in config.yaml." )
+	if filepath.Dir( cfg.SecretFile ) == cfg.AppDir {
+		fmt.Println( "Back up the app dir as a unit -- app.db is unreadable without secret.key." )
 	} else {
-		fmt.Println( "config.yaml is NOT in the app dir. Back up both; app.db is unreadable without" )
-		fmt.Println( "the key in config.yaml, and either one alone is useless." )
+		fmt.Println( "secret.key is NOT in the app dir. Back up config.yaml, secret.key and the app" )
+		fmt.Println( "dir together; app.db is unreadable without secret.key." )
 	}
 	return
 }

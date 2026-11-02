@@ -19,9 +19,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.core.db import Store
+from app.core.logs import KIND_ADMIN
 from app.core.security import actor_from, check_csrf
 from app.models import credentials, login_tokens, users
 from app.routes.helpers import bad_request, error, forbidden, get_config, get_store, not_found, parse_id, read_json, run
+from app.routes.logs import audit
 
 
 async def list_users(request: Request) -> Response:
@@ -59,6 +61,7 @@ async def create_user(request: Request) -> Response:
     store, cfg = get_store(request), get_config(request)
     user = await run(users.create_user, store, display_name, role)
     credential = await run(login_tokens.issue_login_token, store, user.id, cfg.login_token_ttl_seconds)
+    audit(request, KIND_ADMIN, "user created", {"user_id": user.id, "name": user.display_name, "role": user.role})
     return JSONResponse(
         {
             "user_id": user.id,
@@ -91,6 +94,7 @@ async def reissue_login(request: Request) -> Response:
     if await run(users.get_user, store, user_id) is None:
         return not_found("no such user")
     credential = await run(login_tokens.issue_login_token, store, user_id, cfg.login_token_ttl_seconds)
+    audit(request, KIND_ADMIN, "login link reissued", {"user_id": user_id})
     return JSONResponse({"login_path": f"/login/{credential}", "expires_in_seconds": cfg.login_token_ttl_seconds})
 
 
@@ -110,6 +114,7 @@ async def set_user_disabled(request: Request) -> Response:
     refused = await run(set_disabled_checked, get_store(request), actor_from(request).user.id, user_id, disabled)
     if refused is not None:
         return refused.response()
+    audit(request, KIND_ADMIN, "user disabled set", {"user_id": user_id, "disabled": disabled})
     return JSONResponse({"ok": True})
 
 
@@ -130,6 +135,7 @@ async def revoke_access(request: Request) -> Response:
     revoked = await run(revoke_access_checked, get_store(request), actor_from(request).user.id, user_id)
     if isinstance(revoked, RuleRefusal):
         return revoked.response()
+    audit(request, KIND_ADMIN, "access revoked", {"user_id": user_id})
     return JSONResponse({"ok": True, "revoked": revoked.to_dict()})
 
 
@@ -161,6 +167,7 @@ async def delete_user(request: Request) -> Response:
         return forbidden("only the owner can delete an admin account")
     if removed is None:
         return not_found("no such user")
+    audit(request, KIND_ADMIN, "user deleted", {"user_id": user_id})
     return JSONResponse({"ok": True, "removed": removed.to_dict()})
 
 

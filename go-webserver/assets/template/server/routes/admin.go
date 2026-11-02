@@ -7,6 +7,7 @@ import (
 	fiber "github.com/gofiber/fiber/v3"
 
 	db "{{MODULE_PATH}}/server/db"
+	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 )
@@ -86,16 +87,17 @@ func ( handlers *Handlers ) CreateUser( c fiber.Ctx ) ( err error ) {
 		err = serverError( c )
 		return
 	}
-	credential , token_err := models.IssueLoginToken( handlers.Store , user.ID , handlers.Config.LoginTokenTTL )
+	credential , token_err := models.IssueLoginToken( handlers.Store , user.ID , handlers.cfg().LoginTokenTTL )
 	if token_err != nil {
 		err = serverError( c )
 		return
 	}
 
+	handlers.audit( c , logs.KindAdmin , "user created" , fiber.Map{ "user_id": user.ID , "name": user.DisplayName , "role": user.Role } )
 	err = c.Status( fiber.StatusCreated ).JSON( fiber.Map{
 		"user_id":            user.ID,
 		"login_path":         "/login/" + credential,
-		"expires_in_seconds": int( handlers.Config.LoginTokenTTL.Seconds() ),
+		"expires_in_seconds": int( handlers.cfg().LoginTokenTTL.Seconds() ),
 	} )
 	return
 }
@@ -129,14 +131,15 @@ func ( handlers *Handlers ) ReissueLogin( c fiber.Ctx ) ( err error ) {
 		return
 	}
 
-	credential , token_err := models.IssueLoginToken( handlers.Store , user_id , handlers.Config.LoginTokenTTL )
+	credential , token_err := models.IssueLoginToken( handlers.Store , user_id , handlers.cfg().LoginTokenTTL )
 	if token_err != nil {
 		err = serverError( c )
 		return
 	}
+	handlers.audit( c , logs.KindAdmin , "login link reissued" , fiber.Map{ "user_id": user_id } )
 	err = c.JSON( fiber.Map{
 		"login_path":         "/login/" + credential,
-		"expires_in_seconds": int( handlers.Config.LoginTokenTTL.Seconds() ),
+		"expires_in_seconds": int( handlers.cfg().LoginTokenTTL.Seconds() ),
 	} )
 	return
 }
@@ -161,6 +164,7 @@ func ( handlers *Handlers ) SetUserDisabled( c fiber.Ctx ) ( err error ) {
 		err = refused.send( c )
 		return
 	}
+	handlers.audit( c , logs.KindAdmin , "user disabled set" , fiber.Map{ "user_id": user_id , "disabled": body.Disabled } )
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }
@@ -191,6 +195,7 @@ func ( handlers *Handlers ) RevokeAccess( c fiber.Ctx ) ( err error ) {
 		err = refused.send( c )
 		return
 	}
+	handlers.audit( c , logs.KindAdmin , "access revoked" , fiber.Map{ "user_id": user_id } )
 	err = c.JSON( fiber.Map{ "ok": true , "revoked": revoked } )
 	return
 }
@@ -224,6 +229,7 @@ func ( handlers *Handlers ) DeleteUser( c fiber.Ctx ) ( err error ) {
 	removed , delete_err := models.DeleteUser( handlers.Store , user_id , security.UserFrom( c ).ID )
 	switch {
 	case delete_err == nil:
+		handlers.audit( c , logs.KindAdmin , "user deleted" , fiber.Map{ "user_id": user_id } )
 		err = c.JSON( fiber.Map{ "ok": true , "removed": removed } )
 	case errors.Is( delete_err , db.ErrNotFound ):
 		err = notFound( c , "no such user" )

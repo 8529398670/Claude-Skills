@@ -65,16 +65,26 @@ const Invites = {
         } },
       } );
 
+      // Delete asks nothing and offers Undo: the server keeps a deleted link
+      // restorable for a few minutes. Revoke stays a confirmed, one-way step
+      // (see Keys.revokeButton for why).
       const deleteButton = Dom.el( "button" , {
         class: "btn btn-sm btn-outline-danger",
         text: I18n.get( "invite_links.delete_button" ),
         on: { click: async function () {
-          const question = I18n.get( "invite_links.delete_confirm" );
-          if ( question !== "" && !window.confirm( question ) ) return;
           try {
             await Api.deleteInvite( link.id );
             await Invites.refresh();
-          } catch ( error ) { App.showError( error.message ); }
+          } catch ( error ) {
+            App.showError( error.message );
+            return;
+          }
+          Undo.record( {
+            label: I18n.get( "undo.deleted_invite" ),
+            toast: true,
+            undo: async () => { await Api.restoreInvite( link.id ); await Invites.refresh(); },
+            redo: async () => { await Api.deleteInvite( link.id ); await Invites.refresh(); },
+          } );
         } },
       } );
 

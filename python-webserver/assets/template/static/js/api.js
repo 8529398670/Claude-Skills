@@ -6,14 +6,21 @@ const Api = {
 
   async request( path , options ) {
     const settings = options || {};
-    const response = await fetch( path , {
-      method: settings.method || "GET",
-      // The session cookie is the only credential; without this an
-      // authenticated request silently arrives as an anonymous one.
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: settings.body ? JSON.stringify( settings.body ) : undefined,
-    } );
+    let response;
+    try {
+      response = await fetch( path , {
+        method: settings.method || "GET",
+        // The session cookie is the only credential; without this an
+        // authenticated request silently arrives as an anonymous one.
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: settings.body ? JSON.stringify( settings.body ) : undefined,
+      } );
+    } catch ( networkError ) {
+      // Never reached the server, so only the browser can log it.
+      Track.failed( path , 0 );
+      throw networkError;
+    }
 
     let payload = {};
     try {
@@ -23,8 +30,12 @@ const Api = {
     }
 
     if ( !response.ok ) {
+      if ( response.status >= 500 ) Track.failed( path , response.status );
       const error = new Error( payload.error || response.statusText );
       error.status = response.status;
+      // The whole body, for callers that need more than the code (the
+      // Settings screen's problems list, a 409's current version).
+      error.payload = payload;
       throw error;
     }
     return payload;
@@ -66,7 +77,14 @@ const Api = {
     return this.request( "/api/join/claim" , { method: "POST" , body: { credential: credential , user_id: userId , pin: pin || "" } } );
   },
 
-  rename( displayName )        { return this.post( "/api/account/rename" , { display_name: displayName } ); },
+  // expect is the name the caller believes is stored. The server refuses
+  // with a 409 when it is not, so an undo never overwrites a rename made
+  // somewhere else in the meantime.
+  rename( displayName , expect ) {
+    const body = { display_name: displayName };
+    if ( expect !== undefined ) body.expect = expect;
+    return this.post( "/api/account/rename" , body );
+  },
   setPin( pin )                { return this.post( "/api/account/pin" , { pin: pin } ); },
   createMyLoginLink()          { return this.post( "/api/account/login-link" ); },
   logout()                     { return this.post( "/api/logout" ); },
@@ -83,6 +101,7 @@ const Api = {
   },
   revokeInvite( linkId )       { return this.post( "/api/admin/invite-links/" + encodeURIComponent( linkId ) + "/revoke" ); },
   deleteInvite( linkId )       { return this.post( "/api/admin/invite-links/" + encodeURIComponent( linkId ) + "/delete" ); },
+  restoreInvite( linkId )      { return this.post( "/api/admin/invite-links/" + encodeURIComponent( linkId ) + "/restore" ); },
 
   // API keys. createKey's expiresInDays is passed through as-is including null,
   // because the server reads absent as "use the default" and 0 as "never
@@ -93,7 +112,38 @@ const Api = {
   },
   revokeKey( keyId )           { return this.post( "/api/keys/" + encodeURIComponent( keyId ) + "/revoke" ); },
   deleteKey( keyId )           { return this.post( "/api/keys/" + encodeURIComponent( keyId ) + "/delete" ); },
+  restoreKey( keyId )          { return this.post( "/api/keys/" + encodeURIComponent( keyId ) + "/restore" ); },
   listAllKeys()                { return this.request( "/api/admin/keys" ); },
   revokeAnyKey( keyId )        { return this.post( "/api/admin/keys/" + encodeURIComponent( keyId ) + "/revoke" ); },
   deleteAnyKey( keyId )        { return this.post( "/api/admin/keys/" + encodeURIComponent( keyId ) + "/delete" ); },
+  restoreAnyKey( keyId )       { return this.post( "/api/admin/keys/" + encodeURIComponent( keyId ) + "/restore" ); },
+
+  // The activity log (owner only; the server answers anyone else with 404).
+  // q is the search box as typed; the server parses it.
+  logDays( query ) {
+    return this.request( "/api/owner/logs/days" + this.query( { q: query } ) );
+  },
+  logDay( date , query , before ) {
+    return this.request( "/api/owner/logs/days/" + encodeURIComponent( date ) + this.query( { q: query , before: before } ) );
+  },
+  logDownloadPath( date )      { return "/api/owner/logs/days/" + encodeURIComponent( date ) + "/download"; },
+  deleteLogDay( date )         { return this.post( "/api/owner/logs/days/" + encodeURIComponent( date ) + "/delete" ); },
+  pruneLogs()                  { return this.post( "/api/owner/logs/prune" ); },
+
+  // config.yaml as the Settings screen (owner only). version is the one
+  // settings() returned; the server refuses a save against any other.
+  settings()                   { return this.request( "/api/owner/settings" ); },
+  saveSettings( version , changes ) {
+    return this.post( "/api/owner/settings" , { version: version , changes: changes } );
+  },
+
+  // "?a=1&b=2" from the fields that have a value, or "" when none do.
+  query( fields ) {
+    const params = new URLSearchParams();
+    Object.entries( fields ).forEach( function ( entry ) {
+      if ( entry[ 1 ] !== undefined && entry[ 1 ] !== null && entry[ 1 ] !== "" ) params.set( entry[ 0 ] , String( entry[ 1 ] ) );
+    } );
+    const text = params.toString();
+    return text ? "?" + text : "";
+  },
 };

@@ -100,8 +100,18 @@ const Theme = {
         attrs: { type: "button" , "data-theme-key": preset.key },
         children: [ swatch , Dom.el( "span" , { text: I18n.get( "theme.preset_" + preset.key ) } ) ],
         on: { click: () => {
-          this.set( preset.key );
-          update();
+          const previous = this.current;
+          if ( previous === preset.key ) return;
+          const pick = ( key ) => {
+            this.set( key );
+            update();
+          };
+          Undo.run( {
+            label: I18n.get( "undo.theme" ),
+            merge: "theme",
+            do: () => pick( preset.key ),
+            undo: () => pick( previous ),
+          } );
         } },
       } );
       root.appendChild( button );

@@ -138,7 +138,16 @@ def list_users(store: Store) -> list[User]:
     return [User.from_record(record) for _, record in store.all(BUCKET_USERS)]
 
 
-def rename_user(store: Store, user_id: int, display_name: str) -> bool:
+class RenameConflictError(Exception):
+    """The name was not what the caller expected: someone changed it since.
+    current is the name it has now."""
+
+    def __init__(self, current: str) -> None:
+        super().__init__("the name was changed somewhere else in the meantime")
+        self.current = current
+
+
+def rename_user(store: Store, user_id: int, display_name: str, expect: str | None = None) -> bool:
     """Goes through update_value rather than get_user followed by a put. The
     read and the write land in one transaction, which is what stops two
     concurrent admin requests from each reading the old row and the slower one
@@ -147,9 +156,16 @@ def rename_user(store: Store, user_id: int, display_name: str) -> bool:
     Disabling an account is not here: it has to take the account's sessions
     and login links with it in the same transaction, so it lives in
     app/models/credentials.py beside the other operations that span
-    buckets."""
+    buckets.
+
+    expect, when given, is the name the caller believes is stored, checked
+    in the same transaction: RenameConflictError if it is not. It is what
+    makes an undo of a rename safe -- putting the old name back must not
+    overwrite one somebody chose in another tab since."""
 
     def mutate(record: Record) -> None:
+        if expect is not None and record["display_name"] != expect.strip():
+            raise RenameConflictError(record["display_name"])
         record["display_name"] = display_name.strip()
 
     return store.update_value(BUCKET_USERS, user_id, mutate) is not None

@@ -8,15 +8,31 @@
 # everything else -- is applied as a tag after the build rather than passed to
 # it.
 #
-# Afterwards these are set: IMAGE_ID, CONFIG_FILE, VERSION, and every
-# docker_* / server_* value printed by `config shell docker` (see
+# Afterwards these are set: IMAGE_ID, CONFIG_FILE, SECRET_FILE, VERSION,
+# DOCKER_SETTINGS (the assignments below, as text), and every docker_* /
+# server_* value printed by `config shell docker` (see
 # server/config/command.go for the list), including docker_url.
 
 CONFIG_FILE="$( pwd )/config/config.yaml"
+SECRET_FILE="$( pwd )/config/secret.key"
 DOCKERFILE="docker/Dockerfile"
 
-# The container sees config.yaml here (server/config/layout_container.go).
+# The container sees them here (server/config/layout_container.go): config.yaml
+# writable, so the owner's Settings screen can save it; secret.key read-only.
 CONTAINER_CONFIG="/app/config/config.yaml"
+CONTAINER_SECRET="/app/config/secret.key"
+
+# config_dir_run runs the binary with the project's config/ folder mounted at
+# /work, as the invoking user: for the commands that create or rewrite files
+# there (init, secret, migrate). Mounting the folder rather than single files
+# is what lets them create a file, and replace config.yaml by renaming a new
+# copy over it, so a failure half way leaves the old file whole.
+config_dir_run() {
+  docker run --rm --network none --read-only --cap-drop ALL \
+    --user "$( id -u ):$( id -g )" \
+    -v "$( dirname "$CONFIG_FILE" ):/work" \
+    "$IMAGE_ID" config "$@"
+}
 
 # config_run runs the freshly built binary in a throwaway container that can do
 # nothing but read config.yaml: no network, read-only, no capabilities. It runs
@@ -51,11 +67,14 @@ build_image() {
     exit 1
   fi
 
-  if [ -d "$CONFIG_FILE" ]; then
-    echo "ERROR: ${CONFIG_FILE} is a directory. Docker creates one when asked to" >&2
-    echo "       mount a file that does not exist. Remove it and re-run." >&2
-    exit 1
-  fi
+  local mounted
+  for mounted in "$CONFIG_FILE" "$SECRET_FILE"; do
+    if [ -d "$mounted" ]; then
+      echo "ERROR: ${mounted} is a directory. Docker creates one when asked to" >&2
+      echo "       mount a file that does not exist. Remove it and re-run." >&2
+      exit 1
+    fi
+  done
 
   # Version metadata, stamped into the binary exactly as build.sh does, so
   # `docker exec <name> /app/server version` is as informative as a portable
@@ -97,6 +116,7 @@ build_image() {
   # `eval "$( failing )"` would quietly eval nothing and carry on.
   assignments="$( config_run shell docker )"
   eval "$assignments"
+  DOCKER_SETTINGS="$assignments"
 
   docker tag "$IMAGE_ID" "${docker_image}:latest"
   if [ -n "$extra_tag" ]; then
@@ -106,11 +126,22 @@ build_image() {
   echo "Built ${docker_image}:latest (${VERSION}, image ${IMAGE_ID#sha256:})"
 }
 
-# create_config writes config.yaml from the image's defaults with a fresh
-# secret key. It goes through a temporary file so that a failure part-way
-# leaves no half-written config.yaml behind to be mistaken for a real one.
+# create_config writes config.yaml from the image's defaults, and a
+# secret.key with a fresh key beside it unless one is there. Both are created
+# as the invoking user, mode 0600, and neither ever replaces an existing file.
 create_config() {
   mkdir -p "$( dirname "$CONFIG_FILE" )"
-  ( umask 077; docker run --rm --network none "$IMAGE_ID" config init -file - > "${CONFIG_FILE}.new" )
-  mv "${CONFIG_FILE}.new" "$CONFIG_FILE"
+  config_dir_run init -dir /work >/dev/null
+}
+
+# create_secret writes secret.key alone: for a config.yaml copied from
+# config.example.yaml.
+create_secret() {
+  config_dir_run secret -file /work/secret.key >/dev/null
+}
+
+# migrate_config moves server.secret_key out of a config.yaml written before
+# secret.key existed. It prints only when it did something.
+migrate_config() {
+  config_dir_run migrate -dir /work
 }

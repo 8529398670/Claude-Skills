@@ -6,15 +6,18 @@
 #   scripts/login.sh 3             user 3
 #   scripts/login.sh --docker      the docker container, even if a local
 #                                  server is running too
-#   scripts/login.sh --local       this checkout's local database
+#   scripts/login.sh --local       this checkout's local server
+#   scripts/login.sh --no-start    never start a server: with none running,
+#                                  write the link into the database offline
 #
 # Where the link comes from:
 #   - the local server (scripts/run.sh) when it is running: the link goes
 #     into its database, which SQLite's WAL mode makes safe alongside it;
 #   - otherwise the docker container (docker/run.sh) when it is running:
 #     the link goes through `docker exec`;
-#   - otherwise the local database directly, offline. The link waits there
-#     until the server is started.
+#   - otherwise this starts the local server in the background (log in
+#     .run/server.log, stop it with scripts/run.sh stop) and gets the link
+#     from it, so the link works as soon as it is printed.
 # The two keep separate databases, so a link from one does nothing in the
 # other. This says which one it used.
 #
@@ -33,13 +36,15 @@ fi
 
 USER_ID=1
 MODE=auto
+START=true
 for argument in "$@"; do
   case "$argument" in
     --docker) MODE=docker ;;
     --local)  MODE=local ;;
-    -h|--help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --no-start) START=false ;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *[!0-9]*|"")
-      echo "ERROR: expected a numeric user id, --docker or --local; got '${argument}'." >&2
+      echo "ERROR: expected a numeric user id, --docker, --local or --no-start; got '${argument}'." >&2
       exit 1 ;;
     *) USER_ID="$argument" ;;
   esac
@@ -102,23 +107,50 @@ if [ "$MODE" = "docker" ]; then
   exit 0
 fi
 
-if [ ! -f "$database" ]; then
-  echo "ERROR: there is no database yet at ${database}." >&2
-  echo "       Start the server with scripts/run.sh -- its first start creates the owner" >&2
-  echo "       and prints their login link." >&2
-  exit 1
-fi
+issue_link() {
+  if ! "$PYTHON" -m app manage reissue-login --user-id "$USER_ID"; then
+    echo "" >&2
+    echo "Accounts in this database: scripts/run.sh manage list-users" >&2
+    exit 1
+  fi
+}
 
 if [ -n "$LOCAL_PID" ]; then
   echo "Local server (pid ${LOCAL_PID}), served at ${url}"
-else
+  echo "  database ${database}"
+  echo ""
+  issue_link
+  exit 0
+fi
+
+if [ "$START" != "true" ]; then
+  if [ ! -f "$database" ]; then
+    echo "ERROR: there is no database yet at ${database}." >&2
+    echo "       Start the server with scripts/run.sh -- its first start creates the owner" >&2
+    echo "       and prints their login link." >&2
+    exit 1
+  fi
   echo "No server is running for this checkout, so the link goes straight into"
   echo "the database. It works once you start it: scripts/run.sh"
+  echo "  database ${database}"
+  echo ""
+  issue_link
+  exit 0
 fi
+
+if [ "${url#http://}" != "$url" ] && [ "$secure_cookies" = "true" ]; then
+  echo "WARNING: server.secure_cookies is true but the URL is ${url}."
+  echo "         The browser will drop the session cookie and this link will seem to do"
+  echo "         nothing. Set it to false on line $( config_line secure_cookies ) of ${config_file}"
+  echo "         for local use, or set server.public_url to the https:// address in front."
+  echo ""
+fi
+
+echo "No server was running for this checkout; starting one in the background..."
+start_in_background
+echo "Local server (pid ${BACKGROUND_PID}), served at ${url}"
 echo "  database ${database}"
+echo "  log      ${LOG_FILE}"
+echo "  stop it  scripts/run.sh stop"
 echo ""
-if ! "$PYTHON" -m app manage reissue-login --user-id "$USER_ID"; then
-  echo "" >&2
-  echo "Accounts in this database: scripts/run.sh manage list-users" >&2
-  exit 1
-fi
+issue_link

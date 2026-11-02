@@ -88,8 +88,14 @@ const Keys = {
 
   // revokeButton and deleteButton are shared by both tables: the only
   // difference is which endpoint acts on the key, so that is the parameter.
-  // Revoking keeps the row, marked dead; deleting removes it. Revoke is only
-  // offered on a live key, delete on every key.
+  // Revoking keeps the row, marked dead; deleting takes it off the list.
+  // Revoke is only offered on a live key, delete on every key.
+  //
+  // Delete is undoable and revoke is not. The server only marks a deleted
+  // key, and can put it back for a few minutes, so delete asks nothing and
+  // offers Undo instead. Revoking says "stop trusting this" -- the leaked-key
+  // button -- and an undo would quietly trust it again, so it asks first and
+  // stays done.
   revokeButton( key , revoke ) {
     if ( !key.live ) return null;
     return Dom.el( "button" , {
@@ -109,20 +115,31 @@ const Keys = {
     } );
   },
 
-  deleteButton( key , remove ) {
+  deleteButton( key , remove , restore ) {
     return Dom.el( "button" , {
       class: "btn btn-sm btn-outline-danger",
       text: I18n.get( "api_keys.delete_button" ),
       on: { click: async function () {
-        const question = I18n.get( "api_keys.delete_confirm" );
-        if ( question !== "" && !window.confirm( question ) ) return;
         try {
           await remove( key.id );
-          await Keys.refresh();
-          if ( Keys.me.role === "admin" ) await Keys.refreshAll();
-        } catch ( error ) { App.showError( error.message ); }
+          await Keys.refreshBoth();
+        } catch ( error ) {
+          App.showError( error.message );
+          return;
+        }
+        Undo.record( {
+          label: I18n.get( "undo.deleted_key" ),
+          toast: true,
+          undo: async () => { await restore( key.id ); await Keys.refreshBoth(); },
+          redo: async () => { await remove( key.id ); await Keys.refreshBoth(); },
+        } );
       } },
     } );
+  },
+
+  async refreshBoth() {
+    await Keys.refresh();
+    if ( Keys.me.role === "admin" ) await Keys.refreshAll();
   },
 
   async refresh() {
@@ -148,7 +165,7 @@ const Keys = {
         Dom.el( "td" , { children: [
           Dom.el( "div" , { class: "row-actions" , children: [
             Keys.revokeButton( key , function ( id ) { return Api.revokeKey( id ); } ),
-            Keys.deleteButton( key , function ( id ) { return Api.deleteKey( id ); } ),
+            Keys.deleteButton( key , function ( id ) { return Api.deleteKey( id ); } , function ( id ) { return Api.restoreKey( id ); } ),
           ].filter( Boolean ) } ),
         ] } ),
       ] } ) );
@@ -176,7 +193,7 @@ const Keys = {
         Dom.el( "td" , { children: [
           Dom.el( "div" , { class: "row-actions" , children: [
             Keys.revokeButton( key , function ( id ) { return Api.revokeAnyKey( id ); } ),
-            Keys.deleteButton( key , function ( id ) { return Api.deleteAnyKey( id ); } ),
+            Keys.deleteButton( key , function ( id ) { return Api.deleteAnyKey( id ); } , function ( id ) { return Api.restoreAnyKey( id ); } ),
           ].filter( Boolean ) } ),
         ] } ),
       ] } ) );

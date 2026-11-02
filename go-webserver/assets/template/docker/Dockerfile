@@ -32,8 +32,8 @@ ARG BUILD_DATE=unknown
 # no static directory, no language.yaml, and no second executable.
 #
 # -tags container pins the image's fixed layout into the binary
-# (server/config/layout_container.go): config at /app/config/config.yaml, state in
-# /app/data. That is what replaces setting them through ENV, and it is why
+# (server/config/layout_container.go): config at /app/config/config.yaml with
+# secret.key beside it, state in /app/data. That is what replaces setting them through ENV, and it is why
 # `docker exec <name> /app/server manage ...` needs nothing extra.
 RUN CGO_ENABLED=0 GOOS=linux go build -tags container -trimpath \
       -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
@@ -46,8 +46,8 @@ FROM alpine:3.24 AS runtime
 # this app grows later fails with an opaque certificate error.
 #
 # The uid/gid are fixed at 10001 rather than left to Alpine's system range.
-# docker/run.sh grants this user the host's data directory and this group read
-# access to config.yaml; a number in the low hundreds is likely to belong to a
+# docker/run.sh grants this user the host's data directory, and this group
+# read-write access to config.yaml and read access to secret.key; a number in the low hundreds is likely to belong to a
 # real account on a Linux host, and that account would get the same access.
 RUN apk add --no-cache ca-certificates \
  && addgroup -S -g 10001 app \
@@ -57,11 +57,13 @@ WORKDIR /app
 
 COPY --from=builder /out/server ./
 
-# There is no ENV here and no config.yaml in the image
-# (.dockerignore keeps it out -- it holds the secret key, and
-# an image layer is forever). docker/run.sh mounts the project's
-# config/config.yaml at /app/config/config.yaml at run time, so one image
-# serves any deployment and a config change needs a restart, not a rebuild.
+# There is no ENV here, and no config.yaml or secret.key in the image
+# (.dockerignore keeps them out -- an image layer is forever, and a key in
+# one is everyone's). docker/run.sh mounts the project's config/config.yaml
+# (writable) and config/secret.key (read-only) into /app/config at run time,
+# so one image serves any deployment. Most settings apply while it runs --
+# from the owner's Settings screen, or by editing config.yaml on the host;
+# the rest need a restart, never a rebuild.
 #
 # server.static_dir (./static, i.e. /app/static) does not exist in this
 # image, so the embedded frontend is used. Mounting over it, or putting a
@@ -75,7 +77,9 @@ COPY --from=builder /out/server ./
 # docker/run.sh mounts /app/data as a volume and runs the container with
 # --read-only, which is what makes that guarantee real rather than a
 # convention.
-# /app/config is only a mount point for config.yaml; it stays root's.
+# /app/config is only a mount point for config.yaml and secret.key; it stays
+# root's. That is why the container rewrites config.yaml in place rather than
+# by renaming a new file over it (see writeConfigFile).
 RUN mkdir -p /app/data /app/config && chown app:app /app/data
 
 # Note: this ownership survives into a *named* volume, but a bind mount

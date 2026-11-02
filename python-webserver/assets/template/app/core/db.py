@@ -2,7 +2,7 @@
 
 Every model goes through this module and nothing else touches SQLite. Each
 record is a JSON document, and with server.encrypt_at_rest on (the default)
-it is XChaCha-encrypted with server.secret_key before it is written. Doing
+it is XChaCha-encrypted with the key in secret.key before it is written. Doing
 that here, in encode/decode, is what makes at-rest encryption a single switch
 instead of something each model has to remember -- and it means the answer to
 "where does data get written" is one file.
@@ -56,7 +56,7 @@ Key = int | str
 
 class DecodeError(Exception):
     """A stored record that cannot be read back -- almost always a
-    server.secret_key that is not the one the record was written with."""
+    secret.key that is not the one the record was written with."""
 
 
 def _table(bucket: str) -> str:
@@ -136,8 +136,8 @@ class Store:
                 plain = encryption.xchacha_decrypt_bytes(self._secret_key, bytes(raw))
             except encryption.CipherTextError:
                 raise DecodeError(
-                    "could not decrypt a stored record -- is server.secret_key in config.yaml "
-                    "the same one it was written with?"
+                    "could not decrypt a stored record -- is secret.key "
+                    "the same key it was written with?"
                 ) from None
         try:
             return json.loads(plain)

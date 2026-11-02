@@ -83,12 +83,51 @@ const Dom = {
   // "Copied."), for confirmations that need no place of their own on the
   // page. kind is "ok" or "error". An empty message shows nothing, so a
   // language.yaml key set to "" switches that toast off.
-  toast( message , kind ) {
+  //
+  // action is an optional { text , run }: a button on the toast ("Undo").
+  // A toast with one stays up twice as long, since reaching for it takes
+  // longer than reading it.
+  //
+  // The hiding is timed here rather than by Bootstrap, whose delay is fixed
+  // when the instance is made; replacing the instance to change it breaks a
+  // toast that is still fading out. The timer stops while the pointer or the
+  // focus is on the toast, so it never disappears under someone aiming at it.
+  toast( message , kind , action ) {
     const banner = this.get( "toast" );
     if ( !banner || !message ) return;
     banner.className = "toast border-0 " + ( kind === "error" ? "text-bg-danger" : "text-bg-success" );
-    this.text( this.get( "toast-body" ) , message );
-    bootstrap.Toast.getOrCreateInstance( banner ).show();
+    this.text( this.get( "toast-text" ) , message );
+    const button = this.get( "toast-action" );
+    Dom.show( button , Boolean( action ) );
+    if ( action ) {
+      this.text( button , action.text );
+      // The button goes, the toast stays: what the action does next ("Undone:
+      // ...", or an error) takes its place. Hiding it here would swallow that
+      // next toast, which arrives while this one is still fading out.
+      button.onclick = function () {
+        Dom.show( button , false );
+        action.run();
+      };
+    }
+    const instance = bootstrap.Toast.getOrCreateInstance( banner , { autohide: false } );
+    const schedule = function () {
+      window.clearTimeout( banner._hideTimer );
+      banner._hideTimer = window.setTimeout( function () { instance.hide(); } , banner._delay );
+    };
+    if ( !banner._wired ) {
+      banner._wired = true;
+      const hold = function () { window.clearTimeout( banner._hideTimer ); };
+      const release = function () {
+        if ( !banner.matches( ":hover" ) && !banner.contains( document.activeElement ) ) schedule();
+      };
+      banner.addEventListener( "mouseenter" , hold );
+      banner.addEventListener( "focusin" , hold );
+      banner.addEventListener( "mouseleave" , release );
+      banner.addEventListener( "focusout" , () => window.setTimeout( release ) );
+    }
+    banner._delay = action ? 8000 : 4000;
+    instance.show();
+    schedule();
   },
 
   // A status pill for a table cell. tone is a Bootstrap colour name:

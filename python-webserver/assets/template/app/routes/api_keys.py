@@ -9,7 +9,10 @@ admin can additionally see, revoke, and delete everyone's, which is what makes
 
 Revoking keeps the row, marked dead, so the listing still shows the key
 existed and when it stopped working; the purge drops it later. Deleting
-removes the row now. Either one stops the key immediately.
+takes it off every listing. Either one stops the key immediately. Only
+delete can be undone: for RESTORE_WINDOW the restore routes put a deleted key
+back, working again (the Undo on the frontend's toast). Revoke is the switch
+for a key that may have leaked, and has no way back.
 
 Minting, revoking, and deleting require a browser session (the routes are registered
 behind RequireSession in app/routes/__init__.py), so a leaked key cannot
@@ -23,9 +26,22 @@ from typing import Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.core.db import Store
+from app.core.logs import KIND_ADMIN
 from app.core.security import Guard, actor_from, check_csrf
-from app.models import api_keys, to_iso, users
-from app.routes.helpers import bad_request, forbidden, get_config, get_store, not_found, read_json, run
+from app.models import RestoreError, api_keys, to_iso, users
+from app.routes.helpers import (
+    bad_request,
+    conflict,
+    forbidden,
+    get_config,
+    get_store,
+    not_found,
+    read_json,
+    restore_refused,
+    run,
+)
+from app.routes.logs import audit
 
 
 class RequireAPIKeys(Guard):
@@ -115,6 +131,7 @@ async def create_my_key(request: Request) -> Response:
     # The credential appears here and nowhere else, ever.
     row = api_key_row(key)
     row["credential"] = credential
+    audit(request, KIND_ADMIN, "api key created", {"key_id": key.id, "name": key.name, "role": key.role})
     return JSONResponse(row, status_code=201)
 
 
@@ -130,14 +147,16 @@ async def revoke_my_key(request: Request) -> Response:
 
     store = get_store(request)
     key = await run(api_keys.get_api_key, store, request.path_params["key_id"])
-    if key is None or key.user_id != actor_from(request).user.id:
+    if key is None or key.deleted or key.user_id != actor_from(request).user.id:
         return not_found("no such api key")
     await run(api_keys.revoke_api_key, store, key.id)
+    audit(request, KIND_ADMIN, "api key revoked", {"key_id": request.path_params["key_id"]})
     return JSONResponse({"ok": True})
 
 
 async def delete_my_key(request: Request) -> Response:
-    """Remove one of your own keys outright -- live or already dead. Someone
+    """Delete one of your own keys -- live or already dead. It stops working
+    at once and restore_my_key can bring it back for a few minutes. Someone
     else's key is "no such api key", for the same reason as in
     revoke_my_key."""
     body = await read_json(request)
@@ -150,11 +169,42 @@ async def delete_my_key(request: Request) -> Response:
     key = await run(api_keys.get_api_key, store, request.path_params["key_id"])
     if key is None or key.user_id != actor_from(request).user.id:
         return not_found("no such api key")
-    # False here means it vanished since the lookup -- deleted by its owner
-    # and an admin at once -- which is still "no such key", not a fault.
-    if not await run(api_keys.delete_api_key, store, key.id):
+    # False here means it is already deleted, or vanished since the lookup
+    # -- deleted by its owner and an admin at once -- which is still "no such
+    # key", not a fault.
+    if not await run(api_keys.delete_api_key, store, key.id, actor_from(request).user.id):
         return not_found("no such api key")
+    audit(request, KIND_ADMIN, "api key deleted", {"key_id": request.path_params["key_id"]})
     return JSONResponse({"ok": True})
+
+
+async def restore_my_key(request: Request) -> Response:
+    """Undo delete_my_key, within RESTORE_WINDOW. A key an admin deleted is
+    the admin's to restore, not its owner's."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+
+    store, actor = get_store(request), actor_from(request).user
+    key = await run(api_keys.get_api_key, store, request.path_params["key_id"])
+    if key is None or key.user_id != actor.id:
+        return not_found("no such api key")
+    response = await _restore(store, key.id, actor)
+    if response.status_code == 200:
+        audit(request, KIND_ADMIN, "api key restored", {"key_id": request.path_params["key_id"]})
+    return response
+
+
+async def _restore(store: Store, key_id: str, actor: users.User) -> Response:
+    try:
+        key = await run(api_keys.restore_api_key, store, key_id, actor.id, actor.is_admin)
+    except RestoreError as refusal:
+        return restore_refused(refusal)
+    except api_keys.APIKeyLimitError:
+        return conflict("its owner already has the maximum number of live API keys")
+    return JSONResponse(api_key_row(key))
 
 
 async def list_all_keys(request: Request) -> Response:
@@ -180,17 +230,33 @@ async def revoke_any_key(request: Request) -> Response:
         return forbidden("invalid csrf token")
     if await run(api_keys.revoke_api_key, get_store(request), request.path_params["key_id"]) is None:
         return not_found("no such api key")
+    audit(request, KIND_ADMIN, "api key revoked", {"key_id": request.path_params["key_id"]})
     return JSONResponse({"ok": True})
 
 
 async def delete_any_key(request: Request) -> Response:
-    """revoke_any_key without the record left behind: the key stops working
-    and disappears from every listing, its owner's included."""
+    """The key stops working and disappears from every listing, its owner's
+    included. Unlike revoke_any_key it can be undone, by restore_any_key."""
     body = await read_json(request)
     if body is None:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    if not await run(api_keys.delete_api_key, get_store(request), request.path_params["key_id"]):
+    actor_id = actor_from(request).user.id
+    if not await run(api_keys.delete_api_key, get_store(request), request.path_params["key_id"], actor_id):
         return not_found("no such api key")
+    audit(request, KIND_ADMIN, "api key deleted", {"key_id": request.path_params["key_id"]})
     return JSONResponse({"ok": True})
+
+
+async def restore_any_key(request: Request) -> Response:
+    """Undo a delete, any key's, within RESTORE_WINDOW."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    response = await _restore(get_store(request), request.path_params["key_id"], actor_from(request).user)
+    if response.status_code == 200:
+        audit(request, KIND_ADMIN, "api key restored", {"key_id": request.path_params["key_id"]})
+    return response

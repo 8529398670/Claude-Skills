@@ -9,7 +9,9 @@ when you are changing the template itself rather than building features on it.
 - [The owner, and deleting accounts](#the-owner-and-deleting-accounts)
 - [Invite links: one link for a group](#invite-links-one-link-for-a-group)
 - [API keys: the same roles, for callers that are not browsers](#api-keys-the-same-roles-for-callers-that-are-not-browsers)
+- [Soft delete and restore](#soft-delete-and-restore)
 - [MCP: the API keys, for agents](#mcp-the-api-keys-for-agents)
+- [The activity log](#the-activity-log)
 - [Why credentials are shaped `<id>.<secret>`](#why-credentials-are-shaped-idsecret)
 - [Which crypto is used where, and why](#which-crypto-is-used-where-and-why)
 - [Encrypted records in SQLite](#encrypted-records-in-sqlite)
@@ -22,6 +24,7 @@ when you are changing the template itself rather than building features on it.
 - [Why the server holds so little app logic](#why-the-server-holds-so-little-app-logic)
 - [Static asset caching policy](#static-asset-caching-policy)
 - [Where state lives](#where-state-lives)
+- [Live configuration](#live-configuration)
 - [Where assets come from: configured or bundled](#where-assets-come-from-configured-or-bundled)
 - [One entry point](#one-entry-point)
 - [Known limits](#known-limits)
@@ -333,6 +336,48 @@ its own successors -- and write it down in that app's docs.
 | Admin CLI (`list-keys`, `create-key`, `revoke-key`, `delete-key`) | `app/manage.py` |
 | The screen | `static/js/keys.js` |
 
+## Soft delete and restore
+
+Deleting an API key or an invite link in the web UI is undoable: the
+frontend's toast says "API key deleted · Undo", and Ctrl+Z does the same
+(`references/frontend.md`, "Undo and redo"). The server makes that true
+rather than the screen faking it:
+
+- **Delete only marks the row.** `deleted_at` and `deleted_by` are set
+  (`mark_deleted` in `app/models/__init__.py`). From that moment the row is
+  dead -- `load_api_key` and `load_invite_link` refuse it, `live` is false --
+  and it is gone from every listing and from the live-key count. Deleting
+  it again is "no such key".
+- **Restore undoes it, for `RESTORE_WINDOW` (10 minutes).**
+  `POST /api/keys/{id}/restore`, `/api/admin/keys/{id}/restore` and
+  `/api/admin/invite-links/{id}/restore` clear the mark, and the key or link
+  works again exactly as before: same secret, same expiry, same uses. Past
+  the window it is 409; a row that is not deleted is 404.
+- **Who may restore:** whoever deleted it, or an admin. A key an admin
+  deleted is the admin's to bring back, not its owner's (403).
+- **Restoring a key keeps the live-key cap**, checked in the same
+  transaction as the restore, like `issue_api_key` (409 when full).
+- **The purge drops deletions past the window** on its hourly pass. Restore
+  checks the window itself, so a row the purge has not reached yet is still
+  refused.
+- **Revoke has no restore, on purpose.** Revoking is the switch for a key
+  that may have leaked; an undo would quietly trust it again. Delete is
+  tidying up, and tidying up the wrong row is the mistake an undo is for.
+- **The CLI hard-deletes** (`manage delete-key` calls `purge_api_key`): an
+  operator at a shell has no Undo button, so a soft delete there would only
+  leave the row lying around.
+
+A new deletable record follows the same pattern: `deleted_at`/`deleted_by`
+on the record, `mark_deleted` / `unmark_deleted` in update_value, a filter
+in its listing and loader, a `/restore` route answering through
+`restore_refused`, and `deleted_long_ago` in its purge. Tests:
+`app/tests/test_soft_delete.py`.
+
+Server-backed undo of an *edit* uses compare-and-set instead: the request
+carries the value it expects to replace (`expect`), checked in the same
+transaction, and a mismatch is 409 with the current value, so undoing a
+rename never overwrites one made in another tab since (`users.rename_user`).
+
 ## MCP: the API keys, for agents
 
 `POST /mcp` speaks the Model Context Protocol, so an agent -- Claude Code, or
@@ -392,6 +437,82 @@ registered.
 | `Tool`, `Call.bind`, `Refusal`, role filtering | `app/mcp/registry.py` |
 | The built-in tools | `app/routes/mcp_tools.py` |
 | The guard | `RequireAPIKey` in `app/core/security.py` |
+
+## The activity log
+
+Everything that happens is written down, and only the owner can read it
+(`app/core/logs.py`, `app/core/request_log.py`, `app/routes/logs.py`,
+`static/js/track.js`, `static/js/logs.js`). The day files, line format,
+search grammar and JSON API are the same as the Go template's, so the
+frontend is shared.
+
+**What goes in.** Each line is one entry with a `kind`:
+
+| kind | written by | what it says |
+|---|---|---|
+| `request` | `RequestLog` middleware, every request | method, path, status, ms, bytes, referer |
+| `error` | the same, for a 5xx or an exception | the exception's repr (the client only ever sees "internal error") |
+| `auth` | `audit`/`audit_as` in `app/routes/logs.py` | signed in, link refused, joined through an invite, wrong PIN, signed out, PIN changed |
+| `admin` | `audit` | account, key and invite-link changes, log days deleted, prunes |
+| `ui` | `POST /api/logs/events` from `track.js` | screens, clicks, form submits, undo/redo, JS errors, failed calls, device details |
+| `system` | the server | started, stopped, pruned, entries dropped |
+
+Every entry also carries the actor (account id, name, role, and whether it
+came in by session, API key -- by its public id -- or anonymously), the
+client IP (`middleware.client_ip`, the same proxy-trust rules as the rate
+limiter), and the user agent. A `ui` entry's time is the server's; the
+browser's own clock is kept beside it as `ui.at`, so a page cannot backdate
+what it reports.
+
+**What never goes in.** Request bodies, cookies, `Authorization`, the secret
+half of anything, and anything typed. `logs.redact` turns `/login/<cred>`
+and `/join/<cred>` into `/login/…` and masks `token`, `key`, `secret`,
+`code`, `credential`, `csrf_token`, `pin` and `password` query values; the
+referer goes through the same. `track.js` sends a form's field *names*, a
+control's `data-i18n` key or id, and only `#hash` hrefs. A part of the page
+marked `data-no-track` (the Logs screen itself) is skipped.
+
+**Where it lives.** Files, not SQLite: `<app dir>/logs/YYYY-MM-DD.jsonl`,
+with `.1.jsonl`, `.2.jsonl` ... once a day passes `logs.max_file_mb`, and
+`.jsonl.gz` once compressed. A log is append-only, grows all day and is read
+a day at a time; as encrypted records it would make retention a decrypt of
+every row (`delete_where` cannot filter in SQL) and double `app.db` for
+something never joined against app data. With `server.encrypt_at_rest` each
+line is the entry's JSON sealed with the server key
+(`encryption.xchacha_encrypt_bytes`) and base64'd, so the logs directory is
+as unreadable as `app.db` without `secret.key`. The reader takes either form
+line by line, so flipping the setting never strands old days.
+
+**How it is written.** `Logger.log` puts the entry on a 10,000-slot queue and
+returns -- safe on the event loop, no `await run` needed. One daemon thread
+writes, flushing every second or 200 lines. A full queue drops the entry and
+counts it, and the writer logs the count as a `system` warning once it
+catches up. A slow disk can lose log lines; it can never slow a request. The
+writer, the readers and the pruner share one lock, so a file is never
+compressed or deleted mid-write. The lifespan starts the thread and, on
+shutdown, drains and closes it.
+
+**Retention**, from `logs:` in config.yaml, applied hourly by `purge_once`
+and on "Prune now": finished days older than `compress_after_days` are
+gzipped (to a temporary name, then renamed, so a crash leaves the original);
+days older than `retention_days` are deleted; then, while the total is over
+`max_total_mb`, the oldest day goes. Today is never touched, and
+`POST /api/owner/logs/days/<today>/delete` is a 409.
+
+**Who reads it.** `RequireOwner`: the owner, from a browser session. Another
+admin, any API key and the signed out all get the 404 an unknown route gets
+-- the log holds everyone's addresses and activity, including the other
+admins', which is the reason they cannot read it, and a key is a credential
+that lives in files. (The Go template answers the signed out with 401, since
+its `/api` group checks login first; the screen behaves the same.)
+`manage logs` reads the same files from a shell; they are append-only, so
+that is safe with the server running.
+
+**Search** is `logs.Query`: free words match the entry's JSON in any case;
+`kind:` `level:` `user:` `status:` (`5xx` for a class) `method:` `path:`
+(prefix) `ip:` (prefix) `action:` `screen:` narrow; a comma is OR, a leading
+`-` is NOT, quotes make a phrase. It is a linear pass over the day's lines,
+decrypting each, in a worker thread -- see Known limits.
 
 ## Why credentials are shaped `<id>.<secret>`
 
@@ -476,7 +597,7 @@ needs no compiler; the Dockerfile enforces that with `--only-binary=:all:`.
 
 SQLite is the file. What goes in it is records: `app/core/db.py` gives every
 "bucket" a table of `(key, value)` rows, and each value is a JSON document,
-XChaCha-encrypted with `server.secret_key` when `server.encrypt_at_rest` is on
+XChaCha-encrypted with the key in `secret.key` when `server.encrypt_at_rest` is on
 (the default). Models never see SQL or ciphertext; they call
 `put`/`get`/`all`/`update_value`/`delete_where` with plain dicts.
 
@@ -516,23 +637,28 @@ existing record goes through `update_value`.
 **The cost is real and worth stating plainly to the user: lose the key and the
 database is unreadable.** There is no recovery.
 
-The key always lives in `config.yaml`, but where that file sits relative to
-the database depends on how the app is run -- `configuration.md` covers this
-in full, but the short version:
+The key lives in `secret.key`, beside `config.yaml` and never in it -- which
+is what lets `config.yaml` be edited while the server runs, and be writable
+inside the container, without either path touching the key. Where
+`secret.key` sits relative to the database depends on how the app is run --
+`configuration.md` covers this in full, but the short version:
 
-- **Container**: `config/config.yaml` stays in the project directory and is mounted
-  read-only, separately from the data volume, so a leaked `./data` backup is
-  not enough to read it.
+- **Container**: `config/secret.key` stays in the project directory and is
+  mounted read-only, separately from the data volume, so a leaked `./data`
+  backup is not enough to read it.
 - **Run outside Docker with no `./config/config.yaml`**: the first run writes
-  `config.yaml`, key included, into `~/.config/<slug>/` beside `app.db`. That
+  `config.yaml` and `secret.key` into `~/.config/<slug>/` beside `app.db`. That
   is what lets it just run -- at the cost that at-rest encryption then protects
   a database file that leaks *on its own*, not someone who takes the whole
   directory.
 
-`config.load` refuses to start with a missing or malformed key rather than
-continuing or generating a new one, because the alternative failure mode only
+`config.load` refuses to start with a malformed key, or a missing one once a
+database exists, rather than continuing or generating a new one, because the alternative failure mode only
 shows up later, when every record has already become unreadable. A wrong key
-fails loudly on the first read with a message that names the cause.
+fails loudly on the first read with a message that names the cause. An older
+`config.yaml` with `server.secret_key` in it has the key moved into
+`secret.key` (written and read back first, the line removed second), and two
+different keys stop it cold.
 
 Turn it off (`server.encrypt_at_rest: false`) when operational simplicity beats
 at-rest confidentiality -- the data is not sensitive, or disk encryption
@@ -556,7 +682,7 @@ existed to protect still hold without it:
   revokes its sessions and pending links and the key ceiling applies
   whichever door a change comes through.
 - **The key is guarded by the filesystem either way.** Anything that can run
-  `manage` can read `config.yaml`; a socket would have guarded nothing extra.
+  `manage` can read `secret.key`; a socket would have guarded nothing extra.
 
 What this means for code you add: a cron job, importer, or sidecar on the same
 host should import the models and go through them -- never raw SQL against the
@@ -579,6 +705,7 @@ server behind itself, which is why it is a rule rather than a suggestion.
 ## Default permission level for new features
 
 Only two things are admin-gated: managing accounts and minting login links.
+One thing is owner-only: reading the activity log (see above).
 (Seeing and revoking *everyone's* API keys is the admin view of the same
 question -- who can get in.)
 
@@ -674,15 +801,49 @@ exactly the staleness this avoids.
 
 ## Where state lives
 
-Everything the app persists -- database and uploaded files -- lives in one
+Everything the app persists -- database, uploaded files and the activity log
+(`logs/`) -- lives in one
 directory, `~/.config/<slug>/` by default and `/app/data` in a container.
-Everything it can be told -- server and Docker settings, plus the secret key
--- lives in one `config.yaml`, and nothing reads environment variables.
+Everything it can be told -- server and Docker settings -- lives in one
+`config.yaml`, with the key that encrypts the database in `secret.key` beside
+it, and nothing reads environment variables.
 
 That convention has its own reference: see `configuration.md`. Read it before
 adding a setting or writing a file anywhere, because the two rules it exists
 to protect (one backup unit, one file that holds every setting) are easy to
 break by accident.
+
+## Live configuration
+
+`config.yaml` changes under a running server -- the owner's Settings screen,
+a hand edit, `config set` -- and every one of those goes through one place,
+the `Holder` in `app/core/config_live.py`: parse the whole file over the
+defaults, validate it, then swap in a new `Config` or change nothing. The
+watcher that notices hand edits (`Holder.poll`, every two seconds from an
+asyncio task, run in the threadpool) applies a change only once two polls
+agree on the content, and an invalid file is reported and ignored, never half
+applied.
+
+The rule that makes a change *live* is about readers, not writers: anything
+that reads a setting per request reads `request.app.state.settings.get()`
+(`helpers.get_config` does it for routes) once per request and uses that copy
+throughout, never a `Config` captured at startup. That covers the guard
+(cookie lifetime and the Secure flag, whether API keys are believed), the
+routes, the rate limiter and its trusted proxies, the security headers,
+`/mcp` (always routed, answering 404 while switched off), and the activity
+log's settings. What is built once -- the listener, the database, Starlette's
+body-size limit -- reads `Holder.boot()`, and its keys are tagged `[restart]`
+in `defaults.yaml`. `live_config` copies the boot `Config` and overwrites only
+the `[live]` fields; a test fails if a tag and `live_config` disagree.
+
+The Settings screen is the owner's alone, like the activity log, and for the
+same reason: the file decides who can sign in how (`auth.api_keys`, cookie
+security, proxy trust), so it is the most privileged thing in the app. The
+secret key is never part of it -- not in the file, not in the schema the
+screen is built from. Inside the container, `docker:` is read-only there: it
+decides what `docker/run.sh` mounts and hands to the container's user on the
+host, so a compromised container must not choose it. Every save is in the
+activity log with each key's old and new value.
 
 ## Where assets come from: configured or bundled
 
@@ -741,7 +902,7 @@ State these to the user rather than letting them be discovered in production:
   -- move the limiter to a shared store at that point rather than assuming it
   still holds.
 - **Losing the secret key loses the data** when at-rest encryption is on. It
-  is in `config.yaml`; back that file up with the database, never instead of
+  is in `secret.key`; back that file up with the database, never instead of
   it.
 - **An API key is a bearer credential.** Anything holding it is that account,
   at that key's role, until the key is revoked or expires -- there is no
@@ -760,6 +921,20 @@ State these to the user rather than letting them be discovered in production:
   that has no PIN. See [Invite links](#invite-links-one-link-for-a-group).
 - **The PIN lockout is in memory**, like the rate limiter: a restart clears
   it, and with several processes each keeps its own count.
+- **Log search is a scan.** Listing days reads every line once per file and
+  caches the counts; a search, or a page of a day, reads the day's lines
+  again, decrypting each. Fine for the thousands-to-low-millions of lines a
+  small app makes; past that, ship the downloaded JSON lines to a real log
+  store instead of growing this one.
+- **The log can drop lines under load** rather than slow requests down (the
+  count shows on the Logs screen), and a 429 from the rate limiter is not
+  logged at all -- the limiter runs first, so a flood stays cheap.
+- **The log records personal data** -- IP addresses, user agents, what each
+  person clicked. Tell the people using the app, and keep `retention_days`
+  no longer than needed.
+- **One process writes the logs.** Like the rate limiter, the writer is per
+  process; run more than one server process against one app directory and
+  their lines interleave in the same files with nothing coordinating parts.
 - **`language.yaml` is public.** It is served to anyone at `/api/language`,
   signed in or not, because signed-out pages need text too. Never put
   anything sensitive in it.

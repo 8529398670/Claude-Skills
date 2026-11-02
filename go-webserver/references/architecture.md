@@ -9,7 +9,9 @@ when you are changing the template itself rather than building features on it.
 - [The owner, and deleting accounts](#the-owner-and-deleting-accounts)
 - [Invite links: one link for a group](#invite-links-one-link-for-a-group)
 - [API keys: the same roles, for callers that are not browsers](#api-keys-the-same-roles-for-callers-that-are-not-browsers)
+- [Soft delete and restore](#soft-delete-and-restore)
 - [MCP: the API keys, for agents](#mcp-the-api-keys-for-agents)
+- [The activity log](#the-activity-log)
 - [Why credentials are shaped `<id>.<secret>`](#why-credentials-are-shaped-idsecret)
 - [Which crypto is used where, and why](#which-crypto-is-used-where-and-why)
 - [At-rest encryption and the secret key tradeoff](#at-rest-encryption-and-the-secret-key-tradeoff)
@@ -19,6 +21,7 @@ when you are changing the template itself rather than building features on it.
 - [Why the server holds so little app logic](#why-the-server-holds-so-little-app-logic)
 - [Static asset caching policy](#static-asset-caching-policy)
 - [Where state lives](#where-state-lives)
+- [Live configuration](#live-configuration)
 - [Where assets come from: disk or embedded](#where-assets-come-from-disk-or-embedded)
 - [Known limits](#known-limits)
 
@@ -328,6 +331,49 @@ its own successors -- and write it down in that app's docs.
 | The same operations for other processes | `server/control/control.go` |
 | The screen | `static/js/keys.js` |
 
+## Soft delete and restore
+
+Deleting an API key or an invite link in the web UI is undoable: the
+frontend's toast says "API key deleted · Undo", and Ctrl+Z does the same
+(`references/frontend.md`, "Undo and redo"). The server makes that true
+rather than the screen faking it:
+
+- **Delete only marks the row.** `APIKey` and `InviteLink` embed
+  `models.SoftDelete` (`server/models/soft_delete.go`): `DeletedAt` and
+  `DeletedBy`. From that moment the row is dead -- `LoadAPIKey` and
+  `LoadInviteLink` refuse it, `Live()` is false -- and it is gone from every
+  listing and from the live-key count. Deleting it again is
+  `db.ErrNotFound`.
+- **Restore undoes it, for `RestoreWindow` (10 minutes).**
+  `POST /api/keys/:key_id/restore`, `/api/admin/keys/:key_id/restore` and
+  `/api/admin/invite-links/:link_id/restore` clear the mark, and the key or
+  link works again exactly as before: same secret, same expiry, same uses.
+  Past the window it is 409; a row that is not deleted is 404.
+- **Who may restore:** whoever deleted it, or an admin. A key an admin
+  deleted is the admin's to bring back, not its owner's (403).
+- **Restoring a key keeps the live-key cap**, checked in the same
+  transaction as the restore, like `IssueAPIKey` (409 when full).
+- **The purge drops deletions past the window** on its regular pass.
+  Restore checks the window itself, so a row the purge has not reached yet
+  is still refused.
+- **Revoke has no restore, on purpose.** Revoking is the switch for a key
+  that may have leaked; an undo would quietly trust it again. Delete is
+  tidying up, and tidying up the wrong row is the mistake an undo is for.
+- **The CLI hard-deletes.** `manage delete-key`, directly or through the
+  control socket, calls `PurgeAPIKey`: an operator at a shell has no Undo
+  button, so a soft delete there would only leave the row lying around.
+
+A new deletable record follows the same pattern: embed `SoftDelete`, delete
+with `markDeleted` and restore with `unmarkDeleted` inside `UpdateValue`,
+filter `Deleted()` out of its listing and loader, add a `/restore` route
+answering through `restoreRefused`, and check `deletedLongAgo()` in its
+purge. Tests: `server/models/soft_delete_test.go`.
+
+Server-backed undo of an *edit* uses compare-and-set instead: the request
+carries the value it expects to replace (`expect`), checked in the same
+transaction, and a mismatch is 409 with the current value, so undoing a
+rename never overwrites one made in another tab since (`models.RenameUser`).
+
 ## MCP: the API keys, for agents
 
 `POST /mcp` speaks the Model Context Protocol, so an agent -- Claude Code, or
@@ -385,6 +431,76 @@ registered.
 | The built-in tools | `server/routes/mcp_tools.go` |
 | The guard | `Guard.RequireAPIKey` in `server/security/security.go` |
 | End-to-end tests | `server/routes/mcp_test.go` |
+
+## The activity log
+
+Everything that happens is written down, and only the owner can read it
+(`server/logs`, `middleware/request_log.go`, `routes/logs.go`,
+`static/js/track.js`, `static/js/logs.js`).
+
+**What goes in.** Each line is one entry with a `kind`:
+
+| kind | written by | what it says |
+|---|---|---|
+| `request` | `middleware.RequestLog`, every request | method, path, status, ms, bytes, referer |
+| `error` | the same, for a 5xx | the handler's error text (the client only ever sees "internal error") |
+| `auth` | `handlers.audit`/`auditAs` | signed in, link refused, joined through an invite, wrong PIN, signed out, PIN changed |
+| `admin` | `handlers.audit` | account, key and invite-link changes, log days deleted, prunes |
+| `ui` | `POST /api/logs/events` from `track.js` | screens, clicks, form submits, undo/redo, JS errors, failed calls, device details |
+| `system` | the server | started, stopped, pruned, entries dropped |
+
+Every entry also carries the actor (account id, name, role, and whether it
+came in by session, API key -- by its public id -- or anonymously), the
+client IP (through the same `TrustProxy` rules as the rate limiter), and the
+user agent. A `ui` entry's time is the server's; the browser's own clock is
+kept beside it as `ui.at`, so a page cannot backdate what it reports.
+
+**What never goes in.** Request bodies, cookies, `Authorization`, the secret
+half of anything, and anything typed. `logs.Redact` turns `/login/<cred>` and
+`/join/<cred>` into `/login/…` and masks `token`, `key`, `secret`, `code`,
+`credential`, `csrf_token`, `pin` and `password` query values; the referer
+goes through the same. `track.js` sends a form's field *names*, a control's
+`data-i18n` key or id, and only `#hash` hrefs. A part of the page marked
+`data-no-track` (the Logs screen itself) is skipped.
+
+**Where it lives.** Files, not bolt: `<app dir>/logs/YYYY-MM-DD.jsonl`, with
+`.1.jsonl`, `.2.jsonl` ... once a day passes `logs.max_file_mb`, and
+`.jsonl.gz` once compressed. A log is append-only, grows all day and is read
+a day at a time; as bolt records it would make retention a scan of every
+record and double the database file for something that is never joined
+against app data. With `server.encrypt_at_rest` each line is the entry's
+JSON sealed with the server key (XChaCha20-Poly1305, `encryption.ChaCha*`)
+and base64'd, so the logs directory is as unreadable as `app.db` without
+`config.yaml`. The reader takes either form line by line, so flipping the
+setting never strands old days.
+
+**How it is written.** `Logger.Log` puts the entry on a 10,000-slot channel
+and returns; one goroutine writes, flushing every second or 200 lines. A
+full channel drops the entry and counts it, and the writer logs the count as
+a `system` warning once it catches up. A slow disk can lose log lines; it
+can never slow a request. The writer, the readers and the pruner share one
+mutex, so a file is never compressed or deleted mid-write.
+
+**Retention**, from `logs:` in config.yaml, applied hourly by the purge loop
+and on "Prune now": finished days older than `compress_after_days` are
+gzipped (to a temporary name, then renamed, so a crash leaves the original);
+days older than `retention_days` are deleted; then, while the total is over
+`max_total_mb`, the oldest day goes. Today is never touched, and
+`POST /api/owner/logs/days/<today>/delete` is a 409.
+
+**Who reads it.** `Guard.RequireOwner`: the owner, from a browser session.
+Another admin or any API key gets the 404 an unknown route gets -- the log
+holds everyone's addresses and activity, including the other admins', which
+is the reason they cannot read it, and a key is a credential that lives in
+files. Signed out, the `/api` group's `RequireLogin` answers first with 401,
+as it does for every `/api` route. `manage logs` reads the same files from a
+shell; they are append-only, so that is safe with the server running.
+
+**Search** is `logs.ParseQuery`: free words match the entry's JSON in any
+case; `kind:` `level:` `user:` `status:` (`5xx` for a class) `method:`
+`path:` (prefix) `ip:` (prefix) `action:` `screen:` narrow; a comma is OR,
+a leading `-` is NOT, quotes make a phrase. It is a linear pass over the
+day's lines, decrypting each -- see Known limits.
 
 ## Why credentials are shaped `<id>.<secret>`
 
@@ -455,29 +571,34 @@ each deletes the server-side row the cookie points at.
 ## At-rest encryption and the secret key tradeoff
 
 With `server.encrypt_at_rest: true` (the default), every value written to
-bolt is XChaCha-encrypted with `server.secret_key` from `config.yaml`.
+bolt is XChaCha-encrypted with the key in `secret.key`, beside `config.yaml`.
 `server/db/db.go` does this in `encode`/`decode`, so models never think about
 it and no future model can forget to.
 
 **The cost is real and worth stating plainly to the user: lose the key and the
 database is unreadable.** There is no recovery.
 
-The key always lives in `config.yaml`, but where that file sits relative to
-the database depends on how the app is run, and the two cases trade
-differently -- `configuration.md` covers this in full, but the short version:
+The key lives in `secret.key`, never in `config.yaml` -- which is what lets
+`config.yaml` be edited while the server runs, and be writable inside the
+container, without either path touching the key. Where `secret.key` sits
+relative to the database depends on how the app is run, and the two cases
+trade differently -- `configuration.md` covers this in full, but the short
+version:
 
-- **Container**: `config.yaml` stays in the project directory and is mounted
-  read-only, separately from the data volume, so a leaked `./data` backup is
-  not enough to read it.
-- **Portable binary**: on first run it writes `config.yaml`, key included,
+- **Container**: `config/secret.key` stays in the project directory and is
+  mounted read-only, separately from the data volume, so a leaked `./data`
+  backup is not enough to read it.
+- **Portable binary**: on first run it writes `config.yaml` and `secret.key`
   into `~/.config/<slug>/` beside `app.db`. That is what lets a single file
   just run -- at the cost that at-rest encryption then protects a database
   file that leaks *on its own*, not someone who takes the whole directory.
 
-`config.Load` refuses to start with a missing or malformed key rather than
-continuing or generating a new one, because the alternative failure mode only
-shows up on the next restart, when every record has already become
-unreadable.
+`config.Load` refuses to start with a malformed key, or a missing one once a
+database exists, rather than continuing or generating a new one, because the
+alternative failure mode only shows up on the next restart, when every record
+has already become unreadable. An older `config.yaml` with `server.secret_key`
+in it has the key moved into `secret.key` (written and read back first, the
+line removed second), and two different keys stop it cold.
 
 Turn it off (`server.encrypt_at_rest: false`) when operational simplicity beats
 at-rest confidentiality -- the data is not sensitive, or disk encryption
@@ -486,6 +607,7 @@ already covers it.
 ## Default permission level for new features
 
 Only two things are admin-gated: managing accounts and minting login links.
+One thing is owner-only: reading the activity log (see above).
 
 When adding features -- projects, documents, comments, whatever the app is
 for -- **default to "any signed-in user."** Add an admin check only if the
@@ -571,16 +693,47 @@ exactly the staleness this avoids.
 
 ## Where state lives
 
-Everything the app persists -- database and uploaded files -- lives in one
-directory, `~/.config/<slug>/` by default and `/app/data` in a container.
-Everything it can be told -- server, Docker, and build settings, plus the
-secret key -- lives in one `config.yaml`, and nothing reads environment
-variables.
+Everything the app persists -- database, uploaded files and the activity
+log (`logs/`) -- lives in one directory, `~/.config/<slug>/` by default and `/app/data` in a container.
+Everything it can be told -- server, Docker, and build settings -- lives in
+one `config.yaml`, with the key that encrypts the database in `secret.key`
+beside it, and nothing reads environment variables.
 
 That convention has its own reference: see `configuration.md`. Read it before
 adding a setting or writing a file anywhere, because the two rules it exists
 to protect (one backup unit, one file that holds every setting) are easy to
 break by accident.
+
+## Live configuration
+
+`config.yaml` changes under a running server -- the owner's Settings screen,
+a hand edit, `config set` -- and every one of those goes through one function,
+`config.Holder.Apply`: parse the whole file over the defaults, validate it,
+then swap in a new `Config` or change nothing. The watcher that notices hand
+edits (`Holder.Poll`, every two seconds) applies a change only once two polls
+agree on the content, and an invalid file is reported and ignored, never half
+applied.
+
+The rule that makes a change *live* is about readers, not writers: anything
+that reads a setting per request reads `Holder.Get()` once per request and
+uses that copy throughout, never a `Config` captured at startup. That covers
+the guard (cookie lifetime and the Secure flag, whether API keys are
+believed), the handlers, the rate limiter, the security headers, `/mcp`
+(always routed, answering 404 while switched off), the control socket's
+operations, and the activity log's settings. What is built once -- the
+listener, the database, the control socket, fiber's proxy and body-limit
+config -- reads `Holder.Boot()`, and its keys are tagged `[restart]` in
+`defaults.yaml`. `liveConfig` copies the boot `Config` and overwrites only the
+`[live]` fields; a test fails if a tag and `liveConfig` disagree.
+
+The Settings screen is the owner's alone, like the activity log, and for the
+same reason: the file decides who can sign in how (`auth.api_keys`, cookie
+security, proxy trust), so it is the most privileged thing in the app. The
+secret key is never part of it -- not in the file, not in the schema the
+screen is built from. Inside the container, `docker:` and `build:` are
+read-only there: they decide what `docker/run.sh` mounts and hands to the
+container's user on the host, so a compromised container must not choose
+them. Every save is in the activity log with each key's old and new value.
 
 ## Where assets come from: disk or embedded
 
@@ -617,7 +770,7 @@ elements for free, independently of the explicit check in the handler.
 
 It is `os.Root` and not `os.DirFS` on purpose. `os.DirFS` follows symlinks
 wherever they point -- its documentation says so -- so a link in `static/` to
-`../config/config.yaml` would serve the secret key to any visitor. An `os.Root`
+`../config/secret.key` would serve the secret key to any visitor. An `os.Root`
 refuses to resolve anything, symlinks included, that lands outside the
 directory. Two consequences: a symlink that stays inside `static/` still
 works, and the root holds the directory open for the life of the process, so
@@ -739,6 +892,17 @@ State these to the user rather than letting them be discovered in production:
   that has no PIN. See [Invite links](#invite-links-one-link-for-a-group).
 - **The PIN lockout is in memory**, like the rate limiter: a restart clears
   it, and with several processes each keeps its own count.
+- **Log search is a scan.** Listing days reads every line once per file and
+  caches the counts; a search, or a page of a day, reads the day's lines
+  again, decrypting each. Fine for the thousands-to-low-millions of lines a
+  small app makes; past that, ship the downloaded JSON lines to a real log
+  store instead of growing this one.
+- **The log can drop lines under load** rather than slow requests down (the
+  count shows on the Logs screen), and a 429 from the rate limiter is not
+  logged at all -- the limiter runs first, so a flood stays cheap.
+- **The log records personal data** -- IP addresses, user agents, what each
+  person clicked. Tell the people using the app, and keep `retention_days`
+  no longer than needed.
 - **`language.yaml` is public.** It is served to anyone at `/api/language`,
   signed in or not, because signed-out pages need text too. Never put
   anything sensitive in it.
