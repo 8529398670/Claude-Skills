@@ -5,7 +5,9 @@ when you are changing the template itself rather than building features on it.
 
 ## Contents
 
-- [Auth model: links instead of passwords](#auth-model-links-instead-of-passwords)
+- [Auth model: links first](#auth-model-links-first)
+- [Passwords: an option the owner switches on](#passwords-an-option-the-owner-switches-on)
+- [Two-factor sign-in](#two-factor-sign-in)
 - [The owner, and deleting accounts](#the-owner-and-deleting-accounts)
 - [Invite links: one link for a group](#invite-links-one-link-for-a-group)
 - [API keys: the same roles, for callers that are not browsers](#api-keys-the-same-roles-for-callers-that-are-not-browsers)
@@ -25,10 +27,12 @@ when you are changing the template itself rather than building features on it.
 - [Where assets come from: disk or embedded](#where-assets-come-from-disk-or-embedded)
 - [Known limits](#known-limits)
 
-## Auth model: links instead of passwords
+## Auth model: links first
 
-There is no password field anywhere in the schema, and adding one would undo
-the design. Identity is proven exactly two ways:
+Links are the way in. A password is optional, off by default, and only ever
+set by someone who already signed in with a link (see
+[Passwords](#passwords-an-option-the-owner-switches-on)). With passwords off,
+identity is proven exactly two ways:
 
 1. **Redeeming a one-time login token** (`server/models/login_token.go`). An
    admin -- or the first-run bootstrap -- mints a high-entropy credential for
@@ -58,9 +62,9 @@ It is a separate section below, because the interesting parts are the ceiling
 (a key never outranks its owner) and the two rules that follow from a
 credential not being ambient.
 
-"Forgot password" does not exist as a concept. It is replaced by "an admin
+"Forgot password" is not a flow of its own. It is replaced by "an admin
 mints a new link" (or `manage reissue-login` from a shell). That is a real
-trade: less code, no password storage, no reset-flow attack surface, at the
+trade: less code, no reset-flow attack surface, at the
 cost of needing an admin or shell access when someone loses their session. A
 project needing genuine self-service recovery -- email round trip, say -- has
 to add it; it is not part of the base model.
@@ -100,6 +104,97 @@ shipper, a shared dashboard, a support engineer). Use the link promptly, or
 keep the logs private until you have; it also expires after
 `auth.login_token_ttl_seconds`. It only fires when no enabled admin exists, so
 restarts do not keep minting admins.
+
+## Passwords: an option the owner switches on
+
+Links stay the way in. `auth.passwords` (off by default) lets a person who has
+already signed in with a link set a username and password on their own screen,
+so there is still no signup, and a forgotten password is still "get a new login
+link". Turning it off stops every password working and hides the form; the
+hashes stay, so turning it back on restores them. The owner can also block one
+account from the Users screen (`POST /api/owner/users/<id>/password-access`),
+which keeps the hash and leaves its sessions alone.
+
+**The server never sees a password.** `static/js/password.js` derives a digest
+in the browser -- PBKDF2-HMAC-SHA256, 600,000 iterations, 32 bytes, base64url --
+and that digest is what travels and what bcrypt hashes. The salt is
+`<install salt>:<lowercased username>`. The install salt is random, not secret,
+and comes from the public `GET /api/login/options`; it is the same for everyone
+because a per-user salt would need a lookup that says which usernames exist.
+Understand what that does and does not buy:
+
+- A leaked database cannot be replayed: it holds a bcrypt of the digest, not
+  the digest. Hashing only in the browser would not give this -- whatever the
+  browser sends is the password as far as the server is concerned, so the
+  server has to hash it again.
+- A compromised server, or a stray log, cannot expose a password someone reuses
+  elsewhere. This is the whole benefit over the usual approach of sending the
+  password over TLS and hashing on the server.
+- **It is no substitute for HTTPS.** The digest works as a password on the
+  wire, so anyone reading the traffic could replay it, or change the page that
+  computes it. WebCrypto only exists on HTTPS and localhost, so on plain http
+  the form refuses (`insecure_context`) rather than send anything.
+- **Password rules live in the browser**, because the server cannot see the
+  password. Skipping the 12-character minimum only weakens your own account;
+  the server checks only that a digest has the right shape.
+- **`ITERATIONS` and the salt format are part of every stored password.**
+  Changing either makes every password stop working.
+
+Usernames exist because display names are not unique. They are lowercased, 3-32
+of `a-z0-9._-`, and checked by scanning users in the write transaction. Changing
+one means entering the password again, because the digest is salted with it, so
+one form sends both.
+
+`POST /api/login/password` gives one answer for an unknown name, a wrong
+password, and a blocked or disabled account, after one bcrypt each -- a dummy
+hash stands in when there is no account. Wrong guesses are limited per name
+typed (not per account, so a lockout does not say which names are real) and per
+address. Links keep working through a lockout, so nobody can lock the owner out
+by guessing.
+
+Setting a password does not ask for the old one, because that is also how a
+forgotten one is replaced after signing in with a link, and a session can
+already mint itself a link. An account with 2FA has to give a code. Setting one
+ends the account's other sessions.
+
+**An invite link must not walk around a password.** Anyone holding the link can
+pick any name on it, so a claim on an account with a usable password and no PIN
+answers `use_password`. An account with a PIN keeps that path.
+
+`revoke-access` removes the password along with everything else, because
+"nothing issued before this moment can act as the account" has to stay true.
+
+## Two-factor sign-in
+
+Optional per person, offered while `auth.two_factor` is on (the default): a
+code from an authenticator app (TOTP: SHA-1, six digits, thirty seconds, one
+step either side), with ten single-use recovery codes. Written with the standard
+library's HMAC, so it adds no dependency. The QR code is drawn by the vendored
+`qrcode.js`; the secret is shown as text as well.
+
+**It covers every browser sign-in: login links, invite links, and passwords.**
+Otherwise any login link, including one an admin mints, would get around it.
+API keys are exempt: they are not interactive, and they cannot create
+credentials anyway. All three ways end in one function, `startSignInTx` (`server/models/sign_in.go`), inside the
+transaction that spent the first factor. For an account with 2FA it stores a
+five-minute one-time challenge instead of a session and the page asks for a
+code, so a way of signing in cannot forget to. The first factor is already
+spent: a login link used here is gone even if the code never comes.
+
+The secret has to be readable, so unlike every other credential it cannot be
+hashed. It is encrypted on its own with the secret key, on top of whatever the
+record gets, because `server.encrypt_at_rest` can be off. Recovery codes are 80
+random bits, so they are sha256'd like the other random secrets. Each TOTP step
+works once: the last step used is stored, and anything at or before it is
+refused. Five wrong codes lock that account's codes for 15 minutes.
+
+Turning it off, or changing a password, needs a valid code, so a stolen session
+cannot remove it. Someone with neither phone nor recovery codes gets a reset:
+`POST /api/admin/users/<id>/reset-two-factor` follows the delete rules (only the
+owner resets an admin, nobody resets themselves or the owner), and
+`manage reset-2fa -user-id N` is the way back for anyone, the owner included. `revoke-access`
+leaves 2FA alone, since it is not a way in; reset it as a separate step if it is
+what went wrong. With `auth.two_factor` off, nobody is asked and the secrets stay.
 
 ## The owner, and deleting accounts
 
@@ -444,7 +539,7 @@ Everything that happens is written down, and only the owner can read it
 |---|---|---|
 | `request` | `middleware.RequestLog`, every request | method, path, status, ms, bytes, referer |
 | `error` | the same, for a 5xx | the handler's error text (the client only ever sees "internal error") |
-| `auth` | `handlers.audit`/`auditAs` | signed in, link refused, joined through an invite, wrong PIN, signed out, PIN changed |
+| `auth` | `handlers.audit`/`auditAs` | signed in, link refused, joined through an invite, wrong PIN, password refused, wrong code, 2FA on or off, signed out, PIN or password changed |
 | `admin` | `handlers.audit` | account, key and invite-link changes, log days deleted, prunes |
 | `ui` | `POST /api/logs/events` from `track.js` | screens, clicks, form submits, undo/redo, JS errors, failed calls, device details |
 | `system` | the server | started, stopped, pruned, entries dropped |
@@ -458,7 +553,8 @@ kept beside it as `ui.at`, so a page cannot backdate what it reports.
 **What never goes in.** Request bodies, cookies, `Authorization`, the secret
 half of anything, and anything typed. `logs.Redact` turns `/login/<cred>` and
 `/join/<cred>` into `/login/…` and masks `token`, `key`, `secret`, `code`,
-`credential`, `csrf_token`, `pin` and `password` query values; the referer
+`credential`, `csrf_token`, `pin`, `password`, `password_digest`, `challenge`
+and `recovery_code` query values; the referer
 goes through the same. `track.js` sends a form's field *names*, a control's
 `data-i18n` key or id, and only `#hash` hrefs. A part of the page marked
 `data-no-track` (the Logs screen itself) is skipped.
@@ -537,7 +633,8 @@ this app handle secrets" a one-file question.
 | Primitive | Used for |
 |---|---|
 | `crypto/rand` | Every credential, key, and nonce |
-| `bcrypt` | Hashing one-time login secrets and PINs |
+| `bcrypt` | Hashing one-time login secrets, PINs, and password digests |
+| `crypto/hmac` + `crypto/sha1` | TOTP codes (RFC 6238) |
 | `chacha20poly1305` (XChaCha) | Session cookie payloads, values at rest |
 | `sha256` + `crypto/subtle` | Session, API key, and invite link secret lookup, constant-time compare |
 | `nacl/secretbox` | Available for authenticated blobs; unused by the base template |
@@ -890,6 +987,12 @@ State these to the user rather than letting them be discovered in production:
 - **An invite link is a bearer credential for a group.** Anyone holding it
   can join until the places run out, and can sign in as any account it made
   that has no PIN. See [Invite links](#invite-links-one-link-for-a-group).
+- **A password digest is a bearer credential on the wire.** HTTPS is what
+  protects it. See [Passwords](#passwords-an-option-the-owner-switches-on).
+- **Password sign-in scans users.** Every record is encrypted, so finding a
+  username reads them all, once per attempt. Fine at this template's scale.
+- **The attempt limits are in memory**, like the PIN lockout: a restart clears
+  them, and with several processes each keeps its own count.
 - **The PIN lockout is in memory**, like the rate limiter: a restart clears
   it, and with several processes each keeps its own count.
 - **Log search is a scan.** Listing days reads every line once per file and

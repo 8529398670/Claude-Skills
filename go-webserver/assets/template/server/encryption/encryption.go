@@ -19,12 +19,17 @@
 package encryption
 
 import (
+	base32 "encoding/base32"
 	base64 "encoding/base64"
 	binary "encoding/binary"
 	hex "encoding/hex"
 	errors "errors"
+	fmt "fmt"
+	strings "strings"
 
+	hmac "crypto/hmac"
 	random "crypto/rand"
+	sha1 "crypto/sha1"
 	sha256 "crypto/sha256"
 	subtle "crypto/subtle"
 
@@ -114,6 +119,76 @@ func BcryptHash( plain_text string ) ( result string , err error ) {
 
 func BcryptCompare( hashed string , plain_text string ) ( ok bool ) {
 	ok = bcrypt.CompareHashAndPassword( []byte( hashed ) , []byte( plain_text ) ) == nil
+	return
+}
+
+// ---------------------------------------------------------------------------
+// TOTP (RFC 6238) -- the codes an authenticator app shows
+//
+// SHA-1, six digits and thirty seconds are not choices: they are what every
+// authenticator app does, whatever a URI asks for. SHA-1's collision weakness
+// does not touch HMAC-SHA1 here.
+// ---------------------------------------------------------------------------
+
+const (
+	TOTPPeriodSeconds = 30
+	TOTPDigits        = 6
+	// TOTPWindow is one step either side, for a phone whose clock has drifted.
+	TOTPWindow = 1
+)
+
+// TOTPNewSecret is 20 random bytes as base32, the form an authenticator app
+// expects. 20 bytes encode to exactly 32 characters, so there is no padding.
+func TOTPNewSecret() ( secret string ) {
+	secret = base32.StdEncoding.EncodeToString( GenerateRandomBytes( 20 ) )
+	return
+}
+
+// TOTPCode is the code for one 30-second step.
+func TOTPCode( secret string , step uint64 ) ( code string , err error ) {
+	key , err := base32.StdEncoding.DecodeString( secret )
+	if err != nil { return }
+	counter := make( []byte , 8 )
+	binary.BigEndian.PutUint64( counter , step )
+	mac := hmac.New( sha1.New , key )
+	mac.Write( counter )
+	digest := mac.Sum( nil )
+	offset := digest[ len( digest )-1 ] & 0x0F
+	value := binary.BigEndian.Uint32( digest[ offset:offset+4 ] ) & 0x7FFFFFFF
+	code = fmt.Sprintf( "%06d" , value%1000000 )
+	return
+}
+
+// TOTPMatch finds the step code is valid for. after_step is the last step this
+// account used: anything at or before it is refused, which is what makes a
+// code single-use rather than good for its whole window.
+func TOTPMatch( secret string , code string , at_seconds int64 , after_step uint64 ) ( step uint64 , ok bool , err error ) {
+	current := uint64( at_seconds / TOTPPeriodSeconds )
+	for candidate := current - TOTPWindow; candidate <= current+TOTPWindow; candidate++ {
+		if candidate <= after_step { continue }
+		expected , code_err := TOTPCode( secret , candidate )
+		if code_err != nil {
+			err = code_err
+			return
+		}
+		if ConstantTimeEqual( expected , code ) {
+			step , ok = candidate , true
+			return
+		}
+	}
+	return
+}
+
+// RecoveryCode is 80 random bits as XXXX-XXXX-XXXX-XXXX. Long enough that the
+// sha256 stored for it has nothing to brute force, like the other random
+// secrets here.
+func RecoveryCode() ( code string ) {
+	text := base32.StdEncoding.EncodeToString( GenerateRandomBytes( 10 ) )
+	parts := []string{}
+	for index := 0; index < len( text ); index += 4 {
+		parts = append( parts , text[ index:index+4 ] )
+	}
+	code = strings.Join( parts , "-" )
 	return
 }
 

@@ -14,9 +14,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from app.core import encryption
-from app.core.db import BUCKET_LOGIN_TOKENS, BUCKET_SESSIONS, BUCKET_USERS, Record, Store, Transaction
+from app.core.db import BUCKET_LOGIN_TOKENS, BUCKET_USERS, Record, Store, Transaction
 from app.models import from_iso, to_iso, utc_now
-from app.models.sessions import new_session, split_credential
+from app.models.sessions import split_credential
+from app.models.sign_in import SignIn, SignInRules, start_sign_in_tx
 from app.models.users import User
 
 
@@ -82,11 +83,12 @@ def issue_login_token(store: Store, user_id: int, ttl_seconds: int) -> str:
     return f"{token_id}.{secret}"
 
 
-def redeem_login_token(store: Store, credential: str, session_ttl_seconds: int) -> tuple[str, int] | None:
-    """Consume a login link and create the session it grants. Returns
-    (session credential, user id), or None for any failure -- expired, spent,
-    never existed, the wrong secret, or a disabled account all look the same,
-    so the answer cannot be used to probe which links are real.
+def redeem_login_token(store: Store, credential: str, rules: SignInRules) -> SignIn | None:
+    """Consume a login link and start the sign-in it grants -- a session, or a
+    two-factor challenge (see app/models/sign_in.py). Returns None for any
+    failure -- expired, spent, never existed, the wrong secret, or a disabled
+    account all look the same, so the answer cannot be used to probe which
+    links are real.
 
     The bcrypt comparison runs before the write transaction, so the database's
     single write lock is never held for the deliberately slow part. Everything
@@ -122,9 +124,7 @@ def redeem_login_token(store: Store, credential: str, session_ttl_seconds: int) 
 
         current.used_at = utc_now()
         tx.put(BUCKET_LOGIN_TOKENS, token_id, current.to_record())
-        session_id, session_credential, session = new_session(current.user_id, session_ttl_seconds)
-        tx.put(BUCKET_SESSIONS, session_id, session.to_record())
-        return session_credential, current.user_id
+        return start_sign_in_tx(tx, User.from_record(owner), rules)
 
 
 def delete_pending_login_tokens(tx: Transaction, user_id: int) -> int:

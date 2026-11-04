@@ -169,9 +169,9 @@ func TestMCPAuthentication( t *testing.T ) {
 
 	// A browser session is refused, even an admin's.
 	login , _ := models.IssueLoginToken( fixture.store , fixture.owner.ID , time.Hour )
-	session , _ , err := models.RedeemLoginToken( fixture.store , login , time.Hour )
+	signed , err := models.RedeemLoginToken( fixture.store , login , models.SignInRules{ SessionTTL: time.Hour } )
 	if err != nil { t.Fatal( err ) }
-	cookie , _ := encryption.ChaChaEncryptString( fixture.cfg.SecretKey , session )
+	cookie , _ := encryption.ChaChaEncryptString( fixture.cfg.SecretKey , signed.SessionCredential )
 	if status , _ := fixture.post( t , "" , rpc( "ping" , `{}` ) , "Cookie" , "session="+cookie ); status != 403 {
 		t.Errorf( "session: status %d, want 403" , status )
 	}

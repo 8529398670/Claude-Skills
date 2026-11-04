@@ -33,6 +33,7 @@ Usage:
   list-users                            id, name, role, status
   set-disabled    --user-id 3 [--enable]
   revoke-access   --user-id 3           end every session, login link and API key
+  reset-2fa       --user-id 3           take two-factor sign-in off an account
   delete-user     --user-id 3 --yes     remove the account and everything it held
   transfer-owner  --user-id 3           make another enabled admin the owner
   list-keys       [--user-id 3]         API keys, whose they are, when last used
@@ -91,6 +92,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--enable", action="store_true", help="re-enable instead of disabling")
 
     p = commands.add_parser("revoke-access", help="end every session, login link and API key")
+    p.add_argument("--user-id", type=int, required=True)
+
+    p = commands.add_parser("reset-2fa", help="take two-factor sign-in off an account")
     p.add_argument("--user-id", type=int, required=True)
 
     p = commands.add_parser("delete-user", help="remove an account and everything it held")
@@ -167,6 +171,7 @@ def run(arguments: list[str]) -> None:
         "list-users": command_list_users,
         "set-disabled": command_set_disabled,
         "revoke-access": command_revoke_access,
+        "reset-2fa": command_reset_two_factor,
         "delete-user": command_delete_user,
         "transfer-owner": command_transfer_owner,
         "list-keys": command_list_keys,
@@ -254,9 +259,18 @@ def command_revoke_access(store: db.Store, cfg: config.Config, args: argparse.Na
         raise ManageError(f"no user with id {user.id}")
     print(
         f"user #{user.id} ({user.display_name}): ended {revoked.sessions} sessions, deleted "
-        f"{revoked.login_links} unused login links, revoked {revoked.api_keys} API keys"
+        f"{revoked.login_links} unused login links, removed {revoked.passwords} passwords, "
+        f"revoked {revoked.api_keys} API keys"
     )
     print(f"To let them back in: python -m app manage reissue-login --user-id {user.id}")
+
+
+def command_reset_two_factor(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
+    """The way back for someone with neither their phone nor their recovery
+    codes -- the owner included, who no one can reset from the web."""
+    user = require_user(store, args.user_id)
+    credentials.reset_two_factor(store, user.id, None)
+    print(f"user #{user.id} ({user.display_name}): two-factor sign-in is off")
 
 
 def command_delete_user(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:

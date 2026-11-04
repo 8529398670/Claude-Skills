@@ -105,6 +105,7 @@ var secretPathPrefixes = []string{ "/login/" , "/join/" }
 var secretQueryKeys = map[string]bool{
 	"token": true , "key": true , "secret": true , "code": true ,
 	"credential": true , "csrf_token": true , "pin": true , "password": true ,
+	"password_digest": true , "challenge": true , "recovery_code": true ,
 }
 
 const maxPathLength = 300

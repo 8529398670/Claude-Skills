@@ -21,7 +21,7 @@ from starlette.responses import JSONResponse, Response
 from app.core.db import Store
 from app.core.logs import KIND_ADMIN
 from app.core.security import actor_from, check_csrf
-from app.models import credentials, login_tokens, users
+from app.models import credentials, login_tokens, passwords, two_factor, users
 from app.routes.helpers import bad_request, error, forbidden, get_config, get_store, not_found, parse_id, read_json, run
 from app.routes.logs import audit
 
@@ -36,7 +36,16 @@ def user_rows(store: Store) -> list[dict[str, Any]]:
     """Shared with the MCP admin_list_users tool."""
     owner_id = users.get_owner_id(store)
     return [
-        {"id": u.id, "display_name": u.display_name, "role": u.role, "disabled": u.disabled, "owner": u.id == owner_id}
+        {
+            "id": u.id,
+            "display_name": u.display_name,
+            "role": u.role,
+            "disabled": u.disabled,
+            "owner": u.id == owner_id,
+            "has_password": passwords.has_password(u),
+            "password_blocked": u.password_blocked,
+            "two_factor": two_factor.is_on(u),
+        }
         for u in users.list_users(store)
     ]
 
@@ -169,6 +178,33 @@ async def delete_user(request: Request) -> Response:
         return not_found("no such user")
     audit(request, KIND_ADMIN, "user deleted", {"user_id": user_id})
     return JSONResponse({"ok": True, "removed": removed.to_dict()})
+
+
+async def reset_two_factor(request: Request) -> Response:
+    """For someone who lost both the phone and the recovery codes. Who may
+    reset whom lives in credentials.reset_two_factor; it needs a browser
+    session, because it removes what stands between a login link and the
+    account."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    user_id = parse_id(request.path_params["user_id"])
+    if user_id is None:
+        return bad_request("invalid user id")
+    try:
+        found = await run(credentials.reset_two_factor, get_store(request), user_id, actor_from(request).user.id)
+    except credentials.SelfResetError:
+        return bad_request("you cannot reset your own two-factor sign-in")
+    except credentials.OwnerProtectedError:
+        return forbidden("the owner's two-factor sign-in can only be reset from a shell")
+    except credentials.OwnerRequiredError:
+        return forbidden("only the owner can reset an admin's two-factor sign-in")
+    if not found:
+        return not_found("no such user")
+    audit(request, KIND_ADMIN, "two-factor reset", {"user_id": user_id})
+    return JSONResponse({"ok": True})
 
 
 # ---------------------------------------------------------------------------

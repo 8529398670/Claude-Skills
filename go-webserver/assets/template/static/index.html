@@ -60,6 +60,8 @@
           <a class="nav-link" href="#account" data-nav="account"><i class="bi bi-person-circle" aria-hidden="true"></i><span class="nav-link-text"><span data-i18n="nav.account"></span><span id="sidebar-user" class="nav-link-sub"></span></span></a>
           <a class="nav-link" href="#appearance" data-nav="appearance"><i class="bi bi-palette" aria-hidden="true"></i><span data-i18n="nav.appearance"></span></a>
           <a class="nav-link" href="#pin" data-nav="pin"><i class="bi bi-key" aria-hidden="true"></i><span data-i18n="nav.pin"></span></a>
+          <a class="nav-link" href="#password" data-nav="password"><i class="bi bi-lock" aria-hidden="true"></i><span data-i18n="nav.password"></span></a>
+          <a class="nav-link" href="#two-factor" data-nav="two-factor"><i class="bi bi-shield-lock" aria-hidden="true"></i><span data-i18n="nav.two_factor"></span></a>
           <a class="nav-link" href="#api-keys" data-nav="api-keys"><i class="bi bi-code-square" aria-hidden="true"></i><span data-i18n="nav.api_keys"></span></a>
 
           <div id="sidebar-admin" class="sidebar-group" hidden>
@@ -82,6 +84,39 @@
           <h2 class="h4 card-title" data-i18n="signed_out.heading"></h2>
           <p data-i18n="signed_out.body"></p>
           <p id="invalid-link" class="alert alert-warning mb-0" data-i18n="signed_out.invalid_link" hidden></p>
+          <p id="sign-in-expired" class="alert alert-warning mb-0" data-i18n="signed_out.sign_in_expired" hidden></p>
+
+          <!-- Only while the owner has auth.passwords on; see password.js. -->
+          <div id="password-login" class="mt-3" hidden>
+            <h3 class="h6" data-i18n="signed_out.password_heading"></h3>
+            <form id="password-login-form">
+              <div class="mb-3">
+                <label for="login-username" class="form-label" data-i18n="signed_out.username_label"></label>
+                <input id="login-username" class="form-control" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32" required />
+              </div>
+              <div class="mb-3">
+                <label for="login-password" class="form-label" data-i18n="signed_out.password_label"></label>
+                <input id="login-password" class="form-control" name="password" type="password" autocomplete="current-password" required />
+              </div>
+              <button id="password-login-button" type="submit" class="btn btn-primary" data-i18n="signed_out.password_button"></button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- Asked for during any sign-in on an account with two-factor on. See
+           two_factor.js. -->
+      <section id="two-factor-step" class="card" hidden>
+        <div class="card-body">
+          <h2 class="h4 card-title" data-i18n="two_factor.step_heading"></h2>
+          <p data-i18n="two_factor.step_body"></p>
+          <form id="two-factor-step-form" autocomplete="off">
+            <div class="mb-3">
+              <label for="two-factor-step-code" class="form-label" data-i18n="two_factor.code_label"></label>
+              <input id="two-factor-step-code" class="form-control" name="code" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="24" required />
+            </div>
+            <button type="submit" class="btn btn-primary" data-i18n="two_factor.step_button"></button>
+          </form>
         </div>
       </section>
 
@@ -206,6 +241,81 @@
                 <button type="submit" class="btn btn-primary" data-i18n="pin.save_button"></button>
                 <button type="button" id="pin-clear-button" class="btn btn-outline-danger" data-i18n="pin.clear_button" hidden></button>
               </div>
+            </form>
+          </div>
+        </section>
+
+        <!-- Only while the owner has auth.passwords on; see password.js. -->
+        <section class="card view" data-view="password" id="password-panel" hidden>
+          <div class="card-body">
+            <h2 class="h4 card-title" data-i18n="password.heading"></h2>
+            <p class="text-body-secondary" data-i18n="password.description"></p>
+            <p><span id="password-status" class="badge text-bg-secondary"></span></p>
+            <form id="password-form">
+              <div class="mb-3">
+                <label for="password-username" class="form-label" data-i18n="password.username_label"></label>
+                <input id="password-username" class="form-control" name="username" autocomplete="username" autocapitalize="none" spellcheck="false"
+                       minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]{3,32}" required />
+                <div class="form-text" data-i18n="password.username_help"></div>
+              </div>
+              <div class="mb-3">
+                <label for="password-new" class="form-label" data-i18n="password.new_label"></label>
+                <input id="password-new" class="form-control" name="new_password" type="password" autocomplete="new-password" required />
+                <div class="form-text" data-i18n="password.new_help"></div>
+              </div>
+              <div class="mb-3">
+                <label for="password-confirm" class="form-label" data-i18n="password.confirm_label"></label>
+                <input id="password-confirm" class="form-control" name="confirm_password" type="password" autocomplete="new-password" required />
+              </div>
+              <div id="password-code-row" class="mb-3" hidden>
+                <label for="password-code" class="form-label" data-i18n="two_factor.code_label"></label>
+                <input id="password-code" class="form-control" name="code" autocomplete="one-time-code" spellcheck="false" maxlength="24" />
+              </div>
+              <div class="row-actions">
+                <button type="submit" class="btn btn-primary" data-i18n="password.save_button"></button>
+                <button type="button" id="password-remove-button" class="btn btn-outline-danger" data-i18n="password.remove_button" hidden></button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <!-- Only while the owner has auth.two_factor on; see two_factor.js. -->
+        <section class="card view" data-view="two-factor" id="two-factor-panel" hidden>
+          <div class="card-body">
+            <h2 class="h4 card-title" data-i18n="two_factor.heading"></h2>
+            <p class="text-body-secondary" data-i18n="two_factor.description"></p>
+            <p><span id="two-factor-status" class="badge text-bg-secondary"></span></p>
+            <button id="two-factor-start-button" class="btn btn-primary" data-i18n="two_factor.start_button" hidden></button>
+
+            <div id="two-factor-setup" hidden>
+              <p data-i18n="two_factor.setup_scan"></p>
+              <canvas id="two-factor-qr" class="d-block img-fluid mb-3 border rounded"></canvas>
+              <p class="mb-1" data-i18n="two_factor.setup_manual"></p>
+              <p><code id="two-factor-secret"></code></p>
+              <form id="two-factor-confirm-form" autocomplete="off">
+                <div class="mb-3">
+                  <label for="two-factor-code" class="form-label" data-i18n="two_factor.setup_code_label"></label>
+                  <input id="two-factor-code" class="form-control" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required />
+                </div>
+                <button type="submit" class="btn btn-primary" data-i18n="two_factor.confirm_button"></button>
+              </form>
+            </div>
+
+            <div id="two-factor-recovery" class="alert alert-info" hidden>
+              <p data-i18n="two_factor.recovery_notice"></p>
+              <pre id="two-factor-recovery-codes" class="mb-3"></pre>
+              <div class="row-actions">
+                <button id="two-factor-recovery-copy" class="btn btn-sm btn-outline-secondary" data-i18n="two_factor.copy_button"></button>
+                <button id="two-factor-recovery-done" class="btn btn-sm btn-primary" data-i18n="two_factor.done_button"></button>
+              </div>
+            </div>
+
+            <form id="two-factor-disable-form" autocomplete="off" hidden>
+              <div class="mb-3">
+                <label for="two-factor-disable-code" class="form-label" data-i18n="two_factor.code_label"></label>
+                <input id="two-factor-disable-code" class="form-control" name="code" autocomplete="one-time-code" spellcheck="false" maxlength="24" required />
+              </div>
+              <button type="submit" class="btn btn-outline-danger" data-i18n="two_factor.disable_button"></button>
             </form>
           </div>
         </section>
@@ -466,6 +576,7 @@
     the Content-Security-Policy can stay locked to 'self'.
   -->
   <script src="/vendor/bootstrap.bundle.min.js"></script>
+  <script src="/vendor/qrcode.js"></script>
   <script src="/js/dom.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/undo.js"></script>
@@ -475,6 +586,8 @@
   <script src="/js/keys.js"></script>
   <script src="/js/join.js"></script>
   <script src="/js/pin.js"></script>
+  <script src="/js/password.js"></script>
+  <script src="/js/two_factor.js"></script>
   <script src="/js/invites.js"></script>
   <script src="/js/logs.js"></script>
   <script src="/js/settings.js"></script>

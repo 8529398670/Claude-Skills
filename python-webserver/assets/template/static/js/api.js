@@ -68,6 +68,18 @@ const Api = {
     return this.request( "/api/login" , { method: "POST" , body: { credential: credential } } );
   },
 
+  // What the signed-out page needs: whether passwords are on, and the salt.
+  loginOptions() { return this.request( "/api/login/options" ); },
+
+  // Signing in by password, and giving the code an account with two-factor
+  // on is asked for. No session yet, so the same rule as login().
+  passwordLogin( username , digest ) {
+    return this.request( "/api/login/password" , { method: "POST" , body: { username: username , password_digest: digest } } );
+  },
+  finishSignIn( challenge , code ) {
+    return this.request( "/api/login/two-factor" , { method: "POST" , body: { challenge: challenge , code: code } } );
+  },
+
   // Invite links: no session yet either, so the same JSON-body rule as
   // login() applies. The credential always goes in the body.
   joinInfo( credential )                { return this.request( "/api/join/info" , { method: "POST" , body: { credential: credential } } ); },
@@ -86,6 +98,14 @@ const Api = {
     return this.post( "/api/account/rename" , body );
   },
   setPin( pin )                { return this.post( "/api/account/pin" , { pin: pin } ); },
+  // digest is what password.js derived; the password itself is never sent.
+  // An empty digest removes the password.
+  setPassword( username , digest , code ) {
+    return this.post( "/api/account/password" , { username: username , password_digest: digest , code: code } );
+  },
+  startTwoFactor()             { return this.post( "/api/account/two-factor/start" ); },
+  confirmTwoFactor( code )     { return this.post( "/api/account/two-factor/confirm" , { code: code } ); },
+  disableTwoFactor( code )     { return this.post( "/api/account/two-factor/disable" , { code: code } ); },
   createMyLoginLink()          { return this.post( "/api/account/login-link" ); },
   logout()                     { return this.post( "/api/logout" ); },
   listTeam()                   { return this.request( "/api/team" ); },
@@ -95,6 +115,10 @@ const Api = {
   setDisabled( userId , flag ) { return this.post( "/api/admin/users/" + userId + "/disabled" , { disabled: flag } ); },
   revokeAccess( userId )       { return this.post( "/api/admin/users/" + userId + "/revoke-access" ); },
   deleteUser( userId )         { return this.post( "/api/admin/users/" + userId + "/delete" ); },
+  resetTwoFactor( userId )     { return this.post( "/api/admin/users/" + userId + "/reset-two-factor" ); },
+  setPasswordAccess( userId , allowed ) {
+    return this.post( "/api/owner/users/" + userId + "/password-access" , { allowed: allowed } );
+  },
   listInvites()                { return this.request( "/api/admin/invite-links" ); },
   createInvite( label , maxUses , days ) {
     return this.post( "/api/admin/invite-links" , { label: label , max_uses: maxUses , days: days } );

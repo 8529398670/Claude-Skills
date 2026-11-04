@@ -341,6 +341,7 @@ func startPurgeLoop( store *db.Store , logger *logs.Logger ) ( stop chan struct{
 				tokens , _ := models.PurgeExpiredLoginTokens( store )
 				keys , _ := models.PurgeDeadAPIKeys( store )
 				invites , _ := models.PurgeDeadInviteLinks( store )
+				models.PurgeExpiredChallenges( store )
 				if sessions > 0 || tokens > 0 || keys > 0 || invites > 0 {
 					fmt.Printf( "[purge] removed %d expired sessions, %d expired login tokens, %d dead api keys, %d dead invite links\n" , sessions , tokens , keys , invites )
 				}

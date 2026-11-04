@@ -17,9 +17,10 @@ const (
 	RoleUser  = "user"
 )
 
-// User has no password field, and adding one would undo the entire design
-// here: identity is proven only by redeeming a login link or presenting a
-// session cookie. See references/architecture.md before changing that.
+// User: links are the way in. A password is optional and off by default (see
+// password.go): an account gets one only by signing in with a link first, so
+// there is no signup, and the owner decides whether passwords work at all. See
+// references/architecture.md.
 type User struct {
 	ID          uint64     `json:"id"`
 	DisplayName string     `json:"display_name"`
@@ -30,6 +31,21 @@ type User struct {
 	// through an invite link. It is not a password: nothing else checks it.
 	// See pin.go.
 	PinHash string `json:"pin_hash,omitempty"`
+	// What password sign-in needs: a unique name to look the account up by,
+	// since display names are not unique, and a bcrypt hash of what the
+	// browser derived from the password. See password.go.
+	Username     string `json:"username,omitempty"`
+	PasswordHash string `json:"password_hash,omitempty"`
+	// PasswordBlocked is the owner's per-account block. It stops the password
+	// working and keeps the hash, so unblocking restores it.
+	PasswordBlocked bool `json:"password_blocked,omitempty"`
+	// TOTP secrets are encrypted here as well as with the record, because
+	// server.encrypt_at_rest can be off and a secret cannot be hashed. See
+	// two_factor.go.
+	TOTPSecret     string   `json:"totp_secret,omitempty"`
+	TOTPPending    string   `json:"totp_pending,omitempty"`
+	TOTPLastStep   uint64   `json:"totp_last_step,omitempty"`
+	RecoveryHashes []string `json:"recovery_hashes,omitempty"`
 }
 
 func ( user *User ) Disabled() ( result bool ) {
@@ -177,7 +193,8 @@ func SetUserDisabled( store *db.Store , user_id uint64 , disabled bool ) ( err e
 		if tx_err = tx.Put( db.BucketUsers , key , user ); tx_err != nil { return }
 		if disabled == false { return }
 		if _ , tx_err = destroySessionsForUser( tx , user_id ); tx_err != nil { return }
-		_ , tx_err = deletePendingLoginTokens( tx , user_id )
+		if _ , tx_err = deletePendingLoginTokens( tx , user_id ); tx_err != nil { return }
+		tx_err = deleteChallengesForUser( tx , user_id )
 		return
 	} )
 	return

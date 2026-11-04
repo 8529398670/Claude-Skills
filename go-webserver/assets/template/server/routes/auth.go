@@ -37,9 +37,36 @@ func ( handlers *Handlers ) ShowLoginPage( c fiber.Ctx ) ( err error ) {
 	return
 }
 
-// RedeemLoginLink is the whole login. Redeeming a valid link is the login;
-// there is no form, no password, and nothing to phish out of a user beyond
-// the link itself, which dies on first use.
+// signInRules is what decides how a sign-in ends, from the running
+// configuration.
+func ( handlers *Handlers ) signInRules() ( rules models.SignInRules ) {
+	cfg := handlers.cfg()
+	rules = models.SignInRules{ SessionTTL: cfg.SessionTTL , TwoFactor: cfg.TwoFactorEnabled }
+	return
+}
+
+// signInResponse is how every way of signing in ends. A challenge goes back to
+// the page, which asks for the code, and nothing changes in this browser yet.
+// Otherwise this browser switches to the new session: the one it had is ended
+// server-side, not merely replaced in the cookie jar.
+func ( handlers *Handlers ) signInResponse( c fiber.Ctx , signed *models.SignIn , payload fiber.Map , status int ) ( err error ) {
+	if signed.Challenge != "" {
+		err = c.JSON( fiber.Map{ "two_factor": true , "challenge": signed.Challenge } )
+		return
+	}
+	handlers.destroyCookieSession( c )
+	if cookie_err := handlers.Guard.SetSessionCookie( c , signed.SessionCredential ); cookie_err != nil {
+		err = serverError( c )
+		return
+	}
+	err = c.Status( status ).JSON( payload )
+	return
+}
+
+// RedeemLoginLink signs in with a login link. Redeeming a valid link is the
+// login; there is nothing to phish out of a user beyond the link itself, which
+// dies on first use. An account with two-factor on goes on to give a code (see
+// two_factor.go).
 //
 // It is the one state-changing route with no CSRF token -- there is no
 // session yet to hold one -- so it is guarded differently. A forged login
@@ -61,7 +88,7 @@ func ( handlers *Handlers ) RedeemLoginLink( c fiber.Ctx ) ( err error ) {
 	}
 
 	credential := strings.Trim( strings.TrimSpace( body.Credential ) , "/" )
-	session_credential , user_id , redeem_err := models.RedeemLoginToken( handlers.Store , credential , handlers.cfg().SessionTTL )
+	signed , redeem_err := models.RedeemLoginToken( handlers.Store , credential , handlers.signInRules() )
 	if redeem_err != nil {
 		// Expired, already spent, never existed, wrong secret, or a disabled
 		// account all get the same answer. Telling them apart would let
@@ -75,15 +102,10 @@ func ( handlers *Handlers ) RedeemLoginLink( c fiber.Ctx ) ( err error ) {
 		return
 	}
 
-	// Switching accounts: the session this browser had is ended server-side,
-	// not merely replaced in the cookie jar.
-	handlers.destroyCookieSession( c )
-	if cookie_err := handlers.Guard.SetSessionCookie( c , session_credential ); cookie_err != nil {
-		err = serverError( c )
-		return
-	}
-	handlers.auditAs( c , handlers.logUser( user_id , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , "signed in with a login link" , nil )
-	err = c.JSON( fiber.Map{ "ok": true } )
+	message := "signed in with a login link"
+	if signed.Challenge != "" { message = "login link accepted, waiting for a code" }
+	handlers.auditAs( c , handlers.logUser( signed.UserID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , nil )
+	err = handlers.signInResponse( c , signed , fiber.Map{ "ok": true } , fiber.StatusOK )
 	return
 }
 

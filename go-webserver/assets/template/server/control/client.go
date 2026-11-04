@@ -165,6 +165,11 @@ func ( client *Client ) RevokeAccess( user_id uint64 ) ( revoked models.Revoked 
 	return
 }
 
+func ( client *Client ) ResetTwoFactor( user_id uint64 ) ( err error ) {
+	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/users/%d/reset-two-factor" , user_id ) , nil , nil )
+	return
+}
+
 // ListAPIKeys returns every key, or one user's when user_id is non-zero.
 func ( client *Client ) ListAPIKeys( user_id uint64 ) ( keys []APIKeyResponse , err error ) {
 	keys = []APIKeyResponse{}

@@ -12,7 +12,7 @@ from app.core.db import Store
 from app.core.encryption import BadKeyError, CipherTextError
 from app.core.logs import KIND_AUTH
 from app.core.security import Actor, actor_from, check_csrf, clear_session_cookie, decrypt_cookie
-from app.models import login_tokens, pins, sessions, users
+from app.models import login_tokens, passwords, pins, sessions, two_factor, users
 from app.routes.helpers import bad_request, conflict, forbidden, get_config, get_store, read_json, run, server_error
 from app.routes.logs import audit
 
@@ -45,6 +45,12 @@ def me_row(store: Store, cfg: Config, actor: Actor) -> dict[str, Any]:
         "account_role": actor.user.role,
         "is_owner": actor.user.id == owner_id,
         "has_pin": pins.has_pin(actor.user),
+        "username": actor.user.username,
+        "has_password": passwords.has_password(actor.user),
+        "password_blocked": actor.user.password_blocked,
+        "two_factor": two_factor.is_on(actor.user),
+        "passwords_enabled": cfg.passwords_enabled,
+        "two_factor_enabled": cfg.two_factor_enabled,
         "auth": actor.method,
         "api_keys_enabled": cfg.api_keys_enabled,
         # Whether track.js sends anything, and whether it sends clicks.

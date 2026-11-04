@@ -151,6 +151,22 @@ auth:
   # expires has to be asked for (expires_in_days: 0, or `--days 0`). [live]
   api_key_ttl_seconds: 7776000     # 90 days
 
+  # Password sign-in. true lets any account set a username and password on
+  # its own screen, after signing in with a link -- there is still no signup,
+  # and a forgotten password is still "get a new login link". The owner can
+  # block one account from the Users screen. false stops every password
+  # working and hides the form; the hashes stay, so switching it back on
+  # restores them. Needs HTTPS (or localhost), because the browser hashes the
+  # password with WebCrypto before sending it. [live]
+  passwords: false
+
+  # Two-factor sign-in with an authenticator app, which each person turns on
+  # for themselves. It is asked for on every browser sign-in -- password,
+  # login link, and invite link -- never for an API key. false stops offering
+  # it and stops asking for it; the secrets stay, so switching it back on
+  # restores them. [live]
+  two_factor: true
+
 # The activity log: every request, every sign-in and admin action, and what
 # people do on the page (see static/js/track.js). Only the owner can read it,
 # on the Logs screen. It is written as one file per UTC day under

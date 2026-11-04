@@ -53,6 +53,9 @@ func ( handlers *Handlers ) userRows() ( rows []fiber.Map , err error ) {
 			"role":         user.Role,
 			"disabled":     user.Disabled(),
 			"owner":        user.ID == owner_id,
+			"has_password":     user.HasPassword(),
+			"password_blocked": user.PasswordBlocked,
+			"two_factor":       user.TwoFactorOn(),
 		} )
 	}
 	return
@@ -197,6 +200,48 @@ func ( handlers *Handlers ) RevokeAccess( c fiber.Ctx ) ( err error ) {
 	}
 	handlers.audit( c , logs.KindAdmin , "access revoked" , fiber.Map{ "user_id": user_id } )
 	err = c.JSON( fiber.Map{ "ok": true , "revoked": revoked } )
+	return
+}
+
+// ResetTwoFactor is for someone who lost both the phone and the recovery codes.
+// Who may reset whom lives in models.ResetTwoFactor; it needs a browser
+// session, because it removes what stands between a login link and the
+// account.
+func ( handlers *Handlers ) ResetTwoFactor( c fiber.Ctx ) ( err error ) {
+	var body csrfOnlyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	user_id , parse_err := strconv.ParseUint( c.Params( "user_id" ) , 10 , 64 )
+	if parse_err != nil {
+		err = badRequest( c , "invalid user id" )
+		return
+	}
+	reset_err := models.ResetTwoFactor( handlers.Store , user_id , security.UserFrom( c ).ID )
+	switch {
+	case errors.Is( reset_err , db.ErrNotFound ):
+		err = notFound( c , "no such user" )
+		return
+	case errors.Is( reset_err , models.ErrResetSelf ):
+		err = badRequest( c , "you cannot reset your own two-factor sign-in" )
+		return
+	case errors.Is( reset_err , models.ErrOwnerProtected ):
+		err = forbidden( c , "the owner's two-factor sign-in can only be reset from a shell" )
+		return
+	case errors.Is( reset_err , models.ErrOwnerRequired ):
+		err = forbidden( c , "only the owner can reset an admin's two-factor sign-in" )
+		return
+	case reset_err != nil:
+		err = serverError( c )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "two-factor reset" , fiber.Map{ "user_id": user_id } )
+	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }
 

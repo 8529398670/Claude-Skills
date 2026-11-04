@@ -26,7 +26,7 @@ from app.core.config import Config
 from app.core.security import Guard, RequireAdmin, RequireAPIKey, RequireLogin, RequireOwner, RequireSession
 from app.core.static_files import StaticServer
 from app.mcp.protocol import Server as MCPServer
-from app.routes import account, admin, api_keys, auth, invite_links, join, logs, mcp_tools, meta, settings, team
+from app.routes import account, admin, api_keys, auth, invite_links, join, logs, mcp_tools, meta, passwords, settings, team, two_factor
 from app.routes.api_keys import RequireAPIKeys
 from app.routes.helpers import get_config, not_found
 
@@ -42,6 +42,22 @@ class RequireMCP(Guard):
         if not cfg.mcp_enabled or not cfg.api_keys_enabled:
             return not_found("not found")
         return None
+
+
+class RequirePasswords(Guard):
+    """Makes every password route answer 404 while auth.passwords is off.
+    Per request, for the same reason as RequireMCP."""
+
+    def refuse(self, request: Request) -> Response | None:
+        return None if get_config(request).passwords_enabled else not_found("not found")
+
+
+class RequireTwoFactor(Guard):
+    """The same for setting up 2FA while auth.two_factor is off. Finishing a
+    sign-in is not behind this: one already under way may as well end."""
+
+    def refuse(self, request: Request) -> Response | None:
+        return None if get_config(request).two_factor_enabled else not_found("not found")
 
 
 def group(*guards: type) -> Callable[..., Route]:
@@ -86,6 +102,13 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
     # browser session -- not other admins, not any API key, not the signed
     # out; all of them get 404 (see RequireOwner).
     owner = group(RequireOwner)
+    # Passwords and 2FA change how an account signs in, so setting them needs
+    # a browser session, like the PIN: a key that could set a password could
+    # turn itself into a session.
+    password_login = group(RequirePasswords)
+    my_password = group(RequirePasswords, RequireLogin, RequireSession)
+    owner_passwords = group(RequirePasswords, RequireOwner)
+    my_two_factor = group(RequireTwoFactor, RequireLogin, RequireSession)
 
     routes: list[BaseRoute] = [
         # Public: the login link's page and the call it makes, the UI's text
@@ -94,6 +117,9 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         # POST that page sends when the person confirms. See auth.py.
         public("/login/{credential:path}", static_server.serve_login_page),
         public("/api/login", auth.redeem_login_link, ["POST"]),
+        public("/api/login/options", passwords.login_options),
+        public("/api/login/two-factor", two_factor.finish_sign_in, ["POST"]),
+        password_login("/api/login/password", passwords.password_login, ["POST"]),
         public("/api/language", meta.get_language),
         public("/api/health", meta.get_health),
         # Public: invite links (see join.py). Holding the link is the
@@ -112,6 +138,10 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         # A session only, for the same reason as every route that hands out
         # a login link: the link becomes a session. See admin_sessions above.
         sessions_only("/api/account/login-link", account.create_my_login_link, ["POST"]),
+        my_password("/api/account/password", passwords.set_password, ["POST"]),
+        my_two_factor("/api/account/two-factor/start", two_factor.start_setup, ["POST"]),
+        my_two_factor("/api/account/two-factor/confirm", two_factor.confirm_setup, ["POST"]),
+        my_two_factor("/api/account/two-factor/disable", two_factor.disable, ["POST"]),
         signed_in("/api/logout", account.logout, ["POST"]),
         signed_in("/api/team", team.list_team),
         my_keys("/api/keys", api_keys.list_my_keys),
@@ -125,6 +155,7 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         admins("/api/admin/users/{user_id}/disabled", admin.set_user_disabled, ["POST"]),
         admins("/api/admin/users/{user_id}/revoke-access", admin.revoke_access, ["POST"]),
         admin_sessions("/api/admin/users/{user_id}/delete", admin.delete_user, ["POST"]),
+        admin_sessions("/api/admin/users/{user_id}/reset-two-factor", admin.reset_two_factor, ["POST"]),
         # Invite links: one link for a group, each person who opens it joins
         # as a new user (see invite_links.py). Creating one needs a session for
         # the same reason as creating a user -- the link mints accounts and
@@ -142,6 +173,8 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         # config.yaml, as the owner's Settings screen. See settings.py.
         owner("/api/owner/settings", settings.get_settings),
         owner("/api/owner/settings", settings.save_settings, ["POST"]),
+        # The per-account password switch. See passwords.py.
+        owner_passwords("/api/owner/users/{user_id}/password-access", passwords.set_password_access, ["POST"]),
     ]
 
     # The activity log (app/core/logs.py). Switched off in config.yaml, none

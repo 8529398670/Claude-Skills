@@ -34,7 +34,15 @@ type Handlers struct {
 	Guard    *security.Guard
 	Language *language.Language
 	Static   *static.Server
-	Pins     *models.PinGuard
+	Pins     *models.AttemptGuard[ uint64 ]
+	// Codes counts wrong two-factor codes per account, wherever they are
+	// typed. Six digits with a window of three steps would otherwise fall to
+	// a patient guesser.
+	Codes *models.AttemptGuard[ uint64 ]
+	// Per name typed, not per account, so a lockout does not say which names
+	// are real; and per address, across names.
+	PasswordNames     *models.AttemptGuard[ string ]
+	PasswordAddresses *models.AttemptGuard[ string ]
 	// Version is reported to MCP clients as serverInfo.version.
 	Version string
 	// Logs is the activity log (server/logs), set by main.go after New. Nil
@@ -51,7 +59,10 @@ func New( store *db.Store , settings *config.Holder , guard *security.Guard , la
 		Guard:    guard,
 		Language: lang,
 		Static:   static_server,
-		Pins:     models.NewPinGuard(),
+		Pins:     models.NewAttemptGuard[ uint64 ]( models.AttemptMaxFailures ),
+		Codes:    models.NewAttemptGuard[ uint64 ]( models.AttemptMaxFailures ),
+		PasswordNames:     models.NewAttemptGuard[ string ]( models.AttemptMaxFailures ),
+		PasswordAddresses: models.NewAttemptGuard[ string ]( passwordAddressMaxFailures ),
 		Version:  version,
 	}
 	return
@@ -69,6 +80,9 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// the person confirms. See auth.go.
 	app.Get( "/login/*" , handlers.ShowLoginPage )
 	app.Post( "/api/login" , handlers.RedeemLoginLink )
+	app.Get( "/api/login/options" , handlers.GetLoginOptions )
+	app.Post( "/api/login/two-factor" , handlers.FinishSignIn )
+	app.Post( "/api/login/password" , handlers.RequirePasswords , handlers.PasswordLogin )
 	app.Get( "/api/language" , handlers.GetLanguage )
 	app.Get( "/api/health" , handlers.GetHealth )
 
@@ -91,6 +105,13 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// A session only, for the same reason as every route that hands out a
 	// login link: the link becomes a session. See the admin group below.
 	account.Post( "/account/login-link" , handlers.Guard.RequireSession , handlers.CreateMyLoginLink )
+	// Passwords and 2FA change how an account signs in, so setting them needs
+	// a session, like the PIN: a key that could set a password could turn
+	// itself into a session.
+	account.Post( "/account/password" , handlers.RequirePasswords , handlers.Guard.RequireSession , handlers.SetPassword )
+	account.Post( "/account/two-factor/start" , handlers.RequireTwoFactor , handlers.Guard.RequireSession , handlers.StartTwoFactor )
+	account.Post( "/account/two-factor/confirm" , handlers.RequireTwoFactor , handlers.Guard.RequireSession , handlers.ConfirmTwoFactor )
+	account.Post( "/account/two-factor/disable" , handlers.RequireTwoFactor , handlers.Guard.RequireSession , handlers.DisableTwoFactor )
 	account.Post( "/logout" , handlers.Logout )
 	account.Get( "/team" , handlers.ListTeam )
 	// What someone did on the page, sent by track.js. Theirs to send, the
@@ -139,6 +160,7 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	admin.Post( "/users/:user_id/disabled" , handlers.SetUserDisabled )
 	admin.Post( "/users/:user_id/revoke-access" , handlers.RevokeAccess )
 	admin.Post( "/users/:user_id/delete" , handlers.Guard.RequireSession , handlers.DeleteUser )
+	admin.Post( "/users/:user_id/reset-two-factor" , handlers.Guard.RequireSession , handlers.ResetTwoFactor )
 
 	// Invite links: one link for a group, each person who opens it joins as a
 	// new user (see invite_links.go). Creating one needs a session for the
@@ -166,6 +188,10 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	owner_settings := app.Group( "/api/owner/settings" , handlers.Guard.RequireOwner )
 	owner_settings.Get( "" , handlers.GetSettings )
 	owner_settings.Post( "" , handlers.SaveSettings )
+
+	// The per-account password switch. One exact path, so nothing else picks
+	// up these guards. See passwords.go.
+	app.Post( "/api/owner/users/:user_id/password-access" , handlers.RequirePasswords , handlers.Guard.RequireOwner , handlers.SetPasswordAccess )
 
 	// The activity log: the owner only, from a browser session -- not other
 	// admins, not any API key (see Guard.RequireOwner). Its own prefix, so

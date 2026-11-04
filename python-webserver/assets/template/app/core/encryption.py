@@ -18,8 +18,9 @@ Two deliberate rules:
    becomes an auth bypass.
 
 The libraries are libsodium (through PyNaCl) for authenticated encryption and
-key exchange, and bcrypt for one-time login secrets. Both ship prebuilt wheels
-for Alpine (musllinux), so the Docker build needs no compiler.
+key exchange, and bcrypt for login secrets, PINs and passwords. Both ship
+prebuilt wheels for Alpine (musllinux), so the Docker build needs no compiler.
+TOTP is the standard library's HMAC.
 """
 from __future__ import annotations
 
@@ -87,7 +88,7 @@ def constant_time_equal(a: str, b: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# bcrypt -- for one-time login secrets
+# bcrypt -- for one-time login secrets, PINs, and passwords
 # ---------------------------------------------------------------------------
 
 
@@ -104,6 +105,53 @@ def bcrypt_compare(hashed: str, plain_text: str) -> bool:
         return _bcrypt.checkpw(plain_text.encode("utf-8"), hashed.encode("ascii"))
     except ValueError:
         return False
+
+
+# ---------------------------------------------------------------------------
+# TOTP (RFC 6238) -- the codes an authenticator app shows
+#
+# SHA-1, six digits and thirty seconds are not choices: they are what every
+# authenticator app does, whatever a URI asks for. SHA-1's collision weakness
+# does not touch HMAC-SHA1 here.
+# ---------------------------------------------------------------------------
+
+TOTP_PERIOD_SECONDS = 30
+TOTP_DIGITS = 6
+# One step either side, for a phone whose clock has drifted.
+TOTP_WINDOW = 1
+
+
+def totp_new_secret() -> str:
+    """20 random bytes as base32, the form an authenticator app expects. 20
+    bytes encode to exactly 32 characters, so there is no padding."""
+    return base64.b32encode(random_bytes(20)).decode("ascii")
+
+
+def totp_code(secret: str, step: int) -> str:
+    """The code for one 30-second step."""
+    digest = hmac.new(base64.b32decode(secret), step.to_bytes(8, "big"), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    value = int.from_bytes(digest[offset : offset + 4], "big") & 0x7FFFFFFF
+    return str(value % 10**TOTP_DIGITS).zfill(TOTP_DIGITS)
+
+
+def totp_match(secret: str, code: str, at_seconds: int, after_step: int) -> int | None:
+    """The step code is valid for, or None. after_step is the last step this
+    account used: anything at or before it is refused, which is what makes a
+    code single-use rather than good for its whole window."""
+    current = at_seconds // TOTP_PERIOD_SECONDS
+    for step in range(current - TOTP_WINDOW, current + TOTP_WINDOW + 1):
+        if step > after_step and constant_time_equal(totp_code(secret, step), code):
+            return step
+    return None
+
+
+def recovery_code() -> str:
+    """80 random bits as XXXX-XXXX-XXXX-XXXX. Long enough that the sha256
+    stored for it has nothing to brute force, like the other random secrets
+    here."""
+    text = base64.b32encode(random_bytes(10)).decode("ascii")
+    return "-".join(text[index : index + 4] for index in range(0, len(text), 4))
 
 
 # ---------------------------------------------------------------------------

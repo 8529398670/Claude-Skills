@@ -47,6 +47,7 @@ Usage:
   list-users                         id, name, role, status
   set-disabled    -user-id 3 -disabled=true
   revoke-access   -user-id 3         end every session, login link and API key
+  reset-2fa       -user-id 3         take two-factor sign-in off an account
   delete-user     -user-id 3 -yes    remove the account and everything it held
   transfer-owner  -user-id 3         make another enabled admin the owner
   list-keys       [-user-id 3]       API keys, whose they are, when last used
@@ -101,6 +102,7 @@ type backend interface {
 	ReissueLogin( user_id uint64 ) ( user control.UserResponse , err error )
 	SetDisabled( user_id uint64 , disabled bool ) ( user control.UserResponse , err error )
 	RevokeAccess( user_id uint64 ) ( revoked models.Revoked , err error )
+	ResetTwoFactor( user_id uint64 ) ( err error )
 	DeleteUser( user_id uint64 ) ( removed models.Revoked , err error )
 	TransferOwner( user_id uint64 ) ( user control.UserResponse , err error )
 	ListAPIKeys( user_id uint64 ) ( keys []control.APIKeyResponse , err error )
@@ -167,6 +169,8 @@ func Run( arguments []string ) ( err error ) {
 		err = commandSetDisabled( back , rest )
 	case "revoke-access":
 		err = commandRevokeAccess( back , rest )
+	case "reset-2fa":
+		err = commandResetTwoFactor( back , rest )
 	case "delete-user":
 		err = commandDeleteUser( back , rest )
 	case "transfer-owner":
@@ -266,6 +270,11 @@ func ( b *controlBackend ) SetDisabled( user_id uint64 , disabled bool ) ( user 
 
 func ( b *controlBackend ) RevokeAccess( user_id uint64 ) ( revoked models.Revoked , err error ) {
 	revoked , err = b.client.RevokeAccess( user_id )
+	return
+}
+
+func ( b *controlBackend ) ResetTwoFactor( user_id uint64 ) ( err error ) {
+	err = b.client.ResetTwoFactor( user_id )
 	return
 }
 
@@ -411,6 +420,15 @@ func ( b *directBackend ) RevokeAccess( user_id uint64 ) ( revoked models.Revoke
 	// The operator may revoke the owner's access too -- see
 	// models.RevokeAllCredentials.
 	revoked , err = models.RevokeAllCredentials( b.store , user_id , true )
+	return
+}
+
+// ResetTwoFactor acts as the operator (actor 0), who may reset anyone.
+func ( b *directBackend ) ResetTwoFactor( user_id uint64 ) ( err error ) {
+	err = models.ResetTwoFactor( b.store , user_id , 0 )
+	if errors.Is( err , db.ErrNotFound ) {
+		err = fmt.Errorf( "no user with id %d" , user_id )
+	}
 	return
 }
 
@@ -912,6 +930,19 @@ func commandSetDisabled( back backend , arguments []string ) ( err error ) {
 	return
 }
 
+// commandResetTwoFactor is the way back for someone with neither their phone
+// nor their recovery codes -- the owner included, who no one can reset from
+// the web.
+func commandResetTwoFactor( back backend , arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "reset-2fa" , flag.ExitOnError )
+	user_id := set.Uint64( "user-id" , 0 , "id of an existing user" )
+	set.Parse( arguments )
+
+	if err = back.ResetTwoFactor( *user_id ); err != nil { return }
+	fmt.Printf( "user #%d: two-factor sign-in is off\n" , *user_id )
+	return
+}
+
 // commandRevokeAccess is the incident-response command: run it when an
 // account's credentials may be in someone else's hands. The account stays
 // enabled; follow it with reissue-login to let its owner back in.
@@ -922,8 +953,8 @@ func commandRevokeAccess( back backend , arguments []string ) ( err error ) {
 
 	revoked , err := back.RevokeAccess( *user_id )
 	if err != nil { return }
-	fmt.Printf( "user #%d: ended %d sessions, deleted %d unused login links, revoked %d API keys\n" ,
-		*user_id , revoked.Sessions , revoked.LoginLinks , revoked.APIKeys )
+	fmt.Printf( "user #%d: ended %d sessions, deleted %d unused login links, removed %d passwords, revoked %d API keys\n" ,
+		*user_id , revoked.Sessions , revoked.LoginLinks , revoked.Passwords , revoked.APIKeys )
 	fmt.Printf( "To let them back in: reissue-login -user-id %d\n" , *user_id )
 	return
 }

@@ -209,6 +209,8 @@ func liveConfig( boot *Config , boot_file *File , file *File ) ( next *Config ) 
 	next.SessionTTL = seconds( file.Auth.SessionTTLSeconds )
 	next.LoginTokenTTL = seconds( file.Auth.LoginTokenTTLSeconds )
 	next.APIKeysEnabled = file.Auth.APIKeys
+	next.PasswordsEnabled = file.Auth.Passwords
+	next.TwoFactorEnabled = file.Auth.TwoFactor
 	next.APIKeyTTL = seconds( file.Auth.APIKeyTTLSeconds )
 
 	next.Logs.RetentionDays = file.Logs.RetentionDays

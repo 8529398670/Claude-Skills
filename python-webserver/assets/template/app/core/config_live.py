@@ -113,6 +113,8 @@ def live_config(boot: Config, boot_file: config.File, file: config.File) -> Conf
         session_ttl_seconds=file.auth.session_ttl_seconds,
         login_token_ttl_seconds=file.auth.login_token_ttl_seconds,
         api_keys_enabled=file.auth.api_keys,
+        passwords_enabled=file.auth.passwords,
+        two_factor_enabled=file.auth.two_factor,
         api_key_ttl_seconds=file.auth.api_key_ttl_seconds,
         logs=replace(
             boot.logs,

@@ -28,6 +28,7 @@ from app.core.db import BUCKET_INVITE_LINKS, BUCKET_SESSIONS, BUCKET_USERS, Reco
 from app.models import RestoreGoneError, deleted_long_ago, from_iso, mark_deleted, to_iso, unmark_deleted, utc_now
 from app.models.pins import name_closeness
 from app.models.sessions import new_session, split_credential
+from app.models.sign_in import SignIn, SignInRules, start_sign_in_tx
 from app.models.users import ROLE_USER, User, create_user_tx, get_user
 
 INVITE_LINK_MAX_USES = 1000
@@ -225,20 +226,19 @@ def join_invite_link(store: Store, credential: str, display_name: str, session_t
     return session_credential, user
 
 
-def claim_invite_account(store: Store, credential: str, user_id: int, session_ttl_seconds: int) -> tuple[str, User]:
+def claim_invite_account(store: Store, credential: str, user_id: int, rules: SignInRules) -> tuple[SignIn, User]:
     """Sign in as an account this link created -- the same person on another
     device. The caller checks the PIN first (bcrypt stays outside the write
-    lock); everything else is re-checked here, in the transaction that stores
-    the session."""
+    lock); everything else is re-checked here, in the transaction that starts
+    the sign-in."""
     with store.transaction() as tx:
         link = _load_invite_link_tx(tx, credential)
         record = tx.get(BUCKET_USERS, user_id) if link.owns(user_id) else None
         user = None if record is None else User.from_record(record)
         if user is None or user.disabled or user.is_admin:
             raise NotInviteAccountError()
-        session_id, session_credential, session = new_session(user.id, session_ttl_seconds)
-        tx.put(BUCKET_SESSIONS, session_id, session.to_record())
-    return session_credential, user
+        signed = start_sign_in_tx(tx, user, rules)
+    return signed, user
 
 
 def invite_account(store: Store, link: InviteLink, user_id: object) -> User:

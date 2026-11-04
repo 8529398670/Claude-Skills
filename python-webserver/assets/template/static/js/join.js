@@ -6,7 +6,8 @@
 //   2. "is one of these you?" -- accounts that joined through this same link
 //      with a similar name, plus "no, I'm new". This step is shown even with
 //      no matches, because a typo would otherwise use up a place;
-//   3. the PIN, if the account you picked set one.
+//   3. the PIN, if the account you picked set one, then the two-factor code
+//      if it has that on (see two_factor.js).
 //
 // Picking yourself is how the same person signs in on their next device, so
 // a chat app's link preview fetching the URL does nothing: every step is a
@@ -133,7 +134,11 @@ const Join = {
 
   async claim( pin ) {
     try {
-      await Api.joinClaim( this.credential() , this.picked.id , pin );
+      const result = await Api.joinClaim( this.credential() , this.picked.id , pin );
+      if ( result.two_factor ) {
+        TwoFactor.ask( result.challenge );
+        return;
+      }
       this.done();
     } catch ( error ) {
       this.failed( error );

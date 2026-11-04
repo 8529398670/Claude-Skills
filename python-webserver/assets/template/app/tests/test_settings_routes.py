@@ -20,6 +20,7 @@ from app.core import assets, config_live, db, encryption, language
 from app.core.static_files import StaticServer
 from app.main import build_app
 from app.models import api_keys, login_tokens, users
+from app.models.sign_in import SignInRules
 from app.tests.support import new_holder
 
 
@@ -47,7 +48,7 @@ class SettingsRoutesTest(unittest.TestCase):
     @staticmethod
     def session(store: db.Store, cfg, user_id: int) -> str:
         login = login_tokens.issue_login_token(store, user_id, 3600)
-        credential, _ = login_tokens.redeem_login_token(store, login, 3600)
+        credential = login_tokens.redeem_login_token(store, login, SignInRules(3600, False)).session_credential
         return f"{cfg.cookie_name}={encryption.xchacha_encrypt_string(cfg.secret_key, credential)}"
 
     def call(self, method: str, path: str, cookie: str = "", key: str = "", body: dict | None = None) -> tuple[int, dict]:

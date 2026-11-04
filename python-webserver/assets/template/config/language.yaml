@@ -24,6 +24,8 @@ nav:
   account: "Account"
   appearance: "Appearance"
   pin: "PIN"
+  password: "Password"
+  two_factor: "Two-factor"
   api_keys: "API keys"
   admin_heading: "Admin"
   users: "Users"
@@ -80,6 +82,11 @@ signed_out:
   heading: "You are not signed in"
   body: "There is no signup form here on purpose. Ask an admin for a one-time login link, or for your group's invite link."
   invalid_link: "That login link is invalid, expired, or has already been used. Ask for a new one."
+  sign_in_expired: "That sign-in took too long and has expired. Start again."
+  password_heading: "Sign in with a password"
+  username_label: "Username"
+  password_label: "Password"
+  password_button: "Sign in"
 
 login_confirm:
   heading: "Sign in"
@@ -123,6 +130,42 @@ account:
   device_link_notice: "Open this on the other device. It works once."
   copy_button: "Copy"
 
+# The password panel, shown while the owner has auth.passwords on.
+password:
+  heading: "Password"
+  description: "Sign in with a username and password as well as a login link. If you forget it, sign in with a new login link and set another. Setting one signs you out everywhere else."
+  status_set: "Password set"
+  status_none: "No password"
+  username_label: "Username"
+  username_help: "3 to 32 letters, digits, dots, dashes or underscores. Changing it means entering your password again."
+  new_label: "New password"
+  new_help: "At least 12 characters."
+  confirm_label: "Type it again"
+  save_button: "Save"
+  remove_button: "Remove password"
+  remove_confirm: "Remove your password? You will sign in with login links only."
+
+# The two-factor panel, and the step every sign-in shows on an account with
+# it on.
+two_factor:
+  heading: "Two-factor sign-in"
+  description: "Ask for a code from an authenticator app every time you sign in in a browser, whichever way you sign in. API keys are not affected."
+  status_on: "On"
+  status_off: "Off"
+  start_button: "Set up"
+  setup_scan: "Scan this with your authenticator app."
+  setup_manual: "Or enter this key by hand:"
+  setup_code_label: "The 6-digit code it shows"
+  confirm_button: "Turn on"
+  recovery_notice: "Save these recovery codes somewhere safe. Each one works once, in place of a code, if you lose your phone. They are shown only now."
+  copy_button: "Copy"
+  done_button: "Done"
+  disable_button: "Turn off"
+  code_label: "Code from your app, or a recovery code"
+  step_heading: "Enter your code"
+  step_body: "This account has two-factor sign-in on. Enter the code from your authenticator app, or a recovery code."
+  step_button: "Sign in"
+
 admin:
   heading: "Admin"
   description: "Create an account by minting a login link. Send the link to the person; it works once."
@@ -144,6 +187,11 @@ admin:
   revoke_button: "Revoke access"
   # {name} is replaced with the account's display name.
   revoke_confirm: "End every session, unused login link and API key that {name} has? The account stays enabled; send them a new link to let them back in."
+  block_password_button: "Block password"
+  allow_password_button: "Allow password"
+  reset_two_factor_button: "Reset 2FA"
+  # {name} is replaced with the account's display name.
+  reset_two_factor_confirm: "Turn off two-factor sign-in for {name}? Do this only if you are sure it is them asking."
   disable_button: "Disable"
   enable_button: "Enable"
   delete_button: "Delete"
@@ -316,6 +364,22 @@ errors:
   pin_wrong: "That PIN is not right."
   pin_locked: "Too many wrong PINs. Try again in 15 minutes."
   bad_pin: "A PIN is 4 to 8 digits."
+  # And the ones password and two-factor sign-in answer with.
+  invalid_login: "That username or password is not right."
+  login_locked: "Too many wrong tries. Try again in 15 minutes."
+  use_password: "This account has a password. Open the home page and sign in with it."
+  username_taken: "That username is taken."
+  bad_username: "A username is 3 to 32 letters, digits, dots, dashes or underscores."
+  bad_digest: "That password could not be processed."
+  password_blocked: "The owner has blocked passwords for this account."
+  password_too_short: "A password is at least 12 characters."
+  password_mismatch: "Those two passwords are not the same."
+  insecure_context: "Password sign-in needs HTTPS. Your password was not sent."
+  two_factor_wrong: "That code is not right."
+  two_factor_locked: "Too many wrong codes. Try again in 15 minutes."
+  two_factor_on: "Two-factor sign-in is already on."
+  two_factor_off: "Two-factor sign-in is not on."
+  challenge_invalid: "That sign-in has expired. Start again."
   logs_today: "Today's log is still being written, so it cannot be deleted."
   # The Settings screen's save, by code.
   settings_changed: "config.yaml was changed while you were editing. Reload from file to see it."

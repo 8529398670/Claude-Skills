@@ -31,9 +31,15 @@ func splitCredential( raw string ) ( id string , secret string , ok bool ) {
 }
 
 // newSession builds a session without storing it. Its callers --
-// RedeemLoginToken, JoinInviteLink, ClaimInviteAccount -- store it in the
+// startSignInTx, FinishChallenge, JoinInviteLink -- store it in the
 // same transaction that checks the link and the account are still good, so
 // there is deliberately no CreateSession that writes one on its own.
+// SessionID is the record key inside a session credential, or "".
+func SessionID( credential string ) ( session_id string ) {
+	session_id , _ , _ = splitCredential( credential )
+	return
+}
+
 func newSession( user_id uint64 , ttl time.Duration ) ( session_id string , credential string , session *Session ) {
 	session_id = encryption.GenerateURLToken( 16 )
 	secret := encryption.GenerateURLToken( 32 )

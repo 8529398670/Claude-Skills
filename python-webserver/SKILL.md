@@ -1,6 +1,6 @@
 ---
 name: python-webserver
-description: Scaffold a new security-hardened Python web server on Starlette + uvicorn with link-based login (no open signup, no passwords -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), every database record encrypted at rest in a single SQLite file, API keys that reuse the admin/user roles, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + docker/run.sh with no docker-compose, scripts/run.sh and scripts/login.sh that report the real URL, paths and state, one config/config.yaml that configures the server and the Docker container (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Python -- trigger on "build me a webserver/website/web app", "new Starlette app", "Python backend with logins", "I need a simple internal tool with logins", "set up a Python backend with an admin panel", "scaffold a new app with Docker", or "I don't want a signup page, just let me create accounts myself". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, encrypted storage, or Docker packaging to a Python web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Python API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my app", "service account for CI", "add an MCP server/endpoint", or "let Claude (Code) use my app". Do NOT use it for a one-off script, a data pipeline, a CLI tool, or a project that already has its own auth/serving stack the user wants extended in its own style. This is the Python counterpart to the `go-webserver` skill -- pick that one whenever Go, golang, or Fiber is mentioned, or when the user needs one self-contained executable with no runtime at all.
+description: Scaffold a new security-hardened Python web server on Starlette + uvicorn with link-based login (no open signup -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), optional password login the owner switches on, optional two-factor sign-in, every database record encrypted at rest in a single SQLite file, API keys that reuse the admin/user roles, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + docker/run.sh with no docker-compose, scripts/run.sh and scripts/login.sh that report the real URL, paths and state, one config/config.yaml that configures the server and the Docker container (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Python -- trigger on "build me a webserver/website/web app", "new Starlette app", "Python backend with logins", "I need a simple internal tool with logins", "set up a Python backend with an admin panel", "scaffold a new app with Docker", or "I don't want a signup page, just let me create accounts myself". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, encrypted storage, or Docker packaging to a Python web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Python API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my app", "service account for CI", "add an MCP server/endpoint", "let Claude (Code) use my app", "add password login", or "add 2FA / two-factor / TOTP". Do NOT use it for a one-off script, a data pipeline, a CLI tool, or a project that already has its own auth/serving stack the user wants extended in its own style. This is the Python counterpart to the `go-webserver` skill -- pick that one whenever Go, golang, or Fiber is mentioned, or when the user needs one self-contained executable with no runtime at all.
 ---
 
 # Python webserver scaffolder
@@ -13,13 +13,23 @@ The opinions below are already decided. Do not re-litigate them with the
 user unless they raise one -- ask only about what is specific to *their*
 project.
 
-- **No passwords, no signup form.** On first boot the server mints a
+- **Links first, no signup form.** On first boot the server mints a
   random one-time login link and prints it to its own logs. Opening it
   shows a sign-in page; confirming there logs you in as admin and sets a
   secure cookie (opening alone spends nothing, so link previews cannot burn
   it). Admins mint more links for more people, and anyone signed in can
   mint a fresh one for their own account to sign in on another device.
-  That, plus the invite links below, is the entire account system.
+  That, plus the invite links below, is how every account starts.
+- **Passwords are an option, off by default.** With `auth.passwords` on,
+  someone already signed in can set a username and password. The owner
+  switches it on in Settings and can block one account. The browser hashes
+  the password (PBKDF2) and the server bcrypts that, so the server never sees
+  it -- but HTTPS is still required, because the hash works as a password on
+  the wire.
+- **Two-factor sign-in, for whoever wants it.** An authenticator-app code plus
+  recovery codes, asked for on every browser sign-in: password, login link and
+  invite link alike. API keys are exempt. `auth.two_factor` is the owner's
+  switch, on by default.
 - **Invite links for groups.** An admin can also make one multi-use link
   (`/join/<id>.<secret>`) to post in a group chat: each person types their
   name and joins as a `user`, up to a set number of places, until it expires
@@ -114,7 +124,7 @@ project.
   tail, download, delete. Other admins, API keys and the signed out get 404.
   Retention is `logs:` in config.yaml (days kept, total size with oldest-day
   recycling, part size, gzip after N days), applied hourly. Login links, key
-  secrets, PINs and anything typed are never written.
+  secrets, PINs, passwords, codes and anything typed are never written.
 - **One directory holds all state.** The database and app storage live in
   `~/.config/<slug>/` (move it with `server.app_dir`; the container always
   uses `/app/data`). Never write state relative to the working directory.
@@ -127,8 +137,9 @@ Say so rather than scaffolding the wrong thing:
 - A project that already has its own framework, router, auth, or
   deployment style the user wants extended -- extend that instead of
   introducing a second incompatible pattern.
-- A need for real self-service signup, OAuth/SSO, or password login. This
-  template's whole point is avoiding those. If the user wants one, say so
+- A need for real self-service signup or OAuth/SSO. This template's whole
+  point is avoiding those; passwords here are something a person adds after
+  signing in with a link, not a way to register. If the user wants one, say so
   and adapt deliberately rather than quietly shipping magic links anyway.
   The same goes for machine access: the built-in API keys are bearer
   credentials tied to an account, not OAuth client credentials, JWTs, or
@@ -232,7 +243,8 @@ ports they ran on. Do not reset either to a shared value.
       bootstrap.py            # first-run admin + printing links as full URLs
       healthcheck.py          # `health`, the container HEALTHCHECK
     models/                   # users.py, sessions.py, login_tokens.py, api_keys.py,
-                              #   invite_links.py, pins.py
+                              #   invite_links.py, pins.py, passwords.py,
+                              #   two_factor.py, sign_in.py, attempts.py
     mcp/                      # protocol.py: the /mcp JSON-RPC protocol
                               # registry.py: Tool, Call.bind, Refusal
     routes/                   # __init__.py (the URL map) + one module per group,
@@ -250,6 +262,7 @@ ports they ran on. Do not reset either to a shared value.
     js/logs.js                # the owner's Logs screen
     js/dom.js, i18n.js, api.js, app.js, keys.js,
       join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
+      password.js, two_factor.js    # password form and panel; 2FA step and panel
     vendor/                   # self-hosted libs: Bootstrap 5, Bootstrap Icons (see its README)
   scripts/
     run.sh, run.bat           # local run: (re)starts the server; with args, the CLI
@@ -467,6 +480,21 @@ private window:
 - `python -m app manage create-invite --user-id 1 --label "Test"` prints a
   working `/join/...` path.
 
+Then passwords and 2FA, because the point of them is what they refuse. Turn on
+`auth.passwords` in **Settings**, and on a user's account set a password:
+
+- the signed-out page now has a password form, and the network panel shows only
+  `password_digest` in the request, never the password,
+- a wrong password, an unknown name and a blocked account all answer 400
+  `invalid_login`; five tries at one name give 429 `login_locked`,
+- turn on **Two-factor** and sign in again by password, by a new login link,
+  and by an invite link: each asks for the code before it signs anyone in,
+- a used code or recovery code is refused the second time,
+- an invite-link claim on an account with a password and no PIN answers 403
+  `use_password`, and
+- `auth.passwords: false` makes `/api/login/password` answer 404, and turning
+  it back on restores the password.
+
 Then the logs, because the point of them is that nobody but the owner sees
 them and nothing secret is in them:
 
@@ -575,7 +603,8 @@ expectations, running without Docker, and secret-key handling.
 
 Read these when the task goes past "scaffold and build features":
 
-- `references/architecture.md` -- the auth model, invite links (who they
+- `references/architecture.md` -- the auth model, passwords and what hashing
+  them in the browser does and does not buy, two-factor sign-in, invite links (who they
   can create and sign in as, the PIN, and what a leaked one costs), how API
   keys mirror the admin/user roles and why a key can neither outrank its owner nor mint
   another key, the owner account and who may delete whom, why credentials are

@@ -58,6 +58,10 @@ const App = {
       const banner = Dom.get( "invalid-link" );
       if ( I18n.get( "signed_out.invalid_link" ) !== "" ) Dom.show( banner , true );
     }
+    if ( params.get( "login" ) === "expired" ) {
+      Dom.show( Dom.get( "sign-in-expired" ) , I18n.get( "signed_out.sign_in_expired" ) !== "" );
+    }
+    Password.initLogin();
   },
 
   // A login link is /login/<credential>, and the server answers it with this
@@ -92,7 +96,11 @@ const App = {
     button.addEventListener( "click" , async () => {
       button.disabled = true;
       try {
-        await Api.login( this.loginCredential() );
+        const result = await Api.login( this.loginCredential() );
+        if ( result.two_factor ) {
+          TwoFactor.ask( result.challenge );
+          return;
+        }
         // replace, not assign: the link should not stay in the back button.
         window.location.replace( "/" );
       } catch ( error ) {
@@ -124,6 +132,8 @@ const App = {
     // that knows the API keys screen exists.
     Track.init( me );
     Pin.init( me );
+    Password.init( me );
+    TwoFactor.init( me );
     await Keys.init( me );
 
     if ( me.role === "admin" ) {
@@ -305,6 +315,36 @@ const App = {
         } },
       } );
 
+      // Only for someone who lost their phone and recovery codes. Who may
+      // reset whom follows the delete rules; the owner's is shell-only.
+      const canReset = user.two_factor && !isProtected && ( user.role !== "admin" || App.currentUser.is_owner );
+      const resetButton = !canReset ? null : Dom.el( "button" , {
+        class: "btn btn-sm btn-outline-danger",
+        text: I18n.get( "admin.reset_two_factor_button" ),
+        on: { click: async function () {
+          const question = I18n.get( "admin.reset_two_factor_confirm" ).replace( "{name}" , user.display_name );
+          if ( question !== "" && !window.confirm( question ) ) return;
+          try {
+            await Api.resetTwoFactor( user.id );
+            await App.refreshUsers();
+          } catch ( error ) { App.showError( error.message ); }
+        } },
+      } );
+
+      // The owner's per-account password switch. Everyone else gets a 404
+      // from the server, so it is not offered.
+      const canBlock = App.currentUser.is_owner && App.currentUser.passwords_enabled;
+      const passwordButton = !canBlock ? null : Dom.el( "button" , {
+        class: "btn btn-sm btn-outline-secondary",
+        text: I18n.get( user.password_blocked ? "admin.allow_password_button" : "admin.block_password_button" ),
+        on: { click: async function () {
+          try {
+            await Api.setPasswordAccess( user.id , user.password_blocked );
+            await App.refreshUsers();
+          } catch ( error ) { App.showError( error.message ); }
+        } },
+      } );
+
       const ownerLabel = I18n.get( "admin.owner_label" );
       const roleText = user.owner && ownerLabel !== "" ? user.role + " (" + ownerLabel + ")" : user.role;
 
@@ -315,7 +355,7 @@ const App = {
         Dom.el( "td" , { text: roleText } ),
         Dom.el( "td" , { children: [ Dom.badge( I18n.get( statusKey ) , statusTone ) ] } ),
         Dom.el( "td" , { children: [
-          Dom.el( "div" , { class: "row-actions" , children: [ reissueButton , revokeButton , toggleButton , deleteButton ].filter( Boolean ) } ),
+          Dom.el( "div" , { class: "row-actions" , children: [ reissueButton , passwordButton , resetButton , revokeButton , toggleButton , deleteButton ].filter( Boolean ) } ),
         ] } ),
       ] } ) );
     } );

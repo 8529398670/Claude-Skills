@@ -30,7 +30,7 @@ server:  host, port, public_url, app_dir, static_dir, language_file,
          trusted_proxies, proxy_header, body_limit_bytes, rate_limit_max,
          rate_limit_window_seconds, control_socket, mcp
 auth:    session_ttl_seconds, login_token_ttl_seconds, api_keys,
-         api_key_ttl_seconds
+         api_key_ttl_seconds, passwords, two_factor
 logs:    enabled, retention_days, max_total_mb, max_file_mb,
          compress_after_days, static_assets, ui_clicks, echo
 docker:  image, container, bind_address, host_port, data_dir, restart,

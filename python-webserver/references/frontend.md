@@ -272,7 +272,7 @@ screen:
 - `error` from `window.onerror` and unhandled promise rejections.
 
 **Never send a value.** That one rule is what keeps login links, keys and
-PINs out of the log, since they only ever live in fields and in `<code>`
+PINs, passwords and two-factor codes out of the log, since they only ever live in fields and in `<code>`
 boxes. A new event follows it: `Track.event( "click" , { target , detail } )`
 with names and ids only. Mark a part of the page that should not be tracked
 with `data-no-track` (the Logs screen is, or reading the log would fill it).
@@ -358,3 +358,13 @@ Things worth preserving when editing:
 
 Labels stay visible at every width. A placeholder disappears the moment
 someone types and is not a substitute for a label.
+
+## Sign-in screens
+
+`password.js` holds the password form on the signed-out page and the Password
+panel; `two_factor.js` holds the code step and the Two-factor panel. Both panels
+show themselves only when `/api/me` says their switch is on, so nothing else has
+to know. Any sign-in call can answer `{two_factor: true, challenge}` instead of
+signing in; hand that to `TwoFactor.ask( challenge )`. A password never goes
+into a request: only `Password.digest()`'s result does, and there is no fallback
+when WebCrypto is missing.

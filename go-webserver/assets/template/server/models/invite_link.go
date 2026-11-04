@@ -203,8 +203,8 @@ func JoinInviteLink( store *db.Store , credential string , display_name string ,
 // ClaimInviteAccount signs in as an account this link created -- the same
 // person on another device. The caller checks the PIN first (bcrypt stays
 // outside the single writer); everything else is re-checked here, in the
-// transaction that stores the session.
-func ClaimInviteAccount( store *db.Store , credential string , user_id uint64 , session_ttl time.Duration ) ( session_credential string , user *User , err error ) {
+// transaction that starts the sign-in.
+func ClaimInviteAccount( store *db.Store , credential string , user_id uint64 , rules SignInRules ) ( signed *SignIn , user *User , err error ) {
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
 		link , tx_err := loadInviteLinkTx( tx , credential )
 		if tx_err != nil { return }
@@ -215,12 +215,10 @@ func ClaimInviteAccount( store *db.Store , credential string , user_id uint64 , 
 			tx_err = ErrNotInviteAccount
 			return
 		}
-		session_id , new_credential , session := newSession( user.ID , session_ttl )
-		if tx_err = tx.Put( db.BucketSessions , []byte( session_id ) , session ); tx_err != nil { return }
-		session_credential = new_credential
+		signed , tx_err = startSignInTx( tx , user , rules )
 		return
 	} )
-	if err != nil { session_credential , user = "" , nil }
+	if err != nil { signed , user = nil , nil }
 	return
 }
 

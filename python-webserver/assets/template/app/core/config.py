@@ -134,6 +134,8 @@ class AuthSection:
     login_token_ttl_seconds: int
     api_keys: bool
     api_key_ttl_seconds: int
+    passwords: bool
+    two_factor: bool
 
 
 @dataclass
@@ -273,6 +275,12 @@ class Config:
     # How long a new key lasts when the request does not say. Bounded so a
     # forgotten key eventually stops being a live credential.
     api_key_ttl_seconds: int
+
+    # Whether a password is believed at all, and whether an account can set
+    # one. Off keeps the hashes, so switching it back on restores them.
+    passwords_enabled: bool
+    # Whether 2FA is offered and asked for. Off keeps the secrets, the same way.
+    two_factor_enabled: bool
 
     # Encrypts session cookie payloads and, when encrypt_at_rest is on, every
     # record written to the database. Losing it means losing the data.
@@ -830,6 +838,8 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
         session_ttl_seconds=file.auth.session_ttl_seconds,
         login_token_ttl_seconds=file.auth.login_token_ttl_seconds,
         api_keys_enabled=file.auth.api_keys,
+        passwords_enabled=file.auth.passwords,
+        two_factor_enabled=file.auth.two_factor,
         api_key_ttl_seconds=file.auth.api_key_ttl_seconds,
         secret_key=secret_key,
         encrypt_at_rest=file.server.encrypt_at_rest,

@@ -71,7 +71,10 @@ _FILE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.jsonl(\.gz)?$")
 # invite link. Opening one is logged; the credential is not.
 _SECRET_PATH_PREFIXES = ("/login/", "/join/")
 # Query parameters whose values are never written, whatever route they are on.
-_SECRET_QUERY_KEYS = {"token", "key", "secret", "code", "credential", "csrf_token", "pin", "password"}
+_SECRET_QUERY_KEYS = {
+    "token", "key", "secret", "code", "credential", "csrf_token", "pin", "password",
+    "password_digest", "challenge", "recovery_code",
+}
 MAX_PATH_LENGTH = 300
 
 

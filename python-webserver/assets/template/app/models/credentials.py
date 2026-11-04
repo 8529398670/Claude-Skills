@@ -1,6 +1,6 @@
 """Operations on everything an account can sign in with at once -- its
-sessions, its unused login links, and its API keys -- and on the account as a
-whole: disabling it, and deleting it. They live here, rather than in
+sessions, its unused login links, its password, and its API keys -- and on the
+account as a whole: disabling it, and deleting it. They live here, rather than in
 users.py, because each one spans several buckets in one transaction and so
 needs all three models.
 
@@ -17,6 +17,8 @@ from app.models import to_iso, utc_now
 from app.models.api_keys import APIKey
 from app.models.login_tokens import delete_login_tokens_for_user, delete_pending_login_tokens
 from app.models.sessions import destroy_sessions_for_user
+from app.models.sign_in import delete_challenges_for_user
+from app.models.two_factor import clear_record
 from app.models.users import User, owner_id_tx
 
 
@@ -46,6 +48,14 @@ class SelfDeleteError(Exception):
         super().__init__("you cannot delete your own account")
 
 
+class SelfResetError(Exception):
+    """Refusal for resetting your own 2FA: that would skip the code turning
+    it off asks for."""
+
+    def __init__(self) -> None:
+        super().__init__("you cannot reset your own two-factor sign-in")
+
+
 def _refuse_owner(tx: Transaction, user_id: int) -> None:
     if owner_id_tx(tx) == user_id:
         raise OwnerProtectedError()
@@ -54,11 +64,12 @@ def _refuse_owner(tx: Transaction, user_id: int) -> None:
 @dataclass
 class Revoked:
     """What revoke_all_credentials took away, or what delete_user removed
-    along with the account -- the same three things either way."""
+    along with the account -- the same things either way."""
 
     sessions: int = 0
     login_links: int = 0
     api_keys: int = 0
+    passwords: int = 0
 
     def to_dict(self) -> dict[str, int]:
         return asdict(self)
@@ -88,15 +99,21 @@ def set_user_disabled(store: Store, user_id: int, disabled: bool) -> bool:
         if disabled:
             destroy_sessions_for_user(tx, user_id)
             delete_pending_login_tokens(tx, user_id)
+            delete_challenges_for_user(tx, user_id)
     return True
 
 
 def revoke_all_credentials(store: Store, user_id: int, allow_owner: bool = False) -> Revoked | None:
     """The "this account may be compromised" operation: every session is
-    deleted, every unused login link is deleted, and every live API key is
-    revoked, in one transaction. Afterwards nothing issued before this moment
-    can act as the account; the way back in is a new login link from an
-    admin. None if there is no such account.
+    deleted, every unused login link is deleted, the password is removed, and
+    every live API key is revoked, in one transaction. Afterwards nothing
+    issued before this moment can act as the account; the way back in is a new
+    login link from an admin. None if there is no such account.
+
+    2FA stays. It is not something that can be used to get in, and a person
+    whose password leaked should not lose it; if it is what went wrong (they
+    lost the phone, or someone enrolled their own), reset_two_factor is the
+    separate step.
 
     It is deliberately separate from the two operations it is easy to mistake
     it for. Issuing a new login link replaces the old link but leaves
@@ -109,14 +126,19 @@ def revoke_all_credentials(store: Store, user_id: int, allow_owner: bool = False
     (OwnerProtectedError), and True for the CLI: when it is the owner's own
     credentials that leaked, an operator with shell access still needs this."""
     with store.transaction() as tx:
-        if tx.get(BUCKET_USERS, user_id) is None:
+        record = tx.get(BUCKET_USERS, user_id)
+        if record is None:
             return None
         if not allow_owner:
             _refuse_owner(tx, user_id)
         revoked = Revoked(
             sessions=destroy_sessions_for_user(tx, user_id),
             login_links=delete_pending_login_tokens(tx, user_id),
+            passwords=1 if record.get("password_hash", "") != "" else 0,
         )
+        delete_challenges_for_user(tx, user_id)
+        record["password_hash"] = ""
+        tx.put(BUCKET_USERS, user_id, record)
         now = to_iso(utc_now())
         for key_id, record in tx.all(BUCKET_API_KEYS):
             if record["user_id"] == user_id and APIKey.from_record(record).live:
@@ -160,6 +182,39 @@ def delete_user(store: Store, user_id: int, actor_id: int | None) -> Revoked | N
             sessions=destroy_sessions_for_user(tx, user_id),
             login_links=delete_login_tokens_for_user(tx, user_id),
             api_keys=tx.delete_where(BUCKET_API_KEYS, lambda _key, key_record: key_record["user_id"] == user_id),
+            passwords=1 if record.get("password_hash", "") != "" else 0,
         )
+        delete_challenges_for_user(tx, user_id)
         tx.delete(BUCKET_USERS, user_id)
     return removed
+
+
+def reset_two_factor(store: Store, user_id: int, actor_id: int | None) -> bool:
+    """Take 2FA off an account whose person lost both the phone and the
+    recovery codes; False if there is no such account. Sign-ins waiting on a
+    code end with it.
+
+    actor_id is who is asking. None means the operator, through the CLI, who
+    may reset anyone: that is the way back for an owner locked out. Through
+    the web the rules are delete_user's, because this lets someone in who
+    could not get in before:
+
+    - nobody resets themselves (SelfResetError);
+    - nobody resets the owner (OwnerProtectedError);
+    - only the owner resets another admin (OwnerRequiredError)."""
+    with store.transaction() as tx:
+        record = tx.get(BUCKET_USERS, user_id)
+        if record is None:
+            return False
+        if actor_id is not None:
+            if actor_id == user_id:
+                raise SelfResetError()
+            owner_id = owner_id_tx(tx)
+            if owner_id == user_id:
+                raise OwnerProtectedError()
+            if User.from_record(record).is_admin and actor_id != owner_id:
+                raise OwnerRequiredError()
+        clear_record(record)
+        tx.put(BUCKET_USERS, user_id, record)
+        delete_challenges_for_user(tx, user_id)
+    return True

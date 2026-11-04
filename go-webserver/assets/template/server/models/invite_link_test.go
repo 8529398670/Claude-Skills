@@ -78,15 +78,15 @@ func TestInviteLinkJoinClaimAndCapacity( t *testing.T ) {
 	if len( matches ) != 1 || matches[ 0 ].ID != ana.ID {
 		t.Fatalf( "matches for anna: %v" , matches )
 	}
-	if _ , _ , err := ClaimInviteAccount( store , credential , outsider.ID , time.Hour ); !errors.Is( err , ErrNotInviteAccount ) {
+	if _ , _ , err := ClaimInviteAccount( store , credential , outsider.ID , SignInRules{ SessionTTL: time.Hour } ); !errors.Is( err , ErrNotInviteAccount ) {
 		t.Fatalf( "claimed an account the link did not create: %v" , err )
 	}
-	if _ , _ , err := ClaimInviteAccount( store , credential , ana.ID , time.Hour ); err != nil {
+	if _ , _ , err := ClaimInviteAccount( store , credential , ana.ID , SignInRules{ SessionTTL: time.Hour } ); err != nil {
 		t.Fatalf( "claim: %v" , err )
 	}
 
 	RevokeInviteLink( store , link.ID )
-	if _ , _ , err := ClaimInviteAccount( store , credential , ana.ID , time.Hour ); !errors.Is( err , ErrInviteLinkInvalid ) {
+	if _ , _ , err := ClaimInviteAccount( store , credential , ana.ID , SignInRules{ SessionTTL: time.Hour } ); !errors.Is( err , ErrInviteLinkInvalid ) {
 		t.Fatalf( "claimed through a switched-off link" )
 	}
 }
@@ -129,11 +129,11 @@ func TestPin( t *testing.T ) {
 		t.Fatalf( "clearing the pin did not work" )
 	}
 
-	guard := NewPinGuard()
-	for range PinMaxFailures {
+	guard := NewAttemptGuard[ uint64 ]( AttemptMaxFailures )
+	for range AttemptMaxFailures {
 		guard.Record( user.ID , false )
 	}
 	if guard.Locked( user.ID ) == false {
-		t.Fatalf( "%d wrong PINs did not lock" , PinMaxFailures )
+		t.Fatalf( "%d wrong PINs did not lock" , AttemptMaxFailures )
 	}
 }

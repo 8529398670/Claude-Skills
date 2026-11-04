@@ -4,8 +4,6 @@ import (
 	errors "errors"
 	regexp "regexp"
 	strings "strings"
-	sync "sync"
-	time "time"
 	unicode "unicode"
 
 	db "{{MODULE_PATH}}/server/db"
@@ -14,8 +12,8 @@ import (
 
 // A PIN is what stops anyone holding an invite link from signing in as
 // anyone who joined through it. It is asked for only there: login links,
-// sessions and API keys never look at it, so it is not a password and does
-// not make this a password system.
+// sessions and API keys never look at it, so it is not a password (password.go
+// is, and has nothing to do with it).
 
 var ErrBadPin = errors.New( "a PIN is 4 to 8 digits" )
 
@@ -23,7 +21,7 @@ var pinPattern = regexp.MustCompile( `^[0-9]{4,8}$` )
 
 // SetUserPin sets or (with "") clears the PIN. It is bcrypt-hashed: four
 // digits is a small space, so the hash is only half the protection -- the
-// claim route also limits attempts per account (PinGuard).
+// claim route also limits attempts per account (AttemptGuard).
 func SetUserPin( store *db.Store , user_id uint64 , pin string ) ( err error ) {
 	hash := ""
 	if pin != "" {
@@ -55,47 +53,6 @@ func ( user *User ) CheckPin( pin string ) ( ok bool ) {
 	}
 	ok = pin != "" && encryption.BcryptCompare( user.PinHash , pin )
 	return
-}
-
-// PinGuard limits wrong PINs per account. Four digits is only ten thousand
-// guesses, so without this a PIN is decoration: PinMaxFailures misses lock
-// that account's PIN for PinLockout. In memory, like the rate limiter -- so
-// it resets on restart and is per replica.
-type PinGuard struct {
-	mu       sync.Mutex
-	failures map[ uint64 ]int
-	until    map[ uint64 ]time.Time
-}
-
-const (
-	PinMaxFailures = 5
-	PinLockout     = 15 * time.Minute
-)
-
-func NewPinGuard() ( guard *PinGuard ) {
-	guard = &PinGuard{ failures: map[ uint64 ]int{} , until: map[ uint64 ]time.Time{} }
-	return
-}
-
-func ( guard *PinGuard ) Locked( user_id uint64 ) ( result bool ) {
-	guard.mu.Lock()
-	defer guard.mu.Unlock()
-	result = time.Now().Before( guard.until[ user_id ] )
-	return
-}
-
-func ( guard *PinGuard ) Record( user_id uint64 , ok bool ) {
-	guard.mu.Lock()
-	defer guard.mu.Unlock()
-	if ok {
-		delete( guard.failures , user_id )
-		return
-	}
-	guard.failures[ user_id ]++
-	if guard.failures[ user_id ] >= PinMaxFailures {
-		guard.until[ user_id ] = time.Now().Add( PinLockout )
-		delete( guard.failures , user_id )
-	}
 }
 
 // normalizeName folds a name for comparison: case, spacing, and

@@ -140,6 +140,8 @@ type AuthSection struct {
 	LoginTokenTTLSeconds int  `yaml:"login_token_ttl_seconds"`
 	APIKeys              bool `yaml:"api_keys"`
 	APIKeyTTLSeconds     int  `yaml:"api_key_ttl_seconds"`
+	Passwords            bool `yaml:"passwords"`
+	TwoFactor            bool `yaml:"two_factor"`
 }
 
 type LogsSection struct {
@@ -272,6 +274,13 @@ type Config struct {
 	// Turning it off stops existing keys from authenticating too -- the rows
 	// stay, so switching it back on restores them.
 	APIKeysEnabled bool
+	// PasswordsEnabled decides whether a password is believed at all, and
+	// whether an account can set one. Off keeps the hashes, so switching it
+	// back on restores them.
+	PasswordsEnabled bool
+	// TwoFactorEnabled decides whether 2FA is offered and asked for. Off keeps
+	// the secrets, the same way.
+	TwoFactorEnabled bool
 
 	// APIKeyTTL is how long a new key lasts when the request does not say.
 	// The default is bounded so that a forgotten key eventually stops being
@@ -826,6 +835,8 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		LoginTokenTTL: seconds( file.Auth.LoginTokenTTLSeconds ),
 
 		APIKeysEnabled: file.Auth.APIKeys,
+		PasswordsEnabled: file.Auth.Passwords,
+		TwoFactorEnabled: file.Auth.TwoFactor,
 		APIKeyTTL:      seconds( file.Auth.APIKeyTTLSeconds ),
 		MCPEnabled:     file.Server.MCP,
 

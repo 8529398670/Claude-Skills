@@ -170,6 +170,7 @@ func ( server *Server ) routes() ( handler http.Handler ) {
 	mux.HandleFunc( "POST /v1/users/{id}/login-token" , server.handleReissueLogin )
 	mux.HandleFunc( "POST /v1/users/{id}/disabled" , server.handleSetDisabled )
 	mux.HandleFunc( "POST /v1/users/{id}/revoke-access" , server.handleRevokeAccess )
+	mux.HandleFunc( "POST /v1/users/{id}/reset-two-factor" , server.handleResetTwoFactor )
 	mux.HandleFunc( "POST /v1/users/{id}/delete" , server.handleDeleteUser )
 	mux.HandleFunc( "POST /v1/owner" , server.handleTransferOwner )
 	mux.HandleFunc( "GET /v1/api-keys" , server.handleListAPIKeys )
@@ -641,6 +642,23 @@ func ( server *Server ) handleRevokeAccess( w http.ResponseWriter , r *http.Requ
 		return
 	}
 	writeJSON( w , http.StatusOK , revoked )
+}
+
+// handleResetTwoFactor is models.ResetTwoFactor with the operator as the actor,
+// who may reset anyone: it is the way back for an owner locked out.
+func ( server *Server ) handleResetTwoFactor( w http.ResponseWriter , r *http.Request ) {
+	user_id , ok := pathUserID( w , r )
+	if ok == false { return }
+
+	err := models.ResetTwoFactor( server.store , user_id , 0 )
+	switch {
+	case err == nil:
+		writeJSON( w , http.StatusOK , map[ string ]bool{ "ok": true } )
+	case errors.Is( err , db.ErrNotFound ):
+		writeError( w , http.StatusNotFound , fmt.Sprintf( "no user with id %d" , user_id ) )
+	default:
+		writeError( w , http.StatusInternalServerError , err.Error() )
+	}
 }
 
 // handleDeleteUser is models.DeleteUser with the operator as the actor: any

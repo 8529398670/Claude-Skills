@@ -60,8 +60,8 @@ def split_credential(raw: str) -> tuple[str, str] | None:
 
 def new_session(user_id: int, ttl_seconds: int) -> tuple[str, str, Session]:
     """Returns (session_id, credential, session) without storing anything.
-    Its callers -- redeem_login_token, join_invite_link,
-    claim_invite_account -- store the session in the same transaction that
+    Its callers -- sign_in.start_sign_in_tx, sign_in.finish_challenge,
+    join_invite_link -- store the session in the same transaction that
     checks the link and the account are still good, so there is deliberately
     no create_session that writes one on its own. The credential is set on the cookie and never stored; only its
     secret's hash is."""

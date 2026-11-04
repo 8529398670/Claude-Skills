@@ -77,7 +77,7 @@ func IssueLoginToken( store *db.Store , user_id uint64 , ttl time.Duration ) ( c
 // same link cannot both get a session, and a link redeemed while the account
 // is being disabled either lands first (and SetUserDisabled deletes its
 // session) or lands second (and is refused).
-func RedeemLoginToken( store *db.Store , credential string , session_ttl time.Duration ) ( session_credential string , user_id uint64 , err error ) {
+func RedeemLoginToken( store *db.Store , credential string , rules SignInRules ) ( signed *SignIn , err error ) {
 	token_id , secret , ok := splitCredential( credential )
 	if ok == false {
 		err = ErrLoginTokenInvalid
@@ -112,15 +112,10 @@ func RedeemLoginToken( store *db.Store , credential string , session_ttl time.Du
 		current.UsedAt = &now
 		if tx_err = tx.Put( db.BucketLoginTokens , []byte( token_id ) , current ); tx_err != nil { return }
 
-		session_id , new_credential , session := newSession( current.UserID , session_ttl )
-		if tx_err = tx.Put( db.BucketSessions , []byte( session_id ) , session ); tx_err != nil { return }
-
-		session_credential , user_id = new_credential , current.UserID
+		signed , tx_err = startSignInTx( tx , owner , rules )
 		return
 	} )
-	if err != nil {
-		session_credential , user_id = "" , 0
-	}
+	if err != nil { signed = nil }
 	return
 }
 
