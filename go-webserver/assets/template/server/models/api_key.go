@@ -347,7 +347,7 @@ func CountLiveAPIKeysForUser( store *db.Store , user_id uint64 ) ( count int , e
 // revocations cannot have one overwrite the other with a stale copy of the row.
 //
 // The row is marked rather than deleted so that a listing can still show the
-// key existed and when it died. The purge loop removes it later.
+// key existed and when it died. The `purge` job removes it later.
 func RevokeAPIKey( store *db.Store , key_id string ) ( err error ) {
 	err = store.UpdateValue( db.BucketAPIKeys , []byte( key_id ) ,
 		func() any { return &APIKey{} } ,

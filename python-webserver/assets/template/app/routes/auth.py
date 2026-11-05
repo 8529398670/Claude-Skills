@@ -19,8 +19,9 @@ from starlette.responses import JSONResponse, Response
 
 from app.core.config import Config
 from app.core.logs import KIND_AUTH, LEVEL_INFO, LEVEL_WARN, anonymous
+from app.core.middleware import client_ip, trusted_for
 from app.core.security import set_session_cookie
-from app.models import login_tokens
+from app.models import login_tokens, sessions
 from app.models.sign_in import SignIn, SignInRules
 from app.routes.account import destroy_cookie_session
 from app.routes.helpers import bad_request, forbidden, get_config, get_store, read_json, run
@@ -50,7 +51,22 @@ async def sign_in_response(request: Request, signed: SignIn, payload: dict[str, 
     await destroy_cookie_session(request)
     response = JSONResponse(payload, status_code=status)
     set_session_cookie(response, get_config(request), signed.session_credential)
+    await _remember_client(request, signed.session_credential)
     return response
+
+
+async def _remember_client(request: Request, credential: str) -> None:
+    """Best effort: the person is signed in by now, and a sign-in is not worth
+    failing over what the Account screen will show about it."""
+    cfg = get_config(request)
+    parts = sessions.split_credential(credential)
+    if parts is None:
+        return
+    ip = client_ip(request.scope, cfg, trusted_for(cfg))
+    try:
+        await run(sessions.remember_client, get_store(request), parts[0], ip, request.headers.get("user-agent", ""))
+    except Exception as error:  # noqa: BLE001 -- see above
+        print(f"[sessions] could not note where a sign-in came from: {error}", flush=True)
 
 
 async def redeem_login_link(request: Request) -> Response:

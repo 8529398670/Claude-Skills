@@ -289,6 +289,28 @@ add a `kind:` term. Rows are built with `Dom.el` like everything else, and a
 row's JSON shows in a `<pre>` via `textContent`. Its text is the `logs:`
 block in `language.yaml`.
 
+**Live** opens an `EventSource` on `/api/owner/logs/stream` and runs the screen's
+ordinary `refresh()`, throttled, on each `changed` event, so an idle server
+costs no requests. The stream closes when the Logs screen is left and reopens
+on return. A lost stream turns Live off and says so (`logs.live_lost`): the
+server ends one when the session is revoked.
+
+### The Jobs and Account sessions screens
+
+`jobs.js` is the owner's Jobs screen: each job from `GET /api/owner/jobs`, how
+it last went, when it is next due, and a Run now button
+(`POST /api/owner/jobs/<name>/run`, 202 at once; the list shows the outcome).
+
+`sessions.js` is the sessions list on the Account screen, with `current` marking
+this device. Ending one, or all the others, asks first and is not undoable: a
+revoke stays out of `Undo`, like revoking a key.
+
+### Quoting a request
+
+A 5xx body carries `request_id`. `Api.request` puts it after the error message
+(`errors.reference`), and the error flash stays up for about 12 seconds, long
+enough to copy. Pasted into the Logs search it finds that request's line.
+
 ### The Settings screen
 
 `settings.js` is the owner's other screen (`Settings.init( me )` returns at

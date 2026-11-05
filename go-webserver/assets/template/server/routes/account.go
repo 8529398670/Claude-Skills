@@ -37,7 +37,7 @@ type renameRequest struct {
 func ( handlers *Handlers ) GetMe( c fiber.Ctx ) ( err error ) {
 	payload , row_err := handlers.meRow( security.ActorFrom( c ) )
 	if row_err != nil {
-		err = serverError( c )
+		err = serverError( c , row_err )
 		return
 	}
 	err = c.JSON( payload )
@@ -110,7 +110,7 @@ func ( handlers *Handlers ) RenameAccount( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	if rename_err != nil {
-		err = serverError( c )
+		err = serverError( c , rename_err )
 		return
 	}
 	handlers.audit( c , logs.KindAuth , "renamed own account" , fiber.Map{ "name": body.DisplayName } )
@@ -136,7 +136,7 @@ func ( handlers *Handlers ) SetPin( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	if set_err != nil {
-		err = serverError( c )
+		err = serverError( c , set_err )
 		return
 	}
 	handlers.audit( c , logs.KindAuth , "pin changed" , fiber.Map{ "has_pin": body.Pin != "" } )
@@ -164,7 +164,7 @@ func ( handlers *Handlers ) CreateMyLoginLink( c fiber.Ctx ) ( err error ) {
 	}
 	credential , token_err := models.IssueLoginToken( handlers.Store , security.UserFrom( c ).ID , handlers.cfg().LoginTokenTTL )
 	if token_err != nil {
-		err = serverError( c )
+		err = serverError( c , token_err )
 		return
 	}
 	handlers.audit( c , logs.KindAuth , "own login link created" , nil )

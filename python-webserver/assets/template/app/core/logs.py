@@ -31,6 +31,7 @@ import os
 import queue
 import re
 import threading
+import time
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -60,6 +61,9 @@ QUEUE_SIZE = 10000
 # The writer flushes this often (seconds), or every FLUSH_EVERY lines.
 FLUSH_INTERVAL = 1.0
 FLUSH_EVERY = 200
+# The most often on_flushed is called, in seconds. A quiet server flushes after
+# every entry, so without this each one would be a nudge.
+NUDGE_INTERVAL = 1.0
 # The longest line the reader accepts. Every part of an entry is capped well
 # below this, so a longer one is damage.
 MAX_LINE_BYTES = 1024 * 1024
@@ -111,10 +115,11 @@ def anonymous() -> dict[str, Any]:
 
 
 def entry(kind: str, level: str = LEVEL_INFO, **fields: Any) -> dict[str, Any]:
-    """One log line: ts, kind, level, then whichever of actor, ip, ua,
-    request, ui, client, msg and detail are given. Empty ones are left out."""
+    """One log line: ts, kind, level, then whichever of request_id, actor, ip,
+    ua, request, ui, client, msg and detail are given. Empty ones are left
+    out."""
     record: dict[str, Any] = {"ts": fields.pop("ts", None) or now_iso(), "kind": kind, "level": level}
-    for name in ("actor", "ip", "ua", "request", "ui", "client", "msg", "detail"):
+    for name in ("request_id", "actor", "ip", "ua", "request", "ui", "client", "msg", "detail"):
         value = fields.get(name)
         if value not in (None, "", {}, []):
             record[name] = value
@@ -317,6 +322,14 @@ class Logger:
         self._counts_lock = threading.Lock()
         self._counts: dict[str, tuple[int, float, int, int]] = {}
 
+        # Called from the writer thread once new lines are on disk, at most
+        # every NUDGE_INTERVAL: what tells the Logs screen's live tail to look.
+        # It must not block, and it is the callback's job to get to the event
+        # loop. _unannounced and _nudged_at belong to the writer thread.
+        self.on_flushed: Callable[[], None] | None = None
+        self._unannounced = False
+        self._nudged_at = 0.0
+
         # Replaced in tests.
         self.now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
 
@@ -391,6 +404,24 @@ class Logger:
                 self._write(entry(KIND_SYSTEM, LEVEL_WARN, msg=f"{dropped - reported} log entries dropped: the writer fell behind"))
                 reported = dropped
             self.flush()
+            self._nudge()
+
+    def _nudge(self) -> None:
+        """Lines written too soon after the last nudge stay unannounced until
+        the next pass: the queue wait above comes round every FLUSH_INTERVAL,
+        so the last entry of a burst is never left unseen."""
+        callback = self.on_flushed
+        if callback is None or not self._unannounced:
+            return
+        now = time.monotonic()
+        if now - self._nudged_at < NUDGE_INTERVAL:
+            return
+        self._nudged_at = now
+        self._unannounced = False
+        try:
+            callback()
+        except Exception as error:  # noqa: BLE001 -- the log must outlive whatever is listening to it
+            print(f"[logs] on_flushed failed: {error!r}", flush=True)
 
     def flush(self) -> None:
         with self._files_lock:
@@ -430,6 +461,7 @@ class Logger:
                 return
             self._size += len(line)
             self._pending += 1
+            self._unannounced = True
             if self._pending >= FLUSH_EVERY:
                 self._flush_locked()
 
@@ -640,8 +672,8 @@ class Logger:
         """Apply config.yaml's logs settings: finished days older than
         compress_after_days are gzipped, days older than retention_days are
         deleted, and while the total is still over max_total_mb the oldest day
-        is recycled. Today is never touched. The hourly purge loop runs it,
-        and so does the Logs screen's "Prune now"."""
+        is recycled. Today is never touched. The hourly prune-logs job runs
+        it, and so does the Logs screen's "Prune now"."""
         result = {"compressed": 0, "deleted": 0, "bytes_before": 0, "bytes_after": 0}
         with self._files_lock:
             today = self.today()

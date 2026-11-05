@@ -18,6 +18,11 @@ from app.core.db import BUCKET_SESSIONS, Record, Store, Transaction
 from app.models import from_iso, to_iso, utc_now
 from app.models.users import User, get_user
 
+# How stale last_seen_at is allowed to get: the same trade as
+# API_KEY_TOUCH_INTERVAL, a write on one request in a great many.
+SESSION_TOUCH_INTERVAL = timedelta(minutes=15)
+USER_AGENT_MAX_CHARS = 256
+
 
 @dataclass
 class Session:
@@ -26,15 +31,30 @@ class Session:
     csrf_token: str
     created_at: datetime
     expires_at: datetime
+    # What the Account screen lists, so a person can tell their devices apart.
+    # A session from before these existed has none of them.
+    ip: str = ""
+    user_agent: str = ""
+    last_seen_at: datetime | None = None
+    # The record's key. Filled in on the way out of the store and never written
+    # into the record.
+    id: str = ""
 
     def to_record(self) -> Record:
-        return {
+        record = {
             "user_id": self.user_id,
             "secret_hash": self.secret_hash,
             "csrf_token": self.csrf_token,
             "created_at": to_iso(self.created_at),
             "expires_at": to_iso(self.expires_at),
         }
+        if self.ip:
+            record["ip"] = self.ip
+        if self.user_agent:
+            record["user_agent"] = self.user_agent
+        if self.last_seen_at is not None:
+            record["last_seen_at"] = to_iso(self.last_seen_at)
+        return record
 
     @classmethod
     def from_record(cls, record: Record) -> "Session":
@@ -44,6 +64,9 @@ class Session:
             csrf_token=record["csrf_token"],
             created_at=from_iso(record["created_at"]),
             expires_at=from_iso(record["expires_at"]),
+            ip=record.get("ip", ""),
+            user_agent=record.get("user_agent", ""),
+            last_seen_at=from_iso(record.get("last_seen_at")),
         )
 
 
@@ -92,6 +115,7 @@ def load_session(store: Store, credential: str) -> tuple[Session, User] | None:
     if record is None:
         return None
     session = Session.from_record(record)
+    session.id = session_id
 
     if not encryption.constant_time_equal(session.secret_hash, encryption.sha256_hex(secret)):
         return None
@@ -103,6 +127,79 @@ def load_session(store: Store, credential: str) -> tuple[Session, User] | None:
     if user is None or user.disabled:
         return None
     return session, user
+
+
+def remember_client(store: Store, session_id: str, ip: str, user_agent: str) -> None:
+    """Note where a new session signed in from. Every way of signing in ends
+    in auth.sign_in_response, which calls this, rather than each store of a
+    session taking two more arguments."""
+
+    def mutate(record: Record) -> None:
+        record["ip"] = ip
+        record["user_agent"] = user_agent[:USER_AGENT_MAX_CHARS]
+        record["last_seen_at"] = to_iso(utc_now())
+
+    store.update_value(BUCKET_SESSIONS, session_id, mutate)
+
+
+def touch_session(store: Store, session: Session) -> None:
+    """Record use at most once per SESSION_TOUCH_INTERVAL. Called when a
+    request is resolved, not from load_session, so re-checking an open stream
+    does not count as the person doing something. Failures are ignored on
+    purpose, like api_keys._touch: a timestamp is not worth failing a request
+    for."""
+    now = utc_now()
+    if session.last_seen_at is not None and now - session.last_seen_at < SESSION_TOUCH_INTERVAL:
+        return
+
+    def mutate(record: Record) -> None:
+        record["last_seen_at"] = to_iso(now)
+
+    try:
+        store.update_value(BUCKET_SESSIONS, session.id, mutate)
+    except Exception:  # noqa: BLE001 -- bookkeeping only, see above
+        return
+    session.last_seen_at = now
+
+
+def list_sessions(store: Store, user_id: int) -> list[Session]:
+    """One account's live sessions, newest first."""
+    now = utc_now()
+    found = []
+    for key, record in store.all(BUCKET_SESSIONS):
+        if record["user_id"] != user_id:
+            continue
+        session = Session.from_record(record)
+        if now > session.expires_at:
+            continue
+        session.id = str(key)
+        found.append(session)
+    found.sort(key=lambda session: session.created_at, reverse=True)
+    return found
+
+
+def revoke_session(store: Store, user_id: int, session_id: str) -> bool:
+    """End one of an account's sessions. False when it has no such session,
+    which covers another account's: looking and deleting are one transaction,
+    so nothing can change hands between them."""
+    with store.transaction() as tx:
+        record = tx.get(BUCKET_SESSIONS, session_id)
+        if record is None or record["user_id"] != user_id:
+            return False
+        tx.delete(BUCKET_SESSIONS, session_id)
+    return True
+
+
+def revoke_other_sessions(store: Store, user_id: int, keep_id: str) -> int:
+    """End every live session an account has but one, and say how many. An
+    expired one is left for the purge, so the count is what the person saw
+    listed."""
+    now = utc_now()
+
+    def doomed(key: object, record: Record) -> bool:
+        return record["user_id"] == user_id and key != keep_id and now <= from_iso(record["expires_at"])
+
+    return store.delete_where(BUCKET_SESSIONS, doomed)
 
 
 def destroy_session(store: Store, credential: str) -> None:
@@ -123,7 +220,7 @@ def destroy_sessions_for_user(tx: Transaction, user_id: int) -> int:
 
 
 def purge_expired_sessions(store: Store) -> int:
-    """Called hourly from the server's lifespan task. Expired rows are already
+    """Part of the hourly purge job. Expired rows are already
     refused by load_session, so this is only housekeeping to stop the file
     growing without bound -- one transaction, for the same reason as above."""
     now = utc_now()

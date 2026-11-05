@@ -105,6 +105,7 @@ type File struct {
 	Auth   AuthSection   `yaml:"auth"`
 	Logs   LogsSection   `yaml:"logs"`
 	Backups BackupsSection `yaml:"backups"`
+	Metrics MetricsSection `yaml:"metrics"`
 	Docker DockerSection `yaml:"docker"`
 	Build  BuildSection  `yaml:"build"`
 }
@@ -162,6 +163,10 @@ type BackupsSection struct {
 	Enabled       bool `yaml:"enabled"`
 	IntervalHours int  `yaml:"interval_hours"`
 	Keep          int  `yaml:"keep"`
+}
+
+type MetricsSection struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 type DockerSection struct {
@@ -308,6 +313,9 @@ type Config struct {
 	// so with APIKeysEnabled off it is not registered either -- nothing could
 	// authenticate to it.
 	MCPEnabled bool
+	// MetricsEnabled decides whether GET /metrics answers. Like /mcp it takes
+	// keys only, so it also needs APIKeysEnabled.
+	MetricsEnabled bool
 
 	// SecretKey encrypts session cookie payloads and, when EncryptAtRest is
 	// on, every value written to bolt. Losing it means losing the database
@@ -901,6 +909,7 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		TwoFactorEnabled: file.Auth.TwoFactor,
 		APIKeyTTL:      seconds( file.Auth.APIKeyTTLSeconds ),
 		MCPEnabled:     file.Server.MCP,
+		MetricsEnabled: file.Metrics.Enabled,
 
 		SecretKey:     secret_key,
 		EncryptAtRest: file.Server.EncryptAtRest,

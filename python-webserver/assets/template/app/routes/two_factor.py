@@ -72,7 +72,7 @@ async def start_setup(request: Request) -> Response:
     except two_factor.AlreadyOnError:
         return conflict("two_factor_on")
     if secret is None:
-        return server_error()
+        return server_error(request, "two-factor setup: the signed-in account has no record")
     return JSONResponse({"secret": secret})
 
 
@@ -95,7 +95,7 @@ async def confirm_setup(request: Request) -> Response:
         CODES.record(user_id, False)
         return forbidden("two_factor_wrong")
     if codes is None:
-        return server_error()
+        return server_error(request, "two-factor confirm: the signed-in account has no record")
     CODES.record(user_id, True)
     audit(request, KIND_AUTH, "two-factor sign-in turned on")
     return JSONResponse({"recovery_codes": codes})
@@ -118,7 +118,7 @@ async def disable(request: Request) -> Response:
         CODES.record(user_id, False)
         return forbidden("two_factor_wrong")
     if not found:
-        return server_error()
+        return server_error(request, "two-factor disable: the signed-in account has no record")
     CODES.record(user_id, True)
     audit(request, KIND_AUTH, "two-factor sign-in turned off")
     return JSONResponse({"ok": True})

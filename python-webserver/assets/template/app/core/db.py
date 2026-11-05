@@ -44,6 +44,7 @@ BUCKET_LOGIN_TOKENS = "login_tokens"
 BUCKET_API_KEYS = "api_keys"
 BUCKET_INVITE_LINKS = "invite_links"
 BUCKET_SIGN_IN_CHALLENGES = "sign_in_challenges"
+BUCKET_JOBS = "jobs"
 BUCKET_META = "meta"
 
 BUCKETS = (
@@ -53,6 +54,7 @@ BUCKETS = (
     BUCKET_API_KEYS,
     BUCKET_INVITE_LINKS,
     BUCKET_SIGN_IN_CHALLENGES,
+    BUCKET_JOBS,
     BUCKET_META,
 )
 
@@ -386,6 +388,14 @@ def _migrate(store: Store, fresh: bool, steps: Sequence[Migration], server_lock_
         print(f"[migrate] {index + 1}: {step.name}", flush=True)
 
 
+def _buckets_in(connection: sqlite3.Connection) -> list[str]:
+    """The buckets this file has a table for. A file a backup brought back can
+    be older than the code: it has no table for a bucket added since, and that
+    means empty, not damaged -- open_store creates the table once it is live."""
+    tables = {name for (name,) in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    return [bucket for bucket in BUCKETS if bucket in tables]
+
+
 def check_file(path: Path, secret_key: str, encrypt_at_rest: bool) -> None:
     """Decode every record in a database file nothing is using, so a backup
     can be proved readable before it replaces anything. Raises DecodeError, or
@@ -395,7 +405,7 @@ def check_file(path: Path, secret_key: str, encrypt_at_rest: bool) -> None:
         result = connection.execute("PRAGMA integrity_check").fetchone()[0]
         if result != "ok":
             raise DecodeError(f"the file fails SQLite's integrity check: {result}")
-        for bucket in BUCKETS:
+        for bucket in _buckets_in(connection):
             for (value,) in connection.execute(f"SELECT value FROM {_table(bucket)}"):
                 store.decode(value)
 
@@ -410,7 +420,7 @@ def rekey(path: Path, old_key: str, new_key: str, encrypt_at_rest: bool, rewrite
     reader = Store(path, old_key, encrypt_at_rest)
     writer = Store(path, new_key, encrypt_at_rest)
     with reader._write() as connection:
-        for bucket in BUCKETS:
+        for bucket in _buckets_in(connection):
             table = _table(bucket)
             for key, value in connection.execute(f"SELECT key, value FROM {table}").fetchall():
                 record = reader.decode(value)

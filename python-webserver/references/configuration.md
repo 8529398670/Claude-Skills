@@ -19,6 +19,7 @@ adding a setting or writing a file anywhere.
 - [The activity log's settings](#the-activity-logs-settings)
 - [In containers](#in-containers)
 - [Backups](#backups)
+- [Metrics](#metrics)
 - [Adding a setting](#adding-a-setting)
 
 ## One file, no environment variables
@@ -34,6 +35,7 @@ auth:    session_ttl_seconds, login_token_ttl_seconds, api_keys,
 logs:    enabled, retention_days, max_total_mb, max_file_mb,
          compress_after_days, static_assets, ui_clicks, echo
 backups: enabled, interval_hours, keep
+metrics: enabled
 docker:  image, container, bind_address, host_port, data_dir, restart,
          memory, cpus, pids_limit, tmpfs_size
 ```
@@ -343,7 +345,7 @@ Every key in `defaults.yaml` carries a tag in its comments:
 
 | tag | meaning | keys |
 |---|---|---|
-| `[live]` | the next request sees it | `server.public_url`, `secure_cookies`, `trust_proxy`, `trusted_proxies`, `proxy_header`, `rate_limit_max`, `rate_limit_window_seconds`, `rate_limit_signin_max`, `mcp`; all of `auth:` and `backups:`; `logs:` except `enabled` |
+| `[live]` | the next request sees it | `server.public_url`, `secure_cookies`, `trust_proxy`, `trusted_proxies`, `proxy_header`, `rate_limit_max`, `rate_limit_window_seconds`, `rate_limit_signin_max`, `mcp`; all of `auth:`, `backups:` and `metrics:`; `logs:` except `enabled` |
 | `[restart]` | saved now, read at startup | `app.name`, `server.host`, `port`, `app_dir`, `static_dir`, `language_file`, `encrypt_at_rest`, `cookie_name`, `body_limit_bytes`, `logs.enabled` |
 | `[scripts]` | read by `docker/run.sh` only | `docker:` |
 
@@ -484,7 +486,7 @@ itself is described in `architecture.md` ("The activity log").
 | `ui_clicks` | `true` | log every click; screen changes, submits, undo and errors are logged either way |
 | `echo` | `true` | print `[req] GET /path 200 1.2ms ip name` for each request to stdout (and so `docker logs`); uvicorn's own access line is off |
 
-Retention runs from the hourly purge and from "Prune now" on the Logs
+Retention runs from the hourly `prune-logs` job and from "Prune now" on the Logs
 screen. Every key but `enabled` is `[live]`: a change from the Settings screen
 or a hand edit applies to the next request and the next prune.
 `logs.enabled` needs a restart, since the writer and the log's routes are set
@@ -550,10 +552,23 @@ the current key, so `secret.key` does not change. Everyone signs in again,
 because their cookies were sealed with the other key.
 
 The `backups:` section schedules them, off by default: `enabled`,
-`interval_hours` and `keep`, all `[live]`. The hourly job writes
-`auto-<time>.tar.gz` and removes the oldest past `keep`. Backups made by hand
-are never removed. The activity log is not in any backup: it can be far larger
-than everything else, and losing it loses history, not data.
+`interval_hours` and `keep`, all `[live]`. The `backup` job (see "Background
+jobs" in `architecture.md`) looks once an hour and, when `interval_hours` has
+passed, writes `auto-<time>.tar.gz` and removes the oldest past `keep`. A server
+that restarts often still gets its backups, because when the job last ran is in
+the database. Backups made by hand are never removed. The activity log is not
+in any backup: it can be far larger than everything else, and losing it loses
+history, not data. The sessions bucket is, so backups hold each session's IP
+address and user agent.
+
+## Metrics
+
+`metrics.enabled` (`[live]`, default `false`) makes `GET /metrics` answer. It
+also needs `auth.api_keys`, because the only thing it accepts is an admin API
+key: 404 while either is off, 401 anonymous, 403 for a browser session or a
+user-scoped key. Whatever scrapes it therefore holds a credential that can do
+what an admin key can. See "Monitoring" in `architecture.md` for the series and
+`docker-and-deployment.md` for a scrape setup.
 
 ## Adding a setting
 
@@ -566,7 +581,8 @@ than everything else, and losing it loses history, not data.
    `AuthSection`, ...) in `app/core/config.py`, typed `str`, `int`, or
    `bool`. Strict decoding rejects a key the dataclass does not have, and a
    field missing from `defaults.yaml` fails at startup, so the two cannot
-   drift.
+   drift. A new section also needs its dataclass on `File` and an entry in
+   `SECTIONS`.
 3. If the value needs checking, add it to `validate()`.
 4. If the server reads it, add a field to `Config`, fill it in
    `build_config()`, and read it per request through `get_config(request)`.

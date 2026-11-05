@@ -48,7 +48,7 @@ func ( handlers *Handlers ) inviteLinkRow( link *models.InviteLink ) ( row fiber
 func ( handlers *Handlers ) ListInviteLinks( c fiber.Ctx ) ( err error ) {
 	rows , list_err := handlers.inviteLinkRows()
 	if list_err != nil {
-		err = serverError( c )
+		err = serverError( c , list_err )
 		return
 	}
 	err = c.JSON( rows )
@@ -83,7 +83,7 @@ func ( handlers *Handlers ) CreateInviteLink( c fiber.Ctx ) ( err error ) {
 	ttl := time.Duration( body.Days ) * 24 * time.Hour
 	credential , link , issue_err := models.IssueInviteLink( handlers.Store , body.Label , body.MaxUses , ttl , security.UserFrom( c ).ID )
 	if issue_err != nil {
-		err = serverError( c )
+		err = serverError( c , issue_err )
 		return
 	}
 	row := handlers.inviteLinkRow( link )

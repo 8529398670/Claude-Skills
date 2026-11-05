@@ -31,7 +31,7 @@ const Api = {
 
     if ( !response.ok ) {
       if ( response.status >= 500 ) Track.failed( path , response.status );
-      const error = new Error( payload.error || response.statusText );
+      const error = new Error( this.failureText( payload , response ) );
       error.status = response.status;
       // The whole body, for callers that need more than the code (the
       // Settings screen's problems list, a 409's current version).
@@ -39,6 +39,15 @@ const Api = {
       throw error;
     }
     return payload;
+  },
+
+  // A failure on the server's side comes with a reference, which is the one
+  // thing that lets whoever reads it out be matched to a line in the log.
+  failureText( payload , response ) {
+    const text = payload.error || response.statusText;
+    if ( !payload.request_id ) return text;
+    const worded = I18n.get( "errors.reference" );
+    return worded ? worded.replace( "{reference}" , payload.request_id ) : text;
   },
 
   // Any state-changing call carries the per-session CSRF token in the body.
@@ -150,9 +159,19 @@ const Api = {
   logDay( date , query , before ) {
     return this.request( "/api/owner/logs/days/" + encodeURIComponent( date ) + this.query( { q: query , before: before } ) );
   },
+  logStreamPath()              { return "/api/owner/logs/stream"; },
   logDownloadPath( date )      { return "/api/owner/logs/days/" + encodeURIComponent( date ) + "/download"; },
   deleteLogDay( date )         { return this.post( "/api/owner/logs/days/" + encodeURIComponent( date ) + "/delete" ); },
   pruneLogs()                  { return this.post( "/api/owner/logs/prune" ); },
+
+  // Background jobs (owner only). A run outlives the call that starts it.
+  jobs()                       { return this.request( "/api/owner/jobs" ); },
+  runJob( name )               { return this.post( "/api/owner/jobs/" + encodeURIComponent( name ) + "/run" ); },
+
+  // Where this account is signed in.
+  sessions()                   { return this.request( "/api/account/sessions" ); },
+  revokeSession( sessionId )   { return this.post( "/api/account/sessions/" + encodeURIComponent( sessionId ) + "/revoke" ); },
+  revokeOtherSessions()        { return this.post( "/api/account/sessions/revoke-others" ); },
 
   // config.yaml as the Settings screen (owner only). version is the one
   // settings() returned; the server refuses a save against any other.

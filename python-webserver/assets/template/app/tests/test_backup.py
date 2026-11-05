@@ -6,6 +6,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sqlite3
 import tarfile
 import tempfile
 import unittest
@@ -130,6 +131,49 @@ class RestoreTest(BackupTestCase):
         store = db.open_store(current.database_path, current.secret_key, True)
         record = store.get(db.BUCKET_USERS, user.id)
         self.assertEqual(encryption.xchacha_decrypt_string(current.secret_key, record["totp_pending"]), secret)
+
+    def without_bucket(self, made: Path, bucket: str) -> Path:
+        """A backup as code from before bucket existed made it: the same file
+        with that table gone, as the Python template's every backup would be
+        once a new bucket is added."""
+        unpacked = self.root / "unpacked"
+        with tarfile.open(made, "r:gz") as archive:
+            archive.extractall(unpacked, filter="data")
+        connection = sqlite3.connect(unpacked / backup.DATABASE_NAME)
+        connection.execute(f'DROP TABLE "{bucket}"')
+        connection.commit()
+        connection.close()
+        older = self.root / "older.tar.gz"
+        with tarfile.open(older, "w:gz") as archive:
+            for name in sorted(os.listdir(unpacked)):
+                archive.add(unpacked / name, arcname=name)
+        return older
+
+    def test_brings_back_a_backup_from_before_a_bucket_existed(self) -> None:
+        users.create_user(self.store, "Older", users.ROLE_USER)
+        older = self.without_bucket(backup.create(self.store, self.cfg).path, db.BUCKET_JOBS)
+        users.create_user(self.store, "Newer", users.ROLE_USER)
+        result = backup.restore(self.cfg, str(older))
+        self.assertFalse(result.rekeyed)
+        self.assertEqual(self.names(), ["Older"])
+        store = db.open_store(self.cfg.database_path, self.cfg.secret_key, True)
+        self.assertEqual(store.all(db.BUCKET_JOBS), [])
+
+    def test_moves_such_a_backup_onto_the_current_key_too(self) -> None:
+        users.create_user(self.store, "Older", users.ROLE_USER)
+        older = self.without_bucket(backup.create(self.store, self.cfg).path, db.BUCKET_JOBS)
+        old_key = self.root / "secret.key.retired"
+        old_key.write_text(self.cfg.secret_key + "\n")
+        current = replace(self.cfg, secret_key=encryption.generate_key_hex())
+        result = backup.restore(current, str(older), key_file=str(old_key))
+        self.assertTrue(result.rekeyed)
+        self.assertEqual(self.names(current), ["Older"])
+
+    def test_a_missing_bucket_does_not_excuse_the_ones_present(self) -> None:
+        users.create_user(self.store, "Older", users.ROLE_USER)
+        self.without_bucket(backup.create(self.store, self.cfg).path, db.BUCKET_JOBS)
+        with self.assertRaises(db.DecodeError):
+            db.check_file(self.root / "unpacked" / backup.DATABASE_NAME, encryption.generate_key_hex(), True)
 
     def test_uses_a_key_packed_in_the_backup(self) -> None:
         users.create_user(self.store, "Packed", users.ROLE_USER)

@@ -71,21 +71,22 @@ our_server_pid() {
 }
 
 # Stop the server this checkout started, if it is running: TERM, then KILL if
-# it is still there 15 seconds later. Clears the pid file either way.
+# it is still there 20 seconds later. Clears the pid file either way.
 stop_our_server() {
   local pid
   pid="$( our_server_pid )"
   if [ -n "$pid" ]; then
     echo "Stopping the server this checkout started (pid ${pid}, running since $( ps -p "$pid" -o lstart= 2>/dev/null | sed 's/  */ /g' ))..."
     kill -TERM "$pid" 2>/dev/null || true
-    # It shuts down gracefully within 10 seconds (main.go). Past that,
-    # something is stuck, and waiting longer will not unstick it.
-    for _ in $( seq 1 60 ); do
+    # It shuts down gracefully within 15 seconds (drainWait and jobStopWait in
+    # main.go). Past that, something is stuck, and waiting longer will not
+    # unstick it.
+    for _ in $( seq 1 80 ); do
       kill -0 "$pid" 2>/dev/null || break
       sleep 0.25
     done
     if kill -0 "$pid" 2>/dev/null; then
-      echo "It did not exit in 15 seconds; killing it."
+      echo "It did not exit in 20 seconds; killing it."
       kill -KILL "$pid" 2>/dev/null || true
     fi
   fi

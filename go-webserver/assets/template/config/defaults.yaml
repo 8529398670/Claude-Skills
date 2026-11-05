@@ -187,6 +187,12 @@ backups:
   interval_hours: 24               # [live]
   keep: 7                          # [live]
 
+# GET /metrics: request counts, timings and job results in Prometheus's text
+# format. An admin API key reads it, sent as a bearer token, so it needs
+# auth.api_keys. false makes /metrics answer 404.
+metrics:
+  enabled: false                   # [live]
+
 # [scripts] Read by docker/run.sh, which applies a change the next time it
 # runs. Edit these on the host: inside the container they are read-only.
 docker:

@@ -247,6 +247,7 @@ echo "Starting ${docker_container} on ${docker_bind_address}:${docker_host_port}
 docker run -d \
   --name "$docker_container" \
   --restart "$docker_restart" \
+  --stop-timeout 20 \
   -p "$docker_publish" \
   -v "${DATA_DIR}:/app/data" \
   -v "${CONFIG_FILE}:${CONTAINER_CONFIG}" \

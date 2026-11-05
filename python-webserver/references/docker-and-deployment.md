@@ -97,7 +97,8 @@ reconsider -- not before.
   root-owned and read-only to the process, so code execution inside the
   container still cannot rewrite the app or the frontend.
 - **Healthcheck is `python -m app health`,** which reads `server.port` from
-  the mounted config and asks `/api/health`, an endpoint that touches nothing.
+  the mounted config and asks `/api/health`, an endpoint that touches nothing
+  (`/api/ready` is the one that looks at the database, for a load balancer).
   A healthcheck that queried the database would let a slow query get a
   working container killed and restarted -- turning a small problem into an
   outage. Doing it in the app also means a port change cannot leave a stale
@@ -358,7 +359,7 @@ With no arguments it then stops the server it started last and runs a new one
 in the foreground: it records its own pid in `.run/server.pid` just before
 `exec`ing `python -m app`, and only signals that pid if it is still a
 `... -m app` process whose working directory is this checkout (SIGTERM, then
-SIGKILL after 15 seconds), so a stale pid is never mistaken for it. The venv
+SIGKILL after 20 seconds), so a stale pid is never mistaken for it. The venv
 path is not part of that check on purpose: a macOS framework Python
 re-executes `.venv/bin/python` as `Python.app/.../Python`, so it never shows
 up in `ps`. Running it again from
@@ -450,6 +451,11 @@ prints it. Say this explicitly when setting backups up; it is the kind of thing
 discovered at the worst possible time. The activity log is left out too: it can
 be far larger than everything else, and losing it loses history, not data.
 
+**Backups hold IP addresses and user agents.** The log is out, but the sessions
+bucket is in, and each session keeps where it signed in from for the Account
+screen. Treat a backup as personal data for as long as you keep it, whatever
+your log retention says.
+
 Put one back with:
 
 ```bash
@@ -469,13 +475,64 @@ A backup made under another key comes back on the key in use now, so
 `secret.key` itself never changes and everyone just signs in again.
 
 Scheduled backups are off by default: set `backups.enabled: true`, from the
-Settings screen or `config.yaml`, and the hourly job writes
+Settings screen or `config.yaml`, and the hourly `backup` job writes
 `auto-<time>.tar.gz` every `backups.interval_hours`, keeping the last
 `backups.keep`. Backups made by hand are never removed. They sit on the same
 disk as the data, so copy them somewhere else as well.
 
 `configuration.md` covers the equivalent outside Docker, where the key may
 live inside the app directory instead.
+
+## Stopping
+
+The server can need 15 seconds: 10 for requests to finish, then 5 for a
+background job. `docker stop` allows 10 by default and then kills, so
+`docker/run.sh` passes `--stop-timeout 20`, and `scripts/lib.sh` waits 20 seconds
+before SIGKILL. Open live streams are ended first and cost nothing. See
+"Stopping cleanly" in `architecture.md`.
+
+## Health, readiness and metrics
+
+| endpoint | answers | use it for |
+|---|---|---|
+| `/api/health` | the process is up; touches nothing | the container `HEALTHCHECK`, anything that restarts on failure |
+| `/api/ready` | the database is at the expected schema and the key reads it; 2 seconds at most | a load balancer or proxy deciding whether to send traffic here |
+| `/metrics` | Prometheus text, for an admin API key | scraping |
+
+Do not point the container `HEALTHCHECK` at `/api/ready`: a database problem
+would turn into a restart loop. Both are public and neither is logged. They
+count against the general rate limit like any other request, so a prober behind
+a proxy shares its budget with whoever else arrives from that address.
+
+To scrape: set `metrics.enabled: true`, mint an admin key from the browser (or
+`manage create-key --user-id 1 --name prometheus --role admin --days 90`), and
+give it to Prometheus as a bearer token:
+
+```yaml
+scrape_configs:
+  - job_name: myapp
+    scheme: https
+    authorization:
+      credentials_file: /etc/prometheus/myapp.key
+    static_configs:
+      - targets: [app.example.com]
+```
+
+There is no read-only key, so that file holds admin-level access: it can do
+what an admin key can, short of creating credentials. Keep it where the
+scraper's other secrets are, give it an expiry, and rotate it. Series are
+listed under "Monitoring" in `architecture.md`.
+
+## Live updates through a proxy
+
+`/api/owner/logs/stream` is a long-lived response. Two things in front of it can
+get in the way:
+
+- **Buffering.** The response sends `X-Accel-Buffering: no`, which nginx
+  honours. For anything else turn response buffering off for that path, or
+  events arrive in lumps or not at all.
+- **Idle timeouts.** A `: ping` goes out every 15 seconds, so a proxy read
+  timeout of 30 seconds or more is fine. nginx's default of 60 is.
 
 ## Tuning
 

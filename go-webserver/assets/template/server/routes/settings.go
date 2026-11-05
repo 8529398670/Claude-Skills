@@ -23,7 +23,7 @@ import (
 func ( handlers *Handlers ) GetSettings( c fiber.Ctx ) ( err error ) {
 	snapshot , snapshot_err := handlers.Settings.Snapshot()
 	if snapshot_err != nil {
-		err = serverError( c )
+		err = serverError( c , snapshot_err )
 		return
 	}
 	err = c.JSON( snapshot )

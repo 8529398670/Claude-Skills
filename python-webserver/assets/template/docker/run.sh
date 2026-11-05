@@ -243,9 +243,13 @@ if command -v lsof >/dev/null 2>&1; then
 fi
 
 echo "Starting ${docker_container} on ${docker_bind_address}:${docker_host_port}..."
+# --stop-timeout: `docker stop` allows 10 seconds by default, and the server can
+# need 15 -- 10 for requests to finish, 5 for a background job -- so the default
+# would kill it part way through closing the activity log.
 docker run -d \
   --name "$docker_container" \
   --restart "$docker_restart" \
+  --stop-timeout 20 \
   -p "$docker_publish" \
   -v "${DATA_DIR}:/app/data" \
   -v "${CONFIG_FILE}:${CONTAINER_CONFIG}" \

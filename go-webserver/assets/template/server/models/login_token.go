@@ -120,7 +120,7 @@ func RedeemLoginToken( store *db.Store , credential string , rules SignInRules )
 }
 
 // deletePendingLoginTokens removes every unused link an account holds,
-// inside the caller's transaction. Used ones are left for the purge loop, so
+// inside the caller's transaction. Used ones are left for the `purge` job, so
 // a second click on a spent link still fails as "already used".
 func deletePendingLoginTokens( tx *db.Tx , user_id uint64 ) ( removed int , err error ) {
 	removed , err = tx.DeleteWhere( db.BucketLoginTokens ,

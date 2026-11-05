@@ -350,7 +350,7 @@ type PruneResult struct {
 // Prune applies config.yaml's logs settings: finished days older than
 // compress_after_days are gzipped, days older than retention_days are
 // deleted, and while the total is still over max_total_mb the oldest day is
-// recycled. Today is never touched. The hourly purge loop in main.go runs
+// recycled. Today is never touched. The hourly `prune-logs` job (server/jobs) runs
 // it, and so does the Logs screen's "Prune now".
 func ( logger *Logger ) Prune() ( result PruneResult , err error ) {
 	logger.files_lock.Lock()

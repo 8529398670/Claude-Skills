@@ -170,7 +170,7 @@ logs:
   ui_clicks: true                  # log every click; screen changes, submits and errors always are
   echo: true                       # print a one-line summary of each request to stdout
 
-# Scheduled backups, written to <app_dir>/backups by the hourly job. They are
+# Scheduled backups, written to <app_dir>/backups by the hourly backup job. They are
 # the same files `manage backup` makes: the database, config.yaml and storage/,
 # but never secret.key and never the activity log. The disk that holds the
 # data also holds these, so copy them somewhere else too. Only scheduled
@@ -180,6 +180,14 @@ backups:
   enabled: false                   # [live]
   interval_hours: 24               # [live]
   keep: 7                          # [live]
+
+# GET /metrics: Prometheus text about requests, the activity log and background
+# jobs. It answers only an admin API key, so whatever scrapes it holds a
+# credential that can do what an admin can (see auth.api_keys, which it also
+# needs); keep that key where the scraper's other secrets are. false makes
+# /metrics answer 404. [live]
+metrics:
+  enabled: false                   # [live]
 
 # [scripts] Read by docker/run.sh, which applies a change the next time it
 # runs. Edit these on the host: inside the container they are read-only.

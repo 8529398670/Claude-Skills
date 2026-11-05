@@ -160,6 +160,7 @@ func ( guard *Guard ) resolveSession( c fiber.Ctx ) ( actor *Actor ) {
 	session , user := models.LoadSession( guard.Store , credential )
 	if user == nil { return }
 
+	models.TouchSession( guard.Store , session )
 	actor = &Actor{ User: user , Session: session , Role: user.Role }
 	return
 }
@@ -298,6 +299,17 @@ func ( guard *Guard ) RequireOwner( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	err = c.Next()
+	return
+}
+
+// StillOwner is RequireOwner for a stream, which is only checked by middleware
+// when it connects. credential is the session it connected with. It does not
+// count as activity: an open page re-checking is not the person being there.
+func ( guard *Guard ) StillOwner( credential string ) ( ok bool ) {
+	_ , user := models.LoadSession( guard.Store , credential )
+	if user == nil || user.Role != models.RoleAdmin { return }
+	owner_id , err := models.OwnerID( guard.Store )
+	ok = err == nil && owner_id != 0 && user.ID == owner_id
 	return
 }
 

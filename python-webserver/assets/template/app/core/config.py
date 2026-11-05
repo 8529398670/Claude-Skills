@@ -166,6 +166,11 @@ class BackupsSection:
 
 
 @dataclass
+class MetricsSection:
+    enabled: bool
+
+
+@dataclass
 class DockerSection:
     image: str
     container: str
@@ -186,6 +191,7 @@ class File:
     auth: AuthSection
     logs: LogsSection
     backups: BackupsSection
+    metrics: MetricsSection
     docker: DockerSection
 
 
@@ -199,6 +205,7 @@ SECTIONS: dict[str, type] = {
     "auth": AuthSection,
     "logs": LogsSection,
     "backups": BackupsSection,
+    "metrics": MetricsSection,
     "docker": DockerSection,
 }
 
@@ -335,6 +342,10 @@ class Config:
     # Whether POST /mcp exists. It answers only API keys, so with
     # api_keys_enabled off it is not registered either.
     mcp_enabled: bool = True
+
+    # Whether GET /metrics exists. It answers only an admin API key, so with
+    # api_keys_enabled off it answers 404 too.
+    metrics_enabled: bool = False
 
     # The activity log's settings; see app/core/logs.py.
     logs: LogsConfig = field(default_factory=LogsConfig)
@@ -916,6 +927,7 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
         trusted_proxies=tuple(entry.strip() for entry in file.server.trusted_proxies),
         proxy_header=file.server.proxy_header,
         mcp_enabled=file.server.mcp,
+        metrics_enabled=file.metrics.enabled,
         logs=LogsConfig(
             enabled=file.logs.enabled,
             dir=paths.app_dir / LOGS_DIR_NAME,

@@ -26,7 +26,24 @@ from app.core.config import Config
 from app.core.security import Guard, RequireAdmin, RequireAPIKey, RequireLogin, RequireOwner, RequireSession
 from app.core.static_files import StaticServer
 from app.mcp.protocol import Server as MCPServer
-from app.routes import account, admin, api_keys, auth, invite_links, join, logs, mcp_tools, meta, passwords, settings, team, two_factor
+from app.routes import (
+    account,
+    admin,
+    api_keys,
+    auth,
+    invite_links,
+    jobs,
+    join,
+    logs,
+    mcp_tools,
+    meta,
+    metrics,
+    passwords,
+    sessions,
+    settings,
+    team,
+    two_factor,
+)
 from app.routes.api_keys import RequireAPIKeys
 from app.routes.helpers import get_config, not_found
 
@@ -40,6 +57,17 @@ class RequireMCP(Guard):
     def refuse(self, request: Request) -> Response | None:
         cfg = get_config(request)
         if not cfg.mcp_enabled or not cfg.api_keys_enabled:
+            return not_found("not found")
+        return None
+
+
+class RequireMetrics(Guard):
+    """Makes /metrics answer 404 while metrics.enabled or auth.api_keys is
+    off, per request, for the same reason as RequireMCP."""
+
+    def refuse(self, request: Request) -> Response | None:
+        cfg = get_config(request)
+        if not cfg.metrics_enabled or not cfg.api_keys_enabled:
             return not_found("not found")
         return None
 
@@ -122,6 +150,7 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         password_login("/api/login/password", passwords.password_login, ["POST"]),
         public("/api/language", meta.get_language),
         public("/api/health", meta.get_health),
+        public("/api/ready", meta.get_ready),
         # Public: invite links (see join.py). Holding the link is the
         # permission; like a login link, the GET only serves the page.
         public("/join/{credential:path}", static_server.serve_login_page),
@@ -138,6 +167,11 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         # A session only, for the same reason as every route that hands out
         # a login link: the link becomes a session. See admin_sessions above.
         sessions_only("/api/account/login-link", account.create_my_login_link, ["POST"]),
+        # The account's own sessions. A session only: a key has none, and
+        # signing devices out is a person's decision.
+        sessions_only("/api/account/sessions", sessions.list_my_sessions),
+        sessions_only("/api/account/sessions/revoke-others", sessions.revoke_others, ["POST"]),
+        sessions_only("/api/account/sessions/{session_id}/revoke", sessions.revoke_one, ["POST"]),
         my_password("/api/account/password", passwords.set_password, ["POST"]),
         my_two_factor("/api/account/two-factor/start", two_factor.start_setup, ["POST"]),
         my_two_factor("/api/account/two-factor/confirm", two_factor.confirm_setup, ["POST"]),
@@ -173,6 +207,9 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         # config.yaml, as the owner's Settings screen. See settings.py.
         owner("/api/owner/settings", settings.get_settings),
         owner("/api/owner/settings", settings.save_settings, ["POST"]),
+        # Background jobs. See app/core/jobs.py.
+        owner("/api/owner/jobs", jobs.list_jobs),
+        owner("/api/owner/jobs/{name}/run", jobs.run_job, ["POST"]),
         # The per-account password switch. See passwords.py.
         owner_passwords("/api/owner/users/{user_id}/password-access", passwords.set_password_access, ["POST"]),
     ]
@@ -189,6 +226,7 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
             owner("/api/owner/logs/days/{date}/download", logs.download_log_day),
             owner("/api/owner/logs/days/{date}/delete", logs.delete_log_day, ["POST"]),
             owner("/api/owner/logs/prune", logs.prune_logs, ["POST"]),
+            owner("/api/owner/logs/stream", logs.stream_log_changes),
         ]
 
     # MCP: agents calling the app with an API key (see app/mcp and
@@ -204,6 +242,11 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         group(RequireMCP, RequireAPIKey)("/mcp", mcp.endpoint, ["POST"]),
         group(RequireMCP)("/mcp", mcp.method_not_allowed, ["GET", "DELETE"]),
     ]
+
+    # Monitoring: an admin-level key, nothing else. RequireAPIKey before
+    # RequireAdmin, so a signed-in browser is refused however high its role:
+    # this is for a scraper, and a page has no reason to read it.
+    routes.append(group(RequireMetrics, RequireAPIKey, RequireAdmin)("/metrics", metrics.get_metrics))
 
     return routes + [
         # Any other /api/ path is a JSON 404, not the index.html fallback.

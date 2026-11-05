@@ -125,6 +125,20 @@ project.
   Retention is `logs:` in config.yaml (days kept, total size with oldest-day
   recycling, part size, gzip after N days), applied hourly. Login links, key
   secrets, PINs, passwords, codes and anything typed are never written.
+- **Background work is a job.** `purge`, `prune-logs` and `backup` are registered
+  in one place, due times live in the database so a restart neither repeats nor
+  skips them, and the owner's **Jobs** screen shows how each last went and can
+  start one. An exception is that job's failure, never the server's.
+- **People can see and end their own sessions.** The Account screen lists each
+  device with where it signed in from, and ends any of them but this one.
+- **Every request has a reference.** 16 hex characters in `X-Request-ID`, on
+  the log line, and in a 5xx body, so a quoted reference finds the line that
+  says why. `/api/ready` answers "can this instance serve" for a load balancer,
+  and `/metrics` is Prometheus text for an admin API key, off by default.
+- **Live updates are server-sent events, by hand.** A hub with a client cap, a
+  small dropping queue per client, a heartbeat and an auth re-check every 15
+  seconds. The Logs screen's live tail runs on it, and a stop ends open streams
+  first so they never delay it.
 - **One directory holds all state.** The database and app storage live in
   `~/.config/<slug>/` (move it with `server.app_dir`; the container always
   uses `/app/data`). Never write state relative to the working directory.
@@ -242,6 +256,12 @@ ports they ran on. Do not reset either to a shared value.
       logs.py                 # the activity log: entries, redaction, the
                               #   rotating writer thread, read/search/prune
       request_log.py          # one activity-log entry per request
+      request_id.py           # X-Request-ID, made here for every request
+      metrics.py              # /metrics: the counters and their middleware
+      jobs.py                 # background jobs: the registry and the tick
+      housekeeping.py         # the template's jobs: purge, prune-logs, backup
+      sse.py                  # server-sent events: format, hub, EventStream
+      graceful.py             # starting uvicorn, and stopping in the right order
       static_files.py         # gzip-always-fresh text, long-cached images
       assets.py               # configured static dir/language file, or bundled
       language.py             # loads language.yaml, serves it as JSON
@@ -249,12 +269,13 @@ ports they ran on. Do not reset either to a shared value.
       healthcheck.py          # `health`, the container HEALTHCHECK
     models/                   # users.py, sessions.py, login_tokens.py, api_keys.py,
                               #   invite_links.py, pins.py, passwords.py,
-                              #   two_factor.py, sign_in.py, attempts.py
+                              #   two_factor.py, sign_in.py, attempts.py, jobs.py
     mcp/                      # protocol.py: the /mcp JSON-RPC protocol
                               # registry.py: Tool, Call.bind, Refusal
     routes/                   # __init__.py (the URL map) + one module per group,
-                              #   including mcp_tools.py (the MCP tools) and
-                              #   logs.py (the owner's log API, page events, audit())
+                              #   including mcp_tools.py (the MCP tools),
+                              #   logs.py (the owner's log API, page events, audit()),
+                              #   sessions.py, jobs.py and metrics.py
     tests/                    # stdlib unittest: python -m unittest discover app/tests
   static/
     index.html                # placeholder account + admin UI, fully data-i18n'd;
@@ -265,6 +286,8 @@ ports they ran on. Do not reset either to a shared value.
     js/undo.js                # Ctrl+Z / Ctrl+Y history every screen records into
     js/track.js               # sends what people do on the page to the log
     js/logs.js                # the owner's Logs screen
+    js/jobs.js                # the owner's Jobs screen
+    js/sessions.js            # the Account screen's list of sessions
     js/dom.js, i18n.js, api.js, app.js, keys.js,
       join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
       password.js, two_factor.js    # password form and panel; 2FA step and panel
@@ -382,6 +405,26 @@ but stay consistent with the patterns already there:
   links, the key ceiling) holds whichever door a change comes through. An
   operation that touches several buckets at once goes in one
   `store.transaction()`, the way `app/models/credentials.py` does.
+- **New work on a schedule** is a job: `registry.register("name", 3600, fn)`
+  next to the others in `housekeeping.register`. `fn` is an ordinary synchronous
+  function, runs in a worker thread, and returns `(note, error)`: a few words
+  for the Jobs screen and why it failed, empty if it did not. Raising counts as
+  failing. Never start your own `asyncio` loop or thread for this: a job gets
+  no overlaps, a due time that survives restarts, a place on the Jobs screen
+  and a series in `/metrics` for nothing. It can be cut off when the server
+  stops, so make it safe to run again from the start. `app/core/jobs.py`.
+- **New live data** is a `sse.Hub` on `app.state`, created in `build_app` and
+  closed from the `on_stop` that `serve` passes to `graceful.run`, and a route that does what
+  `logs.stream_log_changes` does: `hub.join()` (503 when it says `None`), then
+  `sse.EventStream(hub, client, allowed, ...)`. `allowed` is the check to repeat
+  every 15 seconds, and it is required, because a stream outlives the guard that
+  let it in. Publish with `hub.publish(sse.event("name", data))`, or
+  `sse.publish_from_thread` from a worker thread. Send "this changed" and let the
+  page fetch, rather than a second copy of a read path. See "Live updates" in
+  `references/architecture.md`, and `docker-and-deployment.md` for proxies.
+- **A 500 you decide on** is `server_error(request, "what went wrong")`, never a
+  bare status: the cause is what the log line shows when someone quotes the
+  reference.
 - **New work for another process** -- a cron job, an importer, a sidecar --
   can run `python -m app manage ...`-style code against the same database:
   SQLite's WAL mode allows it alongside the live server. Go through the model
@@ -523,6 +566,22 @@ them and nothing secret is in them:
 - "Prune now" with `logs.retention_days: 1` removes an older day file
   (copy today's to an older date to have one) and never today.
 
+Then what runs without anyone asking. The route tests in `app/tests` cover the
+refusals; these need a real server:
+
+- **Jobs** shows `purge` and the others as having run moments after the first
+  start, and restarting within a few seconds does not run them again,
+- with two sessions signed in, the Account screen lists both, ending the other
+  gets it 401 on its next request, and no undo is offered,
+- `/api/ready` is 200; with `metrics.enabled` on, `/metrics` is 401 anonymous,
+  403 for a browser or a user key, and 200 for an admin key,
+- a forced 500 shows a reference, and that reference pasted into the Logs search
+  finds a line with a message,
+- **Live** on the Logs screen makes no calls while the server is idle, shows a
+  new request in about two seconds, and turns itself off within 15 seconds of
+  that session being revoked, and
+- SIGTERM with Live open exits in under two seconds.
+
 Then the Settings screen, because it writes a file the server runs on
 (`app/tests/test_settings_routes.py` covers the routes, and needs `httpx`;
 without it that module is skipped):
@@ -628,7 +687,8 @@ Read these when the task goes past "scaffold and build features":
   keys mirror the admin/user roles and why a key can neither outrank its owner nor mint
   another key, the owner account and who may delete whom, why credentials are
   shaped `<id>.<secret>`, the `/mcp` endpoint and what it deliberately leaves
-  out, which crypto is used where and why, encrypted
+  out, background jobs, sessions, request IDs and metrics, live updates, the
+  order of a clean stop, which crypto is used where and why, encrypted
   records in SQLite and what they cost, why there is no control socket, the
   threadpool rule, the static caching policy, and the known limits. Read
   before changing the template's structure rather than building on it.
@@ -642,7 +702,8 @@ Read these when the task goes past "scaffold and build features":
 - `references/docker-and-deployment.md` -- what each Dockerfile and
   `docker/run.sh` choice is protecting against, how the scripts read
   `config.yaml` through the image, TLS/reverse-proxy expectations, the secret
-  key, backups, operating the container, and running without Docker.
+  key, backups, stopping, health vs readiness and a scrape setup, streams
+  through a proxy, operating the container, and running without Docker.
 - `references/frontend.md` -- the language.yaml contract in detail, the
   no-build-step rule and how to vendor a library, the JS file conventions,
   Bootstrap, the sidebar/screen shell, and the light-mode CSS structure.

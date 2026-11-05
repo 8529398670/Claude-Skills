@@ -14,6 +14,10 @@ when you are changing the template itself rather than building features on it.
 - [Soft delete and restore](#soft-delete-and-restore)
 - [MCP: the API keys, for agents](#mcp-the-api-keys-for-agents)
 - [The activity log](#the-activity-log)
+- [Background jobs](#background-jobs)
+- [Sessions and devices](#sessions-and-devices)
+- [Monitoring](#monitoring)
+- [Live updates](#live-updates)
 - [Why credentials are shaped `<id>.<secret>`](#why-credentials-are-shaped-idsecret)
 - [Which crypto is used where, and why](#which-crypto-is-used-where-and-why)
 - [At-rest encryption and the secret key tradeoff](#at-rest-encryption-and-the-secret-key-tradeoff)
@@ -386,7 +390,7 @@ its own successors -- and write it down in that app's docs.
   and replaced, never recovered.
 - **Revoke or delete.** Both stop the key on its next request. Revoking keeps
   the row, marked dead, so the listing still answers "what existed last
-  week"; the purge loop drops it after 30 days. Deleting removes the row now.
+  week"; the `purge` job drops it after 30 days. Deleting removes the row now.
   A key's owner can do either to their own keys, and an admin to anyone's
   (`/api/keys/:id/delete`, `/api/admin/keys/:id/delete`,
   `manage delete-key`). Deleting an account deletes all of its keys.
@@ -578,8 +582,8 @@ a `system` warning once it catches up. A slow disk can lose log lines; it
 can never slow a request. The writer, the readers and the pruner share one
 mutex, so a file is never compressed or deleted mid-write.
 
-**Retention**, from `logs:` in config.yaml, applied hourly by the purge loop
-and on "Prune now": finished days older than `compress_after_days` are
+**Retention**, from `logs:` in config.yaml, applied hourly by the `prune-logs`
+job and on "Prune now": finished days older than `compress_after_days` are
 gzipped (to a temporary name, then renamed, so a crash leaves the original);
 days older than `retention_days` are deleted; then, while the total is over
 `max_total_mb`, the oldest day goes. Today is never touched, and
@@ -598,6 +602,186 @@ case; `kind:` `level:` `user:` `status:` (`5xx` for a class) `method:`
 `path:` (prefix) `ip:` (prefix) `action:` `screen:` narrow; a comma is OR,
 a leading `-` is NOT, quotes make a phrase. It is a linear pass over the
 day's lines, decrypting each -- see Known limits.
+
+## Background jobs
+
+Anything that has to happen on a schedule is a job in `server/jobs`, not a
+goroutine of its own. A job is a name, an interval and a function:
+
+```go
+registry.Register( "send-digest" , 24 * time.Hour , func() ( note string , err error ) {
+	sent , err := digest.Send( store )
+	note = fmt.Sprintf( "sent %d" , sent )
+	return
+} )
+```
+
+Register it in `main.go`, beside `jobs.Housekeeping`, before `registry.Start()`.
+The registry then gives it everything below, and a row on the owner's Jobs
+screen (`GET /api/owner/jobs`), with no other change. The screen's "Run now"
+is `POST /api/owner/jobs/:name/run`; it answers 202 as the run starts, because a
+backup can outlast a request, and 409 if the job is already running.
+
+- **Due times come from the last start, not from when the process began.** The
+  record is in the `jobs` bucket. A job never run, or overdue, runs right after
+  boot, so a server restarted more often than a job's interval still runs it,
+  and one that ran a minute before a restart does not run twice.
+- **The start is written before the job runs.** A job that kills the process
+  has used its turn, so it cannot crash the server on every boot. It shows as
+  Interrupted.
+- **`note` says what a run did.** "not due" and "wrote a backup" both end with
+  no error, and the owner needs to tell them apart. Return a note and an error
+  together for a run that did part of its work.
+- **Runs never overlap**, whichever of the schedule and the owner asked first.
+  **A panic** becomes that run's error. A failure is printed and logged as a
+  `system` entry.
+- **A job has to be safe to lose at any moment.** Nothing is cancelled: shutdown
+  waits up to five seconds for a run, then leaves it, because the process can be
+  killed at any time anyway.
+
+`Housekeeping` registers the three every app has: `purge` (expired sessions,
+login links and challenges, dead keys and invite links), `prune-logs` (only
+while the activity log is on) and `backup` (checks hourly;
+`backups.interval_hours` decides whether a check makes one). Each purge step
+runs whatever happens to the one before.
+
+Jobs live in this process, so they stop with it, and there is no queue: a run
+missed while the server was down happens once, on the next boot.
+
+## Sessions and devices
+
+The Account screen lists where the account is signed in, from
+`GET /api/account/sessions`, and can end any session but this one
+(`POST /api/account/sessions/:session_id/revoke`) or every other
+(`POST /api/account/sessions/revoke-others`). All three need a browser session,
+so a leaked key cannot lock its owner out of the screen that revokes it.
+
+- **A session records its sign-in address and browser**, written by
+  `signInResponse` just after the session is made, since every way of signing in
+  ends there and the transaction that makes it has no request to read. They are
+  best effort, and optional, so a session from before they existed still loads.
+  The address is the one from sign-in; it is not updated.
+- **Last seen** is written at most every 15 minutes, by `Guard.resolveSession`,
+  for the same reason as an API key's last use. It is not in `LoadSession`: a
+  stream re-checking its session is not the person being there.
+- **Only your own.** Someone else's id and an id that never existed get the same
+  404, so the answer does not say which exist. An admin's way to end another
+  account's sessions is `revoke-access`.
+- **This device is refused** with a 400, because ending it here would leave the
+  browser holding a dead cookie. Log out does that properly.
+- **Never undoable.** It is the button for a lost phone, so it asks first and
+  stays done, like revoking a key.
+
+The list names only fields it means to show (`sessionRow`), so the secret's hash
+and the CSRF token cannot reach a response through a change to the model.
+
+## Monitoring
+
+**`/api/health` and `/api/ready` answer different questions.** Health is what
+the container's healthcheck reads, and a failure gets the container restarted,
+so it touches nothing: a slow query must not turn into an outage. `/api/ready`
+is for a load balancer or a person deciding whether to send traffic. It checks
+that the database answers, is at this build's schema version, and can be read
+with this key, which reading the owner record proves. It answers 200 or 503,
+says nothing more because it is public, and gives up after two seconds. Callers
+share one probe, so a slow database does not get a pile of reads on top. It uses
+the general rate budget and is not logged.
+
+**Request IDs.** Every request gets 16 hex characters from
+`middleware.RequestID`, the outermost middleware, sent back as `X-Request-ID`
+and written as `request_id` on its log entries. One sent by the caller is
+ignored: it would let anyone choose what appears in the log. A 5xx puts it in
+the body as well, and the page shows it, so what someone reads out goes straight
+into the Logs screen's search. With logs off, the same id is on the `[error]`
+line on stdout.
+
+That only helps if the line says what went wrong, so `serverError( c , cause )`
+returns the cause instead of writing a response. `ErrorHandler`
+(`server/middleware/errors.go`) answers with the generic message and the id,
+and `RequestLog` records the cause. Pass the real error at every call: the cause
+goes to the log and never to the client.
+
+**`/metrics`** is Prometheus's text format, printed by `server/metrics` with no
+client library. It is off until `metrics.enabled` is set, and `auth.api_keys`
+has to be on; otherwise it answers 404. It takes an admin API key as a bearer
+token: a browser session and a user-scoped key get 403. That means the scraper
+holds an admin-level credential, so keep it where you would keep any other, and
+give it its own key so it can be revoked alone.
+
+| metric | type | labels |
+|---|---|---|
+| `app_http_requests_total` | counter | `method`, `status_class` |
+| `app_http_request_duration_seconds` | histogram | none |
+| `app_http_requests_in_flight` | gauge | none |
+| `app_uptime_seconds` | gauge | none |
+| `app_logs_dropped_total` | counter | none |
+| `app_job_last_success_timestamp_seconds` | gauge | `job` |
+| `app_job_last_failure_timestamp_seconds` | gauge | `job` |
+
+The prefix is the same for every app, so one dashboard fits them all; tell them
+apart by the scrape's job label. Nothing is labelled by path, because a path has
+as many values as anyone cares to request, and a scraper keeps a series for each
+forever. Keep that rule for any metric you add. The counters live in memory and
+restart from zero with the process, which Prometheus expects.
+
+## Live updates
+
+`server/stream` pushes server-sent events to a page: an `EventSource` there, a
+`stream.Hub` here. The Logs screen's Live button is the worked example.
+
+```go
+// main.go: one hub per topic, closed on shutdown beside log_stream.
+orders := stream.NewHub( 32 )
+
+// A route, behind whatever guards it needs.
+func ( handlers *Handlers ) StreamOrders( c fiber.Ctx ) ( err error ) {
+	credential , cookie_err := handlers.Guard.DecryptCookie( c.Cookies( handlers.cfg().CookieName ) )
+	if cookie_err != nil {
+		err = notFound( c , "not found" )
+		return
+	}
+	// Asked on every heartbeat. It runs after the request has ended, so it
+	// uses what was copied above and never c.
+	err = stream.Serve( c , handlers.Orders , func() bool {
+		_ , user := models.LoadSession( handlers.Store , credential )
+		return user != nil
+	} )
+	return
+}
+
+// Wherever something happens. Never blocks.
+handlers.Orders.Publish( "changed" , "1" )
+```
+
+A stream is unlike a normal request in four ways, all handled in `Serve`:
+
+- **The server's `WriteTimeout` is one deadline for the whole response**, so each
+  write sets its own instead, keeping the protection against a client that has
+  stopped reading. The 15-second heartbeat has to stay under `WriteTimeout`,
+  which still applies until the first heartbeat replaces it. Writes pass through
+  a small buffer, so a stalled client can hold its slot for about a hundred
+  seconds rather than thirty; the hub's limit is what bounds that.
+- **Middleware runs once, at connect.** The check you pass runs on every
+  heartbeat and ends the stream when it says no, so a revoked session stops
+  within 15 seconds. It runs after the request has ended: copy what it needs
+  first, and never use `c` in it. `Guard.StillOwner` is the Logs screen's.
+- **The writer has its own goroutine**, where a panic would end the process, so
+  it recovers.
+- **A stream never finishes by itself**, so `Hub.Close` has to end it on
+  shutdown. Forget that and every open page costs the whole drain timeout.
+
+**Send a nudge, not the data, if you can.** The Logs stream says only "look
+again", and the page reads through the same route as always, which is what keeps
+search, paging and decryption in one place, and means a dropped event loses
+nothing. Each client's queue holds 16 events and drops the rest, so an event that
+must arrive needs another way to be caught up.
+
+The first event is `changed`, which covers anything missed between the page's
+last read and connecting. A hub lives in this process, so it reaches nobody
+connected to another. Over its limit a client gets 503. `EventSource` cannot send
+an `Authorization` header, so a stream is for browser sessions, and on HTTP/1.1 a
+browser allows about six connections per server, so close a stream when its
+screen is not showing, as `logs.js` does.
 
 ## Why credentials are shaped `<id>.<secret>`
 
@@ -1045,6 +1229,9 @@ State these to the user rather than letting them be discovered in production:
   container `docker/run.sh` builds. With multiple replicas each holds its own
   counters, so the effective limit multiplies -- move to a shared
   `limiter.Config.Storage` at that point rather than assuming it still holds.
+- **Live streams and metrics are per-process too.** A `stream.Hub` reaches only
+  the clients of this process, and `/metrics` counts only its requests, so with
+  replicas each needs its own scrape and an event needs a shared broker.
 - **Losing the secret key loses the data** when at-rest encryption is on. It
   is in `secret.key`, which `manage backup` leaves out on purpose: keep a copy
   somewhere safe, apart from your backups.

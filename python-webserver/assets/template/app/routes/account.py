@@ -88,7 +88,7 @@ async def rename(request: Request) -> Response:
     except users.RenameConflictError as refusal:
         return conflict(str(refusal), display_name=refusal.current)
     if not renamed:
-        return server_error()
+        return server_error(request, "rename: the signed-in account has no record")
     audit(request, KIND_AUTH, "renamed own account", {"name": display_name.strip()})
     return JSONResponse({"ok": True, "display_name": display_name.strip()})
 
@@ -106,7 +106,7 @@ async def set_pin(request: Request) -> Response:
         return bad_request("bad_pin")
     try:
         if not await run(pins.set_user_pin, get_store(request), actor_from(request).user.id, pin):
-            return server_error()
+            return server_error(request, "set pin: the signed-in account has no record")
     except pins.BadPinError:
         return bad_request("bad_pin")
     audit(request, KIND_AUTH, "pin changed", {"has_pin": pin != ""})

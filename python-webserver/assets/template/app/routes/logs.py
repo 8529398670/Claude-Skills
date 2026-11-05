@@ -14,12 +14,12 @@ from typing import Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
-from app.core import logs
+from app.core import logs, request_id, sse
 from app.core.config import trusted_proxy_networks
 from app.core.middleware import client_ip
-from app.core.security import actor_from, check_csrf, log_actor
+from app.core.security import actor_from, check_csrf, decrypt_cookie, log_actor, still_owner
 from app.models import users
-from app.routes.helpers import bad_request, conflict, forbidden, get_config, read_json, run
+from app.routes.helpers import bad_request, conflict, error, forbidden, get_config, get_store, read_json, run
 
 PAGE_DEFAULT = 200
 PAGE_MAX = 1000
@@ -121,6 +121,29 @@ async def prune_logs(request: Request) -> Response:
     result = await run(get_logs(request).prune)
     audit(request, logs.KIND_ADMIN, "logs pruned", {"compressed": result["compressed"], "deleted": result["deleted"]})
     return JSONResponse(result)
+
+
+async def stream_log_changes(request: Request) -> Response:
+    """The Logs screen's live tail: "something changed" nudges, and logs.js
+    runs its normal refresh. Sending the entries themselves would need a
+    second filter and paging path through the same data. This route is under
+    /api/owner/logs, so RequestLog skips it and the stream cannot feed itself.
+
+    RequireOwner let this in once. The cookie is kept to ask again every tick,
+    because the session can end while the stream stays open."""
+    if request.method == "HEAD":
+        return Response(headers=sse.HEADERS)
+    cfg, store = get_config(request), get_store(request)
+    credential = decrypt_cookie(cfg, request.cookies.get(cfg.cookie_name, ""))
+    hub: sse.Hub = request.app.state.log_hub
+    client = hub.join()
+    if client is None:
+        return error(503, "too many live streams")
+
+    async def allowed() -> bool:
+        return await run(still_owner, store, credential)
+
+    return sse.EventStream(hub, client, allowed, opening=(sse.retry(sse.RETRY_MS), sse.CHANGED))
 
 
 class _EventBudget:
@@ -244,6 +267,7 @@ def audit_as(
         logs.entry(
             kind,
             level,
+            request_id=request_id.of(request.scope),
             actor=actor,
             ip=_ip(request),
             ua=logs.truncate(request.headers.get("user-agent", ""), 300),

@@ -15,70 +15,21 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-import uvicorn
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
+from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
-from app.core import assets, backup, bootstrap, config, config_live, db, language, logs, server_lock
+from app.core import assets, bootstrap, config, config_live, db, graceful, housekeeping, jobs, language, logs, metrics, server_lock, sse
 from app.core.middleware import EXCEPTION_HANDLERS, RateLimit, SecurityHeaders
+from app.core.request_id import RequestID
 from app.core.request_log import RequestLog
 from app.core.security import LoadActor
 from app.core.static_files import StaticServer
-from app.models import api_keys, invite_links, login_tokens, sessions, sign_in
 from app.routes import build_routes
 
-PURGE_INTERVAL_SECONDS = 60 * 60
 # How often config.yaml is checked for edits made outside the Settings screen.
 CONFIG_POLL_SECONDS = 2
-
-
-def purge_once(store: db.Store, logger: logs.Logger | None = None) -> None:
-    """Drop expired sessions, expired login tokens, and the API keys and
-    invite links that have been dead long enough to stop being worth listing.
-    None of it is a correctness issue -- every one of those is already refused
-    on read -- so this runs quietly in the background purely to keep the file
-    from growing forever. Then apply the activity log's retention: compress,
-    expire, recycle."""
-    removed_sessions = sessions.purge_expired_sessions(store)
-    removed_tokens = login_tokens.purge_expired_login_tokens(store)
-    removed_keys = api_keys.purge_dead_api_keys(store)
-    removed_invites = invite_links.purge_dead_invite_links(store)
-    sign_in.purge_expired_challenges(store)
-    if removed_sessions or removed_tokens or removed_keys or removed_invites:
-        print(
-            f"[purge] removed {removed_sessions} expired sessions, {removed_tokens} expired login tokens, "
-            f"{removed_keys} dead api keys, {removed_invites} dead invite links",
-            flush=True,
-        )
-    if logger is not None and logger.enabled:
-        pruned = logger.prune()
-        if pruned["deleted"] or pruned["compressed"]:
-            print(f"[purge] logs: {pruned['deleted']} days deleted, {pruned['compressed']} compressed", flush=True)
-            logger.system(logs.LEVEL_INFO, "logs pruned", {"deleted": pruned["deleted"], "compressed": pruned["compressed"]})
-
-
-def backup_once(store: db.Store, settings: config_live.Holder, logger: logs.Logger) -> None:
-    """The scheduled backup, when one is on and due. The settings are read on
-    every pass, so switching it on needs no restart."""
-    made, removed = backup.run_scheduled(store, settings.get())
-    if made is not None:
-        print(f"[backup] {made.path} ({made.size} bytes), {removed} old backups removed", flush=True)
-        logger.system(logs.LEVEL_INFO, "scheduled backup written", {"path": str(made.path), "bytes": made.size, "removed": removed})
-
-
-async def purge_loop(store: db.Store, settings: config_live.Holder, logger: logs.Logger) -> None:
-    while True:
-        await asyncio.sleep(PURGE_INTERVAL_SECONDS)
-        try:
-            await run_in_threadpool(purge_once, store, logger)
-        except Exception as error:  # noqa: BLE001 -- housekeeping must never take the server down
-            print(f"[purge] failed: {error}", flush=True)
-        try:
-            await run_in_threadpool(backup_once, store, settings, logger)
-        except Exception as error:  # noqa: BLE001 -- nor must a backup
-            print(f"[backup] failed: {error}", flush=True)
-            logger.system(logs.LEVEL_ERROR, "scheduled backup failed", {"error": str(error)})
 
 
 async def config_watch(settings: config_live.Holder) -> None:
@@ -113,40 +64,61 @@ def build_app(
 
     settings.report = report
 
+    registry = jobs.Registry(store, logger)
+    housekeeping.register(registry, store, settings, logger)
+    log_hub = sse.Hub()
+    measured = metrics.Metrics()
+
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
+        loop = asyncio.get_running_loop()
+        logger.on_flushed = lambda: sse.publish_from_thread(loop, log_hub, sse.CHANGED)
         logger.start()
         logger.system(logs.LEVEL_INFO, "server started", {"version": version})
         if cfg.secret_migrated:
             logger.system(logs.LEVEL_WARN, "secret key moved to secret.key", {"config": str(cfg.config_file), "secret": str(cfg.secret_file)})
-        tasks = [asyncio.create_task(purge_loop(store, settings, logger)), asyncio.create_task(config_watch(settings))]
+        watcher = asyncio.create_task(config_watch(settings))
+        registry.start()
         try:
             yield
         finally:
-            for task in tasks:
-                task.cancel()
+            # By now requests have finished and streams have ended (serve's
+            # on_stop). Jobs next, since they write to the log; the log last.
+            watcher.cancel()
+            await registry.stop()
+            log_hub.close()
+            logger.on_flushed = None
             logger.system(logs.LEVEL_INFO, "server stopped")
             await run_in_threadpool(logger.close)
 
     app = Starlette(
         routes=build_routes(static_server, cfg),
-        # Outermost first. Headers go on everything; the rate limit runs
-        # before anything touches the database, so a flood is cheap to refuse;
-        # then the caller is resolved once for every route behind it; then
-        # each request is written to the activity log, knowing who made it.
+        # Outermost first. Every request gets its reference and is counted,
+        # whatever becomes of it; headers go on everything; the body limit is
+        # here rather than Starlette's max_body_size= because that one sits
+        # outside all of this, and its 413 would have neither; the rate limit
+        # runs before anything touches the database, so a flood is cheap to
+        # refuse; then the caller is resolved once for every route behind it;
+        # then each request is written to the activity log, knowing who made
+        # it.
         middleware=[
+            Middleware(RequestID),
+            Middleware(metrics.MeasureRequests, metrics=measured),
             Middleware(SecurityHeaders, settings=settings),
+            Middleware(RequestBodyLimitMiddleware, max_body_size=cfg.body_limit_bytes),
             Middleware(RateLimit, settings=settings),
             Middleware(LoadActor, store=store, settings=settings),
             Middleware(RequestLog, settings=settings, logger=logger),
         ],
         exception_handlers=EXCEPTION_HANDLERS,
         lifespan=lifespan,
-        max_body_size=cfg.body_limit_bytes,
     )
     app.state.settings = settings
     app.state.store = store
     app.state.logs = logger
+    app.state.jobs = registry
+    app.state.log_hub = log_hub
+    app.state.metrics = measured
     app.state.language = lang
     # Reported to MCP clients as serverInfo.version.
     app.state.version = version
@@ -196,8 +168,11 @@ def serve(version: str) -> None:
         print(f"[logs]   {cfg.logs.dir} (keeping {cfg.logs.retention_days} days, up to {cfg.logs.max_total_bytes // 1024 // 1024} MB)")
     print(f"[assets] {bundle.source}", flush=True)
 
-    uvicorn.run(
+    graceful.run(
         app,
+        # Before uvicorn waits for connections: it would otherwise wait the
+        # full 10 seconds for a stream that is never going to finish.
+        on_stop=app.state.log_hub.close,
         host=cfg.host,
         port=cfg.port,
         # An empty Server header keeps the response from advertising which

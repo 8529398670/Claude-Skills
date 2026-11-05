@@ -100,6 +100,8 @@ reconsider -- not before.
   healthcheck that queried the database would let a slow query get a working
   container killed and restarted -- turning a small problem into an outage.
   Doing it in the binary also means the runtime image needs no HTTP client.
+  `/api/ready` is the one that touches the database: point a load balancer at
+  that, never the healthcheck.
 
 The Go version in `go.mod` and the builder image tag must stay in step.
 Dependencies here require Go 1.26; bumping one without the other produces a
@@ -150,6 +152,9 @@ and the dependencies before a release -- and scan the built image too, which
   `Ready: <url>`. On a fresh database it then prints the owner's first-run
   login link straight from the log, and points at `scripts/login.sh --docker`
   for a new one later.
+- **`--stop-timeout 20`.** A shutdown can take 15 seconds: ten for requests to
+  finish, five for a background job. Docker's default of ten would kill the
+  process before the activity log and the database close.
 - **Publishes to `docker.bind_address`, `127.0.0.1` by default.** This app
   does **not** terminate TLS. Put nginx, Caddy, or Traefik in front and let it
   hold the certificate.
@@ -373,6 +378,40 @@ The socket lives inside the mounted data directory, so it is covered by the
 volume's permissions and never crosses the container boundary. Nothing about
 it is published to the network, and it needs no port.
 
+### Behind a proxy: live updates
+
+A stream is one long response, and two proxy defaults break it. nginx buffers
+responses, which `X-Accel-Buffering: no` on the stream turns off; anything else
+needs the same done in its own config. Proxies also close a response that goes
+quiet: keep the read timeout above the 15-second heartbeat. In nginx:
+
+```nginx
+location /api/owner/logs/stream {
+    proxy_pass http://127.0.0.1:PORT;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_read_timeout 60s;
+}
+```
+
+### Scraping `/metrics`
+
+Set `metrics.enabled: true`, make an admin API key just for this, and give it to
+Prometheus as a bearer token:
+
+```yaml
+scrape_configs:
+  - job_name: myapp
+    authorization:
+      credentials_file: /etc/prometheus/myapp.key
+    static_configs:
+      - targets: ["myapp.example.com"]
+    scheme: https
+```
+
+The key is admin-level, so treat the file like any other credential.
+
 ## Running from a checkout (scripts/run.sh, scripts/login.sh)
 
 For development and internal boxes, without Docker:
@@ -529,10 +568,14 @@ A backup made under another key comes back on the key in use now, so
 `secret.key` itself never changes and everyone just signs in again.
 
 Scheduled backups are off by default: set `backups.enabled: true`, from the
-Settings screen or `config.yaml`, and the hourly job writes
+Settings screen or `config.yaml`, and the `backup` job writes
 `auto-<time>.tar.gz` every `backups.interval_hours`, keeping the last
 `backups.keep`. Backups made by hand are never removed. They sit on the same
-disk as the data, so copy them somewhere else as well.
+disk as the data, so copy them somewhere else as well. The owner's Jobs screen
+shows how the last one went.
+
+A backup holds the database, and so each live session's sign-in address and
+browser, while the activity log stays out. Treat backups as personal data.
 
 `configuration.md` covers the equivalent for portable binaries, where the key
 lives inside the app directory instead.

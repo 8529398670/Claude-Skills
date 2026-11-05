@@ -58,6 +58,10 @@ type Logger struct {
 
 	// now is time.Now, replaced in tests.
 	now func() time.Time
+
+	onFlushed func()
+	// unannounced means entries were written since onFlushed last ran.
+	unannounced bool
 }
 
 // New makes a Logger; Start begins writing. key and encrypt are
@@ -108,6 +112,15 @@ func ( logger *Logger ) Encrypted() ( result bool ) {
 func ( logger *Logger ) Dropped() ( count int64 ) {
 	count = logger.dropped.Load()
 	return
+}
+
+// OnFlushed sets what is called, at most once per flushInterval, after new
+// entries reach the disk. It is how the Logs screen hears there is something
+// to read, and it runs on the writer's goroutine, so it must not block. Set it
+// before Start.
+func ( logger *Logger ) OnFlushed( notify func() ) {
+	if logger == nil { return }
+	logger.onFlushed = notify
 }
 
 func ( logger *Logger ) Start() {
@@ -167,6 +180,10 @@ func ( logger *Logger ) run() {
 				reported = dropped
 			}
 			logger.flush()
+			if logger.unannounced && logger.onFlushed != nil {
+				logger.onFlushed()
+			}
+			logger.unannounced = false
 		case <-logger.stop:
 			for {
 				select {
@@ -225,6 +242,7 @@ func ( logger *Logger ) write( entry Entry ) {
 	written , _ := logger.buffer.Write( line )
 	logger.size += int64( written )
 	logger.pending += 1
+	logger.unannounced = true
 	if logger.pending >= flushEvery {
 		logger.flushLocked()
 	}

@@ -124,6 +124,19 @@ project.
   is `logs:` in config.yaml (days kept, total size with oldest-day
   recycling, part size, gzip after N days), applied hourly. Login links, key
   secrets, PINs, passwords, codes and anything typed are never written.
+- **Background jobs** run from one registry: named, never overlapping, due
+  times that survive a restart, and an owner **Jobs** screen showing how each
+  last went, with a Run now button. Purge, log retention and scheduled backups
+  are jobs; an app adds its own in one line.
+- **People can see where they are signed in** on the Account screen (device,
+  address, last active) and sign out one device or all the others remotely.
+- **Monitoring.** `/api/health` stays trivial for the container; `/api/ready`
+  checks the database for a load balancer. Every response carries an
+  `X-Request-ID`, and a 5xx shows it to the person, so it finds the log line.
+  `/metrics`, off by default, is Prometheus text for an admin API key.
+- **Live updates.** `server/stream` is a server-sent events helper that handles
+  the write deadline, re-checks access on open streams and ends them on
+  shutdown. The Logs screen's Live button runs on it, with no polling.
 - **One directory holds all state.** The database and app storage live in
   `~/.config/<slug>/` (move it with `server.app_dir`; the container always
   uses `/app/data`). Never write state relative to the working directory -- a
@@ -250,6 +263,13 @@ ports they ran on. Do not reset either to a shared value.
     middleware/middleware.go  # CSP + security headers, rate limit (static files
                               #   exempt, sign-in has its own budget), recover
     middleware/request_log.go # one activity-log entry per request
+    middleware/request_id.go  # the X-Request-ID reference on every response
+    middleware/errors.go      # the ErrorHandler: generic text out, cause logged
+    middleware/metrics.go     # counts every request for /metrics
+    metrics/metrics.go        # the numbers, printed as Prometheus text
+    jobs/                     # jobs.go: named background jobs on a schedule
+                              # housekeeping.go: purge, prune-logs, backup
+    stream/stream.go          # server-sent events: Hub, Serve, heartbeats
     routes/                   # routes.go (the URL map) + one file per group,
                               #   including api_keys.go, mcp_tools.go
                               #   (the MCP tools, + mcp_test.go) and logs.go
@@ -267,6 +287,8 @@ ports they ran on. Do not reset either to a shared value.
     js/undo.js                # Ctrl+Z / Ctrl+Y history every screen records into
     js/track.js               # sends what people do on the page to the log
     js/logs.js                # the owner's Logs screen
+    js/jobs.js                # the owner's Jobs screen
+    js/sessions.js            # "where you're signed in" on the Account screen
     js/dom.js, i18n.js, api.js, app.js, keys.js,
       join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
       password.js, two_factor.js    # password form and panel; 2FA step and panel
@@ -382,6 +404,19 @@ but stay consistent with the patterns already there:
   pages and vendored libraries end up in the portable binary with no extra
   step. A new asset directory *outside* `static/` would need its own
   `go:embed` line -- putting it under `static/` is simpler.
+- **Anything on a schedule** is a job: `registry.Register( name , interval , fn )`
+  in `main.go`, beside `jobs.Housekeeping`. Never a goroutine with its own
+  ticker. The registry stops overlaps, catches panics, survives restarts and
+  puts it on the owner's Jobs screen. See "Background jobs" in
+  `references/architecture.md`.
+- **Pushing to a page** uses `server/stream`: a `Hub`, `stream.Serve` in the
+  route, `Publish` where it happens, and `Hub.Close` in `main.go`'s shutdown.
+  Never a long-lived handler of your own: the write deadline, re-checking access
+  and shutdown are all handled there. See "Live updates".
+- **A 5xx** is `serverError( c , cause )`, with the real error: it reaches the
+  log under the request's id and never the client.
+- **New metrics** go in `server/metrics`. Never label one by path or by anything
+  else a caller controls.
 - **New admin CLI commands** go in `server/manage/manage.go`, which the
   `manage` subcommand dispatches to. Add the operation to the `backend` interface there and implement it twice --
   once on `controlBackend` (a call to `server/control`) and once on

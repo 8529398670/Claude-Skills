@@ -56,9 +56,10 @@ func ( handlers *Handlers ) signInResponse( c fiber.Ctx , signed *models.SignIn 
 	}
 	handlers.destroyCookieSession( c )
 	if cookie_err := handlers.Guard.SetSessionCookie( c , signed.SessionCredential ); cookie_err != nil {
-		err = serverError( c )
+		err = serverError( c , cookie_err )
 		return
 	}
+	models.RecordSessionDevice( handlers.Store , signed.SessionCredential , c.IP() , logs.Truncate( c.Get( fiber.HeaderUserAgent ) , models.SessionUserAgentMax ) )
 	err = c.Status( status ).JSON( payload )
 	return
 }
@@ -98,7 +99,7 @@ func ( handlers *Handlers ) RedeemLoginLink( c fiber.Ctx ) ( err error ) {
 			err = badRequest( c , "invalid login link" )
 			return
 		}
-		err = serverError( c )
+		err = serverError( c , redeem_err )
 		return
 	}
 

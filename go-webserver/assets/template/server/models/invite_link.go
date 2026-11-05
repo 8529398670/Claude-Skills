@@ -23,7 +23,7 @@ const (
 	InviteLinkMaxDays = 365
 
 	// inviteLinkRetention is how long a dead link's row is kept before the
-	// purge loop drops it, so the admin list still shows last week's links.
+	// `purge` job drops it, so the admin list still shows last week's links.
 	inviteLinkRetention = 30 * 24 * time.Hour
 )
 

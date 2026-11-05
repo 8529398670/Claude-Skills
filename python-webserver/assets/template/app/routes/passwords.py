@@ -112,7 +112,7 @@ async def set_password(request: Request) -> Response:
         CODES.record(user.id, False)
         return forbidden("two_factor_wrong")
     if not found:
-        return server_error()
+        return server_error(request, "set password: the signed-in account has no record")
     audit(request, KIND_AUTH, "password removed" if digest == "" else "password changed")
     return JSONResponse({"ok": True, "has_password": digest != ""})
 

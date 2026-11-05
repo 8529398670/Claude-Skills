@@ -176,7 +176,10 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 // logged and reported only as "internal error".
 func refusalError( refused *refusal ) ( err error ) {
 	if refused.status >= 500 {
-		err = fiber.NewError( refused.status , refused.message )
+		err = refused.cause
+		if err == nil {
+			err = fiber.NewError( refused.status , refused.message )
+		}
 		return
 	}
 	err = mcp.Refuse( refused.message )

@@ -32,7 +32,7 @@ type setDisabledRequest struct {
 func ( handlers *Handlers ) ListUsers( c fiber.Ctx ) ( err error ) {
 	rows , list_err := handlers.userRows()
 	if list_err != nil {
-		err = serverError( c )
+		err = serverError( c , list_err )
 		return
 	}
 	err = c.JSON( rows )
@@ -87,12 +87,12 @@ func ( handlers *Handlers ) CreateUser( c fiber.Ctx ) ( err error ) {
 
 	user , create_err := models.CreateUser( handlers.Store , body.DisplayName , body.Role )
 	if create_err != nil {
-		err = serverError( c )
+		err = serverError( c , create_err )
 		return
 	}
 	credential , token_err := models.IssueLoginToken( handlers.Store , user.ID , handlers.cfg().LoginTokenTTL )
 	if token_err != nil {
-		err = serverError( c )
+		err = serverError( c , token_err )
 		return
 	}
 
@@ -136,7 +136,7 @@ func ( handlers *Handlers ) ReissueLogin( c fiber.Ctx ) ( err error ) {
 
 	credential , token_err := models.IssueLoginToken( handlers.Store , user_id , handlers.cfg().LoginTokenTTL )
 	if token_err != nil {
-		err = serverError( c )
+		err = serverError( c , token_err )
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "login link reissued" , fiber.Map{ "user_id": user_id } )
@@ -237,7 +237,7 @@ func ( handlers *Handlers ) ResetTwoFactor( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "only the owner can reset an admin's two-factor sign-in" )
 		return
 	case reset_err != nil:
-		err = serverError( c )
+		err = serverError( c , reset_err )
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "two-factor reset" , fiber.Map{ "user_id": user_id } )
@@ -285,7 +285,7 @@ func ( handlers *Handlers ) DeleteUser( c fiber.Ctx ) ( err error ) {
 	case errors.Is( delete_err , models.ErrOwnerRequired ):
 		err = forbidden( c , "only the owner can delete an admin account" )
 	default:
-		err = serverError( c )
+		err = serverError( c , delete_err )
 	}
 	return
 }
@@ -297,11 +297,13 @@ func ( handlers *Handlers ) DeleteUser( c fiber.Ctx ) ( err error ) {
 type refusal struct {
 	status  int
 	message string
+	// cause is why a 5xx happened. It goes to the log, never to the caller.
+	cause error
 }
 
 func ( refused *refusal ) send( c fiber.Ctx ) ( err error ) {
 	if refused.status >= 500 {
-		err = serverError( c )
+		err = serverError( c , refused.cause )
 		return
 	}
 	err = c.Status( refused.status ).JSON( fiber.Map{ "error": refused.message } )
@@ -312,14 +314,14 @@ func ( refused *refusal ) send( c fiber.Ctx ) ( err error ) {
 // SetUserDisabled and the MCP admin_set_user_disabled tool.
 func ( handlers *Handlers ) setUserDisabled( self_id uint64 , user_id uint64 , disabled bool ) ( refused *refusal ) {
 	if _ , get_err := models.GetUser( handlers.Store , user_id ); get_err != nil {
-		refused = &refusal{ fiber.StatusNotFound , "no such user" }
+		refused = &refusal{ status: fiber.StatusNotFound , message: "no such user" }
 		return
 	}
 
 	// Locking yourself out is unrecoverable without shell access, so it is
 	// worth one guard rail even though an admin could still disable a peer.
 	if disabled && user_id == self_id {
-		refused = &refusal{ fiber.StatusBadRequest , "you cannot disable your own account" }
+		refused = &refusal{ status: fiber.StatusBadRequest , message: "you cannot disable your own account" }
 		return
 	}
 
@@ -328,10 +330,10 @@ func ( handlers *Handlers ) setUserDisabled( self_id uint64 , user_id uint64 , d
 	// be disabled; that check is in the model so every route gets it.
 	if disable_err := models.SetUserDisabled( handlers.Store , user_id , disabled ); disable_err != nil {
 		if errors.Is( disable_err , models.ErrOwnerProtected ) {
-			refused = &refusal{ fiber.StatusForbidden , "the owner account cannot be disabled" }
+			refused = &refusal{ status: fiber.StatusForbidden , message: "the owner account cannot be disabled" }
 			return
 		}
-		refused = &refusal{ fiber.StatusInternalServerError , "internal error" }
+		refused = &refusal{ status: fiber.StatusInternalServerError , message: "internal error" , cause: disable_err }
 	}
 	return
 }
@@ -340,13 +342,13 @@ func ( handlers *Handlers ) setUserDisabled( self_id uint64 , user_id uint64 , d
 // for RevokeAccess and the MCP admin_revoke_access tool.
 func ( handlers *Handlers ) revokeAccess( self_id uint64 , user_id uint64 ) ( revoked models.Revoked , refused *refusal ) {
 	if _ , get_err := models.GetUser( handlers.Store , user_id ); get_err != nil {
-		refused = &refusal{ fiber.StatusNotFound , "no such user" }
+		refused = &refusal{ status: fiber.StatusNotFound , message: "no such user" }
 		return
 	}
 	// Same guard rail as disabling: revoking your own access signs you out
 	// with no link to get back in.
 	if user_id == self_id {
-		refused = &refusal{ fiber.StatusBadRequest , "you cannot revoke your own access" }
+		refused = &refusal{ status: fiber.StatusBadRequest , message: "you cannot revoke your own access" }
 		return
 	}
 
@@ -355,10 +357,10 @@ func ( handlers *Handlers ) revokeAccess( self_id uint64 , user_id uint64 ) ( re
 	revoked , revoke_err := models.RevokeAllCredentials( handlers.Store , user_id , false )
 	if revoke_err != nil {
 		if errors.Is( revoke_err , models.ErrOwnerProtected ) {
-			refused = &refusal{ fiber.StatusForbidden , "the owner account's access cannot be revoked" }
+			refused = &refusal{ status: fiber.StatusForbidden , message: "the owner account's access cannot be revoked" }
 			return
 		}
-		refused = &refusal{ fiber.StatusInternalServerError , "internal error" }
+		refused = &refusal{ status: fiber.StatusInternalServerError , message: "internal error" , cause: revoke_err }
 	}
 	return
 }

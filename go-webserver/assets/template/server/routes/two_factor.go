@@ -80,7 +80,7 @@ func ( handlers *Handlers ) FinishSignIn( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "two_factor_wrong" )
 		return
 	case finish_err != nil:
-		err = serverError( c )
+		err = serverError( c , finish_err )
 		return
 	}
 	handlers.Codes.Record( user_id , true )
@@ -110,7 +110,7 @@ func ( handlers *Handlers ) StartTwoFactor( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	if start_err != nil {
-		err = serverError( c )
+		err = serverError( c , start_err )
 		return
 	}
 	err = c.JSON( fiber.Map{ "secret": secret } )
@@ -144,7 +144,7 @@ func ( handlers *Handlers ) ConfirmTwoFactor( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "two_factor_wrong" )
 		return
 	case confirm_err != nil:
-		err = serverError( c )
+		err = serverError( c , confirm_err )
 		return
 	}
 	handlers.Codes.Record( user_id , true )
@@ -178,7 +178,7 @@ func ( handlers *Handlers ) DisableTwoFactor( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "two_factor_wrong" )
 		return
 	case disable_err != nil:
-		err = serverError( c )
+		err = serverError( c , disable_err )
 		return
 	}
 	handlers.Codes.Record( user_id , true )

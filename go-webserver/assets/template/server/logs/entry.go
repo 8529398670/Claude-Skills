@@ -49,6 +49,9 @@ type Entry struct {
 	TS      time.Time      `json:"ts"`
 	Kind    string         `json:"kind"`
 	Level   string         `json:"level"`
+	// RequestID is the reference a person sees on an error page, so what they
+	// quote can be found here. See server/middleware/request_id.go.
+	RequestID string       `json:"request_id,omitempty"`
 	Actor   *Actor         `json:"actor,omitempty"`
 	IP      string         `json:"ip,omitempty"`
 	UA      string         `json:"ua,omitempty"`

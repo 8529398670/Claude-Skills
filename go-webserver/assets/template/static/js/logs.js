@@ -15,9 +15,13 @@ const Logs = {
   kinds: [ "request" , "ui" , "auth" , "admin" , "error" , "system" ],
   selected: new Set(),
   searchDelayMs: 300,
-  liveMs: 5000,
+  // The least time between reads while Live is on, however busy the server is.
+  liveMs: 2000,
   searchTimer: null,
+  liveOn: false,
+  liveSource: null,
   liveTimer: null,
+  liveLast: 0,
   // Which days are open, kept across a refresh; null until the first one,
   // which opens the newest day.
   openDays: null,
@@ -35,6 +39,7 @@ const Logs = {
     } );
     Dom.get( "logs-live" ).addEventListener( "click" , () => this.toggleLive() );
     Dom.get( "logs-prune" ).addEventListener( "click" , () => this.onPrune() );
+    window.addEventListener( "hashchange" , () => this.followScreen() );
     this.renderKinds();
     await this.refresh();
   },
@@ -264,25 +269,69 @@ const Logs = {
     rows.appendChild( detail );
   },
 
-  // Live: re-read the list every few seconds while this screen is showing.
-  // It holds off while an entry is expanded, so what is being read does not
-  // fold away under the reader.
+  // Live: the server says when there is something new, and the list is read
+  // again then, so a quiet server costs nothing. The stream only says "look
+  // again": the entries come through the same read as everything else here,
+  // with the search box applied.
   toggleLive() {
+    this.setLive( !this.liveOn );
+  },
+
+  setLive( on ) {
+    this.liveOn = on;
     const button = Dom.get( "logs-live" );
-    const on = !this.liveTimer;
     button.setAttribute( "aria-pressed" , String( on ) );
     button.classList.toggle( "btn-primary" , on );
     button.classList.toggle( "btn-outline-secondary" , !on );
-    if ( on ) {
-      this.liveTimer = window.setInterval( () => {
-        if ( Nav.current() !== "logs" ) return;
-        if ( Dom.all( "#logs-days .log-detail:not([hidden])" ).length > 0 ) return;
-        this.refresh();
-      } , this.liveMs );
+    this.followScreen();
+  },
+
+  // The stream is open only while this screen is showing, because each one
+  // holds a connection, and a browser only gets a few per server.
+  followScreen() {
+    if ( this.liveOn && Nav.current() === "logs" ) {
+      this.openLive();
     } else {
-      window.clearInterval( this.liveTimer );
-      this.liveTimer = null;
+      this.closeLive();
     }
+  },
+
+  openLive() {
+    if ( this.liveSource ) return;
+    const source = new EventSource( Api.logStreamPath() );
+    source.addEventListener( "changed" , () => this.onChanged() );
+    // A dropped connection retries by itself. CLOSED means the server said no:
+    // the session ended, or too many pages are watching.
+    source.addEventListener( "error" , () => {
+      if ( source.readyState !== EventSource.CLOSED ) return;
+      this.setLive( false );
+      App.showError( I18n.get( "logs.live_lost" ) );
+    } );
+    this.liveSource = source;
+  },
+
+  closeLive() {
+    if ( this.liveSource ) this.liveSource.close();
+    this.liveSource = null;
+    window.clearTimeout( this.liveTimer );
+    this.liveTimer = null;
+  },
+
+  // At most one read per liveMs, and the last change always gets one. It holds
+  // off while an entry is expanded, so what is being read does not fold away
+  // under the reader.
+  onChanged() {
+    if ( this.liveTimer ) return;
+    const wait = Math.max( 0 , this.liveLast + this.liveMs - Date.now() );
+    this.liveTimer = window.setTimeout( () => {
+      this.liveTimer = null;
+      this.liveLast = Date.now();
+      if ( Dom.all( "#logs-days .log-detail:not([hidden])" ).length > 0 ) {
+        this.onChanged();
+        return;
+      }
+      this.refresh();
+    } , wait );
   },
 
   async onPrune() {

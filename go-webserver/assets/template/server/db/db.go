@@ -32,12 +32,13 @@ const (
 	BucketAPIKeys     = "api_keys"
 	BucketInviteLinks = "invite_links"
 	BucketSignInChallenges = "sign_in_challenges"
+	BucketJobs        = "jobs"
 	BucketMeta        = "meta"
 	// BucketSchema holds the schema version, unencrypted. See migrate.go.
 	BucketSchema      = "schema"
 )
 
-var bucketNames = []string{ BucketUsers , BucketSessions , BucketLoginTokens , BucketAPIKeys , BucketInviteLinks , BucketSignInChallenges , BucketMeta , BucketSchema }
+var bucketNames = []string{ BucketUsers , BucketSessions , BucketLoginTokens , BucketAPIKeys , BucketInviteLinks , BucketSignInChallenges , BucketJobs , BucketMeta , BucketSchema }
 
 type Store struct {
 	bolt          *bolt.DB

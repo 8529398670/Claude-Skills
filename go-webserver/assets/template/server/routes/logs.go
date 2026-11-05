@@ -11,8 +11,10 @@ import (
 	fiber "github.com/gofiber/fiber/v3"
 
 	logs "{{MODULE_PATH}}/server/logs"
+	middleware "{{MODULE_PATH}}/server/middleware"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
+	stream "{{MODULE_PATH}}/server/stream"
 )
 
 // The activity log's endpoints (see server/logs). Reading it is the owner's
@@ -54,7 +56,7 @@ func ( handlers *Handlers ) logSettings() ( settings fiber.Map ) {
 func ( handlers *Handlers ) ListLogDays( c fiber.Ctx ) ( err error ) {
 	days , total , list_err := handlers.Logs.Days( logs.ParseQuery( c.Query( "q" ) ) )
 	if list_err != nil {
-		err = serverError( c )
+		err = serverError( c , list_err )
 		return
 	}
 	err = c.JSON( fiber.Map{
@@ -92,7 +94,7 @@ func ( handlers *Handlers ) GetLogDay( c fiber.Ctx ) ( err error ) {
 	}
 	records , next , read_err := handlers.Logs.ReadDay( day , logs.ParseQuery( c.Query( "q" ) ) , before , limit )
 	if read_err != nil {
-		err = serverError( c )
+		err = serverError( c , read_err )
 		return
 	}
 	err = c.JSON( fiber.Map{ "date": day , "entries": records , "next": next } )
@@ -116,6 +118,23 @@ func ( handlers *Handlers ) DownloadLogDay( c fiber.Ctx ) ( err error ) {
 	return
 }
 
+// StreamLogs tells the Logs screen when there is something new, so Live needs
+// no timer. It sends a nudge, not the entries: the page reads them the way it
+// always does, which is what keeps its search, paging and decryption in one
+// place. Watching cannot feed itself, since nothing under /api/owner/logs is
+// logged.
+func ( handlers *Handlers ) StreamLogs( c fiber.Ctx ) ( err error ) {
+	credential , cookie_err := handlers.Guard.DecryptCookie( c.Cookies( handlers.cfg().CookieName ) )
+	if cookie_err != nil {
+		err = notFound( c , "not found" )
+		return
+	}
+	err = stream.Serve( c , handlers.LogStream , func() bool {
+		return handlers.Guard.StillOwner( credential )
+	} )
+	return
+}
+
 func ( handlers *Handlers ) DeleteLogDay( c fiber.Ctx ) ( err error ) {
 	var body csrfOnlyRequest
 	if c.Bind().JSON( &body ) != nil {
@@ -134,7 +153,7 @@ func ( handlers *Handlers ) DeleteLogDay( c fiber.Ctx ) ( err error ) {
 	case errors.Is( delete_err , logs.ErrToday ):
 		err = conflict( c , logs.ErrToday.Error() , nil )
 	case delete_err != nil:
-		err = serverError( c )
+		err = serverError( c , delete_err )
 	default:
 		handlers.audit( c , logs.KindAdmin , "log day deleted" , fiber.Map{ "date": day } )
 		err = c.JSON( fiber.Map{ "deleted": true } )
@@ -154,7 +173,7 @@ func ( handlers *Handlers ) PruneLogs( c fiber.Ctx ) ( err error ) {
 	}
 	result , prune_err := handlers.Logs.Prune()
 	if prune_err != nil {
-		err = serverError( c )
+		err = serverError( c , prune_err )
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "logs pruned" , fiber.Map{ "compressed": result.Compressed , "deleted": result.Deleted } )
@@ -314,6 +333,7 @@ func ( handlers *Handlers ) auditAs( c fiber.Ctx , actor *logs.Actor , kind stri
 	handlers.Logs.Log( logs.Entry{
 		Kind:   kind,
 		Level:  level,
+		RequestID: middleware.RequestIDFrom( c ),
 		Actor:  actor,
 		IP:     c.IP(),
 		UA:     logs.Truncate( c.Get( fiber.HeaderUserAgent ) , 300 ),

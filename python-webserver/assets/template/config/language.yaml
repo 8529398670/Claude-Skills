@@ -32,6 +32,7 @@ nav:
   invite_links: "Invite links"
   all_keys: "All API keys"
   logs: "Logs"
+  jobs: "Jobs"
   settings: "Settings"
 
 # Short confirmations shown as a toast at the bottom of the screen.
@@ -129,6 +130,27 @@ account:
   device_button: "Make a login link"
   device_link_notice: "Open this on the other device. It works once."
   copy_button: "Copy"
+
+# Where this account is signed in, on the Account screen (static/js/sessions.js).
+sessions:
+  heading: "Where you're signed in"
+  description: "Every device with this account open. If you don't recognise one, sign it out and change how you sign in."
+  table_device: "Device"
+  table_ip: "Address"
+  table_seen: "Last active"
+  table_signed_in: "Signed in"
+  table_actions: "Actions"
+  this_device: "This device"
+  # {browser} and {system} are worked out from what the device said it was.
+  device_name: "{browser} on {system}"
+  unknown_device: "Unknown device"
+  unknown: "Unknown"
+  revoke_button: "Sign out"
+  # Empty this string to stop asking for confirmation.
+  revoke_confirm: "Sign this device out? It will need a new way in."
+  revoke_others_button: "Sign out all other devices"
+  # Empty this string to stop asking for confirmation.
+  revoke_others_confirm: "Sign out every device but this one? They will need a new way in."
 
 # The password panel, shown while the owner has auth.passwords on.
 password:
@@ -292,6 +314,7 @@ logs:
   kind_error: "Error"
   kind_system: "System"
   live_button: "Live"
+  live_lost: "Live updates stopped. Press Live to try again."
   prune_button: "Prune now"
   # Empty this string to stop asking for confirmation.
   prune_confirm: "Apply the retention rules from config.yaml now? Old days are compressed or deleted."
@@ -320,6 +343,29 @@ logs:
   table_ip: "IP"
   anonymous: "signed out"
   via_key: "(API key)"
+
+# The Jobs screen (owner only; static/js/jobs.js). A job you add can have a
+# name here, as job_<name> with dashes as underscores; one without shows its
+# own name.
+jobs:
+  heading: "Jobs"
+  description: "What this app does by itself in the background, and how each job went last. Only you, the owner, can see this."
+  table_name: "Job"
+  table_status: "Status"
+  table_last: "Last run"
+  table_next: "Next run"
+  table_note: "Result"
+  table_actions: "Actions"
+  status_running: "Running"
+  status_ok: "OK"
+  status_failed: "Failed"
+  status_interrupted: "Interrupted"
+  status_never: "Not run yet"
+  never: "Never"
+  run_button: "Run now"
+  job_purge: "Clear out expired records"
+  job_prune_logs: "Apply log retention"
+  job_backup: "Scheduled backup"
 
 # The Settings screen (owner only; static/js/settings.js): config.yaml, one
 # field per setting. Placeholders in {braces} are filled in by the page. The
@@ -355,6 +401,8 @@ settings:
 
 errors:
   generic: "Something went wrong. Please try again."
+  # {reference} finds this failure in the Logs screen's search.
+  reference: "Something went wrong on the server. Reference: {reference}"
   network: "Could not reach the server."
   # Error codes the invite link and PIN routes answer with, by name.
   invite_link_invalid: "This invite link is invalid, expired, or has been switched off."

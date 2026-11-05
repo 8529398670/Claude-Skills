@@ -31,6 +31,7 @@ type authFixture struct {
 	cfg   *config.Config
 	owner *models.User
 	alice *models.User
+	handlers *Handlers
 }
 
 // browser is one cookie jar.
@@ -63,7 +64,7 @@ func newAuthFixture( t *testing.T ) ( fixture *authFixture ) {
 	handlers := New( store , settings , security.New( store , settings ) , nil , static_server , "test" )
 	app := fiber.New()
 	handlers.Register( app )
-	fixture = &authFixture{ app: app , store: store , cfg: cfg , owner: owner , alice: alice }
+	fixture = &authFixture{ app: app , store: store , cfg: cfg , owner: owner , alice: alice , handlers: handlers }
 	return
 }
 

@@ -7,7 +7,7 @@ they only add headers or answer early, which needs no request body handling,
 and plain ASGI avoids BaseHTTPMiddleware's known problems with streaming
 responses and context variables.
 
-The request body limit is Starlette's own (max_body_size on the app, wired in
+The request body limit is Starlette's own RequestBodyLimitMiddleware (wired in
 app/main.py), so it is not repeated here.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ import posixpath
 import sys
 import time
 from collections import deque
-from typing import Sequence, Union
+from typing import Mapping, Sequence, Union
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.exceptions import HTTPException
@@ -25,6 +25,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.core import logs, request_id
 from app.core.config import Config, trusted_proxy_networks
 from app.core.config_live import Holder
 
@@ -266,7 +267,8 @@ class RateLimit:
 #
 # Never hand an internal error message to a client. Every error body has one
 # shape, {"error": "..."}, and the detail of a crash goes to the log, where
-# the operator can see it (uvicorn prints the traceback).
+# the operator can see it (uvicorn prints the traceback). A 5xx body adds
+# request_id: the reference a person can quote, which finds the log line.
 # ---------------------------------------------------------------------------
 
 
@@ -288,14 +290,38 @@ def status_text(code: int) -> str:
     return "bad request"
 
 
+def internal_error(request: Request, cause: object, status: int = 500, headers: Mapping[str, str] | None = None) -> JSONResponse:
+    """The one answer for something going wrong on our side. cause never
+    reaches the client: it goes to stdout, and is left on the request for
+    RequestLog, so the line the reference finds says what happened.
+
+    It sets X-Request-ID itself because server_error's response is sent by
+    Starlette's ServerErrorMiddleware, outside every middleware in
+    main.build_app, RequestID included. Inside them RequestID sets the same
+    value again."""
+    reference = request_id.of(request.scope)
+    print(
+        f"[error] {reference} {request.method} {logs.redact(request.url.path)}: {cause}",
+        file=sys.stderr,
+        flush=True,
+    )
+    request.state.error_cause = str(cause)
+    return JSONResponse(
+        {"error": "internal error", "request_id": reference},
+        status_code=status,
+        headers={**(headers or {}), request_id.HEADER: reference},
+    )
+
+
 async def http_error(request: Request, exc: Exception) -> Response:
     assert isinstance(exc, HTTPException)
+    if exc.status_code >= 500:
+        return internal_error(request, exc.detail, exc.status_code, exc.headers)
     return JSONResponse({"error": status_text(exc.status_code)}, status_code=exc.status_code, headers=exc.headers)
 
 
 async def server_error(request: Request, exc: Exception) -> Response:
-    print(f"[error] {request.method} {request.url.path}: {exc!r}", file=sys.stderr, flush=True)
-    return JSONResponse({"error": "internal error"}, status_code=500)
+    return internal_error(request, repr(exc))
 
 
 EXCEPTION_HANDLERS = {HTTPException: http_error, 500: server_error}

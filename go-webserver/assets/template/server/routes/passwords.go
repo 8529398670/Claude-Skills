@@ -60,7 +60,7 @@ func ( handlers *Handlers ) GetLoginOptions( c fiber.Ctx ) ( err error ) {
 	if cfg.PasswordsEnabled {
 		salt , salt_err := models.InstallSalt( handlers.Store )
 		if salt_err != nil {
-			err = serverError( c )
+			err = serverError( c , salt_err )
 			return
 		}
 		payload[ "salt" ] = salt
@@ -96,7 +96,7 @@ func ( handlers *Handlers ) PasswordLogin( c fiber.Ctx ) ( err error ) {
 	if user != nil {
 		var sign_in_err error
 		if signed , sign_in_err = models.StartPasswordSignIn( handlers.Store , user , handlers.signInRules() ); sign_in_err != nil {
-			err = serverError( c )
+			err = serverError( c , sign_in_err )
 			return
 		}
 	}
@@ -164,7 +164,7 @@ func ( handlers *Handlers ) SetPassword( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "two_factor_wrong" )
 		return
 	case set_err != nil:
-		err = serverError( c )
+		err = serverError( c , set_err )
 		return
 	}
 	message := "password changed"
@@ -202,7 +202,7 @@ func ( handlers *Handlers ) SetPasswordAccess( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	if block_err != nil {
-		err = serverError( c )
+		err = serverError( c , block_err )
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "password access set" , fiber.Map{ "user_id": user_id , "allowed": *body.Allowed } )

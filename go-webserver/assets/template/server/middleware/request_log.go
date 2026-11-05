@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	errors "errors"
 	fmt "fmt"
 	log "log"
 	url "net/url"
@@ -26,8 +25,8 @@ import (
 // It sits after RateLimit in main.go, so a flood of refused requests costs a
 // 429 and nothing else. Skipped: the log's own endpoints (reading the log
 // would fill it; page events arrive as kind "ui" entries of their own),
-// /api/health (a container healthcheck every few seconds is noise), and,
-// unless logs.static_assets is on, the page's scripts, styles and images.
+// /api/health, /api/ready and /metrics (something polling every few seconds is
+// noise), and, unless logs.static_assets is on, the page's scripts, styles and images.
 //
 // The settings are read on every request, not once here: logs.static_assets
 // and logs.echo can change while the server runs (see config.Holder).
@@ -56,11 +55,7 @@ func RequestLog( logger *logs.Logger ) ( handler fiber.Handler ) {
 		if err != nil {
 			// The ErrorHandler has not written the response yet: work out
 			// the status it will, the same way.
-			status = fiber.StatusInternalServerError
-			var fiber_err *fiber.Error
-			if errors.As( err , &fiber_err ) {
-				status = fiber_err.Code
-			}
+			status = errorStatus( err )
 			if status >= 500 {
 				message = err.Error()
 			}
@@ -74,7 +69,7 @@ func RequestLog( logger *logs.Logger ) ( handler fiber.Handler ) {
 func skipRequestLog( c fiber.Ctx , settings config.LogsConfig ) ( skip bool ) {
 	request_path := c.Path()
 	switch {
-	case request_path == "/api/logs/events" , request_path == "/api/health":
+	case request_path == "/api/logs/events" , request_path == "/api/health" , request_path == "/api/ready" , request_path == "/metrics":
 		skip = true
 	case strings.HasPrefix( request_path , "/api/owner/logs" ):
 		skip = true
@@ -105,6 +100,7 @@ func recordRequest( c fiber.Ctx , logger *logs.Logger , settings config.LogsConf
 	entry := logs.Entry{
 		Kind:  logs.KindRequest,
 		Level: logs.LevelInfo,
+		RequestID: RequestIDFrom( c ),
 		Actor: security.LogActor( security.ActorFrom( c ) ),
 		IP:    c.IP(),
 		UA:    logs.Truncate( c.Get( fiber.HeaderUserAgent ) , 300 ),

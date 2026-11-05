@@ -288,6 +288,34 @@ add a `kind:` term. Rows are built with `Dom.el` like everything else, and a
 row's JSON shows in a `<pre>` via `textContent`. Its text is the `logs:`
 block in `language.yaml`.
 
+Live on the Logs screen is an `EventSource` on `Api.logStreamPath()`, not a
+timer. The server sends `changed` when new lines reach the disk, and `refresh()`
+runs, at most once per `liveMs`, holding off while an entry is expanded. The
+stream closes when the screen is hidden and reopens on return. A closed stream
+means the server refused it, so the button turns off and `logs.live_lost` shows.
+See Live updates in `architecture.md`.
+
+### The Jobs screen
+
+`jobs.js`, owner only, lists what `GET /api/owner/jobs` returns, so a job an app
+adds appears with no frontend change. Give one a friendlier name with
+`jobs.job_<name>` in `language.yaml`, dashes as underscores. A run outlasts the
+call that starts it, so the screen looks again every `refreshMs` while something
+is running there.
+
+### Where you're signed in
+
+`sessions.js` draws the devices table on the Account screen. It reads a short
+name out of the User-Agent, only to help someone tell their devices apart.
+Signing a device out asks first and has no undo.
+
+### Error references
+
+A 5xx body carries `request_id`, and `Api.request` turns it into the error's
+message using `errors.reference`, so every screen shows it through
+`App.showError` with no extra code. The banner stays up 12 seconds, long enough
+to copy it down.
+
 ### The Settings screen
 
 `settings.js` is the owner's other screen (`Settings.init( me )` returns at

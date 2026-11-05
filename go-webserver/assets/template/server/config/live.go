@@ -206,6 +206,7 @@ func liveConfig( boot *Config , boot_file *File , file *File ) ( next *Config ) 
 	next.RateLimitWindow = seconds( file.Server.RateLimitWindowSeconds )
 	next.RateLimitSignInMax = file.Server.RateLimitSignInMax
 	next.MCPEnabled = file.Server.MCP
+	next.MetricsEnabled = file.Metrics.Enabled
 
 	next.SessionTTL = seconds( file.Auth.SessionTTLSeconds )
 	next.LoginTokenTTL = seconds( file.Auth.LoginTokenTTLSeconds )

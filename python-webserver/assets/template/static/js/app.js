@@ -135,6 +135,7 @@ const App = {
     Password.init( me );
     TwoFactor.init( me );
     await Keys.init( me );
+    await Sessions.init();
 
     if ( me.role === "admin" ) {
       Dom.show( Dom.get( "admin-panel" ) , true );
@@ -142,9 +143,10 @@ const App = {
       Dom.get( "copy-link-button" ).addEventListener( "click" , this.onCopyLink.bind( this ) );
       await this.refreshUsers();
       await Invites.init( me );
-      // Only the owner gets the Logs and Settings screens; each init checks
-      // is_owner.
+      // Only the owner gets the Logs, Jobs and Settings screens; each init
+      // checks is_owner.
       await Logs.init( me );
+      await Jobs.init( me );
       await Settings.init( me );
     }
 
@@ -367,7 +369,8 @@ const App = {
     const banner = Dom.get( "error-banner" );
     const worded = message ? I18n.get( "errors." + message ) : "";
     Dom.text( banner , worded || message || I18n.get( "errors.generic" ) );
-    Dom.flash( banner , 5000 );
+    // Long enough to copy a reference down.
+    Dom.flash( banner , 12000 );
   },
 };
 

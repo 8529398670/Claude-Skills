@@ -14,6 +14,11 @@ when you are changing the template itself rather than building features on it.
 - [Soft delete and restore](#soft-delete-and-restore)
 - [MCP: the API keys, for agents](#mcp-the-api-keys-for-agents)
 - [The activity log](#the-activity-log)
+- [Background jobs](#background-jobs)
+- [Sessions: seeing and ending your own](#sessions-seeing-and-ending-your-own)
+- [Monitoring: request IDs, readiness, metrics](#monitoring-request-ids-readiness-metrics)
+- [Live updates](#live-updates)
+- [Stopping cleanly](#stopping-cleanly)
 - [Why credentials are shaped `<id>.<secret>`](#why-credentials-are-shaped-idsecret)
 - [Which crypto is used where, and why](#which-crypto-is-used-where-and-why)
 - [Encrypted records in SQLite](#encrypted-records-in-sqlite)
@@ -547,16 +552,18 @@ frontend is shared.
 | kind | written by | what it says |
 |---|---|---|
 | `request` | `RequestLog` middleware, every request | method, path, status, ms, bytes, referer |
-| `error` | the same, for a 5xx or an exception | the exception's repr (the client only ever sees "internal error") |
-| `auth` | `audit`/`audit_as` in `app/routes/logs.py` | signed in, link refused, joined through an invite, wrong PIN, password refused, wrong code, 2FA on or off, signed out, PIN or password changed |
-| `admin` | `audit` | account, key and invite-link changes, log days deleted, prunes |
+| `error` | the same, for a 5xx or an exception | the exception's repr, or the cause a handler gave `server_error` (the client only ever sees "internal error" and the reference) |
+| `auth` | `audit`/`audit_as` in `app/routes/logs.py` | signed in, link refused, joined through an invite, wrong PIN, password refused, wrong code, 2FA on or off, signed out, PIN or password changed, another session ended |
+| `admin` | `audit` | account, key and invite-link changes, log days deleted, prunes, jobs started by hand |
 | `ui` | `POST /api/logs/events` from `track.js` | screens, clicks, form submits, undo/redo, JS errors, failed calls, device details |
-| `system` | the server | started, stopped, pruned, entries dropped |
+| `system` | the server | started, stopped, pruned, entries dropped, a job failing |
 
 Every entry also carries the actor (account id, name, role, and whether it
 came in by session, API key -- by its public id -- or anonymously), the
 client IP (`middleware.client_ip`, the same proxy-trust rules as the rate
-limiter), and the user agent. A `ui` entry's time is the server's; the
+limiter), and the user agent. `request`, `error`, `auth` and `admin` entries
+carry the `request_id` too (see [Monitoring](#monitoring-request-ids-readiness-metrics)).
+A `ui` entry's time is the server's; the
 browser's own clock is kept beside it as `ui.at`, so a page cannot backdate
 what it reports.
 
@@ -587,10 +594,12 @@ counts it, and the writer logs the count as a `system` warning once it
 catches up. A slow disk can lose log lines; it can never slow a request. The
 writer, the readers and the pruner share one lock, so a file is never
 compressed or deleted mid-write. The lifespan starts the thread and, on
-shutdown, drains and closes it.
+shutdown, drains and closes it. After a flush the writer calls `on_flushed`,
+at most once a second, which is what the live tail listens to (see
+[Live updates](#live-updates)).
 
-**Retention**, from `logs:` in config.yaml, applied hourly by `purge_once`
-and on "Prune now": finished days older than `compress_after_days` are
+**Retention**, from `logs:` in config.yaml, applied by the hourly `prune-logs`
+job and on "Prune now": finished days older than `compress_after_days` are
 gzipped (to a temporary name, then renamed, so a crash leaves the original);
 days older than `retention_days` are deleted; then, while the total is over
 `max_total_mb`, the oldest day goes. Today is never touched, and
@@ -610,6 +619,199 @@ that is safe with the server running.
 (prefix) `ip:` (prefix) `action:` `screen:` narrow; a comma is OR, a leading
 `-` is NOT, quotes make a phrase. It is a linear pass over the day's lines,
 decrypting each, in a worker thread -- see Known limits.
+
+## Background jobs
+
+Work the server does with nobody asking: `app/core/jobs.py` is the registry,
+`app/core/housekeeping.py` the template's own jobs, `app/models/jobs.py` what is
+remembered about them, and the owner's Jobs screen (`GET /api/owner/jobs`,
+`POST /api/owner/jobs/<name>/run`) shows them and starts one by hand.
+
+```python
+registry.register("purge", 3600, lambda: purge(store))   # fn() -> (note, error)
+```
+
+| job | what it does | `last_note` |
+|---|---|---|
+| `purge` | drops expired sessions, login tokens and challenges, and long-dead keys and invite links | what it removed |
+| `prune-logs` | applies `logs:` retention; registered only with `logs.enabled` on | days deleted and compressed |
+| `backup` | runs `backup.run_scheduled` | `off`, `not due`, or `wrote <file>` |
+
+**When a job runs comes from the database.** A tick every 30 seconds calls
+`run_due(now)`, and a job is due when it has never run or `last_started +
+interval` has passed. `last_started` is written before the job runs. So a
+restart a moment after a run does not repeat it, a process that dies mid-run
+has still used its turn, and -- the reason this exists -- a server restarted
+more often than a job's interval still runs it. The loop this replaced slept an
+hour first, and a server restarted hourly never purged anything. A job never
+run, or overdue, starts at the first tick after boot, so housekeeping now
+happens shortly after a start.
+
+**What a job can rely on.** One run of a job at a time. It runs in a worker
+thread, so it uses the store directly. An exception is recorded as that job's
+failure, printed, and written to the activity log, and the tick goes on. A
+purge step that fails does not stop the next one; the errors are joined.
+
+**`running` is memory, not a stored flag,** because a stored one would stay
+true after a crash. A start with no finish after it, and nothing running, is
+what the screen calls interrupted.
+
+**Stopping** waits up to five seconds for a run under way, then leaves it. Not
+cancelled: a thread cannot be. That is also why jobs run through
+`graceful.run_abandonable` rather than `run`. `asyncio.run` cancels every task
+left at exit and waits for them, and a plain `run_in_threadpool` task cannot
+finish being cancelled until its thread returns, so one long backup would hold
+the process open however bounded everything before it was. A backup cut off by
+that exit leaves only its temporary file, which `backup.prune` clears later.
+
+The `jobs` bucket is an ordinary bucket: it goes into backups, so a restored
+database brings back when each job last ran. A backup from before the bucket
+existed has no table for it, and `db.check_file` and `db.rekey` skip what the
+file does not have; the next start creates it.
+
+## Sessions: seeing and ending your own
+
+The Account screen lists an account's own sessions and can end the others
+(`app/routes/sessions.py`, `static/js/sessions.js`). A browser session is
+required, so an API key gets 403.
+
+A session record gains three optional fields, read with `.get` so older
+records need no migration: `ip`, `user_agent` (cut to 256 characters) and
+`last_seen_at`. Every way of signing in ends in `auth.sign_in_response`, so that
+is the one place they are captured, 2FA included, and failing to write them
+never fails the sign-in. `last_seen_at` is touched at most every 15 minutes from
+`security._resolve_session`, the same trade as an API key's `last_used_at`. It
+is deliberately not touched from `load_session`, which is what re-checks an open
+stream: a tab left on the Logs screen is not someone using the app.
+
+`Session.id` exists only in memory: `load_session` sets it, `to_record` leaves
+it out.
+
+- `GET /api/account/sessions` builds each row field by field, so `secret_hash`
+  and `csrf_token` cannot leak through a record gaining a field.
+- `POST /api/account/sessions/<id>/revoke` looks and deletes in one
+  transaction. Someone else's id and an id that does not exist get the same
+  404, so the route cannot be used to find out which ids are real. The session
+  in use is refused with a 400: signing out is what ends that one, and it also
+  clears the cookie.
+- `POST /api/account/sessions/revoke-others` ends the rest.
+
+These are revokes, so they ask first and offer no undo. The IPs and user agents
+are personal data, and unlike the activity log the sessions bucket is in every
+backup.
+
+## Monitoring: request IDs, readiness, metrics
+
+**Request IDs** (`app/core/request_id.py`). Every request gets 16 hex
+characters. It is always made here and an inbound `X-Request-ID` is ignored,
+since one a caller could choose is one that could point a search at the wrong
+line. It comes back in the `X-Request-ID` header, sits at the top level of log
+entries, and is in the body of a 5xx: `{"error":"internal error",
+"request_id":"..."}`. The page shows it after the error message, and pasting it
+into the Logs search finds the line.
+
+A reference is only worth having if the line it finds says something, so every
+500 has a cause. An unhandled exception's is its repr. `helpers.server_error`
+takes one: `server_error(request, cause)`. Both go through
+`middleware.internal_error`, which prints `[error] <id> METHOD path: cause` to
+stderr and leaves the cause on the request for `RequestLog`.
+
+`RequestID` is its own middleware, outermost, because `RequestLog` does nothing
+with the log off. It still cannot cover a crash: `server_error`'s response is
+sent by Starlette's `ServerErrorMiddleware`, outside every middleware in the
+stack, so `internal_error` sets the header on the response itself.
+
+**`GET /api/ready`** (`meta.get_ready`) is public and says 200 `{"ok":true}` or
+503 `{"ok":false}`, nothing more. It checks the schema version is the one this
+code expects and reads the owner marker, which proves the file opens and the
+key decrypts it. `/api/health` stays trivial: it decides whether a container is
+restarted, and a database problem restarting a container helps nobody, while
+`/api/ready` decides whether traffic should come here. The check is bounded at 2
+seconds with `asyncio.wait`, not `wait_for`: a timeout must not cancel a thread
+that cannot be cancelled, or it would wait for exactly the thing that is slow. A
+probe in progress is shared by anyone else who asks, so a stuck disk costs one
+thread however often it is polled.
+
+**`GET /metrics`** (`app/core/metrics.py`, `app/routes/metrics.py`) is Prometheus
+text, written by hand. `metrics.enabled` is off by default. It answers 404 while
+that or `auth.api_keys` is off, then 401 anonymous, 403 for a browser session
+or a user-scoped key, and 200 for an admin key.
+
+| series | type | |
+|---|---|---|
+| `app_http_requests_total{method,status_class}` | counter | methods from a fixed list, else `OTHER` |
+| `app_http_request_duration_seconds` | histogram | no labels |
+| `app_http_requests_in_flight` | gauge | |
+| `app_uptime_seconds` | gauge | |
+| `app_logs_dropped_total` | counter | |
+| `app_job_last_success_timestamp_seconds{job}` | gauge | left out for a job with none |
+| `app_job_last_failure_timestamp_seconds{job}` | gauge | left out for a job with none |
+
+The prefix is a fixed `app_`, not the project's name, and the names match the Go
+template's, so one dashboard fits every app. There are no path labels and the
+method list is closed, because a label a request can invent is a series count
+anyone can grow. A live stream leaves the in-flight gauge as soon as it turns
+out to be one and never reaches the histogram, since how long someone watches
+says nothing about the server. It is counted when it ends.
+
+`MeasureRequests` is its own middleware, outside the rate limiter, so a refused
+flood shows up in the counters though it never reaches the log.
+
+## Live updates
+
+`app/core/sse.py` is server-sent events by hand: the format is a few lines of
+text. `sse.event` turns a line break in the data into the next `data:` line, so
+data can never start a field of its own.
+
+A `Hub` fans a message out to its clients. Each has a queue of 16, and a message
+that does not fit is dropped rather than waited for, so a stalled browser costs
+itself an update and costs the sender nothing. It takes eight clients, past
+which the route answers 503.
+
+`EventStream` is the response for one client. Three things about it are not
+obvious:
+
+- **The slot is freed in a `finally` around `__call__`,** not in the generator.
+  When a client goes away Starlette cancels the send, and a generator suspended
+  there can be left unfinished.
+- **Every `send` has a 30 second timeout,** because uvicorn has no write timeout.
+  A client that stops reading otherwise holds its slot, and holds up a stop, for
+  as long as the socket lasts.
+- **Every 15 seconds it sends `: ping` and asks again** whether the request is
+  still allowed. A stream is a request that was authorised once, possibly hours
+  ago. For the log tail that is `security.still_owner`, which calls
+  `load_session` directly, so it does not count as activity and cannot be
+  answered by an API key, and the stream ends within 15 seconds of the session
+  being revoked, or of ownership moving. An error there ends it too.
+
+The one stream in the template is `GET /api/owner/logs/stream`, the Logs
+screen's live tail. It sends a `changed` nudge, not entries, and `logs.js` runs
+its ordinary refresh: sending the entries would need a second filter, decryption
+and paging path over the same files. The nudge comes from the log writer's
+`on_flushed`, gated to one a second because a quiet server flushes after every
+entry. An idle server sends nothing but pings. The route is under
+`/api/owner/logs`, which `RequestLog` skips, so a stream cannot feed itself.
+
+## Stopping cleanly
+
+A stop has to finish in order, and each step has a bound:
+
+| step | where | bound |
+|---|---|---|
+| end the live streams | `graceful.Server.shutdown` calling `on_stop` | at once |
+| requests finish | uvicorn, `timeout_graceful_shutdown` | 10 seconds |
+| a job in progress | `Registry.stop`, from the lifespan | 5 seconds |
+| the log is flushed and closed | the lifespan | normally milliseconds |
+
+The first row is why `app/core/graceful.py` exists. uvicorn.run offers nothing
+between "a stop was asked for" and "wait for every connection", and the lifespan
+runs after that wait, so an open stream would cost the full 10 seconds on every
+stop. `graceful.run` is `uvicorn.run` for this one case, with its
+`KeyboardInterrupt` catch and its exit status when the server never started.
+
+That adds up to more than `docker stop`'s default 10 seconds, hence
+`--stop-timeout 20` in `docker/run.sh`, and 20 seconds before `scripts/lib.sh`
+sends SIGKILL.
 
 ## Why credentials are shaped `<id>.<secret>`
 
@@ -1092,8 +1294,23 @@ State these to the user rather than letting them be discovered in production:
   small app makes; past that, ship the downloaded JSON lines to a real log
   store instead of growing this one.
 - **The log can drop lines under load** rather than slow requests down (the
-  count shows on the Logs screen), and a 429 from the rate limiter is not
-  logged at all -- the limiter runs first, so a flood stays cheap.
+  count shows on the Logs screen and in `app_logs_dropped_total`), and a 429
+  from the rate limiter is not logged at all -- the limiter runs first, so a
+  flood stays cheap.
+- **A reference does not always find a line.** A 5xx on a path `RequestLog`
+  skips (the log's own routes, `/metrics`), or from something outside it
+  (`LoadActor`, the rate limiter), has its `request_id` on stdout only.
+- **Sessions in backups.** Backups hold each session's IP address and user
+  agent, for as long as the backups are kept.
+- **The scraper holds an admin key.** There is no read-only scope, so what can
+  read `/metrics` can also do what an admin key can.
+- **Jobs run in the one server process,** and only there: `manage` commands do
+  not start them, and a stopped server runs nothing.
+- **A job past the stop limit is cut off with the process.** SQLite is safe from
+  that and so is a backup, which only appears when complete, but a job an app
+  adds has to be just as happy to be stopped half way.
+- **Live streams are capped per process,** eight on the log hub. A hub is memory,
+  so it does not span processes.
 - **The log records personal data** -- IP addresses, user agents, what each
   person clicked. Tell the people using the app, and keep `retention_days`
   no longer than needed.

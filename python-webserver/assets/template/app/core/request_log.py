@@ -6,9 +6,9 @@ middleware.server_error) but is what the owner needs.
 
 It sits inside RateLimit, so a flood of refused requests costs a 429 and
 nothing else. Skipped: the log's own endpoints (reading the log would fill
-it; page events arrive as kind "ui" entries of their own), /api/health (a
-container healthcheck every few seconds is noise), and, unless
-logs.static_assets is on, the page's scripts, styles and images.
+it; page events arrive as kind "ui" entries of their own), /api/health and
+/api/ready (a probe every few seconds is noise), /metrics (so is a scrape), and,
+unless logs.static_assets is on, the page's scripts, styles and images.
 
 The settings are read on every request, not once at startup:
 logs.static_assets, logs.echo and the proxy settings can change while the
@@ -59,14 +59,18 @@ class RequestLog:
         try:
             await self.app(scope, receive, send_and_measure)
         except Exception as error:
-            # Logged on its way to server_error, which answers the client.
-            self._record(scope, cfg, started, 500, 0, repr(error))
+            # Logged on its way to server_error, which answers the client. A
+            # response already under way keeps its status: the body limit ends
+            # a 413 by raising through here, and that is not a crash.
+            self._record(scope, cfg, started, status, bytes_out, repr(error) if status >= 500 else "")
             raise
-        self._record(scope, cfg, started, status, bytes_out, "")
+        # A handler that answered 500 itself left its reason here (see
+        # middleware.internal_error).
+        self._record(scope, cfg, started, status, bytes_out, (scope.get("state") or {}).get("error_cause", ""))
 
     def _skip(self, scope: Scope, cfg: Config) -> bool:
         path = scope.get("path", "")
-        if path in ("/api/logs/events", "/api/health") or path.startswith("/api/owner/logs"):
+        if path in ("/api/logs/events", "/api/health", "/api/ready", "/metrics") or path.startswith("/api/owner/logs"):
             return True
         return not cfg.logs.static_assets and static_asset(scope.get("method", ""), path)
 
@@ -76,6 +80,7 @@ class RequestLog:
         record = logs.entry(
             logs.KIND_REQUEST,
             logs.LEVEL_INFO,
+            request_id=state.get("request_id"),
             actor=log_actor(state.get("actor")),
             ip=client_ip(scope, cfg, trusted_for(cfg)),
             ua=logs.truncate(headers.get("user-agent", ""), 300),

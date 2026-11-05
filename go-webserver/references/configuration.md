@@ -34,6 +34,7 @@ auth:    session_ttl_seconds, login_token_ttl_seconds, api_keys,
 logs:    enabled, retention_days, max_total_mb, max_file_mb,
          compress_after_days, static_assets, ui_clicks, echo
 backups: enabled, interval_hours, keep
+metrics: enabled
 docker:  image, container, bind_address, host_port, data_dir, restart,
          memory, cpus, pids_limit, tmpfs_size
 build:   binary_name, output_dir, targets
@@ -339,7 +340,7 @@ Every key in `defaults.yaml` carries a tag in its comments:
 
 | tag | meaning | keys |
 |---|---|---|
-| `[live]` | the next request sees it | `server.public_url`, `secure_cookies`, `rate_limit_max`, `rate_limit_window_seconds`, `rate_limit_signin_max`, `mcp`; all of `auth:` and `backups:`; `logs:` except `enabled` |
+| `[live]` | the next request sees it | `server.public_url`, `secure_cookies`, `rate_limit_max`, `rate_limit_window_seconds`, `rate_limit_signin_max`, `mcp`; all of `auth:`, `backups:` and `metrics:`; `logs:` except `enabled` |
 | `[restart]` | saved now, read at startup | `app.name`, `server.host`, `port`, `app_dir`, `static_dir`, `language_file`, `encrypt_at_rest`, `cookie_name`, `trust_proxy`, `trusted_proxies`, `proxy_header`, `body_limit_bytes`, `control_socket`, `logs.enabled` |
 | `[scripts]` | read by `docker/run.sh` or `scripts/build.sh` only | `docker:`, `build:` |
 
@@ -481,7 +482,7 @@ itself is described in `architecture.md` ("The activity log").
 | `ui_clicks` | `true` | log every click; screen changes, submits, undo and errors are logged either way |
 | `echo` | `true` | print `[req] GET /path 200 1.2ms ip name` for each request to stdout (and so `docker logs`) |
 
-Retention runs from the hourly purge loop and from "Prune now" on the Logs
+Retention runs from the hourly `prune-logs` job and from "Prune now" on the Logs
 screen. Every key but `enabled` is `[live]`: a change from the Settings screen
 or a hand edit applies to the next request and the next prune.
 `logs.enabled` needs a restart, since the writer and the log's routes are set
@@ -546,10 +547,15 @@ the current key, so `secret.key` does not change. Everyone signs in again,
 because their cookies were sealed with the other key.
 
 The `backups:` section schedules them, off by default: `enabled`,
-`interval_hours` and `keep`, all `[live]`. The hourly job writes
-`auto-<time>.tar.gz` and removes the oldest past `keep`. Backups made by hand
+`interval_hours` and `keep`, all `[live]`. The `backup` job checks hourly, and
+writes `auto-<time>.tar.gz` once `interval_hours` have passed, removing the oldest past `keep`. Backups made by hand
 are never removed. The activity log is not in any backup: it can be far larger
-than everything else, and losing it loses history, not data.
+than everything else, and losing it loses history, not data. The database is,
+and it holds each live session's sign-in address and browser, so a backup says
+who was signed in from where.
+
+`metrics.enabled`, `[live]`, makes `GET /metrics` answer an admin API key. See
+Monitoring in `architecture.md`.
 
 ## Adding a setting
 

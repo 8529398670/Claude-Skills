@@ -23,7 +23,7 @@ from app.core.config import Config
 from app.core.config_live import Holder
 from app.core.db import Store
 from app.models.api_keys import APIKey, load_api_key, narrow_role
-from app.models.sessions import Session, load_session
+from app.models.sessions import Session, load_session, touch_session
 from app.models.users import ROLE_ADMIN, User, get_owner_id
 
 # Auth method names, as reported by /api/me. Worth exposing so a client can
@@ -111,6 +111,7 @@ def _resolve_session(store: Store, cfg: Config, cookies: dict[str, str]) -> Acto
     if loaded is None:
         return None
     session, user = loaded
+    touch_session(store, session)
     return Actor(user=user, role=user.role, session=session)
 
 
@@ -305,6 +306,19 @@ class RequireOwner(Guard):
             await _refuse(404, "not_found")(scope, receive, send)
             return
         await self.app(scope, receive, send)
+
+
+def still_owner(store: Store, credential: str) -> bool:
+    """Whether a session is still the owner's, for something that outlives the
+    request that was let in: an open stream, which RequireOwner checked once.
+    Straight to load_session, not through resolve_actor: it must not touch
+    last_seen_at, since a stream staying open is not the person being there,
+    and an API key has no business answering for a session that ended."""
+    loaded = load_session(store, credential)
+    if loaded is None:
+        return False
+    _, user = loaded
+    return user.role == ROLE_ADMIN and get_owner_id(store) == user.id
 
 
 def log_actor(actor: Actor | None) -> dict:

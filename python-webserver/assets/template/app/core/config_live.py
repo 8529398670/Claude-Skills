@@ -108,6 +108,7 @@ def live_config(boot: Config, boot_file: config.File, file: config.File) -> Conf
         rate_limit_window_seconds=file.server.rate_limit_window_seconds,
         rate_limit_signin_max=file.server.rate_limit_signin_max,
         mcp_enabled=file.server.mcp,
+        metrics_enabled=file.metrics.enabled,
         trust_proxy=file.server.trust_proxy,
         trusted_proxies=tuple(entry.strip() for entry in file.server.trusted_proxies),
         proxy_header=file.server.proxy_header,

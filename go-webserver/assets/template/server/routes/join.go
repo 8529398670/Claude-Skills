@@ -77,7 +77,7 @@ func ( handlers *Handlers ) JoinMatch( c fiber.Ctx ) ( err error ) {
 	}
 	matches , match_err := models.InviteMatches( handlers.Store , link , body.DisplayName )
 	if match_err != nil {
-		err = serverError( c )
+		err = serverError( c , match_err )
 		return
 	}
 	rows := []fiber.Map{}
@@ -132,7 +132,7 @@ func ( handlers *Handlers ) JoinClaim( c fiber.Ctx ) ( err error ) {
 		err = notFound( c , "no_such_account" )
 		return
 	case claim_err != nil:
-		err = serverError( c )
+		err = serverError( c , claim_err )
 		return
 	}
 	message := "signed back in through an invite link"
@@ -162,7 +162,7 @@ func ( handlers *Handlers ) JoinCreate( c fiber.Ctx ) ( err error ) {
 		err = c.Status( fiber.StatusConflict ).JSON( fiber.Map{ "error": "invite_link_full" } )
 		return
 	case join_err != nil:
-		err = serverError( c )
+		err = serverError( c , join_err )
 		return
 	}
 	handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , "joined through an invite link" , fiber.Map{ "link_id": link.ID } )

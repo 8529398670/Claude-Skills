@@ -16,6 +16,7 @@ from starlette.responses import JSONResponse
 from app.core.config import Config
 from app.core.config_live import Holder
 from app.core.db import Store
+from app.core.middleware import internal_error
 from app.models import RestoreError, RestoreForbiddenError, RestoreGoneError
 
 run = run_in_threadpool
@@ -84,8 +85,10 @@ def restore_refused(refusal: RestoreError) -> JSONResponse:
     return conflict(str(refusal))
 
 
-def server_error() -> JSONResponse:
-    return error(500, "internal error")
+def server_error(request: Request, cause: object) -> JSONResponse:
+    """A 500 a handler decided on. cause says why: it is what the log line
+    shows, and the client never sees it."""
+    return internal_error(request, cause)
 
 
 def parse_id(raw: str) -> int | None:

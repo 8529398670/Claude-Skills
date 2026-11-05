@@ -70,6 +70,7 @@
             <a class="nav-link" href="#invite-links" data-nav="invite-links"><i class="bi bi-link-45deg" aria-hidden="true"></i><span data-i18n="nav.invite_links"></span></a>
             <a class="nav-link" href="#all-keys" data-nav="all-keys"><i class="bi bi-shield-lock" aria-hidden="true"></i><span data-i18n="nav.all_keys"></span></a>
             <a class="nav-link" href="#logs" data-nav="logs"><i class="bi bi-journal-text" aria-hidden="true"></i><span data-i18n="nav.logs"></span></a>
+            <a class="nav-link" href="#jobs" data-nav="jobs"><i class="bi bi-clock-history" aria-hidden="true"></i><span data-i18n="nav.jobs"></span></a>
             <a class="nav-link" href="#settings" data-nav="settings"><i class="bi bi-sliders" aria-hidden="true"></i><span data-i18n="nav.settings"></span></a>
           </div>
         </nav>
@@ -208,6 +209,27 @@
                 <button id="my-link-copy-button" class="btn btn-sm btn-outline-secondary" data-i18n="account.copy_button"></button>
               </div>
             </div>
+
+            <hr />
+
+            <!-- Every device with a live session on this account; see sessions.js. -->
+            <h3 class="h6" data-i18n="sessions.heading"></h3>
+            <p class="text-body-secondary" data-i18n="sessions.description"></p>
+            <div class="table-responsive">
+              <table id="sessions-table" class="table table-hover align-middle">
+                <thead>
+                  <tr>
+                    <th data-i18n="sessions.table_device"></th>
+                    <th data-i18n="sessions.table_ip"></th>
+                    <th data-i18n="sessions.table_seen"></th>
+                    <th data-i18n="sessions.table_signed_in"></th>
+                    <th data-i18n="sessions.table_actions"></th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <button id="sessions-revoke-others" class="btn btn-outline-danger" data-i18n="sessions.revoke_others_button" hidden></button>
 
             <hr />
 
@@ -529,6 +551,29 @@
           </div>
         </section>
 
+        <!-- Background jobs, owner only; see jobs.js. -->
+        <section class="card view" data-view="jobs" id="jobs-panel" hidden>
+          <div class="card-body">
+            <h2 class="h4 card-title" data-i18n="jobs.heading"></h2>
+            <p class="text-body-secondary" data-i18n="jobs.description"></p>
+            <div class="table-responsive">
+              <table id="jobs-table" class="table table-hover align-middle">
+                <thead>
+                  <tr>
+                    <th data-i18n="jobs.table_name"></th>
+                    <th data-i18n="jobs.table_status"></th>
+                    <th data-i18n="jobs.table_last"></th>
+                    <th data-i18n="jobs.table_next"></th>
+                    <th data-i18n="jobs.table_note"></th>
+                    <th data-i18n="jobs.table_actions"></th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
         <!-- Owner only: config.yaml, one field per setting. See js/settings.js. -->
         <section class="card view" data-view="settings" id="settings-panel" hidden>
           <div class="card-body">
@@ -584,12 +629,14 @@
   <script src="/js/track.js"></script>
   <script src="/js/nav.js"></script>
   <script src="/js/keys.js"></script>
+  <script src="/js/sessions.js"></script>
   <script src="/js/join.js"></script>
   <script src="/js/pin.js"></script>
   <script src="/js/password.js"></script>
   <script src="/js/two_factor.js"></script>
   <script src="/js/invites.js"></script>
   <script src="/js/logs.js"></script>
+  <script src="/js/jobs.js"></script>
   <script src="/js/settings.js"></script>
   <script src="/js/app.js"></script>
 </body>

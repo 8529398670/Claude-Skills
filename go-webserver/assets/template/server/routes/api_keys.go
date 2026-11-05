@@ -21,7 +21,7 @@ import (
 // makes "who has standing access to this app" an answerable question.
 //
 // Revoking keeps the row, marked dead, so the listing still shows the key
-// existed and when it stopped working; the purge loop drops it later.
+// existed and when it stopped working; the `purge` job drops it later.
 // Deleting removes the row now. Either one stops the key immediately.
 //
 // Minting, revoking, and deleting require a browser session (the group in routes.go adds
@@ -90,7 +90,7 @@ func ( handlers *Handlers ) ListMyAPIKeys( c fiber.Ctx ) ( err error ) {
 	user := security.UserFrom( c )
 	keys , list_err := models.ListAPIKeysForUser( handlers.Store , user.ID )
 	if list_err != nil {
-		err = serverError( c )
+		err = serverError( c , list_err )
 		return
 	}
 	rows := []fiber.Map{}
@@ -152,7 +152,7 @@ func ( handlers *Handlers ) CreateMyAPIKey( c fiber.Ctx ) ( err error ) {
 			// into this handler fails as a refusal rather than a 500.
 			err = forbidden( c , "this account is disabled" )
 		default:
-			err = serverError( c )
+			err = serverError( c , issue_err )
 		}
 		return
 	}
@@ -185,8 +185,8 @@ func ( handlers *Handlers ) RevokeMyAPIKey( c fiber.Ctx ) ( err error ) {
 		err = notFound( c , "no such api key" )
 		return
 	}
-	if models.RevokeAPIKey( handlers.Store , key.ID ) != nil {
-		err = serverError( c )
+	if revoke_err := models.RevokeAPIKey( handlers.Store , key.ID ); revoke_err != nil {
+		err = serverError( c , revoke_err )
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": c.Params( "key_id" ) } )
@@ -281,7 +281,7 @@ func deleteKeyError( c fiber.Ctx , delete_err error ) ( err error ) {
 		err = notFound( c , "no such api key" )
 		return
 	}
-	err = serverError( c )
+	err = serverError( c , delete_err )
 	return
 }
 
@@ -291,12 +291,12 @@ func deleteKeyError( c fiber.Ctx , delete_err error ) ( err error ) {
 func ( handlers *Handlers ) ListAllAPIKeys( c fiber.Ctx ) ( err error ) {
 	keys , list_err := models.ListAPIKeys( handlers.Store )
 	if list_err != nil {
-		err = serverError( c )
+		err = serverError( c , list_err )
 		return
 	}
 	users , users_err := models.ListUsers( handlers.Store )
 	if users_err != nil {
-		err = serverError( c )
+		err = serverError( c , users_err )
 		return
 	}
 
@@ -334,8 +334,8 @@ func ( handlers *Handlers ) RevokeAnyAPIKey( c fiber.Ctx ) ( err error ) {
 		err = notFound( c , "no such api key" )
 		return
 	}
-	if models.RevokeAPIKey( handlers.Store , key.ID ) != nil {
-		err = serverError( c )
+	if revoke_err := models.RevokeAPIKey( handlers.Store , key.ID ); revoke_err != nil {
+		err = serverError( c , revoke_err )
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": c.Params( "key_id" ) } )

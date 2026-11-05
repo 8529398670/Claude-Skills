@@ -15,6 +15,7 @@
 package main
 
 import (
+	context "context"
 	embed "embed"
 	fmt "fmt"
 	fs "io/fs"
@@ -28,20 +29,32 @@ import (
 	fiber "github.com/gofiber/fiber/v3"
 
 	assets "{{MODULE_PATH}}/server/assets"
-	backup "{{MODULE_PATH}}/server/backup"
 	bootstrap "{{MODULE_PATH}}/server/bootstrap"
 	config "{{MODULE_PATH}}/server/config"
 	control "{{MODULE_PATH}}/server/control"
 	db "{{MODULE_PATH}}/server/db"
 	healthcheck "{{MODULE_PATH}}/server/healthcheck"
+	jobs "{{MODULE_PATH}}/server/jobs"
 	language "{{MODULE_PATH}}/server/language"
 	logs "{{MODULE_PATH}}/server/logs"
 	manage "{{MODULE_PATH}}/server/manage"
+	metrics "{{MODULE_PATH}}/server/metrics"
 	middleware "{{MODULE_PATH}}/server/middleware"
-	models "{{MODULE_PATH}}/server/models"
 	routes "{{MODULE_PATH}}/server/routes"
 	security "{{MODULE_PATH}}/server/security"
 	static "{{MODULE_PATH}}/server/static"
+	stream "{{MODULE_PATH}}/server/stream"
+)
+
+// How long a shutdown waits, first for requests to finish and then for
+// background jobs. Together they have to fit inside what scripts/lib.sh and
+// `docker stop` allow before they kill the process (--stop-timeout in
+// docker/run.sh).
+const (
+	drainWait   = 10 * time.Second
+	jobStopWait = 5 * time.Second
+	// A few browsers with the Logs screen open is all there should ever be.
+	logStreamLimit = 8
 )
 
 // The frontend and every shipped YAML file, compiled into the binary.
@@ -182,6 +195,8 @@ func run() ( err error ) {
 	// The activity log writes from its own goroutine; Close, deferred here,
 	// runs after the server has stopped, so the last requests make it to disk.
 	logger := logs.New( cfg.Logs , cfg.SecretKey , cfg.EncryptAtRest )
+	log_stream := stream.NewHub( logStreamLimit )
+	logger.OnFlushed( func() { log_stream.Publish( "changed" , "1" ) } )
 	logger.Start()
 	defer logger.Close()
 	logger.System( logs.LevelInfo , "server started" , map[string]any{ "version": version } )
@@ -205,6 +220,12 @@ func run() ( err error ) {
 	guard := security.New( store , settings )
 	handlers := routes.New( store , settings , guard , lang , static_server , version )
 	handlers.Logs = logger
+	registry := jobs.New( store , logger )
+	jobs.Housekeeping( registry , store , logger , settings )
+	handlers.Jobs = registry
+	recorder := metrics.New()
+	handlers.Metrics = recorder
+	handlers.LogStream = log_stream
 
 	app := fiber.New( fiber.Config{
 		AppName: cfg.ProjectName,
@@ -224,22 +245,14 @@ func run() ( err error ) {
 		TrustProxyConfig:   fiber.TrustProxyConfig{ Proxies: cfg.TrustedProxies },
 		EnableIPValidation: true,
 		ProxyHeader:        proxyHeader( cfg ),
-		ErrorHandler: func( c fiber.Ctx , handler_err error ) ( response_err error ) {
-			// Never hand an internal error message to a client. The detail
-			// goes to the log, where the operator can see it.
-			code := fiber.StatusInternalServerError
-			var fiber_err *fiber.Error
-			if ok := asFiberError( handler_err , &fiber_err ); ok {
-				code = fiber_err.Code
-			}
-			if code >= 500 {
-				log.Printf( "[error] %s %s: %v" , c.Method() , c.Path() , handler_err )
-			}
-			response_err = c.Status( code ).JSON( fiber.Map{ "error": statusText( code ) } )
-			return
-		},
+		ErrorHandler:       middleware.ErrorHandler,
 	} )
 
+	// RequestID and Metrics come first, outside Recover: a panic still has to
+	// carry a reference and be counted, and neither depends on the activity
+	// log being on.
+	app.Use( middleware.RequestID() )
+	app.Use( middleware.Metrics( recorder ) )
 	app.Use( middleware.Recover( settings ) )
 	app.Use( middleware.SecurityHeaders( settings ) )
 	app.Use( middleware.RateLimit( settings ) )
@@ -247,11 +260,19 @@ func run() ( err error ) {
 
 	handlers.Register( app )
 
-	stop_purging := startPurgeLoop( store , logger , settings )
-	defer close( stop_purging )
+	// Background work: see server/jobs. Stop is deferred after the logger and
+	// the store, so it runs before they close, and a job finishing during the
+	// wait can still write to both.
+	registry.Start()
+	defer registry.Stop( jobStopWait )
 
 	// Shut down on a signal rather than being killed, so in-flight requests
 	// finish and bolt closes cleanly instead of leaving a locked file behind.
+	// Listen only waits for that drain when it is given a context to watch:
+	// without one it returns as the listener closes, and the deferred closes
+	// above would run underneath requests still being answered.
+	draining , drain := context.WithCancel( context.Background() )
+	defer drain()
 	shutdown := make( chan os.Signal , 1 )
 	signal.Notify( shutdown , os.Interrupt , syscall.SIGTERM )
 	go func() {
@@ -261,7 +282,10 @@ func run() ( err error ) {
 		// come through, and letting a manage command start against a
 		// database that is about to close would fail confusingly.
 		control_server.Close()
-		app.ShutdownWithTimeout( 10 * time.Second )
+		// Streams never finish by themselves, so the drain would wait out its
+		// whole timeout for any page left open.
+		log_stream.Close()
+		drain()
 	}()
 
 	log.Printf( "[start] %s %s listening on %s (secure cookies: %v)" , cfg.ProjectName , version , cfg.ListenAddress() , cfg.SecureCookies )
@@ -293,7 +317,11 @@ func run() ( err error ) {
 	}
 	log.Printf( "[assets] %s" , bundle.Source )
 	log.Printf( "[control] %s" , control_server.Path() )
-	err = app.Listen( cfg.ListenAddress() , fiber.ListenConfig{ DisableStartupMessage: true } )
+	err = app.Listen( cfg.ListenAddress() , fiber.ListenConfig{
+		DisableStartupMessage: true,
+		GracefulContext:       draining,
+		ShutdownTimeout:       drainWait,
+	} )
 	return
 }
 
@@ -301,82 +329,5 @@ func proxyHeader( cfg *config.Config ) ( result string ) {
 	if cfg.TrustProxy {
 		result = cfg.ProxyHeader
 	}
-	return
-}
-
-func asFiberError( err error , out **fiber.Error ) ( ok bool ) {
-	converted , ok := err.( *fiber.Error )
-	if ok {
-		*out = converted
-	}
-	return
-}
-
-func statusText( code int ) ( result string ) {
-	switch {
-	case code == fiber.StatusNotFound:
-		result = "not found"
-	case code == fiber.StatusUnauthorized:
-		result = "not authenticated"
-	case code == fiber.StatusForbidden:
-		result = "forbidden"
-	case code == fiber.StatusTooManyRequests:
-		result = "too many requests"
-	case code >= 500:
-		result = "internal error"
-	default:
-		result = "bad request"
-	}
-	return
-}
-
-// startPurgeLoop drops expired sessions, expired login tokens, and the API
-// keys and invite links that have been dead long enough to stop being worth
-// listing. None of it is a correctness issue -- every one of those is
-// already refused on read -- so this runs quietly in the background purely to
-// keep the bolt file from growing forever.
-//
-// It also makes the scheduled backup, when one is on and due. The settings are
-// read on every pass, so switching it on needs no restart.
-func startPurgeLoop( store *db.Store , logger *logs.Logger , settings *config.Holder ) ( stop chan struct{} ) {
-	stop = make( chan struct{} )
-	go func() {
-		ticker := time.NewTicker( time.Hour )
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				sessions , _ := models.PurgeExpiredSessions( store )
-				tokens , _ := models.PurgeExpiredLoginTokens( store )
-				keys , _ := models.PurgeDeadAPIKeys( store )
-				invites , _ := models.PurgeDeadInviteLinks( store )
-				models.PurgeExpiredChallenges( store )
-				if sessions > 0 || tokens > 0 || keys > 0 || invites > 0 {
-					fmt.Printf( "[purge] removed %d expired sessions, %d expired login tokens, %d dead api keys, %d dead invite links\n" , sessions , tokens , keys , invites )
-				}
-				// The activity log's retention: compress, expire, recycle.
-				if logger.Enabled() {
-					pruned , prune_err := logger.Prune()
-					if prune_err != nil {
-						log.Printf( "[purge] logs: %v" , prune_err )
-					} else if pruned.Deleted > 0 || pruned.Compressed > 0 {
-						fmt.Printf( "[purge] logs: %d days deleted, %d compressed\n" , pruned.Deleted , pruned.Compressed )
-						logger.System( logs.LevelInfo , "logs pruned" , map[string]any{ "deleted": pruned.Deleted , "compressed": pruned.Compressed } )
-					}
-				}
-				made , removed , backup_err := backup.RunScheduled( store , settings.Get() )
-				if backup_err != nil {
-					log.Printf( "[backup] failed: %v" , backup_err )
-					logger.System( logs.LevelError , "scheduled backup failed" , map[string]any{ "error": backup_err.Error() } )
-				}
-				if made != nil {
-					fmt.Printf( "[backup] %s (%d bytes), %d old backups removed\n" , made.Path , made.Bytes , removed )
-					logger.System( logs.LevelInfo , "scheduled backup written" , map[string]any{ "path": made.Path , "bytes": made.Bytes , "removed": removed } )
-				}
-			}
-		}
-	}()
 	return
 }

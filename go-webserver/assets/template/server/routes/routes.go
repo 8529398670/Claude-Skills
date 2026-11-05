@@ -15,12 +15,15 @@ import (
 
 	config "{{MODULE_PATH}}/server/config"
 	db "{{MODULE_PATH}}/server/db"
+	jobs "{{MODULE_PATH}}/server/jobs"
 	language "{{MODULE_PATH}}/server/language"
 	logs "{{MODULE_PATH}}/server/logs"
+	metrics "{{MODULE_PATH}}/server/metrics"
 	mcp "{{MODULE_PATH}}/server/mcp"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 	static "{{MODULE_PATH}}/server/static"
+	stream "{{MODULE_PATH}}/server/stream"
 )
 
 // Handlers carries the dependencies every route group needs. Passing this in
@@ -48,8 +51,15 @@ type Handlers struct {
 	// Logs is the activity log (server/logs), set by main.go after New. Nil
 	// or switched off, nothing is logged and its routes are not registered.
 	Logs *logs.Logger
+	// Jobs is the background job registry (server/jobs), set by main.go.
+	Jobs *jobs.Registry
+	// Metrics counts requests for /metrics, set by main.go.
+	Metrics *metrics.Recorder
+	// LogStream is who has the Logs screen open with Live on, set by main.go.
+	LogStream *stream.Hub
 
 	uiEventBudget eventBudget
+	readiness     readiness
 }
 
 func New( store *db.Store , settings *config.Holder , guard *security.Guard , lang *language.Language , static_server *static.Server , version string ) ( handlers *Handlers ) {
@@ -85,6 +95,7 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	app.Post( "/api/login/password" , handlers.RequirePasswords , handlers.PasswordLogin )
 	app.Get( "/api/language" , handlers.GetLanguage )
 	app.Get( "/api/health" , handlers.GetHealth )
+	app.Get( "/api/ready" , handlers.GetReady )
 
 	// Public: invite links (see join.go). Holding the link is the permission,
 	// so these sit before the signed-in "/api" group below -- registered
@@ -112,6 +123,11 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	account.Post( "/account/two-factor/start" , handlers.RequireTwoFactor , handlers.Guard.RequireSession , handlers.StartTwoFactor )
 	account.Post( "/account/two-factor/confirm" , handlers.RequireTwoFactor , handlers.Guard.RequireSession , handlers.ConfirmTwoFactor )
 	account.Post( "/account/two-factor/disable" , handlers.RequireTwoFactor , handlers.Guard.RequireSession , handlers.DisableTwoFactor )
+	// Your own signed-in devices. A session only: a key that could end
+	// sessions could lock its owner out of the screen that revokes it.
+	account.Get( "/account/sessions" , handlers.Guard.RequireSession , handlers.ListMySessions )
+	account.Post( "/account/sessions/revoke-others" , handlers.Guard.RequireSession , handlers.RevokeMyOtherSessions )
+	account.Post( "/account/sessions/:session_id/revoke" , handlers.Guard.RequireSession , handlers.RevokeMySession )
 	account.Post( "/logout" , handlers.Logout )
 	account.Get( "/team" , handlers.ListTeam )
 	// What someone did on the page, sent by track.js. Theirs to send, the
@@ -198,12 +214,18 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// nothing else picks up RequireOwner by sharing the string.
 	if handlers.Logs.Enabled() {
 		owner_logs := app.Group( "/api/owner/logs" , handlers.Guard.RequireOwner )
+		owner_logs.Get( "/stream" , handlers.StreamLogs )
 		owner_logs.Get( "/days" , handlers.ListLogDays )
 		owner_logs.Get( "/days/:date" , handlers.GetLogDay )
 		owner_logs.Get( "/days/:date/download" , handlers.DownloadLogDay )
 		owner_logs.Post( "/days/:date/delete" , handlers.DeleteLogDay )
 		owner_logs.Post( "/prune" , handlers.PruneLogs )
 	}
+
+	// Background jobs: the owner only, from a browser session, like the log.
+	owner_jobs := app.Group( "/api/owner/jobs" , handlers.Guard.RequireOwner )
+	owner_jobs.Get( "" , handlers.ListJobs )
+	owner_jobs.Post( "/:name/run" , handlers.RunJob )
 
 	// MCP: agents calling the app with an API key (see server/mcp and
 	// mcp_tools.go). Keys only -- RequireAPIKey turns a browser session away
@@ -219,6 +241,12 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	app.Post( "/mcp" , handlers.RequireMCP , handlers.Guard.RequireAPIKey , mcp_server.Handle )
 	app.Get( "/mcp" , handlers.RequireMCP , mcp_server.MethodNotAllowed )
 	app.Delete( "/mcp" , handlers.RequireMCP , mcp_server.MethodNotAllowed )
+
+	// Prometheus. One exact path outside /api, so no group's guards reach it,
+	// and always registered so metrics.enabled can change while the server
+	// runs. An admin key only: the numbers say how the server is doing, and a
+	// browser session has no business scraping.
+	app.Get( "/metrics" , handlers.RequireMetrics , handlers.Guard.RequireAPIKey , handlers.Guard.RequireAdmin , handlers.GetMetrics )
 
 	// Catch-all static serving. Must be registered last -- it matches every
 	// remaining path, so anything added after this line never runs.
@@ -283,12 +311,19 @@ func restoreRefused( c fiber.Ctx , refusal error ) ( err error ) {
 	case errors.Is( refusal , models.ErrAPIKeyLimit ):
 		err = conflict( c , "its owner already has the maximum number of live API keys" , nil )
 	default:
-		err = serverError( c )
+		err = serverError( c , refusal )
 	}
 	return
 }
 
-func serverError( c fiber.Ctx ) ( err error ) {
-	err = c.Status( fiber.StatusInternalServerError ).JSON( fiber.Map{ "error": "internal error" } )
+// serverError ends a request that failed on our side. It writes nothing:
+// handing cause back up is what gets it to the log, and to the ErrorHandler
+// (server/middleware/errors.go), which answers with the generic message and a
+// reference the person can quote. The cause itself never reaches them.
+func serverError( _ fiber.Ctx , cause error ) ( err error ) {
+	err = cause
+	if err == nil {
+		err = errors.New( "internal error" )
+	}
 	return
 }
