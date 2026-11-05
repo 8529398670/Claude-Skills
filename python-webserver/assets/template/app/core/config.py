@@ -44,6 +44,10 @@ from app.core.layout import PINNED, in_container
 # than a setting because it is how config.yaml itself is found.
 APP_SLUG = "{{PROJECT_SLUG}}"
 
+# What everything but the rotation itself says when one was left half way
+# inside the container.
+ROTATION_PENDING_MESSAGE = "a key rotation was cut short -- run docker/rotate-key.sh on the host to finish it"
+
 # Filenames this app uses. Everything it persists lives under the app
 # directory -- see default_app_dir for why.
 # The folder of a source checkout that holds config.yaml, config.example.yaml,
@@ -53,6 +57,9 @@ CONFIG_FILE_NAME = "config.yaml"
 DATABASE_FILE_NAME = "app.db"
 STORAGE_DIR_NAME = "storage"
 LOGS_DIR_NAME = "logs"
+BACKUPS_DIR_NAME = "backups"
+# Held by the running server. See app/core/server_lock.py.
+SERVER_LOCK_NAME = "server.lock"
 LANGUAGE_FILE_NAME = "language.yaml"
 # Beside config.yaml. See config_secret.secret_path_for.
 SECRET_FILE_NAME = "secret.key"
@@ -120,6 +127,7 @@ class ServerSection:
     body_limit_bytes: int
     rate_limit_max: int
     rate_limit_window_seconds: int
+    rate_limit_signin_max: int
     mcp: bool
     # Deprecated: the key lives in secret.key. This is read only so that a
     # config.yaml from before the move can be migrated
@@ -151,6 +159,13 @@ class LogsSection:
 
 
 @dataclass
+class BackupsSection:
+    enabled: bool
+    interval_hours: int
+    keep: int
+
+
+@dataclass
 class DockerSection:
     image: str
     container: str
@@ -170,6 +185,7 @@ class File:
     server: ServerSection
     auth: AuthSection
     logs: LogsSection
+    backups: BackupsSection
     docker: DockerSection
 
 
@@ -182,6 +198,7 @@ SECTIONS: dict[str, type] = {
     "server": ServerSection,
     "auth": AuthSection,
     "logs": LogsSection,
+    "backups": BackupsSection,
     "docker": DockerSection,
 }
 
@@ -206,6 +223,19 @@ class LogsConfig:
     static_assets: bool = False
     ui_clicks: bool = True
     echo: bool = True
+
+
+@dataclass(frozen=True)
+class BackupsConfig:
+    """config.yaml's backups section, resolved. dir is where every backup
+    goes unless `manage backup --out` says otherwise (<app_dir>/backups,
+    created 0700 the first time something is written there). See
+    app/core/backup.py."""
+
+    enabled: bool = False
+    dir: Path = Path(BACKUPS_DIR_NAME)
+    interval_hours: int = 24
+    keep: int = 7
 
 
 @dataclass(frozen=True)
@@ -289,6 +319,8 @@ class Config:
 
     rate_limit_max: int = 120
     rate_limit_window_seconds: int = 60
+    # The separate budget for signing in and joining.
+    rate_limit_signin_max: int = 60
     body_limit_bytes: int = 1048576
 
     # proxy_header is believed only when trust_proxy is on *and* the
@@ -307,6 +339,9 @@ class Config:
     # The activity log's settings; see app/core/logs.py.
     logs: LogsConfig = field(default_factory=LogsConfig)
 
+    # The scheduled backup's settings; see app/core/backup.py.
+    backups: BackupsConfig = field(default_factory=BackupsConfig)
+
     # secret.key, beside config_file: the one file besides the app directory
     # that a backup must include. secret_created is true when this run
     # generated the key, secret_migrated when it moved server.secret_key out
@@ -314,6 +349,13 @@ class Config:
     secret_file: Path = Path(SECRET_FILE_NAME)
     secret_created: bool = False
     secret_migrated: bool = False
+
+    # rotation_finished is true when this load completed a key rotation that
+    # had been cut short. rotation_pending is the same discovery inside the
+    # container, which cannot complete one: docker/rotate-key.sh does, on the
+    # host. See config_secret.py.
+    rotation_finished: bool = False
+    rotation_pending: bool = False
 
     # What this was built from, for config_live.Holder.
     file: Any = field(default=None, repr=False, compare=False)
@@ -624,6 +666,7 @@ def validate(file: File) -> list[str]:
     check(server.body_limit_bytes > 0, "server.body_limit_bytes must be positive")
     check(server.rate_limit_max > 0, "server.rate_limit_max must be positive")
     check(server.rate_limit_window_seconds > 0, "server.rate_limit_window_seconds must be positive")
+    check(server.rate_limit_signin_max > 0, "server.rate_limit_signin_max must be positive")
 
     auth = file.auth
     check(auth.session_ttl_seconds > 0, "auth.session_ttl_seconds must be positive")
@@ -635,6 +678,10 @@ def validate(file: File) -> list[str]:
     check(logs.max_total_mb >= 1, "logs.max_total_mb must be positive")
     check(1 <= logs.max_file_mb <= logs.max_total_mb, "logs.max_file_mb must be positive and no more than logs.max_total_mb")
     check(logs.compress_after_days >= 0, "logs.compress_after_days must be 0 (never) or more")
+
+    backups = file.backups
+    check(backups.interval_hours >= 1, f"backups.interval_hours must be at least 1, got {backups.interval_hours}")
+    check(backups.keep >= 1, f"backups.keep must be at least 1, got {backups.keep}")
 
     docker = file.docker
     check(bool(_IMAGE.match(docker.image)), f"docker.image {docker.image!r} is not a valid lowercase image name")
@@ -781,6 +828,22 @@ def load_path(path: Path, exists: bool) -> Config:
 
     file = read_file(path)
     paths = resolve_paths(file, path)
+
+    # A key rotation cut short: the data may already be on the new key, so
+    # this has to finish before the key is read. Inside the container
+    # secret.key cannot be written, so it is left for docker/rotate-key.sh.
+    rotation_pending = False
+    rotation_finished = False
+    if config_secret.rotation_pending(paths.app_dir):
+        if in_container():
+            rotation_pending = True
+        else:
+            try:
+                config_secret.finish_rotation(paths.app_dir, paths.database_path, path)
+            except OSError as error:
+                raise ConfigError(f"could not finish an interrupted key rotation: {error}") from None
+            rotation_finished = True
+
     secret = config_secret.resolve_secret(file, path, paths.database_path)
     if secret.rewrote:
         # The migration took the key's line out of config.yaml: build from
@@ -807,6 +870,8 @@ def load_path(path: Path, exists: bool) -> Config:
         config_warning=warning,
         secret_created=secret.created,
         secret_migrated=secret.migrated,
+        rotation_pending=rotation_pending,
+        rotation_finished=rotation_finished,
         raw=raw,
     )
 
@@ -845,6 +910,7 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
         encrypt_at_rest=file.server.encrypt_at_rest,
         rate_limit_max=file.server.rate_limit_max,
         rate_limit_window_seconds=file.server.rate_limit_window_seconds,
+        rate_limit_signin_max=file.server.rate_limit_signin_max,
         body_limit_bytes=file.server.body_limit_bytes,
         trust_proxy=file.server.trust_proxy,
         trusted_proxies=tuple(entry.strip() for entry in file.server.trusted_proxies),
@@ -860,6 +926,12 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
             static_assets=file.logs.static_assets,
             ui_clicks=file.logs.ui_clicks,
             echo=file.logs.echo,
+        ),
+        backups=BackupsConfig(
+            enabled=file.backups.enabled,
+            dir=paths.app_dir / BACKUPS_DIR_NAME,
+            interval_hours=file.backups.interval_hours,
+            keep=file.backups.keep,
         ),
         secret_file=config_secret.secret_path_for(path),
         file=file,

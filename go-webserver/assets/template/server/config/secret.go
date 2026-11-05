@@ -6,7 +6,7 @@ package config
 // config.yaml could be edited while the server runs -- by the owner's
 // Settings screen, by hand, by `config set` -- and mounted writable into the
 // container, without any of that ever being able to read or replace the key.
-// secret.key is written once and then only read.
+// secret.key is written once and then only read, until a rotation replaces it.
 //
 // It sits beside config.yaml, wherever that is:
 //
@@ -21,6 +21,7 @@ import (
 	filepath "path/filepath"
 	runtime "runtime"
 	strings "strings"
+	time "time"
 
 	encryption "{{MODULE_PATH}}/server/encryption"
 )
@@ -81,6 +82,116 @@ func WriteSecret( path string , key string ) ( err error ) {
 	if err == nil && written != key {
 		err = fmt.Errorf( "%s does not read back as the key just written to it" , path )
 	}
+	return
+}
+
+// ---------------------------------------------------------------------------
+// key rotation
+// ---------------------------------------------------------------------------
+
+// A rotation (see server/rotate) changes two things that cannot change at the
+// same instant: the data, and secret.key. So it stages everything first, and
+// then writes one marker file. Before the marker, nothing has happened: the
+// data and the key still match, and the staging folder can be thrown away.
+// After it, the rotation is decided, and everything left is a rename that can
+// be repeated: anything that finds the marker finishes the job forward.
+//
+// That is why this part lives here. The next thing to run after a crash has to
+// finish before it reads the key, and Load is what reads the key.
+const (
+	// RotationDirName is the staging folder, inside the app directory so the
+	// renames out of it stay on one filesystem.
+	RotationDirName = ".rotate"
+	rotationMarker  = "pending"
+
+	// SecretNextSuffix and secretRetiredSuffix are beside secret.key.
+	SecretNextSuffix    = ".next"
+	secretRetiredSuffix = ".retired-"
+)
+
+// RotationDir is the staging folder.
+func RotationDir( app_dir string ) ( path string ) {
+	path = filepath.Join( app_dir , RotationDirName )
+	return
+}
+
+// RotationPending reports a rotation that has been decided but not finished.
+func RotationPending( app_dir string ) ( result bool ) {
+	result = isFile( filepath.Join( RotationDir( app_dir ) , rotationMarker ) )
+	return
+}
+
+// MarkRotation is the point of no return. Everything staged must already be
+// on disk, which is why the folder is synced before and after.
+func MarkRotation( app_dir string ) ( err error ) {
+	directory := RotationDir( app_dir )
+	syncDir( directory )
+	handle , err := os.OpenFile( filepath.Join( directory , rotationMarker ) , os.O_WRONLY|os.O_CREATE|os.O_EXCL , 0o600 )
+	if err != nil { return }
+	err = handle.Sync()
+	if close_err := handle.Close(); err == nil {
+		err = close_err
+	}
+	if err == nil {
+		syncDir( directory )
+	}
+	return
+}
+
+// FinishRotationData moves the staged database and log files into place. A
+// file already moved is simply not there to move, so this can be repeated.
+func FinishRotationData( app_dir string , database_path string , logs_dir string ) ( err error ) {
+	directory := RotationDir( app_dir )
+	staged := filepath.Join( directory , filepath.Base( database_path ) )
+	if isFile( staged ) {
+		if err = os.Rename( staged , database_path ); err != nil { return }
+		syncDir( filepath.Dir( database_path ) )
+	}
+	staged_logs := filepath.Join( directory , LogsDirName )
+	entries , read_err := os.ReadDir( staged_logs )
+	if read_err != nil { return }
+	for _ , entry := range entries {
+		if err = os.Rename( filepath.Join( staged_logs , entry.Name() ) , filepath.Join( logs_dir , entry.Name() ) ); err != nil { return }
+	}
+	syncDir( logs_dir )
+	return
+}
+
+// FinishRotationKey retires secret.key and puts the new key in its place. The
+// old key is kept because every backup made before now still needs it. retired
+// is empty when there was nothing left to do.
+func FinishRotationKey( secret_path string ) ( retired string , err error ) {
+	next := secret_path + SecretNextSuffix
+	if isFile( next ) == false { return }
+	new_key , err := ReadSecret( next )
+	if err != nil { return }
+	old_key , err := ReadSecret( secret_path )
+	if err != nil { return }
+	if old_key != new_key {
+		retired = secret_path + secretRetiredSuffix + time.Now().UTC().Format( "20060102-150405" )
+		// Already there means a run cut short in this same second wrote it.
+		if err = WriteSecret( retired , old_key ); err != nil && errors.Is( err , os.ErrExist ) == false { return }
+	}
+	if err = os.Rename( next , secret_path ); err != nil { return }
+	syncDir( filepath.Dir( secret_path ) )
+	return
+}
+
+// ClearRotation ends it. The marker goes first: a folder left without one is
+// only something to clear away, which the next rotation does.
+func ClearRotation( app_dir string ) ( err error ) {
+	directory := RotationDir( app_dir )
+	if err = os.Remove( filepath.Join( directory , rotationMarker ) ); err != nil && errors.Is( err , os.ErrNotExist ) == false { return }
+	syncDir( directory )
+	err = os.RemoveAll( directory )
+	return
+}
+
+// finishRotation is what Load does on finding the marker.
+func finishRotation( paths Paths , config_path string ) ( err error ) {
+	if err = FinishRotationData( paths.AppDir , paths.DatabasePath , filepath.Join( paths.AppDir , LogsDirName ) ); err != nil { return }
+	if _ , err = FinishRotationKey( SecretPathFor( config_path ) ); err != nil { return }
+	err = ClearRotation( paths.AppDir )
 	return
 }
 

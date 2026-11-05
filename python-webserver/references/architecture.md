@@ -26,6 +26,7 @@ when you are changing the template itself rather than building features on it.
 - [Why the server holds so little app logic](#why-the-server-holds-so-little-app-logic)
 - [Static asset caching policy](#static-asset-caching-policy)
 - [Where state lives](#where-state-lives)
+- [Changing a stored record: migrations](#changing-a-stored-record-migrations)
 - [Live configuration](#live-configuration)
 - [Where assets come from: configured or bundled](#where-assets-come-from-configured-or-bundled)
 - [One entry point](#one-entry-point)
@@ -910,6 +911,56 @@ adding a setting or writing a file anywhere, because the two rules it exists
 to protect (one backup unit, one file that holds every setting) are easy to
 break by accident.
 
+## Changing a stored record: migrations
+
+Records are JSON, so most changes need nothing. A new optional field is simply
+absent from older records (read it with `record.get`), and a new bucket is
+created at startup. A migration is for the rest: a field renamed or split, a
+value given a new meaning, records moved between buckets.
+
+The database holds a schema version (`PRAGMA user_version`): how many of the
+steps in `MIGRATIONS` (`app/core/db.py`) have run on it. `open_store` runs
+whatever is missing, in order, before anything else sees the data.
+
+```python
+def split_name(tx: Transaction) -> None:
+    for key, record in tx.all(BUCKET_USERS):
+        first, _, last = record.pop("name").partition(" ")
+        record.update(first=first, last=last)
+        tx.put(BUCKET_USERS, key, record)
+
+
+MIGRATIONS: list[Migration] = [
+    Migration("users: split name into first and last", split_name),
+]
+```
+
+A step works on plain dictionaries, because it has to keep working after a
+model has moved on: never use a model's dataclass in one. `tx` is the same
+record API as `Store.transaction`.
+
+The rules:
+
+- **Add to the end.** Never edit, reorder or remove a step that has shipped: a
+  database's version is a position in this list.
+- **A new database runs none of them.** It is stamped with the latest version,
+  so the models must already describe the newest shape.
+- **An existing database is copied first**, to
+  `app.db.before-migration-v<N>-<time>`, to undo a migration that turns out
+  wrong. Delete it once you are happy.
+- **Each step is one transaction with its version bump.** One that fails leaves
+  the database as the last one left it, and the server refuses to start and
+  names it. Fix the step and start again.
+- **The server does the upgrading.** SQLite lets `manage` open the file beside
+  a live server, so `manage` refuses to migrate while one holds `server.lock`:
+  the server would carry on with the old shape in memory. Restart the server
+  instead. With it stopped, `manage` migrates like anything else.
+- **Keep steps quick.** Nothing else runs until they finish, so a long
+  migration is a long startup.
+- **A database newer than the code is refused**, rather than read by code that
+  would not know what the new shape means. So is a backup from one. To go back
+  to older code, restore the `before-migration` copy.
+
 ## Live configuration
 
 `config.yaml` changes under a running server -- the owner's Settings screen,
@@ -999,13 +1050,24 @@ State these to the user rather than letting them be discovered in production:
   -- move the limiter to a shared store at that point rather than assuming it
   still holds.
 - **Losing the secret key loses the data** when at-rest encryption is on. It
-  is in `secret.key`; back that file up with the database, never instead of
-  it.
+  is in `secret.key`, which `manage backup` leaves out on purpose: keep a copy
+  somewhere safe, apart from your backups.
 - **An API key is a bearer credential.** Anything holding it is that account,
   at that key's role, until the key is revoked or expires -- there is no
   second factor and no origin binding. That is what a key is for, but it means
   the admin key listing is a real answer to "what could get in right now", and
   worth looking at rather than assuming.
+- **Rate limiting has two budgets, and static files have none.** Each address
+  gets `server.rate_limit_max` for most requests, and a separate
+  `server.rate_limit_signin_max` for signing in and for the invite-link calls.
+  Files the page loads are not counted, because `index.html` alone pulls in
+  over twenty, all `no-store`. That leaves them unlimited here: a flood of them
+  costs a read and a gzip each, with no database involved, so anything exposed
+  to real hostility should have a limit on the proxy in front too. The sign-in
+  budget is a backstop, and the per-account and per-address attempt counters
+  are what actually stop guessing. Everyone behind one office network shares an
+  address, so a group joining together can hit it: raise
+  `rate_limit_signin_max` for that rather than the general budget.
 - **Rate limiting counts by IP, not by key.** A key called from many hosts is
   not throttled as one caller, and several keys behind one NAT share a budget.
   The limiter runs before the request is authenticated, which is what keeps an

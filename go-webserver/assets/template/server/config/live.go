@@ -204,6 +204,7 @@ func liveConfig( boot *Config , boot_file *File , file *File ) ( next *Config ) 
 	next.SecureCookies = file.Server.SecureCookies
 	next.RateLimitMax = file.Server.RateLimitMax
 	next.RateLimitWindow = seconds( file.Server.RateLimitWindowSeconds )
+	next.RateLimitSignInMax = file.Server.RateLimitSignInMax
 	next.MCPEnabled = file.Server.MCP
 
 	next.SessionTTL = seconds( file.Auth.SessionTTLSeconds )
@@ -220,6 +221,10 @@ func liveConfig( boot *Config , boot_file *File , file *File ) ( next *Config ) 
 	next.Logs.StaticAssets = file.Logs.StaticAssets
 	next.Logs.UIClicks = file.Logs.UIClicks
 	next.Logs.Echo = file.Logs.Echo
+
+	next.Backups.Enabled = file.Backups.Enabled
+	next.Backups.Interval = time.Duration( file.Backups.IntervalHours ) * time.Hour
+	next.Backups.Keep = file.Backups.Keep
 	return
 }
 

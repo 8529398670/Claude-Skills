@@ -80,7 +80,8 @@ server:
 
   # Where the database, the control socket and app storage live. Empty means
   # ~/.config/{{PROJECT_SLUG}}/. Ignored inside the container, which always
-  # uses /app/data (mounted from docker.data_dir). [restart]
+  # uses /app/data (mounted from docker.data_dir) and keeps the socket on its
+  # tmpfs. [restart]
   app_dir: ""
 
   # Checked on disk first, embedded copy otherwise. Empty language_file means
@@ -124,14 +125,21 @@ server:
   proxy_header: X-Forwarded-For
 
   # The largest request body accepted, and how many requests one address may
-  # make per window before getting 429s.
+  # make per window before getting 429s. Files the page loads (/js, /css,
+  # /vendor, images) do not count: index.html alone pulls in over twenty.
   body_limit_bytes: 1048576        # 1 MiB [restart]
   rate_limit_max: 120              # [live]
   rate_limit_window_seconds: 60    # [live]
 
+  # Signing in and joining through an invite link have their own budget, out
+  # of the same window. Everyone behind one office network shares an address,
+  # and each person joining makes several of these calls, so raise this before
+  # handing an invite link to a large group in one room. [live]
+  rate_limit_signin_max: 60
+
   # Lets `manage` and other processes reach the database through the running
-  # server, over a unix socket in the app directory (bolt allows only one
-  # process to open the file). Off means `manage` needs the server stopped.
+  # server, over a unix socket in the app directory, or on the tmpfs inside
+  # the container (bolt allows only one process to open the file). Off means `manage` needs the server stopped.
   # [restart]
   control_socket: true
 
@@ -187,6 +195,17 @@ logs:
   static_assets: false             # also log requests for /js, /css, /vendor files
   ui_clicks: true                  # log every click; screen changes, submits and errors always are
   echo: true                       # print a one-line summary of each request to stdout
+
+# Scheduled backups, written to <app_dir>/backups by the hourly job. They are
+# the same files `manage backup` makes: the database, config.yaml and storage/,
+# but never secret.key and never the activity log. The disk that holds the
+# data also holds these, so copy them somewhere else too. Only scheduled
+# backups are removed once there are more than keep; ones you make by hand
+# stay until you delete them. [live]
+backups:
+  enabled: false                   # [live]
+  interval_hours: 24               # [live]
+  keep: 7                          # [live]
 
 # [scripts] Read by docker/run.sh, which applies a change the next time it
 # runs. Edit these on the host: inside the container they are read-only.

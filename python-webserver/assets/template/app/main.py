@@ -20,7 +20,7 @@ from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 
-from app.core import assets, bootstrap, config, config_live, db, language, logs
+from app.core import assets, backup, bootstrap, config, config_live, db, language, logs, server_lock
 from app.core.middleware import EXCEPTION_HANDLERS, RateLimit, SecurityHeaders
 from app.core.request_log import RequestLog
 from app.core.security import LoadActor
@@ -58,13 +58,27 @@ def purge_once(store: db.Store, logger: logs.Logger | None = None) -> None:
             logger.system(logs.LEVEL_INFO, "logs pruned", {"deleted": pruned["deleted"], "compressed": pruned["compressed"]})
 
 
-async def purge_loop(store: db.Store, logger: logs.Logger) -> None:
+def backup_once(store: db.Store, settings: config_live.Holder, logger: logs.Logger) -> None:
+    """The scheduled backup, when one is on and due. The settings are read on
+    every pass, so switching it on needs no restart."""
+    made, removed = backup.run_scheduled(store, settings.get())
+    if made is not None:
+        print(f"[backup] {made.path} ({made.size} bytes), {removed} old backups removed", flush=True)
+        logger.system(logs.LEVEL_INFO, "scheduled backup written", {"path": str(made.path), "bytes": made.size, "removed": removed})
+
+
+async def purge_loop(store: db.Store, settings: config_live.Holder, logger: logs.Logger) -> None:
     while True:
         await asyncio.sleep(PURGE_INTERVAL_SECONDS)
         try:
             await run_in_threadpool(purge_once, store, logger)
         except Exception as error:  # noqa: BLE001 -- housekeeping must never take the server down
             print(f"[purge] failed: {error}", flush=True)
+        try:
+            await run_in_threadpool(backup_once, store, settings, logger)
+        except Exception as error:  # noqa: BLE001 -- nor must a backup
+            print(f"[backup] failed: {error}", flush=True)
+            logger.system(logs.LEVEL_ERROR, "scheduled backup failed", {"error": str(error)})
 
 
 async def config_watch(settings: config_live.Holder) -> None:
@@ -105,7 +119,7 @@ def build_app(
         logger.system(logs.LEVEL_INFO, "server started", {"version": version})
         if cfg.secret_migrated:
             logger.system(logs.LEVEL_WARN, "secret key moved to secret.key", {"config": str(cfg.config_file), "secret": str(cfg.secret_file)})
-        tasks = [asyncio.create_task(purge_loop(store, logger)), asyncio.create_task(config_watch(settings))]
+        tasks = [asyncio.create_task(purge_loop(store, settings, logger)), asyncio.create_task(config_watch(settings))]
         try:
             yield
         finally:
@@ -141,6 +155,14 @@ def build_app(
 
 def serve(version: str) -> None:
     cfg = config.load()
+    if cfg.rotation_pending:
+        raise RuntimeError(config.ROTATION_PENDING_MESSAGE)
+    if cfg.rotation_finished:
+        print(f"[secret] finished a key rotation that had been cut short; the new key is in {cfg.secret_file}", flush=True)
+    # Held until the process ends. See app/core/server_lock.py.
+    lock = server_lock.acquire(cfg.app_dir / config.SERVER_LOCK_NAME, timeout_seconds=5)
+    if lock is None:
+        raise RuntimeError(f"another server is already running on {cfg.app_dir}")
     bundle = assets.resolve(cfg.static_dir, cfg.language_file)
     store = db.open_store(cfg.database_path, cfg.secret_key, cfg.encrypt_at_rest)
     lang = language.parse(bundle.language_yaml)

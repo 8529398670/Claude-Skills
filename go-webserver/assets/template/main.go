@@ -28,6 +28,7 @@ import (
 	fiber "github.com/gofiber/fiber/v3"
 
 	assets "{{MODULE_PATH}}/server/assets"
+	backup "{{MODULE_PATH}}/server/backup"
 	bootstrap "{{MODULE_PATH}}/server/bootstrap"
 	config "{{MODULE_PATH}}/server/config"
 	control "{{MODULE_PATH}}/server/control"
@@ -135,6 +136,13 @@ func main() {
 func run() ( err error ) {
 	cfg , err := config.Load()
 	if err != nil { return }
+	if cfg.RotationPending {
+		err = config.ErrRotationPending
+		return
+	}
+	if cfg.RotationFinished {
+		log.Printf( "[secret] finished a key rotation that had been cut short; the new key is in %s" , cfg.SecretFile )
+	}
 
 	embedded , err := embeddedStatic()
 	if err != nil { return }
@@ -239,7 +247,7 @@ func run() ( err error ) {
 
 	handlers.Register( app )
 
-	stop_purging := startPurgeLoop( store , logger )
+	stop_purging := startPurgeLoop( store , logger , settings )
 	defer close( stop_purging )
 
 	// Shut down on a signal rather than being killed, so in-flight requests
@@ -327,7 +335,10 @@ func statusText( code int ) ( result string ) {
 // listing. None of it is a correctness issue -- every one of those is
 // already refused on read -- so this runs quietly in the background purely to
 // keep the bolt file from growing forever.
-func startPurgeLoop( store *db.Store , logger *logs.Logger ) ( stop chan struct{} ) {
+//
+// It also makes the scheduled backup, when one is on and due. The settings are
+// read on every pass, so switching it on needs no restart.
+func startPurgeLoop( store *db.Store , logger *logs.Logger , settings *config.Holder ) ( stop chan struct{} ) {
 	stop = make( chan struct{} )
 	go func() {
 		ticker := time.NewTicker( time.Hour )
@@ -354,6 +365,15 @@ func startPurgeLoop( store *db.Store , logger *logs.Logger ) ( stop chan struct{
 						fmt.Printf( "[purge] logs: %d days deleted, %d compressed\n" , pruned.Deleted , pruned.Compressed )
 						logger.System( logs.LevelInfo , "logs pruned" , map[string]any{ "deleted": pruned.Deleted , "compressed": pruned.Compressed } )
 					}
+				}
+				made , removed , backup_err := backup.RunScheduled( store , settings.Get() )
+				if backup_err != nil {
+					log.Printf( "[backup] failed: %v" , backup_err )
+					logger.System( logs.LevelError , "scheduled backup failed" , map[string]any{ "error": backup_err.Error() } )
+				}
+				if made != nil {
+					fmt.Printf( "[backup] %s (%d bytes), %d old backups removed\n" , made.Path , made.Bytes , removed )
+					logger.System( logs.LevelInfo , "scheduled backup written" , map[string]any{ "path": made.Path , "bytes": made.Bytes , "removed": removed } )
 				}
 			}
 		}

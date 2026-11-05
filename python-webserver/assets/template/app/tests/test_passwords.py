@@ -45,7 +45,7 @@ class AuthRoutesTestCase(unittest.TestCase):
         self.cfg = self.holder.boot()
         self.cfg.app_dir.mkdir(parents=True, exist_ok=True)
         (self.cfg.app_dir / "logs").mkdir(exist_ok=True)
-        self.set_config(passwords_enabled=True, two_factor_enabled=True, rate_limit_max=100000)
+        self.set_config(passwords_enabled=True, two_factor_enabled=True, rate_limit_max=100000, rate_limit_signin_max=100000)
         # encrypt_at_rest off, so a test can see what a record really holds.
         self.store = db.open_store(self.cfg.database_path, self.cfg.secret_key, False)
         bundle = assets.resolve(self.cfg.static_dir, self.cfg.language_file)

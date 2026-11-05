@@ -4,7 +4,7 @@ It used to be server.secret_key in config.yaml. It moved out so that
 config.yaml could be edited while the server runs -- by the owner's Settings
 screen, by hand, by `config set` -- and mounted writable into the container,
 without any of that ever being able to read or replace the key. secret.key is
-written once and then only read.
+written once and then only read, until a rotation replaces it.
 
 It sits beside config.yaml, wherever that is:
 
@@ -17,7 +17,9 @@ server/config/secret.go is the same logic for the Go template.
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core import config
@@ -74,6 +76,110 @@ def write_secret(path: Path, key: str) -> None:
     sync_dir(path.parent)
     if read_secret(path) != key:
         raise ConfigError(f"{path} does not read back as the key just written to it")
+
+
+# ---------------------------------------------------------------------------
+# key rotation
+#
+# A rotation (see app/core/rotate.py) changes two things that cannot change at
+# the same instant: the data, and secret.key. So it stages everything first,
+# and then writes one marker file. Before the marker, nothing has happened:
+# the data and the key still match, and the staging folder can be thrown away.
+# After it, the rotation is decided, and everything left is a rename that can
+# be repeated: anything that finds the marker finishes the job forward.
+#
+# That is why this part lives here. The next thing to run after a crash has to
+# finish before it reads the key, and load is what reads the key.
+# ---------------------------------------------------------------------------
+
+# The staging folder, inside the app directory so the renames out of it stay
+# on one filesystem.
+ROTATION_DIR_NAME = ".rotate"
+ROTATION_MARKER = "pending"
+# Beside secret.key.
+SECRET_NEXT_SUFFIX = ".next"
+SECRET_RETIRED_SUFFIX = ".retired-"
+
+
+def rotation_dir(app_dir: Path) -> Path:
+    return Path(app_dir) / ROTATION_DIR_NAME
+
+
+def rotation_pending(app_dir: Path) -> bool:
+    """A rotation that has been decided but not finished."""
+    return (rotation_dir(app_dir) / ROTATION_MARKER).is_file()
+
+
+def mark_rotation(app_dir: Path) -> None:
+    """The point of no return. Everything staged must already be on disk,
+    which is why the folder is synced before and after."""
+    directory = rotation_dir(app_dir)
+    sync_dir(directory)
+    descriptor = os.open(directory / ROTATION_MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.fsync(descriptor)
+    os.close(descriptor)
+    sync_dir(directory)
+
+
+def finish_rotation_data(app_dir: Path, database_path: Path, logs_dir: Path) -> None:
+    """Move the staged database and log files into place. A file already moved
+    is simply not there to move, so this can be repeated.
+
+    Any -wal and -shm files go first. They belong to the old database, whose
+    contents the staged copy already holds, and SQLite would replay a leftover
+    log onto the new file and corrupt it."""
+    directory = rotation_dir(app_dir)
+    database_path = Path(database_path)
+    staged = directory / database_path.name
+    if staged.is_file():
+        for extension in ("-wal", "-shm"):
+            database_path.with_name(database_path.name + extension).unlink(missing_ok=True)
+        os.replace(staged, database_path)
+        sync_dir(database_path.parent)
+    staged_logs = directory / config.LOGS_DIR_NAME
+    if staged_logs.is_dir():
+        for entry in sorted(staged_logs.iterdir()):
+            os.replace(entry, Path(logs_dir) / entry.name)
+        sync_dir(Path(logs_dir))
+
+
+def finish_rotation_key(secret_path: Path) -> Path | None:
+    """Retire secret.key and put the new key in its place. The old key is kept
+    because every backup made before now still needs it. Returns where it
+    went, or None when there was nothing left to do."""
+    secret_path = Path(secret_path)
+    following = secret_path.with_name(secret_path.name + SECRET_NEXT_SUFFIX)
+    if not following.is_file():
+        return None
+    new_key = read_secret(following)
+    old_key = read_secret(secret_path)
+    retired = None
+    if old_key != new_key:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        retired = secret_path.with_name(f"{secret_path.name}{SECRET_RETIRED_SUFFIX}{stamp}")
+        try:
+            write_secret(retired, old_key)
+        except FileExistsError:
+            pass  # A run cut short in this same second wrote it.
+    os.replace(following, secret_path)
+    sync_dir(secret_path.parent)
+    return retired
+
+
+def clear_rotation(app_dir: Path) -> None:
+    """End it. The marker goes first: a folder left without one is only
+    something to clear away, which the next rotation does."""
+    directory = rotation_dir(app_dir)
+    (directory / ROTATION_MARKER).unlink(missing_ok=True)
+    sync_dir(directory)
+    shutil.rmtree(directory, ignore_errors=True)
+
+
+def finish_rotation(app_dir: Path, database_path: Path, config_path: Path) -> None:
+    """What load does on finding the marker."""
+    finish_rotation_data(app_dir, database_path, Path(app_dir) / config.LOGS_DIR_NAME)
+    finish_rotation_key(secret_path_for(config_path))
+    clear_rotation(app_dir)
 
 
 @dataclass

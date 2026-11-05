@@ -33,7 +33,8 @@ ARG BUILD_DATE=unknown
 #
 # -tags container pins the image's fixed layout into the binary
 # (server/config/layout_container.go): config at /app/config/config.yaml with
-# secret.key beside it, state in /app/data. That is what replaces setting them through ENV, and it is why
+# secret.key beside it, state in /app/data, the control socket on the tmpfs at
+# /tmp. That is what replaces setting them through ENV, and it is why
 # `docker exec <name> /app/server manage ...` needs nothing extra.
 RUN CGO_ENABLED=0 GOOS=linux go build -tags container -trimpath \
       -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \

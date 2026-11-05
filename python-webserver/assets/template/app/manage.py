@@ -21,7 +21,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from app.core import bootstrap, config, db, logs
+from app.core import backup, bootstrap, config, db, logs, rotate
 from app.models import api_keys, credentials, invite_links, login_tokens, users
 
 USAGE = """manage -- account administration for {{PROJECT_NAME}}
@@ -42,6 +42,13 @@ Usage:
   delete-key      --key-id abc123       kill one API key now and remove its record
   create-invite   --user-id 1 --label "Book club" [--uses 10] [--days 30]
                                         one link a group can join through
+  backup          [--out path] [--include-key]
+                                        one file with the database, config.yaml and
+                                        storage, safe while the server runs
+  restore         --from path --yes [--key-file path]
+                                        put a backup back; the server must be stopped
+  rotate-key      --yes                 move to a new secret key; the server must be
+                                        stopped (in Docker: docker/rotate-key.sh)
   paths                                 where this app keeps its state
   logs            [--day 2026-11-02] [--q "status:5xx"] [--limit 50]
                                         the activity log: days, or one day's
@@ -56,8 +63,17 @@ can do what an admin can and a user-scoped one cannot. A key never outranks
 the account it belongs to. --days 0 means it never expires; omit --days to use
 the server's configured default.
 
-These work whether or not the server is running: the database is opened
-directly, which SQLite's WAL mode makes safe alongside a live server.
+A backup leaves secret.key out unless --include-key says otherwise, so keep a
+copy of the key apart from your backups. Without it a backup cannot be read.
+restore keeps what it replaces beside it, as app.db.before-restore-<time>. A
+backup made under an older key needs --key-file, naming that key.
+
+rotate-key re-encrypts the database, two-factor secrets and the activity log,
+and everyone has to sign in again. The old key stays as
+secret.key.retired-<time>, because every backup made before it still needs it.
+
+These work whether or not the server is running, except restore and rotate-key:
+the database is opened directly, which SQLite's WAL mode makes safe alongside a live server.
 
 Every command reads the same config.yaml and secret.key as the server (see
 "paths" for which). secret.key in particular must hold the key the data was
@@ -127,6 +143,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--uses", type=int, default=10, help="how many people can join through it (1-1000)")
     p.add_argument("--days", type=int, default=30, help="days until it stops working (1-365)")
 
+    p = commands.add_parser("backup", help="one file with the database, config.yaml and storage")
+    p.add_argument("--out", default="", help="a file to write, or a folder to write into (default: the backups folder)")
+    p.add_argument("--include-key", action="store_true", help="put secret.key in the backup: anyone with the file can then read everything")
+
+    p = commands.add_parser("restore", help="put a backup back; the server must be stopped")
+    p.add_argument("--from", dest="source", required=True, help="the backup file")
+    p.add_argument("--key-file", default="", help="the key this backup was made with, if it is not the current one")
+    p.add_argument("--yes", action="store_true", help="confirm: the database and storage are replaced")
+
+    p = commands.add_parser("rotate-key", help="move to a new secret key; the server must be stopped")
+    p.add_argument("--new-key-file", default="", help="the new key, for docker/rotate-key.sh; empty means make one")
+    p.add_argument("--yes", action="store_true", help="confirm: everyone has to sign in again")
+
     commands.add_parser("paths", help="where this app keeps its state")
 
     p = commands.add_parser("logs", help="the activity log: days, or one day's entries")
@@ -156,7 +185,21 @@ def run(arguments: list[str]) -> None:
         command_logs(cfg, args)
         return
 
-    store = db.open_store(cfg.database_path, cfg.secret_key, cfg.encrypt_at_rest)
+    if cfg.rotation_finished:
+        print(f"[secret] finished a key rotation that had been cut short; the new key is in {cfg.secret_file}", file=sys.stderr)
+    if args.command == "rotate-key":
+        command_rotate_key(cfg, args)
+        return
+    if cfg.rotation_pending:
+        raise ManageError(config.ROTATION_PENDING_MESSAGE)
+
+    # "restore" replaces the database, so it must not depend on opening it --
+    # it has to work on a database too damaged for anything else to read.
+    if args.command == "restore":
+        command_restore(cfg, args)
+        return
+
+    store = db.open_store(cfg.database_path, cfg.secret_key, cfg.encrypt_at_rest, cfg.app_dir / config.SERVER_LOCK_NAME)
     # A database written before the owner marker existed gets one here too,
     # so the owner rules hold for commands run before the server's first boot
     # on the new version.
@@ -179,10 +222,12 @@ def run(arguments: list[str]) -> None:
         "revoke-key": command_revoke_key,
         "delete-key": command_delete_key,
         "create-invite": command_create_invite,
+        "backup": command_backup,
     }
     try:
         handlers[args.command](store, cfg, args)
     except (
+        backup.BackupError,
         db.DecodeError,
         credentials.OwnerProtectedError,
         users.NotAdminError,
@@ -387,6 +432,66 @@ def command_delete_key(store: db.Store, cfg: config.Config, args: argparse.Names
     print(f"api key {key.id} ({key.name!r}, owner #{key.user_id}) deleted -- it stops working immediately")
 
 
+def command_backup(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
+    result = backup.create(store, cfg, out=args.out, include_key=args.include_key)
+    print(f"Backup written: {result.path} ({result.size} bytes)")
+    if result.manifest.contains_key:
+        print("WARNING: it includes secret.key. Anyone holding this file can read all the data.")
+    else:
+        print(f"secret.key is NOT in it. It needs the key with fingerprint {result.manifest.key_fingerprint}:")
+        print("keep a copy of secret.key somewhere safe, apart from this file.")
+    if not result.manifest.encrypt_at_rest:
+        print("server.encrypt_at_rest is off, so the database in this backup is not encrypted.")
+
+
+def command_restore(cfg: config.Config, args: argparse.Namespace) -> None:
+    if not args.yes:
+        raise ManageError("restore replaces the database and storage; pass --yes to confirm")
+    try:
+        result = backup.restore(cfg, args.source, key_file=args.key_file)
+    except backup.BackupError as error:
+        raise ManageError(str(error)) from None
+    print(f"Restored the backup from {result.manifest.created_at}.")
+    if result.rekeyed:
+        print("It was made under another key and has been moved onto the current one.")
+        print("Everyone has to sign in again, because their cookies were sealed with the other key.")
+    if result.saved_database:
+        print(f"The database it replaced: {result.saved_database}")
+    if result.saved_storage:
+        print(f"The storage it replaced:  {result.saved_storage}")
+    if result.saved_config:
+        print(f"config.yaml was left as it is; the backup's copy is at {result.saved_config}")
+
+
+def command_rotate_key(cfg: config.Config, args: argparse.Namespace) -> None:
+    # Loading the config just finished a rotation that was cut short, which is
+    # what this command was probably run to do. Rotating again on top of it
+    # is not.
+    if cfg.rotation_finished:
+        print("That finished the rotation that was cut short. Run this again to rotate once more.")
+        return
+    if not args.yes:
+        raise ManageError("rotate-key signs everyone out and needs the server stopped; pass --yes to confirm")
+    try:
+        result = rotate.run(cfg, new_key_file=args.new_key_file)
+    except rotate.RotateError as error:
+        raise ManageError(str(error)) from None
+    if result.resumed:
+        print("Finished moving the data onto the new key.")
+        return
+    print(f"The data is on the new key (fingerprint {result.new_fingerprint}, was {result.old_fingerprint}).")
+    if cfg.encrypt_at_rest:
+        print(f"Re-encrypted the database and {result.log_files} log files.")
+    if args.new_key_file:
+        return
+    print(f"The new key is in {cfg.secret_file}: back it up.")
+    print("Everyone has to sign in again.")
+    if result.retired_key:
+        print(f"The old key is kept at {result.retired_key}")
+        print("Backups made before now still need it: `manage restore --key-file` takes it. Delete it")
+        print("once those backups no longer matter, and do not keep it beside them.")
+
+
 def command_logs(cfg: config.Config, args: argparse.Namespace) -> None:
     reader = logs.Logger(cfg.logs, cfg.secret_key, cfg.encrypt_at_rest)
     query = logs.Query(args.q)
@@ -426,6 +531,7 @@ def command_paths(cfg: config.Config) -> None:
     print(f"{'database':<14} {cfg.database_path}  (plus -wal and -shm files while in use)")
     print(f"{'storage':<14} {cfg.storage_dir}")
     print(f"{'logs':<14} {cfg.logs.dir}")
+    print(f"{'backups':<14} {cfg.backups.dir}")
     print(f"{'static':<14} {cfg.static_dir}{note(cfg.static_dir)}")
     print(f"{'language':<14} {cfg.language_file}{note(cfg.language_file)}")
     if cfg.config_warning:
@@ -441,4 +547,5 @@ def command_paths(cfg: config.Config) -> None:
     else:
         print("secret.key is NOT in the app dir. Back up config.yaml, secret.key and the app")
         print("dir together; app.db is unreadable without secret.key.")
-    print("Stop the server before copying app.db, or the copy can miss writes still in app.db-wal.")
+    print("`manage backup` is safe while the server runs. Copying app.db by hand is not: the")
+    print("copy can miss writes still in app.db-wal.")

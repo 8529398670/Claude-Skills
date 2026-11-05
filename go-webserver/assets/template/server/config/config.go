@@ -59,6 +59,7 @@ const (
 	ControlSocketName = "control.sock"
 	StorageDirName    = "storage"
 	LogsDirName       = "logs"
+	BackupsDirName    = "backups"
 	LanguageFileName  = "language.yaml"
 
 	// SecretFileName sits beside config.yaml. See SecretPathFor.
@@ -103,6 +104,7 @@ type File struct {
 	Server ServerSection `yaml:"server"`
 	Auth   AuthSection   `yaml:"auth"`
 	Logs   LogsSection   `yaml:"logs"`
+	Backups BackupsSection `yaml:"backups"`
 	Docker DockerSection `yaml:"docker"`
 	Build  BuildSection  `yaml:"build"`
 }
@@ -131,6 +133,7 @@ type ServerSection struct {
 	BodyLimitBytes         int    `yaml:"body_limit_bytes"`
 	RateLimitMax           int    `yaml:"rate_limit_max"`
 	RateLimitWindowSeconds int    `yaml:"rate_limit_window_seconds"`
+	RateLimitSignInMax     int    `yaml:"rate_limit_signin_max"`
 	ControlSocket          bool   `yaml:"control_socket"`
 	MCP                    bool   `yaml:"mcp"`
 }
@@ -153,6 +156,12 @@ type LogsSection struct {
 	StaticAssets      bool `yaml:"static_assets"`
 	UIClicks          bool `yaml:"ui_clicks"`
 	Echo              bool `yaml:"echo"`
+}
+
+type BackupsSection struct {
+	Enabled       bool `yaml:"enabled"`
+	IntervalHours int  `yaml:"interval_hours"`
+	Keep          int  `yaml:"keep"`
 }
 
 type DockerSection struct {
@@ -212,6 +221,13 @@ type Config struct {
 	SecretCreated  bool
 	SecretMigrated bool
 
+	// RotationFinished is true when this load completed a key rotation that
+	// had been cut short. RotationPending is the same discovery inside the
+	// container, which cannot complete one: docker/rotate-key.sh does, on the
+	// host. See secret.go.
+	RotationFinished bool
+	RotationPending  bool
+
 	// ConfigWarning is non-empty when secret.key is readable by other users,
 	// or config.yaml writable by them. It is a warning rather than an error
 	// so a misconfigured mode never stops a server that was working, but it
@@ -219,7 +235,8 @@ type Config struct {
 	ConfigWarning string
 
 	// AppDir is the one directory this application owns: the database, the
-	// control socket, and any uploaded or generated files.
+	// control socket (except in the container, see layout_container.go), and
+	// any uploaded or generated files.
 	//
 	// Defaulting to ~/.config/<slug> rather than ./data matters for the
 	// single-file build: a binary run from a Downloads folder, a USB stick,
@@ -300,6 +317,8 @@ type Config struct {
 
 	RateLimitMax    int
 	RateLimitWindow time.Duration
+	// RateLimitSignInMax is the separate budget for signing in and joining.
+	RateLimitSignInMax int
 	BodyLimit       int
 
 	// TrustProxy tells fiber to believe ProxyHeader -- but only on a
@@ -314,6 +333,9 @@ type Config struct {
 
 	// Logs is the activity log's settings; see server/logs.
 	Logs LogsConfig
+
+	// Backups is the scheduled backup's settings; see server/backup.
+	Backups BackupsConfig
 
 	// file and raw are what this was built from, for NewHolder.
 	file *File
@@ -334,13 +356,28 @@ type LogsConfig struct {
 	Echo              bool
 }
 
+// ErrRotationPending is what everything but the rotation itself says when one
+// was left half way inside the container.
+var ErrRotationPending = errors.New( "a key rotation was cut short -- run docker/rotate-key.sh on the host to finish it" )
+
+// BackupsConfig is config.yaml's backups section, resolved. Dir is where every
+// backup goes unless `manage backup -out` says otherwise (<app_dir>/backups,
+// created 0700 the first time something is written there).
+type BackupsConfig struct {
+	Enabled  bool
+	Dir      string
+	Interval time.Duration
+	Keep     int
+}
+
 // layout is what the container image pins, regardless of config.yaml. See
 // layout_container.go; outside the image every field is empty and nothing is
 // pinned.
 type layout struct {
-	ConfigFile string
-	AppDir     string
-	Host       string
+	ConfigFile    string
+	AppDir        string
+	ControlSocket string
+	Host          string
 }
 
 // InContainer reports whether this binary was built for the container image.
@@ -536,6 +573,7 @@ func ( file *File ) Validate() ( err error ) {
 	check( server.BodyLimitBytes > 0 , "server.body_limit_bytes must be positive" )
 	check( server.RateLimitMax > 0 , "server.rate_limit_max must be positive" )
 	check( server.RateLimitWindowSeconds > 0 , "server.rate_limit_window_seconds must be positive" )
+	check( server.RateLimitSignInMax > 0 , "server.rate_limit_signin_max must be positive" )
 
 	auth := file.Auth
 	check( auth.SessionTTLSeconds > 0 , "auth.session_ttl_seconds must be positive" )
@@ -547,6 +585,10 @@ func ( file *File ) Validate() ( err error ) {
 	check( logs.MaxTotalMB >= 1 , "logs.max_total_mb must be positive" )
 	check( logs.MaxFileMB >= 1 && logs.MaxFileMB <= logs.MaxTotalMB , "logs.max_file_mb must be positive and no more than logs.max_total_mb" )
 	check( logs.CompressAfterDays >= 0 , "logs.compress_after_days must be 0 (never) or more" )
+
+	backups := file.Backups
+	check( backups.IntervalHours >= 1 , "backups.interval_hours must be at least 1, got %d" , backups.IntervalHours )
+	check( backups.Keep >= 1 , "backups.keep must be at least 1, got %d" , backups.Keep )
 
 	docker := file.Docker
 	check( imagePattern.MatchString( docker.Image ) , "docker.image %q is not a valid lowercase image name" , docker.Image )
@@ -757,6 +799,24 @@ func LoadPath( path string , exists bool ) ( cfg *Config , err error ) {
 	if err != nil { return }
 
 	paths := ResolvePaths( file , path )
+
+	// A key rotation cut short: the data may already be on the new key, so
+	// this has to finish before the key is read. Inside the container
+	// secret.key cannot be written, so it is left for docker/rotate-key.sh.
+	rotation_pending := false
+	rotation_finished := false
+	if RotationPending( paths.AppDir ) {
+		if InContainer() {
+			rotation_pending = true
+		} else {
+			if err = finishRotation( paths , path ); err != nil {
+				err = fmt.Errorf( "could not finish an interrupted key rotation: %w" , err )
+				return
+			}
+			rotation_finished = true
+		}
+	}
+
 	secret , err := resolveSecret( file , path , paths.DatabasePath )
 	if err != nil { return }
 	if secret.Rewrote {
@@ -788,6 +848,8 @@ func LoadPath( path string , exists bool ) ( cfg *Config , err error ) {
 	cfg.ConfigCreated = created
 	cfg.SecretCreated = secret.Created
 	cfg.SecretMigrated = secret.Migrated
+	cfg.RotationPending = rotation_pending
+	cfg.RotationFinished = rotation_finished
 	cfg.ConfigWarning = permissionWarning( path , cfg.SecretFile )
 	if secret.Warning != "" {
 		cfg.ConfigWarning = strings.TrimPrefix( cfg.ConfigWarning + "; " + secret.Warning , "; " )
@@ -818,7 +880,7 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		AppDir:       paths.AppDir,
 		DatabasePath: paths.DatabasePath,
 
-		ControlSocketPath:    filepath.Join( paths.AppDir , ControlSocketName ),
+		ControlSocketPath:    paths.ControlSocketPath,
 		ControlSocketEnabled: file.Server.ControlSocket,
 		StorageDir:           filepath.Join( paths.AppDir , StorageDirName ),
 
@@ -845,6 +907,7 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 
 		RateLimitMax:    file.Server.RateLimitMax,
 		RateLimitWindow: seconds( file.Server.RateLimitWindowSeconds ),
+		RateLimitSignInMax: file.Server.RateLimitSignInMax,
 		BodyLimit:       file.Server.BodyLimitBytes,
 
 		TrustProxy:     file.Server.TrustProxy,
@@ -863,6 +926,13 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 			Echo:              file.Logs.Echo,
 		},
 
+		Backups: BackupsConfig{
+			Enabled:  file.Backups.Enabled,
+			Dir:      filepath.Join( paths.AppDir , BackupsDirName ),
+			Interval: time.Duration( file.Backups.IntervalHours ) * time.Hour,
+			Keep:     file.Backups.Keep,
+		},
+
 		file: file,
 	}
 	return
@@ -872,11 +942,12 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 // way the server resolves it. `config shell server` prints the same values,
 // so the scripts never work out a path on their own.
 type Paths struct {
-	ProjectDir   string
-	AppDir       string
-	DatabasePath string
-	StaticDir    string
-	LanguageFile string
+	ProjectDir        string
+	AppDir            string
+	DatabasePath      string
+	ControlSocketPath string
+	StaticDir         string
+	LanguageFile      string
 }
 
 // ResolvePaths works the paths out without creating anything.
@@ -895,6 +966,10 @@ func ResolvePaths( file *File , config_path string ) ( paths Paths ) {
 		paths.AppDir = absolute
 	}
 	paths.DatabasePath = filepath.Join( paths.AppDir , DatabaseFileName )
+	paths.ControlSocketPath = filepath.Join( paths.AppDir , ControlSocketName )
+	if pinned.ControlSocket != "" {
+		paths.ControlSocketPath = pinned.ControlSocket
+	}
 	paths.StaticDir = resolvePath( base , file.Server.StaticDir )
 
 	// An operator can drop a language.yaml into the app directory to reword

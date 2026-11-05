@@ -687,6 +687,47 @@ def _total(by_day: dict[str, list[DayFile]]) -> int:
     return sum(file.size for parts in by_day.values() for file in parts)
 
 
+def rekey_files(directory: Path, staging: Path, old_key: str, new_key: str) -> int:
+    """Write a copy of every log file in directory into staging, with each
+    line moved from old_key to new_key and every file still gzipped or not as
+    it was. Returns how many files it wrote.
+
+    A line that does not open with old_key is copied as it stands: a
+    half-written last line, or one left from a time encryption was off or
+    another key was in use. Nothing could read those before, so nothing is
+    lost, and dropping them would make this a tool that deletes things it does
+    not understand."""
+    staging.mkdir(mode=0o700, parents=True, exist_ok=True)
+    count = 0
+    for item in sorted(os.scandir(directory), key=lambda entry: entry.name):
+        if _FILE.match(item.name) is None or not item.is_file(follow_symlinks=False):
+            continue
+        opener = gzip.open if item.name.endswith(".gz") else open
+        descriptor = os.open(staging / item.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as raw:
+            with opener(item.path, "rb") as source:
+                target = gzip.GzipFile(fileobj=raw, mode="wb") if item.name.endswith(".gz") else raw
+                for line in source:
+                    target.write(_rekey_line(line, old_key, new_key))
+                if target is not raw:
+                    target.close()
+            raw.flush()
+            os.fsync(raw.fileno())
+        count += 1
+    return count
+
+
+def _rekey_line(line: bytes, old_key: str, new_key: str) -> bytes:
+    trimmed = line.strip()
+    if not trimmed or trimmed[:1] == b"{":
+        return line
+    try:
+        plain = encryption.xchacha_decrypt_bytes(old_key, base64.b64decode(trimmed, validate=True))
+    except (ValueError, encryption.CipherTextError):
+        return line
+    return base64.b64encode(encryption.xchacha_encrypt_bytes(new_key, plain)) + b"\n"
+
+
 def _compress(file: DayFile) -> None:
     """Gzip one part next to itself, then remove the original. The .gz
     appears only once it is complete (a temporary name, then a rename), so a

@@ -246,17 +246,36 @@ into the container on every run. An older project's `server.secret_key` is
 moved into it by `docker/run.sh` before the container starts; the container
 itself never writes `config/`. It must stay stable:
 
-- It encrypts session cookie payloads -- rotating it logs everyone out.
+- It encrypts session cookie payloads -- changing it logs everyone out.
 - With `server.encrypt_at_rest: true` (default) it encrypts every record in
   the database -- **rotating or losing it makes the data permanently
   unreadable.**
 
-So `secret.key` is as important as `data/` for backups. Back up both
-together or neither is useful. If the user is setting up backups, say this
-explicitly; it is the kind of thing discovered at the worst possible time.
+So `secret.key` is as important as `data/`, and `manage backup` leaves it out
+on purpose: see [Backups](#backups).
 
-To rotate deliberately, export the data first, change the key, re-import.
-There is no in-place re-encryption in the template.
+To change it, run the rotation, never an edit of the file:
+
+```bash
+docker/rotate-key.sh --yes
+```
+
+That stops the container, moves the database, the two-factor secrets and the
+activity log onto a new key, and starts it again. The container cannot do this
+alone, because `secret.key` is mounted read-only, so the work is split: the
+script writes `config/secret.key.next` on the host, a throwaway container moves
+the data, and the script swaps the key file. A marker in `data/.rotate/` holds
+the two halves together. If anything stops it part way, the server refuses to
+start rather than run on a key that does not match the data, and running the
+script again finishes the same rotation.
+
+Everyone has to sign in again. The old key stays as
+`config/secret.key.retired-<time>`, because backups made before it still need
+it: `docker/restore.sh backup.tar.gz config/secret.key.retired-<time>`. Delete
+it once those backups no longer matter. Both names are in `.gitignore` and
+`.dockerignore`.
+
+See `configuration.md` for what a rotation does and does not fix after a leak.
 
 ## First login
 
@@ -410,11 +429,50 @@ the requirement, `go-webserver` is the template for it.
 
 ## Backups
 
-The entire state is the `data/` directory plus `config/secret.key` and
-`config/config.yaml`, and you need the first two together -- `app.db` without
-the key in `secret.key` is unreadable. Stop the
-container before copying: while the server runs, recent writes can still be in
-`app.db-wal` rather than `app.db`. Use `docker stop`, copy, `docker start`.
+The state is `data/` plus `config/secret.key` and `config/config.yaml`.
+`manage backup` writes one file holding the database, `config.yaml` and
+`storage/`, **while the server runs**: `VACUUM INTO` copies one fixed moment,
+including what is still in `app.db-wal`, which copying `app.db` by hand would
+miss.
+
+```bash
+docker exec <container-name> python -m app manage backup
+docker cp <container-name>:/app/data/backups/backup-<time>.tar.gz .
+```
+
+The file lands in `data/backups/`. It belongs to the container's user on a
+Linux host, which is what `docker cp` is for.
+
+**`secret.key` is not in a backup unless you pass `--include-key`**, and nothing
+can read a backup without it, so keep a copy of the key apart from your
+backups. Each backup's manifest records the key's fingerprint, and the command
+prints it. Say this explicitly when setting backups up; it is the kind of thing
+discovered at the worst possible time. The activity log is left out too: it can
+be far larger than everything else, and losing it loses history, not data.
+
+Put one back with:
+
+```bash
+docker/restore.sh path/to/backup.tar.gz
+docker/restore.sh path/to/backup.tar.gz config/secret.key.retired-<date>
+```
+
+It stops the container, restores in a throwaway container with the same mounts,
+and starts it again. The backup is unpacked and every record decoded before
+anything in place changes, so a wrong key or a damaged file is refused with the
+data untouched. What it replaces stays in the data directory as
+`app.db.before-restore-<time>` and `storage.before-restore-<time>`. Delete them
+once you are happy. `config.yaml` is not replaced; the backup's copy is left
+beside them as `config.yaml.from-backup-<time>`.
+
+A backup made under another key comes back on the key in use now, so
+`secret.key` itself never changes and everyone just signs in again.
+
+Scheduled backups are off by default: set `backups.enabled: true`, from the
+Settings screen or `config.yaml`, and the hourly job writes
+`auto-<time>.tar.gz` every `backups.interval_hours`, keeping the last
+`backups.keep`. Backups made by hand are never removed. They sit on the same
+disk as the data, so copy them somewhere else as well.
 
 `configuration.md` covers the equivalent outside Docker, where the key may
 live inside the app directory instead.

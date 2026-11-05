@@ -28,11 +28,12 @@ app:     name
 server:  host, port, public_url, app_dir, static_dir, language_file,
          encrypt_at_rest, secure_cookies, cookie_name, trust_proxy,
          trusted_proxies, proxy_header, body_limit_bytes, rate_limit_max,
-         rate_limit_window_seconds, mcp
+         rate_limit_window_seconds, rate_limit_signin_max, mcp
 auth:    session_ttl_seconds, login_token_ttl_seconds, api_keys,
          api_key_ttl_seconds, passwords, two_factor
 logs:    enabled, retention_days, max_total_mb, max_file_mb,
          compress_after_days, static_assets, ui_clicks, echo
+backups: enabled, interval_hours, keep
 docker:  image, container, bind_address, host_port, data_dir, restart,
          memory, cpus, pids_limit, tmpfs_size
 ```
@@ -219,7 +220,7 @@ database and every activity-log line, is **not in `config.yaml`**. It is in
 One rule -- the folder `config.yaml` is in -- so there is nothing to
 configure (`config_secret.secret_path_for`). The file is 64 hex characters and
 a newline, mode 0600, in `.gitignore` and `.dockerignore`. It is written once,
-with `O_EXCL` so nothing ever replaces it, and read back before anything
+with `O_EXCL` so nothing but a rotation ever replaces it, and read back before anything
 trusts it: by `scaffold.py`, `config init`, `config secret`, a first run with
 no config anywhere, and the first `scripts/run.sh` or `docker/run.sh`.
 
@@ -274,9 +275,39 @@ Outside Docker you get the same separation by keeping `config/` in the
 project (or setting `server.app_dir` to somewhere other than the directory
 holding it).
 
-Losing the key loses the data. There is no recovery, and no in-place
-re-encryption in the template -- rotating means exporting, changing the key,
-and re-importing.
+Losing the key loses the data. There is no recovery.
+
+### Rotating the key
+
+`manage rotate-key --yes` moves everything to a new key, with the server stopped (in Docker,
+`docker/rotate-key.sh --yes`). Never swap `secret.key` by hand.
+
+| What the key protects | What a rotation does |
+|---|---|
+| Database records | re-encrypted, with `encrypt_at_rest` on |
+| Two-factor secrets | re-encrypted, always: they are encrypted on their own inside the record |
+| Activity log lines | re-encrypted, gzipped days included |
+| Session cookies | stop working: everyone signs in again |
+| Backups | left as they are: each keeps the key it was made with |
+
+The old key stays as `secret.key.retired-<time>` (mode 0600) beside the new one,
+because backups made before the rotation need it: `manage restore --from
+<file> --yes --key-file secret.key.retired-<time>`. Delete it once those backups
+no longer matter, and do not store it with them.
+
+It cannot leave the key and the data out of step. Everything is staged and
+proved in `<app_dir>/.rotate/` while the live files stay untouched, so a failure
+there changes nothing. Then one marker file decides it, and the rest is renames
+that the next `manage` command or server start finishes before it reads the key.
+
+**After a real leak, rotating is the first step, not the only one.** It means the
+leaked key no longer reads what is on disk from now on, but it does not change
+anything the key protected. If the database leaked with it, assume the contents
+are known: two-factor secrets, password hashes and everything else. So also
+revoke API keys and sessions (`manage revoke-access`), have people reset 2FA,
+and treat every backup and copy made under the old key as still readable by
+whoever holds it. Anything new that encrypts a field with the key itself must
+be added to `two_factor.rekey_record`, or it is lost at the next rotation.
 
 ## Changing settings while the server runs
 
@@ -312,7 +343,7 @@ Every key in `defaults.yaml` carries a tag in its comments:
 
 | tag | meaning | keys |
 |---|---|---|
-| `[live]` | the next request sees it | `server.public_url`, `secure_cookies`, `trust_proxy`, `trusted_proxies`, `proxy_header`, `rate_limit_max`, `rate_limit_window_seconds`, `mcp`; all of `auth:`; `logs:` except `enabled` |
+| `[live]` | the next request sees it | `server.public_url`, `secure_cookies`, `trust_proxy`, `trusted_proxies`, `proxy_header`, `rate_limit_max`, `rate_limit_window_seconds`, `rate_limit_signin_max`, `mcp`; all of `auth:` and `backups:`; `logs:` except `enabled` |
 | `[restart]` | saved now, read at startup | `app.name`, `server.host`, `port`, `app_dir`, `static_dir`, `language_file`, `encrypt_at_rest`, `cookie_name`, `body_limit_bytes`, `logs.enabled` |
 | `[scripts]` | read by `docker/run.sh` only | `docker:` |
 
@@ -493,19 +524,36 @@ the data directory (`/app/data/language.yaml`).
 
 ## Backups
 
-Back up **`secret.key`, `config.yaml` and the app directory together**:
+`manage backup` writes one file to `<app_dir>/backups/` holding the database,
+`config.yaml` and `storage/`, and it is safe while the server runs: `VACUUM INTO`
+copies one fixed moment, including what is still in `app.db-wal`, which copying
+`app.db` by hand would miss. `--out` names another file or folder.
 
-- Outside Docker: the whole `~/.config/<slug>/` directory, plus
-  `config/config.yaml` and `config/secret.key` if those are the ones in use
-  (`manage paths` says which).
-- Docker: `config/secret.key`, `config/config.yaml` **and** `docker.data_dir`
-  (`./data` by default) -- deliberately separate.
+**`secret.key` stays out unless you pass `--include-key`**, because a backup that
+carries its key can be read by anyone who gets the file. A backup without it is
+unreadable without the key, so keep a copy of `secret.key` somewhere safe, apart
+from your backups. The manifest in each backup records the key's fingerprint,
+and the command prints it. Outside Docker, `~/.config/<slug>/` can hold `secret.key`
+beside `app.db`, so a plain copy of that folder carries the key.
 
-`app.db` without the key is unreadable, and the key without the database is
-nothing; `config.yaml` is only settings, but they are this deployment's. Stop the server before copying: while it
-runs, recent writes can still be in `app.db-wal` rather than `app.db`, and a
-copy of one without the other can be missing them. With the server stopped,
-SQLite folds the log back in and `app.db` alone is complete.
+`manage restore --from <file> --yes` puts one back, with the server stopped: the
+server holds `server.lock` in the app directory for as long as it runs, and
+restore refuses while it does. It unpacks the file and decodes every record first, so a wrong key or a damaged
+file is refused with nothing changed. What it replaces is kept beside it as
+`app.db.before-restore-<time>` and `storage.before-restore-<time>`. `config.yaml`
+is left alone, with the backup's copy saved as `config.yaml.from-backup-<time>`
+to compare.
+
+A backup made under a key this deployment no longer uses needs that key:
+`manage restore --from <file> --yes --key-file <old key>`. The data comes back on
+the current key, so `secret.key` does not change. Everyone signs in again,
+because their cookies were sealed with the other key.
+
+The `backups:` section schedules them, off by default: `enabled`,
+`interval_hours` and `keep`, all `[live]`. The hourly job writes
+`auto-<time>.tar.gz` and removes the oldest past `keep`. Backups made by hand
+are never removed. The activity log is not in any backup: it can be far larger
+than everything else, and losing it loses history, not data.
 
 ## Adding a setting
 

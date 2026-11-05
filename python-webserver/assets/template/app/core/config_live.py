@@ -106,6 +106,7 @@ def live_config(boot: Config, boot_file: config.File, file: config.File) -> Conf
         secure_cookies=file.server.secure_cookies,
         rate_limit_max=file.server.rate_limit_max,
         rate_limit_window_seconds=file.server.rate_limit_window_seconds,
+        rate_limit_signin_max=file.server.rate_limit_signin_max,
         mcp_enabled=file.server.mcp,
         trust_proxy=file.server.trust_proxy,
         trusted_proxies=tuple(entry.strip() for entry in file.server.trusted_proxies),
@@ -125,6 +126,12 @@ def live_config(boot: Config, boot_file: config.File, file: config.File) -> Conf
             static_assets=file.logs.static_assets,
             ui_clicks=file.logs.ui_clicks,
             echo=file.logs.echo,
+        ),
+        backups=replace(
+            boot.backups,
+            enabled=file.backups.enabled,
+            interval_hours=file.backups.interval_hours,
+            keep=file.backups.keep,
         ),
         file=file,
     )

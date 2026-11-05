@@ -229,6 +229,9 @@ ports they ran on. Do not reset either to a shared value.
                               #   check|set|shell`
                               # layout_container.go: the image's fixed paths
     db/db.go                  # bolt open + buckets + encrypt-on-write helpers
+    db/migrate.go             # the schema version and the list of migrations
+    backup/backup.go          # `manage backup` / `restore`, and the schedule
+    rotate/rotate.go          # `manage rotate-key`: re-encrypt onto a new key
     logs/                     # the activity log: entry.go (the line + redaction),
                               #   writer.go (async, rotating), store.go (read,
                               #   search, prune), query.go (search grammar)
@@ -244,7 +247,8 @@ ports they ran on. Do not reset either to a shared value.
                               # registry.go: Tool, argument binding, Refuse
     static/static.go          # gzip-always-fresh text, long-cached images
     language/language.go      # loads language.yaml, serves it as JSON
-    middleware/middleware.go  # CSP + security headers, rate limit, recover
+    middleware/middleware.go  # CSP + security headers, rate limit (static files
+                              #   exempt, sign-in has its own budget), recover
     middleware/request_log.go # one activity-log entry per request
     routes/                   # routes.go (the URL map) + one file per group,
                               #   including api_keys.go, mcp_tools.go
@@ -276,6 +280,7 @@ ports they ran on. Do not reset either to a shared value.
   docker/
     Dockerfile                # built with the project root as context
     build.sh, run.sh          # build the image; build + run the container
+    restore.sh, rotate-key.sh # put a backup back; move to a new secret key
     lib.sh                    # shared by both (sourced)
   misc/vendor.sh              # downloads a library into static/vendor/
   .gitignore, .gitattributes, .dockerignore   # .dockerignore: what the build context leaves out
@@ -349,6 +354,11 @@ but stay consistent with the patterns already there:
   `server/models/` with plain functions, matching `user.go`. Go through
   `store.Put`/`Get`/`ForEach` -- that is what keeps at-rest encryption
   automatic instead of something each model must remember.
+- **A change to a stored record's shape** (a field renamed, split, or given a
+  new meaning) gets a step at the end of `migrations` in
+  `server/db/migrate.go`, once the app has data anyone cares about. A new
+  optional field or a new bucket needs nothing. `architecture.md` has the rules
+  and an example.
 - **New files on disk** go under `cfg.StorageDir` (`<app dir>/storage/`),
   never a path relative to the working directory -- that changes depending on
   how the process was started, and would land outside what users back up.
@@ -552,7 +562,14 @@ for anything served over https.
 sends the command over the control socket, and with it stopped it opens the
 database directly. It prints which route it took on stderr. If a command
 fails with a lock timeout, the server was started with
-`server.control_socket: false`.
+`server.control_socket: false`, or the command ran in a separate `docker run`,
+which cannot see the running container's socket (use `docker exec`).
+`manage restore` and `manage rotate-key` are the
+exceptions: they need the server stopped.
+
+To check backups, run `manage backup` with the server up, stop it, and run
+`manage restore -from <file> -yes`. Tell the user a backup leaves `secret.key`
+out unless they pass `-include-key`, and that it cannot be read without that key.
 
 If the user wants the single-file build, verify that too rather than assuming
 it works: `scripts/build.sh` for their platform, then run the binary from an empty
@@ -569,6 +586,8 @@ what the user is doing rather than defaulting to one.
 ```bash
 cd <target-dir>
 docker/run.sh                  # build, run, wait until healthy, print the URL
+docker/restore.sh <file> [key] # put a backup back
+docker/rotate-key.sh --yes     # move to a new secret key
 scripts/login.sh --docker      # a fresh owner login link from the container
 ```
 
@@ -627,6 +646,9 @@ self-sufficient:
 ./myapp manage delete-user -user-id 3 -yes
 ./myapp manage transfer-owner -user-id 2
 ./myapp manage create-invite -user-id 1 -label "Book club" -uses 20 -days 14
+./myapp manage backup                                   # safe while it runs
+./myapp manage restore -from backup-<time>.tar.gz -yes  # with it stopped
+./myapp manage rotate-key -yes                          # with it stopped
 ./myapp version
 ```
 

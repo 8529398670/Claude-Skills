@@ -13,6 +13,7 @@ app/main.py), so it is not repeated here.
 from __future__ import annotations
 
 import ipaddress
+import posixpath
 import sys
 import time
 from collections import deque
@@ -148,6 +149,56 @@ def _is_trusted(address: str, trusted: Sequence[IPNetwork]) -> bool:
     return any(parsed in network for network in trusted)
 
 
+def static_asset(method: str, path: str) -> bool:
+    """A file the page loads (/js/app.js, /vendor/...), as opposed to the page
+    itself, an API call, or a login or invite link -- whose credential can
+    contain a dot, which is why those are ruled out first."""
+    if method not in ("GET", "HEAD"):
+        return False
+    if path.startswith(("/api/", "/login/", "/join/", "/mcp")):
+        return False
+    return posixpath.splitext(path)[1] != ""
+
+
+# The exact POSTs that try a credential. Joining through an invite link counts:
+# each of those calls takes a PIN or mints an account.
+SIGN_IN_PATHS = frozenset({
+    "/api/login",
+    "/api/login/two-factor",
+    "/api/login/password",
+    "/api/join/info",
+    "/api/join/match",
+    "/api/join/claim",
+    "/api/join/create",
+})
+
+BUDGET_GENERAL = "general"
+BUDGET_SIGN_IN = "sign-in"
+BUDGET_NONE = "none"
+
+
+def budget_for(method: str, path: str) -> str:
+    """Which limit a request counts against.
+
+    The path is lowercased and loses a trailing slash first. Starlette's own
+    routes are exact, so today that changes nothing, but the Go template's
+    router ignores both and the two templates should agree; a route added with
+    looser matching must not be how a caller skips the sign-in budget.
+
+    Static files are exempt because index.html alone pulls in more than
+    twenty, all no-store, so counting them meant about five reloads a minute
+    hit a 429. Serving one touches no database and no credential. The page
+    itself is not exempt, and neither is anything under /api."""
+    normalised = path.lower()
+    if len(normalised) > 1:
+        normalised = normalised.rstrip("/")
+    if method == "POST" and normalised in SIGN_IN_PATHS:
+        return BUDGET_SIGN_IN
+    if static_asset(method, normalised):
+        return BUDGET_NONE
+    return BUDGET_GENERAL
+
+
 class RateLimit:
     """A per-process, in-memory sliding-window limiter, keyed by client IP.
     That is exactly right for the single uvicorn process this template runs.
@@ -155,17 +206,22 @@ class RateLimit:
     each would allow the full budget -- move to a shared store at that point
     rather than assuming the limit still holds.
 
+    Each address has two budgets over the same window: one for signing in, and
+    one for everything else. Keeping them apart means a page full of API calls
+    cannot lock someone out of signing in, and guessing at sign-in does not
+    get the budget the rest of the app has.
+
     It runs before the request is authenticated, which is what keeps an
     unauthenticated flood cheap to refuse.
 
-    The budget, the window and who counts as a proxy are read per request,
-    so an edit to server.rate_limit_max, rate_limit_window_seconds or the
-    proxy settings applies at once."""
+    The budgets, the window and who counts as a proxy are read per request,
+    so an edit to server.rate_limit_max, rate_limit_signin_max,
+    rate_limit_window_seconds or the proxy settings applies at once."""
 
     def __init__(self, app: ASGIApp, settings: Holder) -> None:
         self.app = app
         self.settings = settings
-        self._hits: dict[str, deque[float]] = {}
+        self._hits: dict[tuple[str, str], deque[float]] = {}
         self._last_sweep = time.monotonic()
 
     def _sweep(self, now: float, window: float) -> None:
@@ -181,14 +237,19 @@ class RateLimit:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        budget = budget_for(scope.get("method", ""), scope.get("path", ""))
+        if budget == BUDGET_NONE:
+            await self.app(scope, receive, send)
+            return
         cfg = self.settings.get()
+        limit = cfg.rate_limit_signin_max if budget == BUDGET_SIGN_IN else cfg.rate_limit_max
         window = float(cfg.rate_limit_window_seconds)
         now = time.monotonic()
         self._sweep(now, window)
-        hits = self._hits.setdefault(client_ip(scope, cfg, trusted_for(cfg)), deque())
+        hits = self._hits.setdefault((budget, client_ip(scope, cfg, trusted_for(cfg))), deque())
         while hits and now - hits[0] > window:
             hits.popleft()
-        if len(hits) >= cfg.rate_limit_max:
+        if len(hits) >= limit:
             response = JSONResponse(
                 {"error": "too many requests"},
                 status_code=429,

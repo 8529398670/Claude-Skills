@@ -15,6 +15,7 @@ data/
 config/config.yaml
 config/secret.key
 **/secret.key
+**/secret.key.*
 config/config.yaml.*
 config/.config.yaml.*
 *.md

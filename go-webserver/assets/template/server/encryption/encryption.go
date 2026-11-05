@@ -201,6 +201,14 @@ func GenerateKeyHex() ( key_hex string ) {
 	return
 }
 
+// KeyFingerprint names a key without revealing it: the start of a hash of the
+// key, which a backup's manifest can carry so a restore can say which key it
+// needs. The prefix keeps this hash from matching any other use of the key.
+func KeyFingerprint( key_hex string ) ( result string ) {
+	result = Sha256Hex( "key-fingerprint-v1:" + key_hex )[ :16 ]
+	return
+}
+
 func decodeKey( key_hex string ) ( key [32]byte , err error ) {
 	raw , decode_err := hex.DecodeString( key_hex )
 	if decode_err != nil || len( raw ) != 32 {

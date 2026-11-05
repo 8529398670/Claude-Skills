@@ -125,6 +125,16 @@ build_image() {
   echo "Built ${docker_image}:latest (${VERSION}, image ${IMAGE_ID#sha256:})"
 }
 
+# resolve_data_dir sets DATA_DIR. docker.data_dir is relative to the project
+# directory, like every docker: path.
+resolve_data_dir() {
+  case "$docker_data_dir" in
+    /*) DATA_DIR="$docker_data_dir" ;;
+    *)  DATA_DIR="$( pwd )/${docker_data_dir#./}" ;;
+  esac
+  DATA_DIR="${DATA_DIR%/}"
+}
+
 # create_config writes config.yaml from the image's defaults, and a
 # secret.key with a fresh key beside it unless one is there. Both are created
 # as the invoking user, mode 0600, and neither ever replaces an existing file.

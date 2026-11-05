@@ -331,7 +331,7 @@ func commandShell( arguments []string ) ( err error ) {
 			{ "secure_cookies" , strconv.FormatBool( file.Server.SecureCookies ) },
 			{ "trust_proxy" , strconv.FormatBool( file.Server.TrustProxy ) },
 			{ "control_socket" , strconv.FormatBool( file.Server.ControlSocket ) },
-			{ "control_socket_path" , filepath.Join( paths.AppDir , ControlSocketName ) },
+			{ "control_socket_path" , paths.ControlSocketPath },
 		}
 	case "docker":
 		docker := file.Docker

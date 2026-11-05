@@ -23,6 +23,7 @@ when you are changing the template itself rather than building features on it.
 - [Why the server holds so little app logic](#why-the-server-holds-so-little-app-logic)
 - [Static asset caching policy](#static-asset-caching-policy)
 - [Where state lives](#where-state-lives)
+- [Changing a stored record: migrations](#changing-a-stored-record-migrations)
 - [Live configuration](#live-configuration)
 - [Where assets come from: disk or embedded](#where-assets-come-from-disk-or-embedded)
 - [Known limits](#known-limits)
@@ -801,6 +802,60 @@ adding a setting or writing a file anywhere, because the two rules it exists
 to protect (one backup unit, one file that holds every setting) are easy to
 break by accident.
 
+## Changing a stored record: migrations
+
+Records are JSON, so most changes need nothing. A new optional field reads as
+its zero value from older records, and a new bucket is created at startup. A
+migration is for the rest: a field renamed or split, a value given a new
+meaning, records moved between buckets.
+
+The database holds a schema version: how many of the steps in `migrations`
+(`server/db/migrate.go`) have run on it. It lives in its own `schema` bucket,
+unencrypted, so a backup can report it without the key. `db.Open` runs whatever
+is missing, in order, before anything else sees the data. That covers the
+server starting and `manage` opening the file with the server stopped, so bolt's
+lock means nothing runs under a live server.
+
+```go
+var migrations = []Migration{
+	{
+		Name: "users: split name into first and last",
+		Up: func( tx *Tx ) ( err error ) {
+			err = tx.EachRecord( BucketUsers , func( key []byte , record map[string]any ) ( changed bool , each_err error ) {
+				first , last , _ := strings.Cut( record[ "name" ].( string ) , " " )
+				delete( record , "name" )
+				record[ "first" ] , record[ "last" ] = first , last
+				changed = true
+				return
+			} )
+			return
+		},
+	},
+}
+```
+
+`EachRecord` gives each record as generic JSON, because a migration has to keep
+working after the Go struct has moved on: never use a model's struct in one.
+`tx` also has the usual `Get`, `Put`, `Delete` and `ForEach`.
+
+The rules:
+
+- **Add to the end.** Never edit, reorder or remove a step that has shipped: a
+  database's version is a position in this list.
+- **A new database runs none of them.** It is stamped with the latest version,
+  so the structs must already describe the newest shape.
+- **An existing database is copied first**, to
+  `app.db.before-migration-v<N>-<time>`, to undo a migration that turns out
+  wrong. Delete it once you are happy.
+- **Each step is one transaction with its version bump.** One that fails leaves
+  the database as the last one left it, and the server refuses to start and
+  names it. Fix the step and start again.
+- **Keep steps quick.** bolt has one writer, and nothing else runs until they
+  finish, so a long migration is a long startup.
+- **A database newer than the build is refused**, rather than read by code that
+  would not know what the new shape means. So is a backup from one. To go back
+  to an older build, restore the `before-migration` copy.
+
 ## Live configuration
 
 `config.yaml` changes under a running server -- the owner's Settings screen,
@@ -893,9 +948,10 @@ toolchain and no container runtime. `myapp manage reissue-login` is what makes
 bolt hands its file to exactly one process. That is a real constraint, and the
 template's answer is to lean on it rather than work around it: the server owns
 the database, and every other process asks the server to act on its behalf
-over a unix socket in the app directory.
+over a unix socket.
 
     ~/.config/myapp/control.sock     mode 0600, created by the running server
+    /tmp/control/control.sock        the same, inside the container image
 
 `manage` takes whichever route is available -- the socket when a server is
 running, the database file when one is not -- so the same command works on a
@@ -906,19 +962,39 @@ signed in.
 
 ### Why there is no token on the socket
 
-There is deliberately no password, token, or handshake. The socket lives in
-the app directory, which is mode 0700, next to `app.db`, and only the user
-that owns `config.yaml` (mode 0600, holding the key) can reach it. Any
+There is deliberately no password, token, or handshake. Outside the container
+the socket lives in the app directory, which is mode 0700, next to `app.db`,
+and only the user that owns `config.yaml` (mode 0600, holding the key) can reach it. Any
 process that can open the socket can already read the key and the database
 directly, so a credential would guard nothing while adding one more secret to
 store and rotate. The filesystem permission *is* the authentication.
 
 This is also the reason the socket must never be moved somewhere
 world-readable and is never bound to a TCP address. The argument depends
-entirely on the socket being exactly as hard to reach as the database file
-sitting beside it. A network listener would need a real credential, a second
+entirely on the socket being as hard to reach as the database file. A network listener would need a real credential, a second
 copy of the auth checks, and an audit story -- which is the cost the socket
 exists to avoid.
+
+### Why the container's socket is on tmpfs
+
+The container's data directory is normally shared from the host, and such a
+mount may be unable to hold a socket: colima's refuses the bind with "operation
+not permitted". The image therefore pins the socket to `/tmp/control` on the
+container's tmpfs (`server/config/layout_container.go`). `docker exec` shares
+that tmpfs, so `manage` finds the socket with nothing extra to type.
+
+`/tmp` is open to every user, so the socket never sits in it directly.
+`control.Listen` makes `/tmp/control` mode 0700 and refuses to start unless it
+is a real directory, owned by this user, that nobody else can enter. That leaves
+the container's own user and root, who can read the key and the database
+already, so the no-token argument holds. It is also tighter than a socket in a
+shared folder, because a tmpfs is private to its container and nothing outside
+can reach it short of `docker exec`.
+
+The cost is that a separate `docker run` gets a tmpfs of its own and cannot see
+a running server. It falls back to opening the database directly, which is
+right when the server is stopped. With the server up, bolt's lock refuses it
+after 5 seconds, and `manage` says to use `docker exec` or stop the server.
 
 ### What this buys, in security terms
 
@@ -970,13 +1046,24 @@ State these to the user rather than letting them be discovered in production:
   counters, so the effective limit multiplies -- move to a shared
   `limiter.Config.Storage` at that point rather than assuming it still holds.
 - **Losing the secret key loses the data** when at-rest encryption is on. It
-  is in `config.yaml`; back that file up with the database, never instead of
-  it.
+  is in `secret.key`, which `manage backup` leaves out on purpose: keep a copy
+  somewhere safe, apart from your backups.
 - **An API key is a bearer credential.** Anything holding it is that account,
   at that key's role, until the key is revoked or expires -- there is no
   second factor and no origin binding. That is what a key is for, but it means
   the admin key listing is a real answer to "what could get in right now", and
   worth looking at rather than assuming.
+- **Rate limiting has two budgets, and static files have none.** Each address
+  gets `server.rate_limit_max` for most requests, and a separate
+  `server.rate_limit_signin_max` for signing in and for the invite-link calls.
+  Files the page loads are not counted, because `index.html` alone pulls in
+  over twenty, all `no-store`. That leaves them unlimited here: a flood of them
+  costs a read and a gzip each, with no database involved, so anything exposed
+  to real hostility should have a limit on the proxy in front too. The sign-in
+  budget is a backstop, and the per-account and per-address attempt counters
+  are what actually stop guessing. Everyone behind one office network shares an
+  address, so a group joining together can hit it: raise
+  `rate_limit_signin_max` for that rather than the general budget.
 - **Rate limiting counts by IP, not by key.** A key called from many hosts is
   not throttled as one caller, and several keys behind one NAT share a budget.
   The limiter runs before the request is authenticated, which is what keeps an

@@ -5,6 +5,7 @@
 package middleware
 
 import (
+	strings "strings"
 	time "time"
 
 	fiber "github.com/gofiber/fiber/v3"
@@ -73,33 +74,102 @@ func securityHeaders( secure_cookies bool ) ( handler fiber.Handler ) {
 	return
 }
 
+// rateBudget is which limit a request counts against.
+type rateBudget int
+
+const (
+	budgetGeneral rateBudget = iota
+	budgetSignIn
+	budgetNone
+)
+
+// signInPaths are the exact POSTs that try a credential. Joining through an
+// invite link counts: each of those calls takes a PIN or mints an account.
+var signInPaths = map[string]bool{
+	"/api/login":            true,
+	"/api/login/two-factor": true,
+	"/api/login/password":   true,
+	"/api/join/info":        true,
+	"/api/join/match":       true,
+	"/api/join/claim":       true,
+	"/api/join/create":      true,
+}
+
+// budgetFor sorts a request.
+//
+// The path is normalised first because fiber's routing is not strict: it
+// ignores case and a trailing slash, so /API/LOGIN/ reaches the same handler
+// as /api/login. Comparing the raw path would let a caller pick a spelling
+// that skips the sign-in budget, or one that passes for a static file.
+//
+// Static files are exempt because index.html alone pulls in more than twenty,
+// all no-store, so counting them meant about five reloads a minute hit a 429.
+// Serving one touches no database and no credential. The page itself is not
+// exempt, and neither is anything under /api.
+func budgetFor( method string , request_path string ) ( budget rateBudget ) {
+	normalised := strings.ToLower( request_path )
+	if len( normalised ) > 1 {
+		normalised = strings.TrimRight( normalised , "/" )
+	}
+	switch {
+	case method == fiber.MethodPost && signInPaths[ normalised ]:
+		budget = budgetSignIn
+	case staticAsset( method , normalised ):
+		budget = budgetNone
+	}
+	return
+}
+
 // RateLimit is a per-process, in-memory limiter. That is exactly right for
 // the single container docker/run.sh builds. Run more than one replica and the
 // counters stop being shared, so each replica would allow the full budget --
 // move to a shared store (limiter.Config.Storage) at that point rather than
 // assuming the limit still holds.
 //
-// The budget and the window are read per request, so an edit to
-// server.rate_limit_max or rate_limit_window_seconds applies at once.
+// Each address has two budgets over the same window: one for signing in, and
+// one for everything else. Keeping them apart means a page full of API calls
+// cannot lock someone out of signing in, and guessing at sign-in does not get
+// the budget the rest of the app has.
+//
+// The budgets and the window are read per request, so an edit to any of
+// server.rate_limit_max, rate_limit_signin_max or rate_limit_window_seconds
+// applies at once.
 func RateLimit( settings *config.Holder ) ( handler fiber.Handler ) {
-	handler = limiter.New( limiter.Config{
-		MaxFunc: func( fiber.Ctx ) ( result int ) {
-			result = settings.Get().RateLimitMax
-			return
-		},
-		ExpirationFunc: func( fiber.Ctx ) ( result time.Duration ) {
-			result = settings.Get().RateLimitWindow
-			return
-		},
-		KeyGenerator: func( c fiber.Ctx ) ( result string ) {
-			result = c.IP()
-			return
-		},
-		LimitReached: func( c fiber.Ctx ) ( err error ) {
-			err = c.Status( fiber.StatusTooManyRequests ).JSON( fiber.Map{ "error": "too many requests" } )
-			return
-		},
-	} )
+	limited := func( prefix string , limit func( cfg *config.Config ) int ) ( result fiber.Handler ) {
+		result = limiter.New( limiter.Config{
+			MaxFunc: func( fiber.Ctx ) ( max int ) {
+				max = limit( settings.Get() )
+				return
+			},
+			ExpirationFunc: func( fiber.Ctx ) ( window time.Duration ) {
+				window = settings.Get().RateLimitWindow
+				return
+			},
+			KeyGenerator: func( c fiber.Ctx ) ( key string ) {
+				key = prefix + c.IP()
+				return
+			},
+			LimitReached: func( c fiber.Ctx ) ( err error ) {
+				err = c.Status( fiber.StatusTooManyRequests ).JSON( fiber.Map{ "error": "too many requests" } )
+				return
+			},
+		} )
+		return
+	}
+	general := limited( "general:" , func( cfg *config.Config ) int { return cfg.RateLimitMax } )
+	sign_in := limited( "sign-in:" , func( cfg *config.Config ) int { return cfg.RateLimitSignInMax } )
+
+	handler = func( c fiber.Ctx ) ( err error ) {
+		switch budgetFor( c.Method() , c.Path() ) {
+		case budgetNone:
+			err = c.Next()
+		case budgetSignIn:
+			err = sign_in( c )
+		default:
+			err = general( c )
+		}
+		return
+	}
 	return
 }
 

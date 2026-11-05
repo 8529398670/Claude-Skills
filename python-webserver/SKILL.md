@@ -229,11 +229,16 @@ ports they ran on. Do not reset either to a shared value.
                               #   shell server|docker`
       layout.py               # the container image's pinned paths
       encryption.py           # the ONLY module that touches crypto
-      db.py                   # SQLite record store, encrypt-on-write
+      db.py                   # SQLite record store, encrypt-on-write, and the
+                              #   schema version and the list of migrations
+      backup.py               # `manage backup` / `restore`, and the schedule
+      rotate.py               # `manage rotate-key`: re-encrypt onto a new key
+      server_lock.py          # how restore and rotate know a server is running
       security.py             # sessions + API keys -> one Actor, guards
                               #   (incl. RequireAPIKey for /mcp, RequireOwner
                               #   for the logs), CSRF
-      middleware.py           # CSP + security headers, rate limit, JSON errors
+      middleware.py           # CSP + security headers, rate limit (static files
+                              #   exempt, sign-in has its own budget), JSON errors
       logs.py                 # the activity log: entries, redaction, the
                               #   rotating writer thread, read/search/prune
       request_log.py          # one activity-log entry per request
@@ -272,6 +277,7 @@ ports they ran on. Do not reset either to a shared value.
   docker/
     Dockerfile                # built with the project root as context
     build.sh, run.sh          # build the image; build + run the container
+    restore.sh, rotate-key.sh # put a backup back; move to a new secret key
     lib.sh                    # shared by both (sourced)
   misc/vendor.sh              # downloads a library into static/vendor/
   .gitignore, .gitattributes, .dockerignore   # .dockerignore: what the build context leaves out
@@ -347,6 +353,10 @@ but stay consistent with the patterns already there:
   what keeps at-rest encryption automatic instead of something each model
   must remember. Anything that edits an existing record goes through
   `update_value`, which is atomic.
+- **A change to a stored record's shape** (a field renamed, split, or given a
+  new meaning) gets a step at the end of `MIGRATIONS` in `app/core/db.py`, once
+  the app has data anyone cares about. A new optional field or a new bucket
+  needs nothing. `architecture.md` has the rules and an example.
 - **New files on disk** go under `cfg.storage_dir` (`<app dir>/storage/`),
   never a path relative to the working directory -- that changes depending on
   how the process was started, and would land outside what users back up.
@@ -546,6 +556,8 @@ for anything served over https.
 ```bash
 cd <target-dir>
 docker/run.sh                  # build, run, wait until healthy, print the URL
+docker/restore.sh <file> [key] # put a backup back
+docker/rotate-key.sh --yes     # move to a new secret key
 scripts/login.sh --docker      # a fresh owner login link from the container
 ```
 
@@ -581,6 +593,10 @@ The image and container names are `docker.image` and `docker.container`,
 which default to the slug of the project name (Docker rejects uppercase
 repository names); `scaffold.py` prints it.
 
+To check backups, run `manage backup` with the server up, stop it, and run
+`manage restore --from <file> --yes`. Tell the user a backup leaves `secret.key`
+out unless they pass `--include-key`, and that it cannot be read without that key.
+
 Day to day, account management belongs in the admin panel. The CLI is for
 when nobody can get in, and works against the live container:
 
@@ -591,6 +607,9 @@ docker exec -it <project-slug> python -m app manage create-key --user-id 1 --nam
 docker exec -it <project-slug> python -m app manage delete-user --user-id 3 --yes
 docker exec -it <project-slug> python -m app manage transfer-owner --user-id 2
 docker exec -it <project-slug> python -m app manage create-invite --user-id 1 --label "Book club" --uses 20 --days 14
+docker exec -it <project-slug> python -m app manage backup    # safe while it runs
+docker/restore.sh data/backups/backup-<time>.tar.gz           # stops it, restores, starts it
+docker/rotate-key.sh --yes                                    # new secret key, same data
 docker exec -it <project-slug> python -m app version
 ```
 

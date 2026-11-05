@@ -4,6 +4,7 @@ import (
 	bufio "bufio"
 	bytes "bytes"
 	gzip "compress/gzip"
+	base64 "encoding/base64"
 	json "encoding/json"
 	errors "errors"
 	fmt "fmt"
@@ -13,7 +14,10 @@ import (
 	regexp "regexp"
 	sort "sort"
 	strconv "strconv"
+	strings "strings"
 	time "time"
+
+	encryption "{{MODULE_PATH}}/server/encryption"
 )
 
 // DayLayout names the day files: UTC dates.
@@ -412,6 +416,93 @@ func totalBytes( by_day map[string][]dayFile ) ( total int64 ) {
 			total += file.size
 		}
 	}
+	return
+}
+
+// RekeyFiles writes a copy of every log file in directory into staging, with
+// each line moved from old_key to new_key and every file still gzipped or not
+// as it was. It returns how many files it wrote.
+//
+// A line that does not open with old_key is copied as it stands: a half-written
+// last line, or one left from a time encryption was off or another key was in
+// use. Nothing could read those before, so nothing is lost, and dropping them
+// would make this a tool that deletes things it does not understand.
+func RekeyFiles( directory string , staging string , old_key string , new_key string ) ( count int , err error ) {
+	entries , err := os.ReadDir( directory )
+	if err != nil { return }
+	if err = os.MkdirAll( staging , 0o700 ); err != nil { return }
+	reader := &Logger{ key: old_key , encrypt: true }
+	for _ , entry := range entries {
+		if filePattern.MatchString( entry.Name() ) == false || entry.Type().IsRegular() == false { continue }
+		source := filepath.Join( directory , entry.Name() )
+		if err = rekeyFile( reader , source , filepath.Join( staging , entry.Name() ) , new_key ); err != nil {
+			err = fmt.Errorf( "could not move %s to the new key: %w" , source , err )
+			return
+		}
+		count++
+	}
+	return
+}
+
+func rekeyFile( reader *Logger , source string , target string , new_key string ) ( err error ) {
+	input , err := os.Open( source )
+	if err != nil { return }
+	defer input.Close()
+	output , err := os.OpenFile( target , os.O_WRONLY|os.O_CREATE|os.O_EXCL , 0o600 )
+	if err != nil { return }
+	defer output.Close()
+
+	var lines io.Reader = input
+	var writer io.Writer = output
+	var zipped *gzip.Writer
+	if strings.HasSuffix( source , ".gz" ) {
+		unzipped , zip_err := gzip.NewReader( input )
+		if zip_err != nil {
+			err = zip_err
+			return
+		}
+		defer unzipped.Close()
+		lines = unzipped
+		zipped = gzip.NewWriter( output )
+		writer = zipped
+	}
+
+	buffered := bufio.NewReader( lines )
+	for {
+		line , read_err := buffered.ReadBytes( '\n' )
+		if len( line ) > 0 {
+			moved , move_err := rekeyLine( reader , line , new_key )
+			if move_err != nil {
+				err = move_err
+				return
+			}
+			if _ , err = writer.Write( moved ); err != nil { return }
+		}
+		if errors.Is( read_err , io.EOF ) { break }
+		if read_err != nil {
+			err = read_err
+			return
+		}
+	}
+	if zipped != nil {
+		if err = zipped.Close(); err != nil { return }
+	}
+	if err = output.Sync(); err != nil { return }
+	err = output.Close()
+	return
+}
+
+func rekeyLine( reader *Logger , line []byte , new_key string ) ( result []byte , err error ) {
+	result = line
+	trimmed := bytes.TrimSpace( line )
+	if len( trimmed ) == 0 || trimmed[ 0 ] == '{' { return }
+	plain , decode_err := reader.decode( trimmed )
+	if decode_err != nil { return }
+	sealed , err := encryption.ChaChaEncryptBytes( new_key , plain )
+	if err != nil { return }
+	result = make( []byte , base64.StdEncoding.EncodedLen( len( sealed ) ) + 1 )
+	base64.StdEncoding.Encode( result , sealed )
+	result[ len( result ) - 1 ] = '\n'
 	return
 }
 

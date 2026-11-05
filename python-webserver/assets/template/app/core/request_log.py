@@ -16,7 +16,6 @@ server runs (see config_live.Holder).
 """
 from __future__ import annotations
 
-import posixpath
 import time
 from urllib.parse import urlsplit
 
@@ -26,7 +25,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.core import logs
 from app.core.config import Config
 from app.core.config_live import Holder
-from app.core.middleware import client_ip, trusted_for
+from app.core.middleware import client_ip, static_asset, trusted_for
 from app.core.security import log_actor
 
 
@@ -69,7 +68,7 @@ class RequestLog:
         path = scope.get("path", "")
         if path in ("/api/logs/events", "/api/health") or path.startswith("/api/owner/logs"):
             return True
-        return not cfg.logs.static_assets and _static_asset(scope.get("method", ""), path)
+        return not cfg.logs.static_assets and static_asset(scope.get("method", ""), path)
 
     def _record(self, scope: Scope, cfg: Config, started: float, status: int, bytes_out: int, message: str) -> None:
         headers = Headers(scope=scope)
@@ -100,17 +99,6 @@ class RequestLog:
             request = record["request"]
             name = record["actor"].get("name") or "-"
             print(f"[req] {request['method']} {request['path']} {status} {request['ms']:.1f}ms {record.get('ip', '')} {name}", flush=True)
-
-
-def _static_asset(method: str, path: str) -> bool:
-    """A file the page loads (/js/app.js, /vendor/...), as opposed to the page
-    itself, an API call, or a login or invite link -- whose credential can
-    contain a dot, which is why those are ruled out first."""
-    if method not in ("GET", "HEAD"):
-        return False
-    if path.startswith(("/api/", "/login/", "/join/", "/mcp")):
-        return False
-    return posixpath.splitext(path)[1] != ""
 
 
 def _redact_referer(value: str) -> str:

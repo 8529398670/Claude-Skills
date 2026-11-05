@@ -200,7 +200,9 @@ and the dependencies before a release -- and scan the built image too, which
   since the last run (`.run/docker.last`).
 - **`--read-only`** plus a `noexec,nosuid` tmpfs for `/tmp`: the container
   cannot write to its own filesystem. This is what turns the Dockerfile's
-  ownership choices into an actual guarantee.
+  ownership choices into an actual guarantee. The tmpfs also holds the control
+  socket, so running the image `--read-only` without it stops the server at
+  startup unless `server.control_socket` is `false`.
 - **`--cap-drop ALL`** and **`--security-opt no-new-privileges:true`**: no
   Linux capabilities, and no process inside can gain more rights than it
   started with, even via a setuid binary.
@@ -257,17 +259,36 @@ into the container on every run. An older project's `server.secret_key` is
 moved into it by `docker/run.sh` before the container starts; the container
 itself never writes `config/`. It must stay stable:
 
-- It encrypts session cookie payloads -- rotating it logs everyone out.
+- It encrypts session cookie payloads -- changing it logs everyone out.
 - With `server.encrypt_at_rest: true` (default) it encrypts every value in
-  the database -- **rotating or losing it makes the data permanently
-  unreadable.**
+  the database and every activity-log line -- **losing it, or swapping it by
+  hand, makes the data permanently unreadable.**
 
-So `secret.key` is as important as `data/` for backups. Back up both
-together or neither is useful. If the user is setting up backups, say this
-explicitly; it is the kind of thing discovered at the worst possible time.
+So `secret.key` is as important as `data/`, and `manage backup` leaves it out
+on purpose: see [Backups](#backups).
 
-To rotate deliberately, export the data first, change the key, re-import.
-There is no in-place re-encryption in the template.
+To change it, run the rotation, never an edit of the file:
+
+```bash
+docker/rotate-key.sh --yes
+```
+
+That stops the container, moves the database, the two-factor secrets and the
+activity log onto a new key, and starts it again. The container cannot do this
+alone, because `secret.key` is mounted read-only, so the work is split: the
+script writes `config/secret.key.next` on the host, a throwaway container moves
+the data, and the script swaps the key file. A marker in `data/.rotate/` holds
+the two halves together. If anything stops it part way, the server refuses to
+start rather than run on a key that does not match the data, and running the
+script again finishes the same rotation.
+
+Everyone has to sign in again. The old key stays as
+`config/secret.key.retired-<time>`, because backups made before it still need
+it: `docker/restore.sh backup.tar.gz config/secret.key.retired-<time>`. Delete
+it once those backups no longer matter. Both names are in `.gitignore` and
+`.dockerignore`.
+
+See `configuration.md` for what a rotation does and does not fix after a leak.
 
 ## First login
 
@@ -295,13 +316,17 @@ docker exec -it <container-name> /app/server manage reissue-login -user-id 1
 
 **bolt allows one process to open the database**, and the running server holds
 it. `docker exec ... manage` still works, because the server listens on
-`control.sock` inside the data directory and the CLI goes through it rather
-than opening the file:
+`/tmp/control/control.sock` inside the container and the CLI goes through it
+rather than opening the file:
 
 ```bash
 docker exec -it <name> /app/server manage list-users
 docker exec -it <name> /app/server manage reissue-login -user-id 1
 ```
+
+The socket is on the container's tmpfs, not in the data directory, because a
+directory shared from the host may be unable to hold one (colima's refuses the
+bind). See "Why the container's socket is on tmpfs" in `architecture.md`.
 
 Day-to-day account management still belongs in the admin panel; the CLI is the
 recovery path for when nobody can get in.
@@ -339,6 +364,10 @@ docker start <name>
 
 The `secret.key` mount is what carries the key; without it the stored
 records cannot be decrypted.
+
+Stop the container first in every case. A one-off has its own `/tmp`, so it
+cannot see a running server's socket: it tries the database file instead, waits
+5 seconds on bolt's lock, and fails, saying to use `docker exec`.
 
 The socket lives inside the mounted data directory, so it is covered by the
 volume's permissions and never crosses the container boundary. Nothing about
@@ -461,12 +490,49 @@ got is what you built.
 
 ## Backups
 
-The entire state is the `data/` directory plus `config/secret.key` and
-`config/config.yaml`, and you need the first two together -- `app.db` without
-the key in `secret.key` is unreadable. bolt is a single file, so a
-copy taken while the server is stopped is complete and consistent; copying
-from under a running server can catch a write in progress. Use `docker stop`,
-copy, `docker start`.
+The state is `data/` plus `config/secret.key` and `config/config.yaml`.
+`manage backup` writes one file holding the database, `config.yaml` and
+`storage/`, **while the server runs**: bolt copies the database from a read
+transaction, which sees one fixed moment and holds up no writer.
+
+```bash
+docker exec <container-name> /app/server manage backup
+docker cp <container-name>:/app/data/backups/backup-<time>.tar.gz .
+```
+
+The file lands in `data/backups/`. It belongs to the container's user on a
+Linux host, which is what `docker cp` is for.
+
+**`secret.key` is not in a backup unless you pass `-include-key`**, and nothing
+can read a backup without it, so keep a copy of the key apart from your
+backups. Each backup's manifest records the key's fingerprint, and the command
+prints it. Say this explicitly when setting backups up; it is the kind of thing
+discovered at the worst possible time. The activity log is left out too: it can
+be far larger than everything else, and losing it loses history, not data.
+
+Put one back with:
+
+```bash
+docker/restore.sh path/to/backup.tar.gz
+docker/restore.sh path/to/backup.tar.gz config/secret.key.retired-<date>
+```
+
+It stops the container, restores in a throwaway container with the same mounts,
+and starts it again. The backup is unpacked and every record decoded before
+anything in place changes, so a wrong key or a damaged file is refused with the
+data untouched. What it replaces stays in the data directory as
+`app.db.before-restore-<time>` and `storage.before-restore-<time>`. Delete them
+once you are happy. `config.yaml` is not replaced; the backup's copy is left
+beside them as `config.yaml.from-backup-<time>`.
+
+A backup made under another key comes back on the key in use now, so
+`secret.key` itself never changes and everyone just signs in again.
+
+Scheduled backups are off by default: set `backups.enabled: true`, from the
+Settings screen or `config.yaml`, and the hourly job writes
+`auto-<time>.tar.gz` every `backups.interval_hours`, keeping the last
+`backups.keep`. Backups made by hand are never removed. They sit on the same
+disk as the data, so copy them somewhere else as well.
 
 `configuration.md` covers the equivalent for portable binaries, where the key
 lives inside the app directory instead.

@@ -165,6 +165,13 @@ def generate_key_hex() -> str:
     return secrets.token_hex(32)
 
 
+def key_fingerprint(key_hex: str) -> str:
+    """Name a key without revealing it: the start of a hash of the key, which
+    a backup's manifest can carry so a restore can say which key it needs.
+    The prefix keeps this hash from matching any other use of the key."""
+    return sha256_hex("key-fingerprint-v1:" + key_hex)[:16]
+
+
 def _decode_key(key_hex: str) -> bytes:
     try:
         raw = bytes.fromhex(key_hex)

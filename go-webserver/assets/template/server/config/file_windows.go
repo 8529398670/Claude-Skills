@@ -12,4 +12,11 @@ func linkCount( info os.FileInfo ) ( links uint64 , ok bool ) {
 	return
 }
 
+// OwnedByProcess has nothing to compare on Windows, where the directory ACL
+// decides who gets in.
+func OwnedByProcess( info os.FileInfo ) ( result bool ) {
+	result = true
+	return
+}
+
 func keepGroup( path string , previous os.FileInfo ) {}

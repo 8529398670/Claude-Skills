@@ -18,6 +18,14 @@ func linkCount( info os.FileInfo ) ( links uint64 , ok bool ) {
 	return
 }
 
+// OwnedByProcess reports whether this process's user owns the file.
+func OwnedByProcess( info os.FileInfo ) ( result bool ) {
+	if stat , is_stat := info.Sys().( *syscall.Stat_t ); is_stat {
+		result = int( stat.Uid ) == os.Geteuid()
+	}
+	return
+}
+
 // keepGroup gives a rewritten file back the group the old one had.
 func keepGroup( path string , previous os.FileInfo ) {
 	if stat , is_stat := previous.Sys().( *syscall.Stat_t ); is_stat {

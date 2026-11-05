@@ -58,11 +58,7 @@ migrate_config
 # path. It is mounted at /app/data and holds the database and app storage.
 # secret.key is mounted separately and stays outside it, so a leaked backup of
 # the data directory alone cannot be decrypted.
-case "$docker_data_dir" in
-  /*) DATA_DIR="$docker_data_dir" ;;
-  *)  DATA_DIR="$( pwd )/${docker_data_dir#./}" ;;
-esac
-DATA_DIR="${DATA_DIR%/}"
+resolve_data_dir
 
 # config.yaml is writable from inside the container, so treat docker.data_dir
 # as something a compromised container could have chosen: this script hands
@@ -313,7 +309,10 @@ Three things on the host make up this deployment:
   ${DATA_DIR}/
       app.db and storage/ (mounted at /app/data)
 
-Back them up together -- the database is useless without secret.key.
+Back them up: docker exec ${docker_container} python -m app manage backup
+writes one file to ${DATA_DIR}/backups while the server runs, and
+docker/restore.sh puts one back. secret.key is not in it, so keep a copy of
+that apart from your backups -- the database is useless without it.
 
 Editing config.yaml on the host: most settings apply within seconds. Use an
 editor that saves in place (vi, nano, VS Code do); one that writes a new file

@@ -11,6 +11,7 @@ import (
 	json "encoding/json"
 	errors "errors"
 	fmt "fmt"
+	os "os"
 	time "time"
 
 	bolt "go.etcd.io/bbolt"
@@ -32,9 +33,11 @@ const (
 	BucketInviteLinks = "invite_links"
 	BucketSignInChallenges = "sign_in_challenges"
 	BucketMeta        = "meta"
+	// BucketSchema holds the schema version, unencrypted. See migrate.go.
+	BucketSchema      = "schema"
 )
 
-var bucketNames = []string{ BucketUsers , BucketSessions , BucketLoginTokens , BucketAPIKeys , BucketInviteLinks , BucketSignInChallenges , BucketMeta }
+var bucketNames = []string{ BucketUsers , BucketSessions , BucketLoginTokens , BucketAPIKeys , BucketInviteLinks , BucketSignInChallenges , BucketMeta , BucketSchema }
 
 type Store struct {
 	bolt          *bolt.DB
@@ -47,6 +50,14 @@ type Store struct {
 // process (a stray `manage` command, a container that did not fully stop)
 // blocks forever instead of telling you what is wrong.
 func Open( cfg *config.Config ) ( store *Store , err error ) {
+	store , err = openWith( cfg , migrations )
+	return
+}
+
+// openWith is Open with the list of migrations named, so a test can bring its
+// own.
+func openWith( cfg *config.Config , steps []Migration ) ( store *Store , err error ) {
+	fresh := exists( cfg.DatabasePath ) == false
 	handle , err := bolt.Open( cfg.DatabasePath , 0o600 , &bolt.Options{ Timeout: 5 * time.Second } )
 	if err != nil {
 		err = fmt.Errorf( "could not open database at %s (is another instance running?): %w" , cfg.DatabasePath , err )
@@ -65,10 +76,125 @@ func Open( cfg *config.Config ) ( store *Store , err error ) {
 		}
 		return
 	} )
+	if err == nil {
+		err = store.migrate( cfg , fresh , steps )
+	}
 	if err != nil {
 		handle.Close()
 		store = nil
 	}
+	return
+}
+
+// Snapshot writes a consistent copy of the database to path while the server
+// goes on working: a bolt read transaction sees one fixed moment, and writers
+// are not held up by it. The file keeps its encryption, so it needs the same
+// key to read.
+func ( store *Store ) Snapshot( path string ) ( err error ) {
+	err = store.bolt.View( func( tx *bolt.Tx ) ( tx_err error ) {
+		tx_err = tx.CopyFile( path , 0o600 )
+		return
+	} )
+	return
+}
+
+// ErrInUse means another process holds the database.
+var ErrInUse = errors.New( "db: the database is in use" )
+
+// IsLocked says an open failed because another process holds the file, as
+// opposed to something being wrong with the file itself.
+func IsLocked( err error ) ( result bool ) {
+	result = errors.Is( err , bolt.ErrTimeout )
+	return
+}
+
+// Exclusive takes bolt's lock on a database file, for work that must not
+// happen under a live server. release gives it back. A missing file is free,
+// and so is a damaged one: bolt refuses to open it, but nothing can be
+// serving it either, and repairing it by restoring is the likeliest reason to
+// be here.
+func Exclusive( path string ) ( release func() , err error ) {
+	release = func() {}
+	if _ , stat_err := os.Stat( path ); stat_err != nil { return }
+	handle , open_err := bolt.Open( path , 0o600 , &bolt.Options{ Timeout: time.Second } )
+	switch {
+	case open_err == nil:
+		release = func() { handle.Close() }
+	case errors.Is( open_err , bolt.ErrTimeout ):
+		err = ErrInUse
+	}
+	return
+}
+
+// CheckFile opens a database file that nothing is using and decodes every
+// record in it, so a backup can be proved readable before it replaces
+// anything.
+func CheckFile( path string , secret_key string , encrypt_at_rest bool ) ( err error ) {
+	handle , err := bolt.Open( path , 0o600 , &bolt.Options{ Timeout: 5 * time.Second , ReadOnly: true } )
+	if err != nil { return }
+	defer handle.Close()
+	reader := &Store{ secretKey: secret_key , encryptAtRest: encrypt_at_rest }
+	err = handle.View( func( tx *bolt.Tx ) ( tx_err error ) {
+		tx_err = tx.ForEach( func( name []byte , bucket *bolt.Bucket ) ( bucket_err error ) {
+			if string( name ) == BucketSchema { return }
+			bucket_err = bucket.ForEach( func( key []byte , value []byte ) ( record_err error ) {
+				if value == nil { return }
+				var record any
+				if record_err = reader.decode( value , &record ); record_err != nil {
+					record_err = fmt.Errorf( "%s/%q: %w" , name , key , record_err )
+				}
+				return
+			} )
+			return
+		} )
+		return
+	} )
+	return
+}
+
+// Rekey rewrites a database file that nothing is using from old_key to
+// new_key, in one transaction, so it is all or nothing. Every value goes
+// through rewrite as plain JSON, for the fields a model encrypts a second
+// time on its own (see models.RekeyRecord). With encrypt_at_rest off only
+// rewrite has anything to change.
+func Rekey( path string , old_key string , new_key string , encrypt_at_rest bool , rewrite func( bucket string , plain []byte ) ( []byte , error ) ) ( err error ) {
+	handle , err := bolt.Open( path , 0o600 , &bolt.Options{ Timeout: 5 * time.Second } )
+	if err != nil { return }
+	defer handle.Close()
+	err = handle.Update( func( tx *bolt.Tx ) ( tx_err error ) {
+		tx_err = tx.ForEach( func( name []byte , bucket *bolt.Bucket ) ( bucket_err error ) {
+			if string( name ) == BucketSchema { return }
+			// Collected first: changing a bucket under its own cursor is the
+			// one thing bolt warns about.
+			changed := map[string][]byte{}
+			bucket_err = bucket.ForEach( func( key []byte , value []byte ) ( record_err error ) {
+				if value == nil { return }
+				plain := value
+				if encrypt_at_rest {
+					if plain , record_err = encryption.ChaChaDecryptBytes( old_key , value ); record_err != nil {
+						record_err = fmt.Errorf( "could not decrypt %s/%q with the old key: %w" , name , key , record_err )
+						return
+					}
+				}
+				if plain , record_err = rewrite( string( name ) , plain ); record_err != nil {
+					record_err = fmt.Errorf( "%s/%q: %w" , name , key , record_err )
+					return
+				}
+				if encrypt_at_rest {
+					if plain , record_err = encryption.ChaChaEncryptBytes( new_key , plain ); record_err != nil { return }
+				}
+				// A copy: plain can still be bolt's own memory here.
+				changed[ string( key ) ] = append( []byte( nil ) , plain... )
+				return
+			} )
+			if bucket_err != nil { return }
+			for key , value := range changed {
+				if bucket_err = bucket.Put( []byte( key ) , value ); bucket_err != nil { return }
+			}
+			return
+		} )
+		return
+	} )
 	return
 }
 
@@ -89,15 +215,20 @@ func ( store *Store ) encode( value any ) ( result []byte , err error ) {
 }
 
 func ( store *Store ) decode( raw []byte , out any ) ( err error ) {
-	plain := raw
-	if store.encryptAtRest {
-		plain , err = encryption.ChaChaDecryptBytes( store.secretKey , raw )
-		if err != nil {
-			err = fmt.Errorf( "could not decrypt a stored record -- is secret.key the same key it was written with?: %w" , err )
-			return
-		}
-	}
+	plain , err := store.open( raw )
+	if err != nil { return }
 	err = json.Unmarshal( plain , out )
+	return
+}
+
+// open is decode without the JSON: a stored value as its plain bytes.
+func ( store *Store ) open( raw []byte ) ( plain []byte , err error ) {
+	plain = raw
+	if store.encryptAtRest == false { return }
+	plain , err = encryption.ChaChaDecryptBytes( store.secretKey , raw )
+	if err != nil {
+		err = fmt.Errorf( "could not decrypt a stored record -- is secret.key the same key it was written with?: %w" , err )
+	}
 	return
 }
 

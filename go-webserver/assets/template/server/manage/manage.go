@@ -30,12 +30,14 @@ import (
 	filepath "path/filepath"
 	time "time"
 
+	backup "{{MODULE_PATH}}/server/backup"
 	bootstrap "{{MODULE_PATH}}/server/bootstrap"
 	config "{{MODULE_PATH}}/server/config"
 	control "{{MODULE_PATH}}/server/control"
 	db "{{MODULE_PATH}}/server/db"
 	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
+	rotate "{{MODULE_PATH}}/server/rotate"
 )
 
 const usage = `manage -- account administration for {{PROJECT_NAME}}
@@ -56,6 +58,13 @@ Usage:
   delete-key      -key-id abc123     kill one API key now and remove its record
   create-invite   -user-id 1 -label "Book club" [-uses 10] [-days 30]
                                      one link a group can join through
+  backup          [-out path] [-include-key]
+                                     one file with the database, config.yaml and
+                                     storage, safe while the server runs
+  restore         -from path -yes [-key-file path]
+                                     put a backup back; the server must be stopped
+  rotate-key      -yes               move to a new secret key; the server must be
+                                     stopped (in Docker: docker/rotate-key.sh)
   paths                              where this app keeps its state
   logs            [-day 2026-11-02] [-q "status:5xx"] [-limit 50]
                                      the activity log: days, or one day's
@@ -70,13 +79,21 @@ can do what an admin can and a user-scoped one cannot. A key never outranks
 the account it belongs to. -days 0 means it never expires; omit -days to use
 the server's configured default.
 
+A backup leaves secret.key out unless -include-key says otherwise, so keep a
+copy of the key apart from your backups. Without it a backup cannot be read.
+restore keeps what it replaces beside it, as app.db.before-restore-<time>. A
+backup made under an older key needs -key-file, naming that key.
+
+rotate-key re-encrypts the database, two-factor secrets and the activity log,
+and everyone has to sign in again. The old key stays as
+secret.key.retired-<time>, because every backup made before it still needs it.
+
 Reachable two ways, identical either way:
   ./{{PROJECT_SLUG}} manage list-users     (the single portable binary)
   ./manage list-users                      (the standalone tool in the image)
 
 These work whether or not the server is running. With the server up the
-command is sent to it over the control socket in the app directory; with the
-server stopped the database is opened directly.
+command is sent to it over the control socket; with the server stopped the database is opened directly.
 
 Every command reads the same config.yaml and secret.key as the server (see
 "paths" for which). secret.key in particular must hold the key the data was
@@ -110,6 +127,7 @@ type backend interface {
 	RevokeAPIKey( key_id string ) ( key control.APIKeyResponse , err error )
 	DeleteAPIKey( key_id string ) ( key control.APIKeyResponse , err error )
 	CreateInviteLink( user_id uint64 , label string , max_uses int , days int ) ( link control.InviteLinkResponse , err error )
+	Backup( options backup.Options ) ( result backup.Result , err error )
 	AnyAdminExists() ( result bool , err error )
 	Close() ( err error )
 	Route() ( description string )
@@ -144,6 +162,25 @@ func Run( arguments []string ) ( err error ) {
 	// with the server up or down -- the files are only ever appended to.
 	if command == "logs" {
 		err = commandLogs( cfg , rest )
+		return
+	}
+
+	if cfg.RotationFinished {
+		fmt.Fprintf( os.Stderr , "[secret] finished a key rotation that had been cut short; the new key is in %s\n" , cfg.SecretFile )
+	}
+	if command == "rotate-key" {
+		err = commandRotateKey( cfg , rest )
+		return
+	}
+	if cfg.RotationPending {
+		err = config.ErrRotationPending
+		return
+	}
+
+	// "restore" replaces the database, so it must not be holding it open --
+	// and it has to work on a database too damaged for anything else to open.
+	if command == "restore" {
+		err = commandRestore( cfg , rest )
 		return
 	}
 
@@ -185,6 +222,8 @@ func Run( arguments []string ) ( err error ) {
 		err = commandDeleteKey( back , rest )
 	case "create-invite":
 		err = commandCreateInvite( back , cfg , rest )
+	case "backup":
+		err = commandBackup( back , rest )
 	default:
 		Usage()
 		err = fmt.Errorf( "unknown command %q" , command )
@@ -211,11 +250,22 @@ func connect( cfg *config.Config ) ( back backend , err error ) {
 
 	store , open_err := db.Open( cfg )
 	if open_err != nil {
+		// A refused schema or a failed migration has its own message, and
+		// advice about the socket would only send someone the wrong way.
+		if db.IsLocked( open_err ) == false {
+			err = open_err
+			return
+		}
 		if cfg.ControlSocketEnabled {
+			advice := "If the server is running, it was started with server.control_socket: false; restart it with the socket enabled or stop it first."
+			// The socket is on the server container's own tmpfs, so a
+			// `docker run` beside it finds no socket and then a locked file.
+			if config.InContainer() {
+				advice = "If the server is running in another container, this one cannot see its socket: use `docker exec <name> /app/server manage ...` there, or stop it first."
+			}
 			err = fmt.Errorf(
-				"could not reach a running server on %s, and could not open the database directly: %w\n"+
-					"If the server is running, it was started with server.control_socket: false; restart it with the socket enabled or stop it first." ,
-				cfg.ControlSocketPath , open_err )
+				"could not reach a running server on %s, and could not open the database directly: %w\n%s" ,
+				cfg.ControlSocketPath , open_err , advice )
 			return
 		}
 		err = fmt.Errorf( "database error (server.control_socket is false, so the server must be stopped): %w" , open_err )
@@ -310,6 +360,11 @@ func ( b *controlBackend ) RevokeAPIKey( key_id string ) ( key control.APIKeyRes
 
 func ( b *controlBackend ) CreateInviteLink( user_id uint64 , label string , max_uses int , days int ) ( link control.InviteLinkResponse , err error ) {
 	link , err = b.client.CreateInviteLink( user_id , label , max_uses , days )
+	return
+}
+
+func ( b *controlBackend ) Backup( options backup.Options ) ( result backup.Result , err error ) {
+	result , err = b.client.Backup( options )
 	return
 }
 
@@ -572,6 +627,11 @@ func ( b *directBackend ) AnyAdminExists() ( result bool , err error ) {
 	return
 }
 
+func ( b *directBackend ) Backup( options backup.Options ) ( result backup.Result , err error ) {
+	result , err = backup.Create( b.store , b.cfg , options )
+	return
+}
+
 func commandBootstrapAdmin( back backend , cfg *config.Config , arguments []string ) ( err error ) {
 	set := flag.NewFlagSet( "bootstrap-admin" , flag.ExitOnError )
 	name := set.String( "name" , "" , "display name for the first admin" )
@@ -628,6 +688,108 @@ func commandReissueLogin( back backend , cfg *config.Config , arguments []string
 	if err != nil { return }
 
 	bootstrap.PrintLoginLink( cfg , fmt.Sprintf( "%s #%d %q" , user.Role , user.ID , user.DisplayName ) , user.Credential )
+	return
+}
+
+func commandBackup( back backend , arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "backup" , flag.ExitOnError )
+	out := set.String( "out" , "" , "a file to write, or a folder to write into (default: the backups folder)" )
+	include_key := set.Bool( "include-key" , false , "put secret.key in the backup: anyone with the file can then read everything" )
+	set.Parse( arguments )
+
+	// A running server does the writing, and its working directory is not
+	// this one, so a relative path has to be settled here.
+	target := *out
+	if target != "" {
+		if target , err = filepath.Abs( target ); err != nil { return }
+	}
+	result , err := back.Backup( backup.Options{ Out: target , IncludeKey: *include_key } )
+	if err != nil { return }
+
+	fmt.Printf( "Backup written: %s (%d bytes)\n" , result.Path , result.Bytes )
+	if result.Manifest.ContainsKey {
+		fmt.Println( "WARNING: it includes secret.key. Anyone holding this file can read all the data." )
+	} else {
+		fmt.Printf( "secret.key is NOT in it. It needs the key with fingerprint %s:\n" , result.Manifest.KeyFingerprint )
+		fmt.Println( "keep a copy of secret.key somewhere safe, apart from this file." )
+	}
+	if result.Manifest.EncryptAtRest == false {
+		fmt.Println( "server.encrypt_at_rest is off, so the database in this backup is not encrypted." )
+	}
+	return
+}
+
+func commandRestore( cfg *config.Config , arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "restore" , flag.ExitOnError )
+	from := set.String( "from" , "" , "the backup file" )
+	key_file := set.String( "key-file" , "" , "the key this backup was made with, if it is not the current one" )
+	yes := set.Bool( "yes" , false , "confirm: the database and storage are replaced" )
+	set.Parse( arguments )
+
+	if *from == "" {
+		err = fmt.Errorf( "-from is required" )
+		return
+	}
+	if *yes == false {
+		err = fmt.Errorf( "restore replaces the database and storage; pass -yes to confirm" )
+		return
+	}
+	result , err := backup.Restore( cfg , backup.RestoreOptions{ From: *from , KeyFile: *key_file } )
+	if err != nil { return }
+
+	fmt.Printf( "Restored the backup from %s.\n" , result.Manifest.CreatedAt.Format( time.RFC3339 ) )
+	if result.Rekeyed {
+		fmt.Println( "It was made under another key and has been moved onto the current one." )
+		fmt.Println( "Everyone has to sign in again, because their cookies were sealed with the other key." )
+	}
+	if result.SavedDatabase != "" {
+		fmt.Printf( "The database it replaced: %s\n" , result.SavedDatabase )
+	}
+	if result.SavedStorage != "" {
+		fmt.Printf( "The storage it replaced:  %s\n" , result.SavedStorage )
+	}
+	if result.SavedConfig != "" {
+		fmt.Printf( "config.yaml was left as it is; the backup's copy is at %s\n" , result.SavedConfig )
+	}
+	return
+}
+
+func commandRotateKey( cfg *config.Config , arguments []string ) ( err error ) {
+	set := flag.NewFlagSet( "rotate-key" , flag.ExitOnError )
+	new_key_file := set.String( "new-key-file" , "" , "the new key, for docker/rotate-key.sh; empty means make one" )
+	yes := set.Bool( "yes" , false , "confirm: everyone has to sign in again" )
+	set.Parse( arguments )
+
+	// Loading the config just finished a rotation that was cut short, which
+	// is what this command was probably run to do. Rotating again on top of
+	// it is not.
+	if cfg.RotationFinished {
+		fmt.Println( "That finished the rotation that was cut short. Run this again to rotate once more." )
+		return
+	}
+	if *yes == false {
+		err = fmt.Errorf( "rotate-key signs everyone out and needs the server stopped; pass -yes to confirm" )
+		return
+	}
+	result , err := rotate.Run( cfg , rotate.Options{ NewKeyFile: *new_key_file } )
+	if err != nil { return }
+
+	if result.Resumed {
+		fmt.Println( "Finished moving the data onto the new key." )
+		return
+	}
+	fmt.Printf( "The data is on the new key (fingerprint %s, was %s).\n" , result.NewFingerprint , result.OldFingerprint )
+	if cfg.EncryptAtRest {
+		fmt.Printf( "Re-encrypted the database and %d log files.\n" , result.LogFiles )
+	}
+	if *new_key_file != "" { return }
+	fmt.Printf( "The new key is in %s: back it up.\n" , cfg.SecretFile )
+	fmt.Println( "Everyone has to sign in again." )
+	if result.RetiredKey != "" {
+		fmt.Printf( "The old key is kept at %s\n" , result.RetiredKey )
+		fmt.Println( "Backups made before now still need it: `manage restore -key-file` takes it. Delete it" )
+		fmt.Println( "once those backups no longer matter, and do not keep it beside them." )
+	}
 	return
 }
 
@@ -691,6 +853,7 @@ func commandPaths( cfg *config.Config ) ( err error ) {
 	fmt.Printf( "%-14s %s\n" , "database" , cfg.DatabasePath )
 	fmt.Printf( "%-14s %s\n" , "storage" , cfg.StorageDir )
 	fmt.Printf( "%-14s %s\n" , "logs" , cfg.Logs.Dir )
+	fmt.Printf( "%-14s %s\n" , "backups" , cfg.Backups.Dir )
 	fmt.Printf( "%-14s %s%s\n" , "static" , cfg.StaticDir , existsNote( cfg.StaticDir ) )
 	fmt.Printf( "%-14s %s%s\n" , "language" , cfg.LanguageFile , existsNote( cfg.LanguageFile ) )
 

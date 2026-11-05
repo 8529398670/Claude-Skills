@@ -12,6 +12,7 @@ Asking for the code at sign-in is app/models/sign_in.py.
 from __future__ import annotations
 
 import time
+from typing import Callable
 
 from app.core import encryption
 from app.core.db import BUCKET_USERS, Record, Store
@@ -144,3 +145,21 @@ def disable(store: Store, user_id: int, code: object, secret_key: str) -> bool:
         clear_record(record)
 
     return store.update_value(BUCKET_USERS, user_id, mutate) is not None
+
+
+def rekey_record(old_key: str, new_key: str) -> Callable[[str, Record], None]:
+    """What moving the database to a new key has to do beyond the record's
+    own encryption: a TOTP secret is encrypted again on its own (see the top
+    of this file), so it has to be opened with the old key and sealed with the
+    new one. Anything else that encrypts a field with the secret key belongs
+    here too, or that field is lost at the next rotation."""
+
+    def rewrite(bucket: str, record: Record) -> None:
+        if bucket != BUCKET_USERS:
+            return
+        for field in ("totp_secret", "totp_pending"):
+            sealed = record.get(field, "")
+            if sealed:
+                record[field] = encryption.xchacha_encrypt_string(new_key, encryption.xchacha_decrypt_string(old_key, sealed))
+
+    return rewrite
