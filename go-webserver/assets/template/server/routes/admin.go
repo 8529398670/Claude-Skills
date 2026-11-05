@@ -35,7 +35,7 @@ func ( handlers *Handlers ) ListUsers( c fiber.Ctx ) ( err error ) {
 		err = serverError( c , list_err )
 		return
 	}
-	err = c.JSON( rows )
+	err = sendPage( c , "users" , rows )
 	return
 }
 
@@ -97,6 +97,7 @@ func ( handlers *Handlers ) CreateUser( c fiber.Ctx ) ( err error ) {
 	}
 
 	handlers.audit( c , logs.KindAdmin , "user created" , fiber.Map{ "user_id": user.ID , "name": user.DisplayName , "role": user.Role } )
+	handlers.Webhooks.Emit( models.EventUserCreated , map[string]any{ "user_id": user.ID , "display_name": user.DisplayName , "role": user.Role } )
 	err = c.Status( fiber.StatusCreated ).JSON( fiber.Map{
 		"user_id":            user.ID,
 		"login_path":         "/login/" + credential,
@@ -275,6 +276,7 @@ func ( handlers *Handlers ) DeleteUser( c fiber.Ctx ) ( err error ) {
 	switch {
 	case delete_err == nil:
 		handlers.audit( c , logs.KindAdmin , "user deleted" , fiber.Map{ "user_id": user_id } )
+		handlers.Webhooks.Emit( models.EventUserDeleted , map[string]any{ "user_id": user_id } )
 		err = c.JSON( fiber.Map{ "ok": true , "removed": removed } )
 	case errors.Is( delete_err , db.ErrNotFound ):
 		err = notFound( c , "no such user" )
@@ -334,7 +336,9 @@ func ( handlers *Handlers ) setUserDisabled( self_id uint64 , user_id uint64 , d
 			return
 		}
 		refused = &refusal{ status: fiber.StatusInternalServerError , message: "internal error" , cause: disable_err }
+		return
 	}
+	handlers.Webhooks.Emit( models.EventUserDisabled , map[string]any{ "user_id": user_id , "disabled": disabled } )
 	return
 }
 

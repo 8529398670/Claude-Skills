@@ -15,7 +15,7 @@ import (
 	models "{{MODULE_PATH}}/server/models"
 )
 
-// devices is a browser's GET /api/account/sessions, which answers a list.
+// devices is a browser's GET /api/account/sessions: the rows of its first page.
 func ( client *browser ) devices( t *testing.T ) ( rows []map[ string ]any ) {
 	t.Helper()
 	request , _ := http.NewRequest( http.MethodGet , "/api/account/sessions" , nil )
@@ -30,7 +30,11 @@ func ( client *browser ) devices( t *testing.T ) ( rows []map[ string ]any ) {
 	if strings.Contains( string( raw ) , "secret_hash" ) || strings.Contains( string( raw ) , "csrf" ) {
 		t.Fatalf( "the list leaks a credential: %s" , raw )
 	}
-	if err = encoding_json.Unmarshal( raw , &rows ); err != nil { t.Fatal( err ) }
+	var page struct {
+		Sessions []map[ string ]any `json:"sessions"`
+	}
+	if err = encoding_json.Unmarshal( raw , &page ); err != nil { t.Fatal( err ) }
+	rows = page.Sessions
 	return
 }
 

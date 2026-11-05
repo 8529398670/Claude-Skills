@@ -66,6 +66,9 @@ class Registry:
         self._ticker: asyncio.Task[None] | None = None
         # Replaced in tests.
         self.now: Callable[[], datetime] = utc_now
+        # Hears the name of a job whose run failed, in the job's worker
+        # thread. main points it at webhooks.
+        self.on_failure: Callable[[str], None] | None = None
 
     def register(self, name: str, interval_seconds: int, fn: Callable[[], tuple[str, str]]) -> None:
         if name in self._jobs:
@@ -125,6 +128,8 @@ class Registry:
         if error:
             print(f"[job] {job.name} failed: {error}", flush=True)
             self.logger.system(logs.LEVEL_ERROR, "job failed", {"job": job.name, "error": error})
+            if self.on_failure is not None:
+                self.on_failure(job.name)
 
     # -- the tick ----------------------------------------------------------
 

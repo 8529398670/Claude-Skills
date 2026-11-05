@@ -94,6 +94,14 @@ func Sha256Hex( value string ) ( result string ) {
 	return
 }
 
+// HMACSHA256Hex signs a message, as lowercase hex.
+func HMACSHA256Hex( key string , message string ) ( result string ) {
+	mac := hmac.New( sha256.New , []byte( key ) )
+	mac.Write( []byte( message ) )
+	result = hex.EncodeToString( mac.Sum( nil ) )
+	return
+}
+
 // ConstantTimeEqual compares two hex/ASCII digests without leaking, through
 // how long the comparison takes, how many leading characters matched. Go's ==
 // on strings returns early at the first difference, which is exactly the

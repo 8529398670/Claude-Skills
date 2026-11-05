@@ -33,12 +33,14 @@ nav:
   all_keys: "All API keys"
   logs: "Logs"
   jobs: "Jobs"
+  webhooks: "Webhooks"
   settings: "Settings"
 
 # Short confirmations shown as a toast at the bottom of the screen.
 ui:
   saved: "Saved."
   copied: "Copied."
+  load_more: "Load more"
 
 # Ctrl+Z / Ctrl+Y (static/js/undo.js). The toast reads "<undone> <label>",
 # e.g. "Undone: theme change", with a Redo button. Actions that announce
@@ -59,6 +61,7 @@ undo:
   rename: "name changed"
   deleted_key: "API key deleted"
   deleted_invite: "invite link deleted"
+  deleted_webhook: "webhook deleted"
   settings: "settings change"
 
 # The Appearance card. Light is always the default; a pick is remembered in
@@ -366,6 +369,44 @@ jobs:
   job_purge: "Clear out expired records"
   job_prune_logs: "Apply log retention"
   job_backup: "Scheduled backup"
+  job_webhooks: "Send webhooks"
+
+# The Webhooks screen (owner only; static/js/webhooks.js). {name} is the
+# endpoint's name. Event names are shown as they are: they are what the
+# receiver sees.
+webhooks:
+  heading: "Webhooks"
+  description: "Tell other systems when something happens here. Each event is signed and sent to the address you give it, and retried for a while if it does not arrive. Only you, the owner, can see this."
+  name_label: "Name"
+  name_placeholder: "Team chat"
+  url_label: "Address"
+  url_placeholder: "https://example.com/hooks/in"
+  events_label: "Send these events"
+  all_events: "Everything"
+  create_button: "Add webhook"
+  secret_notice: "This is the signing secret. Copy it now: it will not be shown again."
+  copy_button: "Copy"
+  table_name: "Name"
+  table_url: "Address"
+  table_status: "Status"
+  table_actions: "Actions"
+  status_on: "On"
+  status_off: "Off"
+  enable_button: "Turn on"
+  disable_button: "Turn off"
+  test_button: "Send test"
+  test_sent: "Test event queued."
+  deliveries_button: "Deliveries"
+  delete_button: "Delete"
+  deliveries_heading: "Recent deliveries to {name}"
+  table_event: "Event"
+  table_delivery: "Delivery"
+  table_attempts: "Attempts"
+  table_result: "Last result"
+  table_when: "Queued"
+  delivery_delivered: "Delivered"
+  delivery_failed: "Failed"
+  delivery_pending: "Waiting"
 
 # The Settings screen (owner only; static/js/settings.js): config.yaml, one
 # field per setting. Placeholders in {braces} are filled in by the page. The
@@ -398,6 +439,24 @@ settings:
   invalid_file: "config.yaml does not validate, so the server is running on the last good version. {error}"
   read_only: "The server cannot write config.yaml, so it can only be changed by editing the file by hand."
   stale: "config.yaml was replaced on the host since this container started. Restart the container to see and change the new version."
+
+# The page a browser gets when a page load fails (404, 429, 500 and so on).
+# The server renders this, so it works when the app itself cannot load. "other"
+# is any status without its own pair. {reference} is what finds a 5xx in the
+# Logs screen's search.
+error_page:
+  home: "Back to the app"
+  not_found_title: "Page not found"
+  not_found_message: "This page does not exist, or the link is out of date."
+  method_not_allowed_title: "That is not possible here"
+  method_not_allowed_message: "This address does not work that way."
+  rate_limited_title: "Too many requests"
+  rate_limited_message: "Please wait a minute, then try again."
+  server_error_title: "Something went wrong"
+  server_error_message: "This is a problem on the server, not with anything you did. Please try again."
+  other_title: "That did not work"
+  other_message: "The server could not answer this request."
+  reference: "Reference: {reference}"
 
 errors:
   generic: "Something went wrong. Please try again."

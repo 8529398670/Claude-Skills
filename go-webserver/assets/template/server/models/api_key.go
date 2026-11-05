@@ -299,6 +299,12 @@ func GetAPIKey( store *db.Store , key_id string ) ( key *APIKey , err error ) {
 	return
 }
 
+// sortAPIKeys puts keys oldest first. A key's bucket key is a random token, so
+// the bucket order means nothing and would change a page's rows between calls.
+func sortAPIKeys( keys []*APIKey ) {
+	sort.SliceStable( keys , func( i int , j int ) bool { return keys[ i ].CreatedAt.Before( keys[ j ].CreatedAt ) } )
+}
+
 // ListAPIKeys returns every key in the database, newest last, leaving out
 // deleted ones. Only the admin endpoint and the CLI use it; a user asking for
 // "my keys" goes through ListAPIKeysForUser.
@@ -312,6 +318,7 @@ func ListAPIKeys( store *db.Store ) ( keys []*APIKey , err error ) {
 			}
 			return true
 		} )
+	sortAPIKeys( keys )
 	return
 }
 
@@ -326,6 +333,7 @@ func ListAPIKeysForUser( store *db.Store , user_id uint64 ) ( keys []*APIKey , e
 			}
 			return true
 		} )
+	sortAPIKeys( keys )
 	return
 }
 

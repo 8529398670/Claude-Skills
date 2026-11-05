@@ -16,6 +16,9 @@ import (
 	config "{{MODULE_PATH}}/server/config"
 )
 
+// robotsPolicy keeps every response out of search results.
+const robotsPolicy = "noindex, nofollow"
+
 // SecurityHeaders assumes everything the page needs is same-origin, which is
 // true for this template on purpose: libraries are downloaded once and served
 // from static/vendor/ rather than pulled from a CDN at runtime. That is what
@@ -29,6 +32,10 @@ import (
 func SecurityHeaders( settings *config.Holder ) ( handler fiber.Handler ) {
 	secure , plain := securityHeaders( true ) , securityHeaders( false )
 	handler = func( c fiber.Ctx ) ( err error ) {
+		// helmet has no field for this one. Every app built from this template
+		// is private, and robots.txt only asks: this covers a crawler that
+		// reaches a page anyway.
+		c.Set( fiber.HeaderXRobotsTag , robotsPolicy )
 		if settings.Get().SecureCookies {
 			err = secure( c )
 			return
@@ -150,7 +157,9 @@ func RateLimit( settings *config.Holder ) ( handler fiber.Handler ) {
 				return
 			},
 			LimitReached: func( c fiber.Ctx ) ( err error ) {
-				err = c.Status( fiber.StatusTooManyRequests ).JSON( fiber.Map{ "error": "too many requests" } )
+				// Through the ErrorHandler: a page load gets the error page,
+				// and everything else the usual JSON.
+				err = fiber.ErrTooManyRequests
 				return
 			},
 		} )

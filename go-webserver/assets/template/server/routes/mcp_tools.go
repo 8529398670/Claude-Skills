@@ -37,13 +37,11 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 	server.Register( &mcp.Tool{
 		Name:        "list_team",
 		Title:       "List team",
-		Description: "Everyone with an active account: id and display name. Use the id wherever another tool asks for a user.",
+		Description: "People with an active account, a page at a time: id and display name. Use the id wherever another tool asks for a user. next is the offset of the following page, or null on the last one.",
 		ReadOnly:    true,
+		InputSchema: pageSchema,
 		Call: func( call *mcp.Call ) ( result any , err error ) {
-			if err = call.Bind( &struct{}{} ); err != nil { return }
-			members , err := handlers.teamRows()
-			if err != nil { return }
-			result = fiber.Map{ "members": members }
+			result , err = toolPage( call , "members" , handlers.teamRows )
 			return
 		},
 	} )
@@ -51,14 +49,12 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 	server.Register( &mcp.Tool{
 		Name:        "admin_list_users",
 		Title:       "List users (admin)",
-		Description: "Every account, including disabled ones, with its role and which one is the owner.",
+		Description: "Accounts, a page at a time, including disabled ones, with each one's role and which is the owner. next is the offset of the following page, or null on the last one.",
 		ReadOnly:    true,
 		AdminOnly:   true,
+		InputSchema: pageSchema,
 		Call: func( call *mcp.Call ) ( result any , err error ) {
-			if err = call.Bind( &struct{}{} ); err != nil { return }
-			users , err := handlers.userRows()
-			if err != nil { return }
-			result = fiber.Map{ "users": users }
+			result , err = toolPage( call , "users" , handlers.userRows )
 			return
 		},
 	} )
@@ -130,14 +126,12 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 	server.Register( &mcp.Tool{
 		Name:        "admin_list_invite_links",
 		Title:       "List invite links (admin)",
-		Description: "Every group invite link: label, places used and left, expiry, and whether it still works. The links themselves are never shown again after creation.",
+		Description: "Group invite links, a page at a time: label, places used and left, expiry, and whether each still works. The links themselves are never shown again after creation. next is the offset of the following page, or null on the last one.",
 		ReadOnly:    true,
 		AdminOnly:   true,
+		InputSchema: pageSchema,
 		Call: func( call *mcp.Call ) ( result any , err error ) {
-			if err = call.Bind( &struct{}{} ); err != nil { return }
-			links , err := handlers.inviteLinkRows()
-			if err != nil { return }
-			result = fiber.Map{ "invite_links": links }
+			result , err = toolPage( call , "invite_links" , handlers.inviteLinkRows )
 			return
 		},
 	} )
@@ -165,6 +159,7 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 				err = mcp.Refuse( "no such invite link" )
 				return
 			}
+			handlers.Webhooks.Emit( models.EventInviteLinkRevoked , map[string]any{ "link_id": args.LinkID } )
 			result = fiber.Map{ "ok": true }
 			return
 		},

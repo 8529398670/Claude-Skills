@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.core import config, config_schema
-from app.core.config import Config, ConfigError, ValidationError
+from app.core.config import Config, ConfigError, ValidationError, WebhooksConfig
 from app.core.config_schema import MODE_LIVE, MODE_RESTART, MODE_SCRIPTS
 from app.core.layout import PINNED, in_container
 
@@ -127,6 +127,10 @@ def live_config(boot: Config, boot_file: config.File, file: config.File) -> Conf
             static_assets=file.logs.static_assets,
             ui_clicks=file.logs.ui_clicks,
             echo=file.logs.echo,
+        ),
+        webhooks=WebhooksConfig(
+            timeout_seconds=file.webhooks.timeout_seconds,
+            allow_private_targets=file.webhooks.allow_private_targets,
         ),
         backups=replace(
             boot.backups,

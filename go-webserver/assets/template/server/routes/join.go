@@ -166,6 +166,7 @@ func ( handlers *Handlers ) JoinCreate( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , "joined through an invite link" , fiber.Map{ "link_id": link.ID } )
+	handlers.Webhooks.Emit( models.EventUserCreated , map[string]any{ "user_id": user.ID , "display_name": user.DisplayName , "role": user.Role , "invite_link_id": link.ID } )
 	signed := &models.SignIn{ UserID: user.ID , SessionCredential: session_credential }
 	err = handlers.signInResponse( c , signed , fiber.Map{ "ok": true , "display_name": user.DisplayName } , fiber.StatusCreated )
 	return

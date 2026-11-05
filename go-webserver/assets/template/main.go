@@ -33,16 +33,19 @@ import (
 	config "{{MODULE_PATH}}/server/config"
 	control "{{MODULE_PATH}}/server/control"
 	db "{{MODULE_PATH}}/server/db"
+	errorpage "{{MODULE_PATH}}/server/errorpage"
 	healthcheck "{{MODULE_PATH}}/server/healthcheck"
 	jobs "{{MODULE_PATH}}/server/jobs"
 	language "{{MODULE_PATH}}/server/language"
 	logs "{{MODULE_PATH}}/server/logs"
 	manage "{{MODULE_PATH}}/server/manage"
 	metrics "{{MODULE_PATH}}/server/metrics"
+	models "{{MODULE_PATH}}/server/models"
 	middleware "{{MODULE_PATH}}/server/middleware"
 	routes "{{MODULE_PATH}}/server/routes"
 	security "{{MODULE_PATH}}/server/security"
 	static "{{MODULE_PATH}}/server/static"
+	webhooks "{{MODULE_PATH}}/server/webhooks"
 	stream "{{MODULE_PATH}}/server/stream"
 )
 
@@ -171,8 +174,11 @@ func run() ( err error ) {
 	lang , err := language.Parse( bundle.LanguageYAML )
 	if err != nil { return }
 
+	error_pages := errorpage.New( lang )
+
 	static_server , err := static.New( bundle.Static )
 	if err != nil { return }
+	static_server.NotFound = error_pages.NotFound( static_server.NotFound )
 
 	if err = bootstrap.EnsureFirstAdmin( store , cfg , "Admin" ); err != nil { return }
 
@@ -223,6 +229,17 @@ func run() ( err error ) {
 	registry := jobs.New( store , logger )
 	jobs.Housekeeping( registry , store , logger , settings )
 	handlers.Jobs = registry
+	dispatcher := webhooks.New( store , settings )
+	registry.Register( webhooks.JobName , webhooks.JobInterval , dispatcher.Run )
+	dispatcher.Nudge = func() { registry.RunNow( webhooks.JobName ) }
+	registry.OnFailure = func( name string ) {
+		// Not its own failure: that would queue a delivery about being unable
+		// to deliver.
+		if name != webhooks.JobName {
+			dispatcher.Emit( models.EventJobFailed , map[string]any{ "job": name } )
+		}
+	}
+	handlers.Webhooks = dispatcher
 	recorder := metrics.New()
 	handlers.Metrics = recorder
 	handlers.LogStream = log_stream
@@ -245,7 +262,7 @@ func run() ( err error ) {
 		TrustProxyConfig:   fiber.TrustProxyConfig{ Proxies: cfg.TrustedProxies },
 		EnableIPValidation: true,
 		ProxyHeader:        proxyHeader( cfg ),
-		ErrorHandler:       middleware.ErrorHandler,
+		ErrorHandler:       middleware.NewErrorHandler( error_pages ),
 	} )
 
 	// RequestID and Metrics come first, outside Recover: a panic still has to

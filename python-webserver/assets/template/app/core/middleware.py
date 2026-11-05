@@ -25,7 +25,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.core import logs, request_id
+from app.core import error_page, logs, request_id
 from app.core.config import Config, trusted_proxy_networks
 from app.core.config_live import Holder
 
@@ -53,35 +53,39 @@ CONTENT_SECURITY_POLICY = "; ".join(
 )
 
 
+PLAIN_HEADERS = {
+    "content-security-policy": CONTENT_SECURITY_POLICY,
+    "x-frame-options": "DENY",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "same-origin",
+    "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
+    "x-dns-prefetch-control": "off",
+    # Every app built from this template is private, and robots.txt only
+    # asks: this covers a crawler that reaches a page anyway.
+    "x-robots-tag": "noindex, nofollow",
+}
+# Only claim HTTPS-only when the deployment actually is. Sending HSTS from a
+# local http:// run would pin the browser to https for localhost and break
+# every other project on that port.
+SECURE_HEADERS = dict(PLAIN_HEADERS, **{"strict-transport-security": "max-age=63072000; includeSubDomains"})
+
+
 class SecurityHeaders:
     """server.secure_cookies decides HSTS and can change while the server
-    runs, so both header sets are built here and the current setting picks
-    one per request."""
+    runs, so the current setting picks a header set per request."""
 
     def __init__(self, app: ASGIApp, settings: Holder) -> None:
         self.app = app
         self.settings = settings
-        self.plain = {
-            "content-security-policy": CONTENT_SECURITY_POLICY,
-            "x-frame-options": "DENY",
-            "x-content-type-options": "nosniff",
-            "referrer-policy": "same-origin",
-            "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
-            "cross-origin-opener-policy": "same-origin",
-            "cross-origin-resource-policy": "same-origin",
-            "x-dns-prefetch-control": "off",
-        }
-        # Only claim HTTPS-only when the deployment actually is. Sending HSTS
-        # from a local http:// run would pin the browser to https for
-        # localhost and break every other project on that port.
-        self.secure = dict(self.plain, **{"strict-transport-security": "max-age=63072000; includeSubDomains"})
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
-        chosen = self.secure if self.settings.get().secure_cookies else self.plain
+        chosen = SECURE_HEADERS if self.settings.get().secure_cookies else PLAIN_HEADERS
 
         async def send_with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -251,10 +255,12 @@ class RateLimit:
         while hits and now - hits[0] > window:
             hits.popleft()
         if len(hits) >= limit:
-            response = JSONResponse(
-                {"error": "too many requests"},
-                status_code=429,
-                headers={"retry-after": str(int(window))},
+            headers = {"retry-after": str(int(window))}
+            request = Request(scope)
+            response: Response = (
+                error_page.response(request, 429, headers=headers)
+                if error_page.wanted(request)
+                else JSONResponse({"error": "too many requests"}, status_code=429, headers=headers)
             )
             await response(scope, receive, send)
             return
@@ -290,15 +296,15 @@ def status_text(code: int) -> str:
     return "bad request"
 
 
-def internal_error(request: Request, cause: object, status: int = 500, headers: Mapping[str, str] | None = None) -> JSONResponse:
+def internal_error(request: Request, cause: object, status: int = 500, headers: Mapping[str, str] | None = None) -> Response:
     """The one answer for something going wrong on our side. cause never
     reaches the client: it goes to stdout, and is left on the request for
     RequestLog, so the line the reference finds says what happened.
 
-    It sets X-Request-ID itself because server_error's response is sent by
-    Starlette's ServerErrorMiddleware, outside every middleware in
-    main.build_app, RequestID included. Inside them RequestID sets the same
-    value again."""
+    It sets X-Request-ID and the security headers itself because
+    server_error's response is sent by Starlette's ServerErrorMiddleware,
+    outside every middleware in main.build_app, RequestID and SecurityHeaders
+    included. Inside them, those set the same values again."""
     reference = request_id.of(request.scope)
     print(
         f"[error] {reference} {request.method} {logs.redact(request.url.path)}: {cause}",
@@ -306,17 +312,19 @@ def internal_error(request: Request, cause: object, status: int = 500, headers: 
         flush=True,
     )
     request.state.error_cause = str(cause)
-    return JSONResponse(
-        {"error": "internal error", "request_id": reference},
-        status_code=status,
-        headers={**(headers or {}), request_id.HEADER: reference},
-    )
+    security = SECURE_HEADERS if request.app.state.settings.get().secure_cookies else PLAIN_HEADERS
+    all_headers = {**security, **(headers or {}), request_id.HEADER: reference}
+    if error_page.wanted(request):
+        return error_page.response(request, status, reference, all_headers)
+    return JSONResponse({"error": "internal error", "request_id": reference}, status_code=status, headers=all_headers)
 
 
 async def http_error(request: Request, exc: Exception) -> Response:
     assert isinstance(exc, HTTPException)
     if exc.status_code >= 500:
         return internal_error(request, exc.detail, exc.status_code, exc.headers)
+    if error_page.wanted(request):
+        return error_page.response(request, exc.status_code, headers=exc.headers)
     return JSONResponse({"error": status_text(exc.status_code)}, status_code=exc.status_code, headers=exc.headers)
 
 

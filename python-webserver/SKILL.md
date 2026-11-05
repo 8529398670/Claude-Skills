@@ -50,6 +50,13 @@ project.
   user-scoped key, a browser session is refused, and no tool creates a
   credential or deletes anything. Stateless JSON-RPC over POST, written by
   hand -- no SDK, no SSE, no sessions. `server.mcp: false` removes it.
+- **Webhooks tell other systems what happened.** The owner adds endpoints on a
+  Webhooks screen. Events go through a durable outbox, signed with HMAC-SHA256 and
+  retried with backoff, and an endpoint can only be a public `https` address, checked
+  again on the address actually dialled.
+- **Failures look right.** A browser gets a styled error page, and scripts keep their
+  JSON. Every list in the API is paged, and nothing here is meant for search engines:
+  `robots.txt` and an `X-Robots-Tag` header on every response say so.
 - **The first admin is the owner.** Any admin can permanently delete an
   ordinary user; only the owner can delete another admin, and nobody can
   delete, disable, or revoke the owner from the web. Ownership is a marker,
@@ -261,6 +268,8 @@ ports they ran on. Do not reset either to a shared value.
       jobs.py                 # background jobs: the registry and the tick
       housekeeping.py         # the template's jobs: purge, prune-logs, backup
       sse.py                  # server-sent events: format, hub, EventStream
+      webhooks.py             # the outbox's sender, signing, and the address guard
+      error_page.py           # the page a browser gets when a page load fails
       graceful.py             # starting uvicorn, and stopping in the right order
       static_files.py         # gzip-always-fresh text, long-cached images
       assets.py               # configured static dir/language file, or bundled
@@ -269,13 +278,14 @@ ports they ran on. Do not reset either to a shared value.
       healthcheck.py          # `health`, the container HEALTHCHECK
     models/                   # users.py, sessions.py, login_tokens.py, api_keys.py,
                               #   invite_links.py, pins.py, passwords.py,
-                              #   two_factor.py, sign_in.py, attempts.py, jobs.py
+                              #   two_factor.py, sign_in.py, attempts.py, jobs.py,
+                              #   webhooks.py
     mcp/                      # protocol.py: the /mcp JSON-RPC protocol
                               # registry.py: Tool, Call.bind, Refusal
     routes/                   # __init__.py (the URL map) + one module per group,
                               #   including mcp_tools.py (the MCP tools),
                               #   logs.py (the owner's log API, page events, audit()),
-                              #   sessions.py, jobs.py and metrics.py
+                              #   sessions.py, jobs.py, webhooks.py and metrics.py
     tests/                    # stdlib unittest: python -m unittest discover app/tests
   static/
     index.html                # placeholder account + admin UI, fully data-i18n'd;
@@ -413,6 +423,13 @@ but stay consistent with the patterns already there:
   no overlaps, a due time that survives restarts, a place on the Jobs screen
   and a series in `/metrics` for nothing. It can be cut off when the server
   stops, so make it safe to run again from the start. `app/core/jobs.py`.
+- **A new event** goes in the list in `app/models/webhooks.py`, and is sent with
+  `await emit( request , name , data )` where the thing happens. Ids and names only in
+  `data`, since it leaves the server, and never rename one once it has shipped.
+- **A new list route** answers with `send_page( request , "rows" , rows )`, and its
+  screen uses `Pager.load`: a plain `forEach` would stop at the first page.
+- **A new page with a path of its own** needs a route before the catch-all, as
+  `serve_login_page` has. There is no `index.html` fallback, so an unknown path is a 404.
 - **New live data** is a `sse.Hub` on `app.state`, created in `build_app` and
   closed from the `on_stop` that `serve` passes to `graceful.run`, and a route that does what
   `logs.stream_log_changes` does: `hub.join()` (503 when it says `None`), then

@@ -8,14 +8,15 @@ from typing import Callable
 
 from app.core import backup, config_live, db, logs
 from app.core.jobs import Registry
-from app.models import api_keys, invite_links, login_tokens, sessions, sign_in
+from app.models import api_keys, invite_links, login_tokens, sessions, sign_in, webhooks
 
 HOUR_SECONDS = 60 * 60
 
 
 def purge(store: db.Store) -> tuple[str, str]:
-    """Drop expired sessions, expired login tokens, and the API keys and
-    invite links that have been dead long enough to stop being worth listing.
+    """Drop expired sessions, expired login tokens, the API keys and invite
+    links that have been dead long enough to stop being worth listing, and old
+    webhook rows.
     None of it is a correctness issue -- every one of those is already refused
     on read -- so this is only here to keep the file from growing forever.
 
@@ -27,6 +28,7 @@ def purge(store: db.Store) -> tuple[str, str]:
         ("api keys", api_keys.purge_dead_api_keys),
         ("invite links", invite_links.purge_dead_invite_links),
         ("sign-in challenges", sign_in.purge_expired_challenges),
+        ("webhook rows", webhooks.purge_webhooks),
     )
     removed: list[str] = []
     errors: list[str] = []

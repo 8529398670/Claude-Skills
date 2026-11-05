@@ -106,6 +106,7 @@ type File struct {
 	Logs   LogsSection   `yaml:"logs"`
 	Backups BackupsSection `yaml:"backups"`
 	Metrics MetricsSection `yaml:"metrics"`
+	Webhooks WebhooksSection `yaml:"webhooks"`
 	Docker DockerSection `yaml:"docker"`
 	Build  BuildSection  `yaml:"build"`
 }
@@ -167,6 +168,11 @@ type BackupsSection struct {
 
 type MetricsSection struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+type WebhooksSection struct {
+	TimeoutSeconds      int  `yaml:"timeout_seconds"`
+	AllowPrivateTargets bool `yaml:"allow_private_targets"`
 }
 
 type DockerSection struct {
@@ -344,6 +350,8 @@ type Config struct {
 
 	// Backups is the scheduled backup's settings; see server/backup.
 	Backups BackupsConfig
+	// Webhooks is how outbound webhooks are sent; see server/webhooks.
+	Webhooks WebhooksConfig
 
 	// file and raw are what this was built from, for NewHolder.
 	file *File
@@ -367,6 +375,12 @@ type LogsConfig struct {
 // ErrRotationPending is what everything but the rotation itself says when one
 // was left half way inside the container.
 var ErrRotationPending = errors.New( "a key rotation was cut short -- run docker/rotate-key.sh on the host to finish it" )
+
+// WebhooksConfig is config.yaml's webhooks section, resolved.
+type WebhooksConfig struct {
+	Timeout             time.Duration
+	AllowPrivateTargets bool
+}
 
 // BackupsConfig is config.yaml's backups section, resolved. Dir is where every
 // backup goes unless `manage backup -out` says otherwise (<app_dir>/backups,
@@ -594,6 +608,7 @@ func ( file *File ) Validate() ( err error ) {
 	check( logs.MaxFileMB >= 1 && logs.MaxFileMB <= logs.MaxTotalMB , "logs.max_file_mb must be positive and no more than logs.max_total_mb" )
 	check( logs.CompressAfterDays >= 0 , "logs.compress_after_days must be 0 (never) or more" )
 
+	check( file.Webhooks.TimeoutSeconds >= 1 && file.Webhooks.TimeoutSeconds <= 60 , "webhooks.timeout_seconds must be 1-60, got %d" , file.Webhooks.TimeoutSeconds )
 	backups := file.Backups
 	check( backups.IntervalHours >= 1 , "backups.interval_hours must be at least 1, got %d" , backups.IntervalHours )
 	check( backups.Keep >= 1 , "backups.keep must be at least 1, got %d" , backups.Keep )
@@ -935,6 +950,10 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 			Echo:              file.Logs.Echo,
 		},
 
+		Webhooks: WebhooksConfig{
+			Timeout:             time.Duration( file.Webhooks.TimeoutSeconds ) * time.Second,
+			AllowPrivateTargets: file.Webhooks.AllowPrivateTargets,
+		},
 		Backups: BackupsConfig{
 			Enabled:  file.Backups.Enabled,
 			Dir:      filepath.Join( paths.AppDir , BackupsDirName ),

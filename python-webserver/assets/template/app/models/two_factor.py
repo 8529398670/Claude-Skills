@@ -15,7 +15,7 @@ import time
 from typing import Callable
 
 from app.core import encryption
-from app.core.db import BUCKET_USERS, Record, Store
+from app.core.db import BUCKET_USERS, BUCKET_WEBHOOKS, Record, Store
 from app.models.users import User
 
 RECOVERY_CODE_COUNT = 10
@@ -147,17 +147,22 @@ def disable(store: Store, user_id: int, code: object, secret_key: str) -> bool:
     return store.update_value(BUCKET_USERS, user_id, mutate) is not None
 
 
+# Every field encrypted with the secret key on its own, by bucket. Anything else
+# that does so belongs here too, or that field is lost at the next rotation.
+SEALED_FIELDS = {
+    BUCKET_USERS: ("totp_secret", "totp_pending"),
+    BUCKET_WEBHOOKS: ("secret",),
+}
+
+
 def rekey_record(old_key: str, new_key: str) -> Callable[[str, Record], None]:
     """What moving the database to a new key has to do beyond the record's
-    own encryption: a TOTP secret is encrypted again on its own (see the top
-    of this file), so it has to be opened with the old key and sealed with the
-    new one. Anything else that encrypts a field with the secret key belongs
-    here too, or that field is lost at the next rotation."""
+    own encryption: a TOTP secret or a webhook's signing secret is encrypted
+    again on its own (see the top of this file), so it has to be opened with
+    the old key and sealed with the new one."""
 
     def rewrite(bucket: str, record: Record) -> None:
-        if bucket != BUCKET_USERS:
-            return
-        for field in ("totp_secret", "totp_pending"):
+        for field in SEALED_FIELDS.get(bucket, ()):
             sealed = record.get(field, "")
             if sealed:
                 record[field] = encryption.xchacha_encrypt_string(new_key, encryption.xchacha_decrypt_string(old_key, sealed))

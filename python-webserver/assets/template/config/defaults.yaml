@@ -189,6 +189,15 @@ backups:
 metrics:
   enabled: false                   # [live]
 
+# Events sent to the endpoints on the owner's Webhooks screen.
+webhooks:
+  # How long one delivery attempt may take, 1 to 60.
+  timeout_seconds: 10              # [live]
+  # Lets an endpoint be on this machine or a private network, and use plain
+  # http. Off, nothing on the Webhooks screen can reach anything internal.
+  # Only turn this on if whoever is the owner should have that reach.
+  allow_private_targets: false     # [live]
+
 # [scripts] Read by docker/run.sh, which applies a change the next time it
 # runs. Edit these on the host: inside the container they are read-only.
 docker:

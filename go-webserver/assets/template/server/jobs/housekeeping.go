@@ -26,9 +26,9 @@ func Housekeeping( registry *Registry , store *db.Store , logger *logs.Logger , 
 	registry.Register( "backup" , housekeepingInterval , scheduledBackup( store , logger , settings ) )
 }
 
-// purge drops expired sessions, login links and sign-in challenges, and the
-// API keys and invite links that have been dead long enough to stop being
-// worth listing. None of it is a correctness issue -- every one of those is
+// purge drops expired sessions, login links and sign-in challenges, the API
+// keys and invite links that have been dead long enough to stop being worth
+// listing, and old webhook rows. None of it is a correctness issue -- every one of those is
 // already refused on read -- so this only stops the bolt file growing forever.
 // Every step runs whatever happens to the one before it.
 func purge( store *db.Store ) ( run Func ) {
@@ -38,8 +38,9 @@ func purge( store *db.Store ) ( run Func ) {
 		keys , keys_err := models.PurgeDeadAPIKeys( store )
 		invites , invites_err := models.PurgeDeadInviteLinks( store )
 		challenges , challenges_err := models.PurgeExpiredChallenges( store )
-		note = fmt.Sprintf( "removed %d sessions, %d login links, %d keys, %d invite links, %d challenges" , sessions , tokens , keys , invites , challenges )
-		err = errors.Join( sessions_err , tokens_err , keys_err , invites_err , challenges_err )
+		webhooks , webhooks_err := models.PurgeWebhooks( store )
+		note = fmt.Sprintf( "removed %d sessions, %d login links, %d keys, %d invite links, %d challenges, %d webhook rows" , sessions , tokens , keys , invites , challenges , webhooks )
+		err = errors.Join( sessions_err , tokens_err , keys_err , invites_err , challenges_err , webhooks_err )
 		return
 	}
 	return

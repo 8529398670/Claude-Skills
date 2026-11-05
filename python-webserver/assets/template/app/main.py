@@ -20,12 +20,13 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
-from app.core import assets, bootstrap, config, config_live, db, graceful, housekeeping, jobs, language, logs, metrics, server_lock, sse
+from app.core import assets, bootstrap, config, config_live, db, graceful, housekeeping, jobs, language, logs, metrics, server_lock, sse, webhooks
 from app.core.middleware import EXCEPTION_HANDLERS, RateLimit, SecurityHeaders
 from app.core.request_id import RequestID
 from app.core.request_log import RequestLog
 from app.core.security import LoadActor
 from app.core.static_files import StaticServer
+from app.models import webhooks as webhook_models
 from app.routes import build_routes
 
 # How often config.yaml is checked for edits made outside the Settings screen.
@@ -66,6 +67,17 @@ def build_app(
 
     registry = jobs.Registry(store, logger)
     housekeeping.register(registry, store, settings, logger)
+    dispatcher = webhooks.Dispatcher(store, settings)
+    dispatcher.registry = registry
+    registry.register(webhooks.JOB_NAME, webhooks.JOB_INTERVAL_SECONDS, dispatcher.run)
+
+    def job_failed(name: str) -> None:
+        # Not its own failure: that would queue a delivery about being unable
+        # to deliver.
+        if name != webhooks.JOB_NAME:
+            dispatcher.emit(webhook_models.EVENT_JOB_FAILED, {"job": name})
+
+    registry.on_failure = job_failed
     log_hub = sse.Hub()
     measured = metrics.Metrics()
 
@@ -73,6 +85,7 @@ def build_app(
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         loop = asyncio.get_running_loop()
         logger.on_flushed = lambda: sse.publish_from_thread(loop, log_hub, sse.CHANGED)
+        dispatcher.loop = loop
         logger.start()
         logger.system(logs.LEVEL_INFO, "server started", {"version": version})
         if cfg.secret_migrated:
@@ -85,6 +98,7 @@ def build_app(
             # By now requests have finished and streams have ended (serve's
             # on_stop). Jobs next, since they write to the log; the log last.
             watcher.cancel()
+            dispatcher.loop = None
             await registry.stop()
             log_hub.close()
             logger.on_flushed = None
@@ -117,6 +131,7 @@ def build_app(
     app.state.store = store
     app.state.logs = logger
     app.state.jobs = registry
+    app.state.webhooks = dispatcher
     app.state.log_hub = log_hub
     app.state.metrics = measured
     app.state.language = lang

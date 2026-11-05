@@ -18,6 +18,9 @@ when you are changing the template itself rather than building features on it.
 - [Sessions: seeing and ending your own](#sessions-seeing-and-ending-your-own)
 - [Monitoring: request IDs, readiness, metrics](#monitoring-request-ids-readiness-metrics)
 - [Live updates](#live-updates)
+- [Paging lists](#paging-lists)
+- [Error pages](#error-pages)
+- [Webhooks](#webhooks)
 - [Stopping cleanly](#stopping-cleanly)
 - [Why credentials are shaped `<id>.<secret>`](#why-credentials-are-shaped-idsecret)
 - [Which crypto is used where, and why](#which-crypto-is-used-where-and-why)
@@ -813,6 +816,122 @@ That adds up to more than `docker stop`'s default 10 seconds, hence
 `--stop-timeout 20` in `docker/run.sh`, and 20 seconds before `scripts/lib.sh`
 sends SIGKILL.
 
+## Paging lists
+
+Every list route takes `?limit=` (default 200, at most 1000) and `?offset=`, and
+answers `{"users": [...], "next": 200, "total": 431}`. The rows sit under a name
+of their own, `next` is the offset of the following page or `null` on the last
+one, and `total` counts every row. A bad value is a 400. The MCP list tools take
+the same two arguments and answer the same shape. Use `send_page( request , "users" , rows )` and `page_body` in
+`app/routes/helpers.py`, and `_page` in `app/routes/mcp_tools.py`, for a new list, so
+it pages the same way.
+
+**It is an offset, not a cursor.** Most lists sort on a field that is encrypted
+at rest, so each page reads the whole list anyway and a cursor would save
+nothing. The natural cursor for a key or a session is also its record id, which
+has no business in a URL. The cost is that a row deleted between two pages shifts
+the next one by a row. The screens reload from the first page after any change,
+so they never see that, but a script walking a list while it changes can skip a
+row.
+
+**Paging bounds the response, not the read.** See [Known limits](#known-limits).
+Jobs, log days and invite-link name matches are not paged, because each is
+bounded already; a day of the log has its own `before` paging. `manage`, the
+internal callers and the model functions still see every row.
+
+## Error pages
+
+A person who hits a bad address sees a page, and a script sees what it always
+did. `app/core/error_page.py` decides by asking whether the request is a page load: GET or HEAD,
+outside `/api/`, `/mcp` and `/metrics`, with `text/html` in `Accept`. Anything
+else keeps its plain answer, so `api.js` always gets JSON and a missing
+stylesheet is a plain-text 404 that reads clearly in the console.
+
+The server renders it, rather than the browser app, for two reasons. The app
+needs `/api/language` before it can show a word, and that call is rate limited,
+so it cannot be relied on while answering a 429. And it has nothing to bootstrap,
+so a broken app can still show it. Its text is the `error_page` section of
+`language.yaml`, HTML-escaped. The CSP allows no inline styles or scripts, so it
+links the stylesheets and `theme.js` the app already serves, which the rate
+limiter exempts: it is light unless this browser saved a dark choice. A 5xx shows
+the request id as a reference, and never the cause. It is never cached, since the
+same address may work next time.
+
+**There is no `index.html` fallback.** The app navigates by hash, and the only
+paths it reads are `/login/...` and `/join/...`, which have routes of their own.
+Anything else is a real 404. An app that adds a page with a path of its own must
+give it a route before the catch-all, as `serve_login_page` does.
+
+## Webhooks
+
+The owner's Webhooks screen lists endpoints that want to hear about things. The
+code is `app/core/webhooks.py`, `app/models/webhooks.py` and the Webhooks routes. Owner only, from a browser
+session, and no MCP tools: an endpoint sends what happens here to somewhere else,
+so a leaked key must not be able to add one.
+
+**It is an outbox.** `await emit( request , event , data )` from `app/routes/helpers.py` writes one delivery row per endpoint that wants the
+event and returns. The `webhooks` background job sends them, so a slow receiver
+never holds up a request and a restart loses nothing. An emit asks for a run
+straight away; when one is already going, a later run picks the row up, within
+about a minute. Retries wait 1 minute, 5 minutes, 30 minutes, 2 hours and 12
+hours, and the sixth failure gives up. Finished deliveries stay listed for 7 days.
+Each run sends at most 50. An MCP tool, already in a worker thread, calls `call.request.app.state.webhooks.emit(...)`.
+
+**Delivery is at least once.** A crash between the send and recording it sends it
+again, so a receiver dedupes on `X-Webhook-Delivery`. A retry sends the same bytes
+with the same id.
+
+**Events are a fixed list** in `app/models/webhooks.py`, because their names are a promise to
+whoever receives them, which the activity log's free-text messages are not:
+`user.created`, `user.disabled`, `user.deleted`, `api_key.created`,
+`api_key.revoked`, `invite_link.created`, `invite_link.revoked` and `job.failed`,
+plus `webhook.test` from the screen's test button. A change made through MCP fires
+too, and switching the log off changes nothing. Sign-ins are left out on purpose:
+they are frequent, and nobody needs them yet. To add one, append it to the list
+and emit it where the thing happens. An event not on the list still reaches `*`
+subscribers. Payloads carry ids and names only, the same rule as a log entry's
+detail.
+
+**What a receiver gets** is a POST with this JSON body, and these headers:
+
+```
+{"id":"<delivery id>","event":"user.created","created_at":"...","data":{...}}
+
+X-Webhook-Event:     user.created
+X-Webhook-Delivery:  <delivery id>
+X-Webhook-Signature: t=<unix seconds>,v1=<hex>
+```
+
+`v1` is HMAC-SHA256 of `<t>.<raw body>` with the endpoint's secret. Check it
+against the raw bytes before parsing, compare in constant time, and refuse an old
+`t`, so a captured request cannot be replayed. `webhook_cases.json` has worked
+examples. Any 2xx counts as delivered. A redirect is a failure and is not
+followed.
+
+**The secret has to come back**, unlike a key's, because the server signs with it.
+So it is sealed with the secret key on its own, the way a TOTP secret is, and
+`two_factor.rekey_record` carries it across a rotation and a restore. It is shown once, on creation.
+
+**This is the only code that calls an address someone typed**, so it is where a
+server-side request forgery would start. An address must be `https` with no
+username or password, and is checked when it is saved and before each send. The
+check that counts is on the address actually dialled, after DNS, so a name that
+resolves to something public today and `169.254.169.254` tomorrow gets nowhere.
+That is a replacement for `http.client`'s `_create_connection`, which runs
+`getaddrinfo` itself and checks each address before connecting. TLS is wrapped
+around that socket afterwards, so certificate and hostname checks still use the
+name in the URL. `http.client` follows no redirects and reads no proxy settings.
+The attribute is private, so `test_webhooks.py` fails if a Python release moves
+it. There is no new dependency.
+
+The blocked ranges cover this machine, private networks, link-local (where cloud
+metadata lives) and everything else that is not the public internet, and the same
+list is in both templates. `webhooks.allow_private_targets` lifts all of this and
+allows plain `http`, for a receiver on the same network.
+
+A delivery's error text never holds the URL, which may carry a token. The audit
+log records an endpoint's name and id only, for the same reason.
+
 ## Why credentials are shaped `<id>.<secret>`
 
 Login tokens, sessions, API keys, and invite links all use `<id>.<secret>`,
@@ -1087,13 +1206,22 @@ Path traversal is stopped two ways: any request containing a `..` segment is
 rejected outright, and the resolved path (after symlinks) is then confirmed to
 still be under the root. The second check is the real guarantee -- it verifies
 where the path landed rather than trying to blocklist how it got there. The
-first exists so probes answer 404 instead of quietly hitting the index
-fallback, which is clearer in an access log.
+first states the intent rather than leaving it to the path checks below it.
 
-A missing path *with* an extension is a 404. A missing path *without* one
-falls back to `index.html` so client-side routing works. Serving HTML for a
-missing `.js` would leave the browser reporting a confusing MIME error instead
-of the real problem.
+A missing path is a 404, whether or not it has an extension: see
+[Error pages](#error-pages). A browser loading a page gets the error page, and a
+missing `.js` or `.css` gets plain text, since serving HTML for one would leave
+the browser reporting a confusing MIME error instead of the real problem.
+
+`static/favicon.ico` is a neutral placeholder: replace the file to brand an app.
+
+**Search engines are told to stay out, twice.** These are private apps, so
+`static/robots.txt` disallows everything, which also stops polite crawlers
+fetching a login link that ends up somewhere public, and every response carries
+`X-Robots-Tag: noindex, nofollow`. Neither is a lock. A crawler that obeys
+`robots.txt` never fetches a page, so it never sees the header, and it can still
+list a bare address that someone linked publicly. Keeping a page private is the
+sign-in's job.
 
 If this ever costs too much CPU (very large JS, very high traffic), the fix is
 smaller static output, not caching the text assets -- that would reintroduce
@@ -1288,6 +1416,19 @@ State these to the user rather than letting them be discovered in production:
   them, and with several processes each keeps its own count.
 - **The PIN lockout is in memory**, like the rate limiter: a restart clears
   it, and with several processes each keeps its own count.
+- **Paging bounds the response, not the read.** Every record is encrypted, so
+  each page of a list decodes all of it and then cuts out the rows. Fine at this
+  template's scale; past that, the list needs an index of its own.
+- **A webhook can arrive twice, or late.** Delivery is at least once and in no
+  guaranteed order, and a new event can wait up to a minute behind a run already
+  going. Six failures over about fifteen hours and it is given up on, with no
+  button to send it again. The job works through deliveries one at a time, so a
+  receiver that hangs costs `webhooks.timeout_seconds` each, at most 50 a run.
+- **`manage` does not fire webhooks.** Only the HTTP routes and MCP tools do, and
+  there are no `manage` commands for endpoints. To change a signing secret, delete
+  the endpoint and add it again.
+- **Webhook rows are scanned.** Each run reads the whole outbox, which the 7-day
+  retention keeps small unless an app emits a great deal.
 - **Log search is a scan.** Listing days reads every line once per file and
   caches the counts; a search, or a page of a day, reads the day's lines
   again, decrypting each. Fine for the thousands-to-low-millions of lines a

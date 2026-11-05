@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light" />
   <title data-i18n="app.title">&nbsp;</title>
+  <link rel="icon" href="/favicon.ico" />
   <!-- Before the stylesheets paint, so a saved dark theme never flashes light. -->
   <script src="/js/theme.js"></script>
   <!-- Bootstrap 5 and its icon font, vendored (see /vendor/README.md), then
@@ -71,6 +72,7 @@
             <a class="nav-link" href="#all-keys" data-nav="all-keys"><i class="bi bi-shield-lock" aria-hidden="true"></i><span data-i18n="nav.all_keys"></span></a>
             <a class="nav-link" href="#logs" data-nav="logs"><i class="bi bi-journal-text" aria-hidden="true"></i><span data-i18n="nav.logs"></span></a>
             <a class="nav-link" href="#jobs" data-nav="jobs"><i class="bi bi-clock-history" aria-hidden="true"></i><span data-i18n="nav.jobs"></span></a>
+            <a class="nav-link" href="#webhooks" data-nav="webhooks"><i class="bi bi-broadcast" aria-hidden="true"></i><span data-i18n="nav.webhooks"></span></a>
             <a class="nav-link" href="#settings" data-nav="settings"><i class="bi bi-sliders" aria-hidden="true"></i><span data-i18n="nav.settings"></span></a>
           </div>
         </nav>
@@ -551,6 +553,78 @@
           </div>
         </section>
 
+        <!-- Telling other systems what happens here, owner only; see webhooks.js. -->
+        <section class="card view" data-view="webhooks" id="webhooks-panel" hidden>
+          <div class="card-body">
+            <h2 class="h4 card-title" data-i18n="webhooks.heading"></h2>
+            <p class="text-body-secondary" data-i18n="webhooks.description"></p>
+
+            <form id="create-webhook-form" autocomplete="off">
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label for="webhook-name" class="form-label" data-i18n="webhooks.name_label"></label>
+                  <input id="webhook-name" class="form-control" maxlength="80" required
+                         data-i18n-attr="placeholder:webhooks.name_placeholder" />
+                </div>
+                <div class="col-md-8">
+                  <label for="webhook-url" class="form-label" data-i18n="webhooks.url_label"></label>
+                  <input id="webhook-url" class="form-control" type="url" maxlength="2000" required
+                         data-i18n-attr="placeholder:webhooks.url_placeholder" />
+                </div>
+              </div>
+              <fieldset class="mt-3">
+                <legend class="form-label fs-6" data-i18n="webhooks.events_label"></legend>
+                <div class="form-check">
+                  <input id="webhook-all-events" class="form-check-input" type="checkbox" checked />
+                  <label for="webhook-all-events" class="form-check-label" data-i18n="webhooks.all_events"></label>
+                </div>
+                <div id="webhook-events"></div>
+              </fieldset>
+              <button type="submit" class="btn btn-primary mt-3" data-i18n="webhooks.create_button"></button>
+            </form>
+
+            <div id="webhook-secret-box" class="alert alert-info mt-3" hidden>
+              <p class="mb-2" data-i18n="webhooks.secret_notice"></p>
+              <div class="link-box">
+                <code id="webhook-secret-value"></code>
+                <button id="copy-webhook-button" class="btn btn-sm btn-outline-secondary" data-i18n="webhooks.copy_button"></button>
+              </div>
+            </div>
+
+            <div class="table-responsive mt-4">
+              <table id="webhooks-table" class="table table-hover align-middle">
+                <thead>
+                  <tr>
+                    <th data-i18n="webhooks.table_name"></th>
+                    <th data-i18n="webhooks.table_url"></th>
+                    <th data-i18n="webhooks.table_status"></th>
+                    <th data-i18n="webhooks.table_actions"></th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+
+            <div id="webhook-deliveries" class="mt-4" hidden>
+              <h3 id="webhook-deliveries-heading" class="h6"></h3>
+              <div class="table-responsive">
+                <table id="webhook-deliveries-table" class="table table-hover align-middle">
+                  <thead>
+                    <tr>
+                      <th data-i18n="webhooks.table_event"></th>
+                      <th data-i18n="webhooks.table_delivery"></th>
+                      <th data-i18n="webhooks.table_attempts"></th>
+                      <th data-i18n="webhooks.table_result"></th>
+                      <th data-i18n="webhooks.table_when"></th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- Background jobs, owner only; see jobs.js. -->
         <section class="card view" data-view="jobs" id="jobs-panel" hidden>
           <div class="card-body">
@@ -628,6 +702,7 @@
   <script src="/js/api.js"></script>
   <script src="/js/track.js"></script>
   <script src="/js/nav.js"></script>
+  <script src="/js/pager.js"></script>
   <script src="/js/keys.js"></script>
   <script src="/js/sessions.js"></script>
   <script src="/js/join.js"></script>
@@ -637,6 +712,7 @@
   <script src="/js/invites.js"></script>
   <script src="/js/logs.js"></script>
   <script src="/js/jobs.js"></script>
+  <script src="/js/webhooks.js"></script>
   <script src="/js/settings.js"></script>
   <script src="/js/app.js"></script>
 </body>

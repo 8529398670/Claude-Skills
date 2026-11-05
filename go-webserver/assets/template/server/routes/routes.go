@@ -23,6 +23,7 @@ import (
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 	static "{{MODULE_PATH}}/server/static"
+	webhooks "{{MODULE_PATH}}/server/webhooks"
 	stream "{{MODULE_PATH}}/server/stream"
 )
 
@@ -53,6 +54,9 @@ type Handlers struct {
 	Logs *logs.Logger
 	// Jobs is the background job registry (server/jobs), set by main.go.
 	Jobs *jobs.Registry
+	// Webhooks is how a route says something happened (server/webhooks), set
+	// by main.go. Nil is fine: nothing is sent.
+	Webhooks *webhooks.Dispatcher
 	// Metrics counts requests for /metrics, set by main.go.
 	Metrics *metrics.Recorder
 	// LogStream is who has the Logs screen open with Live on, set by main.go.
@@ -227,6 +231,17 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	owner_jobs.Get( "" , handlers.ListJobs )
 	owner_jobs.Post( "/:name/run" , handlers.RunJob )
 
+	// Outbound webhooks: the owner only, from a browser session, like the log.
+	owner_webhooks := app.Group( "/api/owner/webhooks" , handlers.Guard.RequireOwner )
+	owner_webhooks.Get( "" , handlers.ListWebhooks )
+	owner_webhooks.Post( "" , handlers.CreateWebhook )
+	owner_webhooks.Get( "/events" , handlers.ListWebhookEvents )
+	owner_webhooks.Post( "/:webhook_id/enabled" , handlers.SetWebhookEnabled )
+	owner_webhooks.Post( "/:webhook_id/delete" , handlers.DeleteWebhook )
+	owner_webhooks.Post( "/:webhook_id/restore" , handlers.RestoreWebhook )
+	owner_webhooks.Post( "/:webhook_id/test" , handlers.TestWebhook )
+	owner_webhooks.Get( "/:webhook_id/deliveries" , handlers.ListWebhookDeliveries )
+
 	// MCP: agents calling the app with an API key (see server/mcp and
 	// mcp_tools.go). Keys only -- RequireAPIKey turns a browser session away
 	// -- and every tool runs at the key's effective role, so this is the API
@@ -247,6 +262,12 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// runs. An admin key only: the numbers say how the server is doing, and a
 	// browser session has no business scraping.
 	app.Get( "/metrics" , handlers.RequireMetrics , handlers.Guard.RequireAPIKey , handlers.Guard.RequireAdmin , handlers.GetMetrics )
+
+	// Any other /api/ path is a JSON 404, not a static page.
+	app.Get( "/api/*" , func( c fiber.Ctx ) ( err error ) {
+		err = c.Status( fiber.StatusNotFound ).JSON( fiber.Map{ "error": "not found" } )
+		return
+	} )
 
 	// Catch-all static serving. Must be registered last -- it matches every
 	// remaining path, so anything added after this line never runs.

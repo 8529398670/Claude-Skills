@@ -21,6 +21,24 @@ from app.models import RestoreError, RestoreForbiddenError, RestoreGoneError
 
 run = run_in_threadpool
 
+# Every list the API hands out is paged the same way: ?limit= and ?offset= in,
+# and {"<rows>": [...], "next": <offset of the next page, or null>, "total":
+# <rows in all>} out.
+#
+# An offset rather than a cursor, on purpose. Most of these lists sort on a
+# field that is encrypted at rest, so every page has to read the whole list
+# anyway and a cursor would save nothing; and the natural cursor for a key or
+# a session is its record id, which has no business in a URL. The cost is that
+# a row deleted between two pages shifts the next one by a row. The screens
+# reload from the first page after any change, so they never see that.
+#
+# Paging here bounds the response, not the read. See Known limits in
+# references/architecture.md.
+PAGE_DEFAULT = 200
+PAGE_MAX = 1000
+PAGE_LIMIT_MESSAGE = "limit must be 1-1000"
+PAGE_OFFSET_MESSAGE = "offset must be 0 or more"
+
 
 def get_store(request: Request) -> Store:
     return request.app.state.store
@@ -46,6 +64,43 @@ async def read_json(request: Request) -> dict[str, Any] | None:
     except ValueError:
         return None
     return body if isinstance(body, dict) else None
+
+
+async def emit(request: Request, event: str, data: dict[str, Any]) -> None:
+    """Say something happened (app/core/webhooks.py). It writes to the
+    database, so it goes through run like any other model call."""
+    await run(request.app.state.webhooks.emit, event, data)
+
+
+def whole_number(raw: str | None, default: int) -> int | None:
+    """A query parameter as an int: default when it is absent, None when it
+    is not a number."""
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def page_body(name: str, rows: list[Any], limit: int, offset: int) -> dict[str, Any]:
+    """One page cut out of rows, which must already be in their final order.
+    name is the field the rows go under."""
+    total = len(rows)
+    start = min(offset, total)
+    end = min(start + limit, total)
+    return {name: rows[start:end], "next": end if end < total else None, "total": total}
+
+
+def send_page(request: Request, name: str, rows: list[Any]) -> JSONResponse:
+    """The answer to a list route: the page its query asks for."""
+    limit = whole_number(request.query_params.get("limit"), PAGE_DEFAULT)
+    if limit is None or not 1 <= limit <= PAGE_MAX:
+        return bad_request(PAGE_LIMIT_MESSAGE)
+    offset = whole_number(request.query_params.get("offset"), 0)
+    if offset is None or offset < 0:
+        return bad_request(PAGE_OFFSET_MESSAGE)
+    return JSONResponse(page_body(name, rows, limit, offset))
 
 
 # One error shape for the whole API, so the frontend has one thing to handle

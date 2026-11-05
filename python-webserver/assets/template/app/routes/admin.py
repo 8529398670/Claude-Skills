@@ -21,15 +21,15 @@ from starlette.responses import JSONResponse, Response
 from app.core.db import Store
 from app.core.logs import KIND_ADMIN
 from app.core.security import actor_from, check_csrf
-from app.models import credentials, login_tokens, passwords, two_factor, users
-from app.routes.helpers import bad_request, error, forbidden, get_config, get_store, not_found, parse_id, read_json, run
+from app.models import credentials, login_tokens, passwords, two_factor, users, webhooks
+from app.routes.helpers import bad_request, emit, error, forbidden, get_config, get_store, not_found, parse_id, read_json, run, send_page
 from app.routes.logs import audit
 
 
 async def list_users(request: Request) -> Response:
     """Marks the owner on its row, so the UI can tell which delete, disable,
     and revoke buttons the server would refuse."""
-    return JSONResponse(await run(user_rows, get_store(request)))
+    return send_page(request, "users", await run(user_rows, get_store(request)))
 
 
 def user_rows(store: Store) -> list[dict[str, Any]]:
@@ -71,6 +71,7 @@ async def create_user(request: Request) -> Response:
     user = await run(users.create_user, store, display_name, role)
     credential = await run(login_tokens.issue_login_token, store, user.id, cfg.login_token_ttl_seconds)
     audit(request, KIND_ADMIN, "user created", {"user_id": user.id, "name": user.display_name, "role": user.role})
+    await emit(request, webhooks.EVENT_USER_CREATED, {"user_id": user.id, "display_name": user.display_name, "role": user.role})
     return JSONResponse(
         {
             "user_id": user.id,
@@ -124,6 +125,7 @@ async def set_user_disabled(request: Request) -> Response:
     if refused is not None:
         return refused.response()
     audit(request, KIND_ADMIN, "user disabled set", {"user_id": user_id, "disabled": disabled})
+    await emit(request, webhooks.EVENT_USER_DISABLED, {"user_id": user_id, "disabled": disabled})
     return JSONResponse({"ok": True})
 
 
@@ -177,6 +179,7 @@ async def delete_user(request: Request) -> Response:
     if removed is None:
         return not_found("no such user")
     audit(request, KIND_ADMIN, "user deleted", {"user_id": user_id})
+    await emit(request, webhooks.EVENT_USER_DELETED, {"user_id": user_id})
     return JSONResponse({"ok": True, "removed": removed.to_dict()})
 
 

@@ -42,16 +42,7 @@ const Invites = {
 
   async refresh() {
     const body = Dom.get( "invite-links-table" ).querySelector( "tbody" );
-    let links = [];
-    try {
-      links = await Api.listInvites();
-    } catch ( error ) {
-      App.showError( error.message );
-      return;
-    }
-
-    Dom.clear( body );
-    links.forEach( function ( link ) {
+    await Pager.load( "invite-links-table" , "invite_links" , ( offset ) => Api.listInvites( offset ) , function ( link ) {
       const revokeButton = !link.live ? null : Dom.el( "button" , {
         class: "btn btn-sm btn-outline-danger",
         text: I18n.get( "invite_links.revoke_button" ),

@@ -171,6 +171,12 @@ class MetricsSection:
 
 
 @dataclass
+class WebhooksSection:
+    timeout_seconds: int
+    allow_private_targets: bool
+
+
+@dataclass
 class DockerSection:
     image: str
     container: str
@@ -192,6 +198,7 @@ class File:
     logs: LogsSection
     backups: BackupsSection
     metrics: MetricsSection
+    webhooks: WebhooksSection
     docker: DockerSection
 
 
@@ -206,6 +213,7 @@ SECTIONS: dict[str, type] = {
     "logs": LogsSection,
     "backups": BackupsSection,
     "metrics": MetricsSection,
+    "webhooks": WebhooksSection,
     "docker": DockerSection,
 }
 
@@ -230,6 +238,14 @@ class LogsConfig:
     static_assets: bool = False
     ui_clicks: bool = True
     echo: bool = True
+
+
+@dataclass(frozen=True)
+class WebhooksConfig:
+    """config.yaml's webhooks section, resolved."""
+
+    timeout_seconds: int = 10
+    allow_private_targets: bool = False
 
 
 @dataclass(frozen=True)
@@ -352,6 +368,7 @@ class Config:
 
     # The scheduled backup's settings; see app/core/backup.py.
     backups: BackupsConfig = field(default_factory=BackupsConfig)
+    webhooks: WebhooksConfig = field(default_factory=WebhooksConfig)
 
     # secret.key, beside config_file: the one file besides the app directory
     # that a backup must include. secret_created is true when this run
@@ -690,6 +707,9 @@ def validate(file: File) -> list[str]:
     check(1 <= logs.max_file_mb <= logs.max_total_mb, "logs.max_file_mb must be positive and no more than logs.max_total_mb")
     check(logs.compress_after_days >= 0, "logs.compress_after_days must be 0 (never) or more")
 
+    timeout = file.webhooks.timeout_seconds
+    check(1 <= timeout <= 60, f"webhooks.timeout_seconds must be 1-60, got {timeout}")
+
     backups = file.backups
     check(backups.interval_hours >= 1, f"backups.interval_hours must be at least 1, got {backups.interval_hours}")
     check(backups.keep >= 1, f"backups.keep must be at least 1, got {backups.keep}")
@@ -938,6 +958,10 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
             static_assets=file.logs.static_assets,
             ui_clicks=file.logs.ui_clicks,
             echo=file.logs.echo,
+        ),
+        webhooks=WebhooksConfig(
+            timeout_seconds=file.webhooks.timeout_seconds,
+            allow_private_targets=file.webhooks.allow_private_targets,
         ),
         backups=BackupsConfig(
             enabled=file.backups.enabled,

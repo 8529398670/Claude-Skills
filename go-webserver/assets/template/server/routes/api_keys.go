@@ -3,6 +3,7 @@ package routes
 import (
 	errors "errors"
 
+
 	fiber "github.com/gofiber/fiber/v3"
 
 	db "{{MODULE_PATH}}/server/db"
@@ -97,7 +98,7 @@ func ( handlers *Handlers ) ListMyAPIKeys( c fiber.Ctx ) ( err error ) {
 	for _ , key := range keys {
 		rows = append( rows , apiKeyRow( key , "" ) )
 	}
-	err = c.JSON( rows )
+	err = sendPage( c , "keys" , rows )
 	return
 }
 
@@ -161,6 +162,7 @@ func ( handlers *Handlers ) CreateMyAPIKey( c fiber.Ctx ) ( err error ) {
 	row := apiKeyRow( key , "" )
 	row[ "credential" ] = credential
 	handlers.audit( c , logs.KindAdmin , "api key created" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role } )
+	handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role } )
 	err = c.Status( fiber.StatusCreated ).JSON( row )
 	return
 }
@@ -190,6 +192,7 @@ func ( handlers *Handlers ) RevokeMyAPIKey( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": c.Params( "key_id" ) } )
+	handlers.Webhooks.Emit( models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } )
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }
@@ -311,7 +314,7 @@ func ( handlers *Handlers ) ListAllAPIKeys( c fiber.Ctx ) ( err error ) {
 	for _ , key := range keys {
 		rows = append( rows , apiKeyRow( key , names[ key.UserID ] ) )
 	}
-	err = c.JSON( rows )
+	err = sendPage( c , "keys" , rows )
 	return
 }
 
@@ -339,6 +342,7 @@ func ( handlers *Handlers ) RevokeAnyAPIKey( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": c.Params( "key_id" ) } )
+	handlers.Webhooks.Emit( models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } )
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }

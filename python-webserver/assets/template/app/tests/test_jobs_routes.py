@@ -26,7 +26,7 @@ class JobsRoutesTest(RoutesTestCase):
         self.assertEqual(self.call("GET", "/api/owner/jobs", key=self.admin_key)[0], 404)
         status, body = self.call("GET", "/api/owner/jobs", cookie=self.owner_cookie)
         self.assertEqual(status, 200)
-        self.assertEqual([row["name"] for row in body["jobs"]], ["backup", "prune-logs", "purge"])
+        self.assertEqual([row["name"] for row in body["jobs"]], ["backup", "prune-logs", "purge", "webhooks"])
         self.assertEqual(body["jobs"][0]["interval_seconds"], 3600)
 
         status, body = self.call("POST", "/api/owner/jobs/purge/run", key=self.admin_key, body={})

@@ -210,6 +210,12 @@ func DisableTwoFactor( store *db.Store , user_id uint64 , code string , secret_k
 	return
 }
 
+// rekeyFields is every field sealed on its own with the secret key, by bucket.
+var rekeyFields = map[string][]string{
+	db.BucketUsers:    { "totp_secret" , "totp_pending" },
+	db.BucketWebhooks: { "secret" },
+}
+
 // RekeyRecord is what moving the database to a new key has to do beyond the
 // record's own encryption: a TOTP secret is encrypted again on its own (see
 // the top of this file), so it has to be opened with the old key and sealed
@@ -221,11 +227,12 @@ func DisableTwoFactor( store *db.Store , user_id uint64 , code string , secret_k
 func RekeyRecord( old_key string , new_key string ) ( rewrite func( bucket string , plain []byte ) ( []byte , error ) ) {
 	rewrite = func( bucket string , plain []byte ) ( result []byte , err error ) {
 		result = plain
-		if bucket != db.BucketUsers { return }
+		fields := rekeyFields[ bucket ]
+		if len( fields ) == 0 { return }
 		record := map[string]json.RawMessage{}
 		if err = json.Unmarshal( plain , &record ); err != nil { return }
 		changed := false
-		for _ , field := range []string{ "totp_secret" , "totp_pending" } {
+		for _ , field := range fields {
 			raw , present := record[ field ]
 			if present == false { continue }
 			var sealed string

@@ -45,6 +45,9 @@ BUCKET_API_KEYS = "api_keys"
 BUCKET_INVITE_LINKS = "invite_links"
 BUCKET_SIGN_IN_CHALLENGES = "sign_in_challenges"
 BUCKET_JOBS = "jobs"
+BUCKET_WEBHOOKS = "webhooks"
+# The outbox: see app/core/webhooks.py.
+BUCKET_WEBHOOK_DELIVERIES = "webhook_deliveries"
 BUCKET_META = "meta"
 
 BUCKETS = (
@@ -55,6 +58,8 @@ BUCKETS = (
     BUCKET_INVITE_LINKS,
     BUCKET_SIGN_IN_CHALLENGES,
     BUCKET_JOBS,
+    BUCKET_WEBHOOKS,
+    BUCKET_WEBHOOK_DELIVERIES,
     BUCKET_META,
 )
 

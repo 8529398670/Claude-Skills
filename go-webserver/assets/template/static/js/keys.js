@@ -144,16 +144,7 @@ const Keys = {
 
   async refresh() {
     const body = Dom.get( "keys-table" ).querySelector( "tbody" );
-    let keys = [];
-    try {
-      keys = await Api.listKeys();
-    } catch ( error ) {
-      App.showError( error.message );
-      return;
-    }
-
-    Dom.clear( body );
-    keys.forEach( function ( key ) {
+    await Pager.load( "keys-table" , "keys" , ( offset ) => Api.listKeys( offset ) , function ( key ) {
       // createElement + textContent throughout: a key's name is free text its
       // owner typed. See the note at the top of dom.js.
       body.appendChild( Dom.el( "tr" , { children: [
@@ -174,16 +165,7 @@ const Keys = {
 
   async refreshAll() {
     const body = Dom.get( "admin-keys-table" ).querySelector( "tbody" );
-    let keys = [];
-    try {
-      keys = await Api.listAllKeys();
-    } catch ( error ) {
-      App.showError( error.message );
-      return;
-    }
-
-    Dom.clear( body );
-    keys.forEach( function ( key ) {
+    await Pager.load( "admin-keys-table" , "keys" , ( offset ) => Api.listAllKeys( offset ) , function ( key ) {
       body.appendChild( Dom.el( "tr" , { children: [
         Dom.el( "td" , { text: key.display_name || ( "#" + key.user_id ) } ),
         Dom.el( "td" , { text: key.name } ),

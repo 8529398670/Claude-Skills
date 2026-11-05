@@ -50,6 +50,13 @@ project.
   user-scoped key, a browser session is refused, and no tool creates a
   credential or deletes anything. Stateless JSON-RPC over POST, written by
   hand -- no SDK, no SSE, no sessions. `server.mcp: false` removes it.
+- **Webhooks tell other systems what happened.** The owner adds endpoints on a
+  Webhooks screen. Events go through a durable outbox, signed with HMAC-SHA256 and
+  retried with backoff, and an endpoint can only be a public `https` address, checked
+  again on the address actually dialled.
+- **Failures look right.** A browser gets a styled error page, and scripts keep their
+  JSON. Every list in the API is paged, and nothing here is meant for search engines:
+  `robots.txt` and an `X-Robots-Tag` header on every response say so.
 - **The first admin is the owner.** Any admin can permanently delete an
   ordinary user; only the owner can delete another admin, and nobody can
   delete, disable, or revoke the owner from the web. Ownership is a marker,
@@ -270,6 +277,8 @@ ports they ran on. Do not reset either to a shared value.
     jobs/                     # jobs.go: named background jobs on a schedule
                               # housekeeping.go: purge, prune-logs, backup
     stream/stream.go          # server-sent events: Hub, Serve, heartbeats
+    webhooks/webhooks.go      # the outbox's sender, signing, and the address guard
+    errorpage/errorpage.go    # the page a browser gets when a page load fails
     routes/                   # routes.go (the URL map) + one file per group,
                               #   including api_keys.go, mcp_tools.go
                               #   (the MCP tools, + mcp_test.go) and logs.go
@@ -396,6 +405,13 @@ but stay consistent with the patterns already there:
   function there instead. One file to audit is the entire point.
 - **Never build HTML from strings containing user data.** Use `Dom.el`
   with `text:`, which is why that helper exists.
+- **A new event** goes in the list in `server/models/webhook.go`, and is sent with
+  `handlers.Webhooks.Emit( name , data )` where the thing happens. Ids and names only
+  in `data`, since it leaves the server, and never rename one once it has shipped.
+- **A new list route** answers with `sendPage( c , "rows" , rows )`, and its screen
+  uses `Pager.load`: a plain `forEach` would stop at the first page.
+- **A new page with a path of its own** needs a route using `handlers.Static.ServeIndex`
+  before the catch-all. There is no `index.html` fallback, so an unknown path is a 404.
 - **Adding a library?** Run `misc/vendor.sh <url>` and reference
   `/vendor/<file>`. A `<script src>` pointing at a CDN is blocked by the
   Content-Security-Policy -- that is the policy working. Vendor the file

@@ -45,7 +45,7 @@ func newMonitored( t *testing.T , logging bool ) ( fixture *monitored ) {
 	handlers.Logs = logger
 	handlers.Metrics = metrics.New()
 
-	app := fiber.New( fiber.Config{ ErrorHandler: middleware.ErrorHandler } )
+	app := fiber.New( fiber.Config{ ErrorHandler: middleware.NewErrorHandler( nil ) } )
 	app.Use( middleware.RequestID() )
 	app.Use( middleware.Metrics( handlers.Metrics ) )
 	app.Use( middleware.Recover( settings ) )

@@ -46,7 +46,7 @@ func ( handlers *Handlers ) ListMySessions( c fiber.Ctx ) ( err error ) {
 	for _ , session := range sessions {
 		rows = append( rows , sessionRow( session , actor.Session.ID ) )
 	}
-	err = c.JSON( rows )
+	err = sendPage( c , "sessions" , rows )
 	return
 }
 

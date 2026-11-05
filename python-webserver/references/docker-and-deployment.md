@@ -202,6 +202,12 @@ reproducible and does not silently resolve to newer versions.
   the host. Raise these deliberately for real load rather than discovering
   them under traffic.
 
+**Outbound calls.** The container can reach the network, and webhooks are the
+one thing in the template that uses it. The image carries `ca-certificates` for
+that. Nothing else limits where it can go, so if yours should only reach a few
+addresses, enforce that on the host or a firewall too. The app refuses private
+addresses on its own: see [Webhooks](architecture.md#webhooks).
+
 ## Paths inside the container
 
 The image pins the app directory to `/app/data` and the config file to

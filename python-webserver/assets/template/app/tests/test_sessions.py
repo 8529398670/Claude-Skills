@@ -87,7 +87,7 @@ class CaptureTest(RoutesTestCase):
         return TestClient(self.app, base_url="https://testserver", headers={"user-agent": BROWSER})
 
     def assert_captured(self, client: TestClient) -> None:
-        rows = client.get("/api/account/sessions").json()
+        rows = client.get("/api/account/sessions").json()["sessions"]
         current = next(row for row in rows if row["current"])
         self.assertEqual(current["ip"], "testclient")
         self.assertEqual(len(current["user_agent"]), 256)
@@ -154,9 +154,9 @@ class CaptureTest(RoutesTestCase):
 
 class ListTest(RoutesTestCase):
     def rows(self, cookie: str) -> list[dict]:
-        status, rows = self.call("GET", "/api/account/sessions", cookie=cookie)
+        status, reply = self.call("GET", "/api/account/sessions", cookie=cookie)
         self.assertEqual(status, 200)
-        return rows
+        return reply["sessions"]
 
     def test_needs_a_session(self) -> None:
         self.assertEqual(self.call("GET", "/api/account/sessions")[0], 401)
@@ -174,8 +174,8 @@ class ListTest(RoutesTestCase):
 
     def test_shows_nothing_secret(self) -> None:
         response = self.request("GET", "/api/account/sessions", cookie=self.owner_cookie)
-        self.assertEqual(set(response.json()[0]) - {"id", "current", "created_at", "expires_at", "last_seen_at", "ip", "user_agent"}, set())
-        record = self.store.get(db.BUCKET_SESSIONS, response.json()[0]["id"])
+        self.assertEqual(set(response.json()["sessions"][0]) - {"id", "current", "created_at", "expires_at", "last_seen_at", "ip", "user_agent"}, set())
+        record = self.store.get(db.BUCKET_SESSIONS, response.json()["sessions"][0]["id"])
         self.assertNotIn("secret_hash", response.text)
         self.assertNotIn("csrf_token", response.text)
         self.assertNotIn(record["secret_hash"], response.text)
@@ -193,7 +193,7 @@ class RevokeTest(RoutesTestCase):
         return self.call("POST", f"/api/account/sessions/{session_id}/revoke", cookie=cookie, body={"csrf_token": token})
 
     def current_id(self, cookie: str) -> str:
-        rows = self.call("GET", "/api/account/sessions", cookie=cookie)[1]
+        rows = self.call("GET", "/api/account/sessions", cookie=cookie)[1]["sessions"]
         return next(row["id"] for row in rows if row["current"])
 
     def test_ends_the_other_device(self) -> None:

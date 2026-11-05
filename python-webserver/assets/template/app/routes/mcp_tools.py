@@ -12,16 +12,30 @@ with a register(registry) function called from build_registry below.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
+from app.core.db import Store
 from app.mcp.registry import Call, Refusal, Registry, Tool
-from app.models import invite_links
+from app.models import invite_links, webhooks
 from app.routes.account import me_row
 from app.routes.admin import RuleRefusal, revoke_access_checked, set_disabled_checked, user_rows
+from app.routes.helpers import PAGE_DEFAULT, PAGE_LIMIT_MESSAGE, PAGE_MAX, PAGE_OFFSET_MESSAGE, page_body
 from app.routes.invite_links import invite_link_rows
 from app.routes.team import team_rows
 
 USER_ID_SCHEMA = {"type": "integer", "minimum": 1, "description": "The account's id, from list_team or admin_list_users."}
+
+
+# Both optional, so a paged tool still works with no arguments.
+PAGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "limit": {"type": "integer", "minimum": 1, "maximum": PAGE_MAX, "description": "Rows to return. Default 200."},
+        "offset": {"type": "integer", "minimum": 0, "description": "Rows to skip: the next value of the previous page."},
+    },
+    "additionalProperties": False,
+}
 
 
 def _schema(properties: dict[str, Any]) -> dict[str, Any]:
@@ -32,19 +46,28 @@ def _no_args(call: Call) -> None:
     call.bind({})
 
 
+def _page(call: Call, name: str, load: Callable[[Store], list[Any]]) -> dict[str, Any]:
+    """send_page for a tool, so the two doors page the same way."""
+    args = call.bind({}, optional={"limit": int, "offset": int})
+    limit, offset = args.get("limit", PAGE_DEFAULT), args.get("offset", 0)
+    if not 1 <= limit <= PAGE_MAX:
+        raise Refusal(PAGE_LIMIT_MESSAGE)
+    if offset < 0:
+        raise Refusal(PAGE_OFFSET_MESSAGE)
+    return page_body(name, load(call.store), limit, offset)
+
+
 def whoami(call: Call) -> dict[str, Any]:
     _no_args(call)
     return me_row(call.store, call.config, call.actor)
 
 
 def list_team(call: Call) -> dict[str, Any]:
-    _no_args(call)
-    return {"members": team_rows(call.store)}
+    return _page(call, "members", team_rows)
 
 
 def admin_list_users(call: Call) -> dict[str, Any]:
-    _no_args(call)
-    return {"users": user_rows(call.store)}
+    return _page(call, "users", user_rows)
 
 
 def admin_set_user_disabled(call: Call) -> dict[str, Any]:
@@ -52,6 +75,7 @@ def admin_set_user_disabled(call: Call) -> dict[str, Any]:
     refused = set_disabled_checked(call.store, call.actor.user.id, args["user_id"], args["disabled"])
     if refused is not None:
         raise Refusal(refused.message)
+    call.request.app.state.webhooks.emit(webhooks.EVENT_USER_DISABLED, {"user_id": args["user_id"], "disabled": args["disabled"]})
     return {"ok": True}
 
 
@@ -64,14 +88,14 @@ def admin_revoke_access(call: Call) -> dict[str, Any]:
 
 
 def admin_list_invite_links(call: Call) -> dict[str, Any]:
-    _no_args(call)
-    return {"invite_links": invite_link_rows(call.store)}
+    return _page(call, "invite_links", invite_link_rows)
 
 
 def admin_revoke_invite_link(call: Call) -> dict[str, Any]:
     args = call.bind({"link_id": str})
     if not invite_links.revoke_invite_link(call.store, args["link_id"]):
         raise Refusal("no such invite link")
+    call.request.app.state.webhooks.emit(webhooks.EVENT_INVITE_LINK_REVOKED, {"link_id": args["link_id"]})
     return {"ok": True}
 
 
@@ -87,15 +111,17 @@ def build_registry() -> Registry:
     registry.register(Tool(
         name="list_team",
         title="List team",
-        description="Everyone with an active account: id and display name. Use the id wherever another tool asks for a user.",
+        description="People with an active account, a page at a time: id and display name. Use the id wherever another tool asks for a user. next is the offset of the following page, or null on the last one.",
         call=list_team,
+        input_schema=PAGE_SCHEMA,
         read_only=True,
     ))
     registry.register(Tool(
         name="admin_list_users",
         title="List users (admin)",
-        description="Every account, including disabled ones, with its role and which one is the owner.",
+        description="Accounts, a page at a time, including disabled ones, with each one's role and which is the owner. next is the offset of the following page, or null on the last one.",
         call=admin_list_users,
+        input_schema=PAGE_SCHEMA,
         read_only=True,
         admin_only=True,
     ))
@@ -119,8 +145,9 @@ def build_registry() -> Registry:
     registry.register(Tool(
         name="admin_list_invite_links",
         title="List invite links (admin)",
-        description="Every group invite link: label, places used and left, expiry, and whether it still works. The links themselves are never shown again after creation.",
+        description="Group invite links, a page at a time: label, places used and left, expiry, and whether each still works. The links themselves are never shown again after creation. next is the offset of the following page, or null on the last one.",
         call=admin_list_invite_links,
+        input_schema=PAGE_SCHEMA,
         read_only=True,
         admin_only=True,
     ))

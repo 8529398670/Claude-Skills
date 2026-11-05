@@ -303,6 +303,22 @@ adds appears with no frontend change. Give one a friendlier name with
 call that starts it, so the screen looks again every `refreshMs` while something
 is running there.
 
+### The Webhooks screen
+
+`webhooks.js`, owner only: add an endpoint, turn it on or off, send a test, and
+see how its deliveries went. The signing secret appears once, in a box like a new
+key's. Event names are shown as they are, because they are what the receiver
+sees. See [Webhooks](architecture.md#webhooks).
+
+### Long lists
+
+`pager.js` fills a table from a paged route and offers "Load more" under it while
+there are rows left. `Pager.load( tableId , field , fetchPage , renderRow )`
+answers the page, or `null` if the call failed. A refresh is a load from the start,
+so a change on the screen never leaves a stale page behind. Use it for any new
+list: a plain `forEach` would quietly stop at the first page. See
+[Paging lists](architecture.md#paging-lists).
+
 ### Where you're signed in
 
 `sessions.js` draws the devices table on the Account screen. It reads a short

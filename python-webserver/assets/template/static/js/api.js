@@ -117,8 +117,8 @@ const Api = {
   disableTwoFactor( code )     { return this.post( "/api/account/two-factor/disable" , { code: code } ); },
   createMyLoginLink()          { return this.post( "/api/account/login-link" ); },
   logout()                     { return this.post( "/api/logout" ); },
-  listTeam()                   { return this.request( "/api/team" ); },
-  listUsers()                  { return this.request( "/api/admin/users" ); },
+  listTeam( offset )           { return this.request( "/api/team" + this.query( { offset: offset } ) ); },
+  listUsers( offset )          { return this.request( "/api/admin/users" + this.query( { offset: offset } ) ); },
   createUser( name , role )    { return this.post( "/api/admin/users" , { display_name: name , role: role } ); },
   reissueLogin( userId )       { return this.post( "/api/admin/users/" + userId + "/reissue-login" ); },
   setDisabled( userId , flag ) { return this.post( "/api/admin/users/" + userId + "/disabled" , { disabled: flag } ); },
@@ -128,7 +128,7 @@ const Api = {
   setPasswordAccess( userId , allowed ) {
     return this.post( "/api/owner/users/" + userId + "/password-access" , { allowed: allowed } );
   },
-  listInvites()                { return this.request( "/api/admin/invite-links" ); },
+  listInvites( offset )        { return this.request( "/api/admin/invite-links" + this.query( { offset: offset } ) ); },
   createInvite( label , maxUses , days ) {
     return this.post( "/api/admin/invite-links" , { label: label , max_uses: maxUses , days: days } );
   },
@@ -139,14 +139,14 @@ const Api = {
   // API keys. createKey's expiresInDays is passed through as-is including null,
   // because the server reads absent as "use the default" and 0 as "never
   // expires" -- collapsing them here would lose the distinction.
-  listKeys()                   { return this.request( "/api/keys" ); },
+  listKeys( offset )           { return this.request( "/api/keys" + this.query( { offset: offset } ) ); },
   createKey( name , role , expiresInDays ) {
     return this.post( "/api/keys" , { name: name , role: role , expires_in_days: expiresInDays } );
   },
   revokeKey( keyId )           { return this.post( "/api/keys/" + encodeURIComponent( keyId ) + "/revoke" ); },
   deleteKey( keyId )           { return this.post( "/api/keys/" + encodeURIComponent( keyId ) + "/delete" ); },
   restoreKey( keyId )          { return this.post( "/api/keys/" + encodeURIComponent( keyId ) + "/restore" ); },
-  listAllKeys()                { return this.request( "/api/admin/keys" ); },
+  listAllKeys( offset )        { return this.request( "/api/admin/keys" + this.query( { offset: offset } ) ); },
   revokeAnyKey( keyId )        { return this.post( "/api/admin/keys/" + encodeURIComponent( keyId ) + "/revoke" ); },
   deleteAnyKey( keyId )        { return this.post( "/api/admin/keys/" + encodeURIComponent( keyId ) + "/delete" ); },
   restoreAnyKey( keyId )       { return this.post( "/api/admin/keys/" + encodeURIComponent( keyId ) + "/restore" ); },
@@ -164,12 +164,26 @@ const Api = {
   deleteLogDay( date )         { return this.post( "/api/owner/logs/days/" + encodeURIComponent( date ) + "/delete" ); },
   pruneLogs()                  { return this.post( "/api/owner/logs/prune" ); },
 
+  // Webhooks (owner only). A test is queued, not sent, by the time this answers.
+  webhooks( offset )           { return this.request( "/api/owner/webhooks" + this.query( { offset: offset } ) ); },
+  webhookEvents()              { return this.request( "/api/owner/webhooks/events" ); },
+  createWebhook( name , url , events ) {
+    return this.post( "/api/owner/webhooks" , { name: name , url: url , events: events } );
+  },
+  setWebhookEnabled( id , flag ) { return this.post( "/api/owner/webhooks/" + encodeURIComponent( id ) + "/enabled" , { enabled: flag } ); },
+  deleteWebhook( id )          { return this.post( "/api/owner/webhooks/" + encodeURIComponent( id ) + "/delete" ); },
+  restoreWebhook( id )         { return this.post( "/api/owner/webhooks/" + encodeURIComponent( id ) + "/restore" ); },
+  testWebhook( id )            { return this.post( "/api/owner/webhooks/" + encodeURIComponent( id ) + "/test" ); },
+  webhookDeliveries( id , offset ) {
+    return this.request( "/api/owner/webhooks/" + encodeURIComponent( id ) + "/deliveries" + this.query( { offset: offset } ) );
+  },
+
   // Background jobs (owner only). A run outlives the call that starts it.
   jobs()                       { return this.request( "/api/owner/jobs" ); },
   runJob( name )               { return this.post( "/api/owner/jobs/" + encodeURIComponent( name ) + "/run" ); },
 
   // Where this account is signed in.
-  sessions()                   { return this.request( "/api/account/sessions" ); },
+  sessions( offset )           { return this.request( "/api/account/sessions" + this.query( { offset: offset } ) ); },
   revokeSession( sessionId )   { return this.post( "/api/account/sessions/" + encodeURIComponent( sessionId ) + "/revoke" ); },
   revokeOtherSessions()        { return this.post( "/api/account/sessions/revoke-others" ); },
 

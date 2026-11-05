@@ -43,6 +43,7 @@ from app.routes import (
     settings,
     team,
     two_factor,
+    webhooks,
 )
 from app.routes.api_keys import RequireAPIKeys
 from app.routes.helpers import get_config, not_found
@@ -210,6 +211,15 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         # Background jobs. See app/core/jobs.py.
         owner("/api/owner/jobs", jobs.list_jobs),
         owner("/api/owner/jobs/{name}/run", jobs.run_job, ["POST"]),
+        # Webhooks. See app/core/webhooks.py.
+        owner("/api/owner/webhooks", webhooks.list_webhooks),
+        owner("/api/owner/webhooks", webhooks.create_webhook, ["POST"]),
+        owner("/api/owner/webhooks/events", webhooks.list_events),
+        owner("/api/owner/webhooks/{webhook_id}/enabled", webhooks.set_enabled, ["POST"]),
+        owner("/api/owner/webhooks/{webhook_id}/delete", webhooks.delete_webhook, ["POST"]),
+        owner("/api/owner/webhooks/{webhook_id}/restore", webhooks.restore_webhook, ["POST"]),
+        owner("/api/owner/webhooks/{webhook_id}/test", webhooks.send_test, ["POST"]),
+        owner("/api/owner/webhooks/{webhook_id}/deliveries", webhooks.list_deliveries),
         # The per-account password switch. See passwords.py.
         owner_passwords("/api/owner/users/{user_id}/password-access", passwords.set_password_access, ["POST"]),
     ]

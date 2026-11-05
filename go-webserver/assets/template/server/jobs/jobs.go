@@ -65,6 +65,9 @@ type job struct {
 
 // Registry holds the jobs. Register them before Start.
 type Registry struct {
+	// OnFailure, when set, hears the name of a job whose run failed.
+	OnFailure func( name string )
+
 	store  *db.Store
 	logger *logs.Logger
 
@@ -276,6 +279,7 @@ func ( registry *Registry ) execute( entry *job , started models.JobRecord ) {
 	if run_err != nil {
 		log.Printf( "[jobs] %s failed: %v" , entry.name , run_err )
 		registry.logger.System( logs.LevelError , "background job failed" , map[string]any{ "job": entry.name , "error": run_err.Error() } )
+		if registry.OnFailure != nil { registry.OnFailure( entry.name ) }
 	}
 }
 

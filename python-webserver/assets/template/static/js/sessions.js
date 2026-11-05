@@ -71,16 +71,8 @@ const Sessions = {
   },
 
   async refresh() {
-    let sessions;
-    try {
-      sessions = await Api.sessions();
-    } catch ( error ) {
-      App.showError( error.message );
-      return;
-    }
     const body = Dom.get( "sessions-table" ).querySelector( "tbody" );
-    Dom.clear( body );
-    sessions.forEach( ( session ) => {
+    const page = await Pager.load( "sessions-table" , "sessions" , ( offset ) => Api.sessions( offset ) , ( session ) => {
       const name = [ Dom.el( "span" , { text: this.device( session ) } ) ];
       if ( session.current ) name.push( Dom.el( "span" , { class: "ms-2" , children: [ Dom.badge( I18n.get( "sessions.this_device" ) , "success" ) ] } ) );
       body.appendChild( Dom.el( "tr" , { children: [
@@ -91,6 +83,6 @@ const Sessions = {
         Dom.el( "td" , { children: session.current ? [] : [ this.revokeButton( session ) ] } ),
       ] } ) );
     } );
-    Dom.show( Dom.get( "sessions-revoke-others" ) , sessions.length > 1 );
+    if ( page !== null ) Dom.show( Dom.get( "sessions-revoke-others" ) , page.total > 1 );
   },
 };

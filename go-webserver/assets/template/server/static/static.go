@@ -44,12 +44,22 @@ func init() {
 }
 
 type Server struct {
+	// NotFound answers a path with nothing behind it. main.go wraps it so a
+	// browser gets the error page; a stylesheet or script tag keeps this plain
+	// text, which is what makes a missing asset easy to read in the console.
+	NotFound fiber.Handler
+
 	fsys      fs.FS
 	indexFile string
 }
 
 func New( fsys fs.FS ) ( server *Server , err error ) {
-	server = &Server{ fsys: fsys , indexFile: "index.html" }
+	server = &Server{ NotFound: plainNotFound , fsys: fsys , indexFile: "index.html" }
+	return
+}
+
+func plainNotFound( c fiber.Ctx ) ( err error ) {
+	err = c.Status( fiber.StatusNotFound ).SendString( "Not found" )
 	return
 }
 
@@ -58,10 +68,8 @@ func New( fsys fs.FS ) ( server *Server , err error ) {
 // fs.FS already refuses these -- fs.ValidPath rejects any path containing a
 // ".." element. That stops a request *naming* a path outside the root; what
 // stops a symlink inside the root from *pointing* outside it is the os.Root
-// that server/assets opens for the disk case. This check is here so such a
-// request answers 404 directly instead of falling through to the index.html
-// fallback, which is clearer to whoever reads the access log, and so the
-// intent is stated rather than left as a property of the standard library.
+// that server/assets opens for the disk case. This check is here so the intent
+// is stated rather than left as a property of the standard library.
 func hasDotDot( request_path string ) ( result bool ) {
 	normalised := strings.ReplaceAll( request_path , "\\" , "/" )
 	for _ , segment := range strings.Split( normalised , "/" ) {
@@ -106,27 +114,14 @@ func ( server *Server ) Handler( c fiber.Ctx ) ( err error ) {
 		request_path = path.Join( request_path , server.indexFile )
 	}
 
+	// No fallback to index.html. The app navigates by hash, and the two paths
+	// it does read have their own routes (/login/*, /join/*), so anything else
+	// is a real 404. An app that adds a path-routed page registers it with
+	// ServeIndex, before this handler.
 	name , ok := resolve( request_path )
-	if ok == false {
-		err = c.Status( fiber.StatusNotFound ).SendString( "Not found" )
+	if ok == false || server.isFile( name ) == false {
+		err = server.NotFound( c )
 		return
-	}
-
-	if server.isFile( name ) == false {
-		// A path with no extension is a client-side route ("/settings"), so
-		// hand back index.html and let the browser router take over. A path
-		// that names a file and is missing is a genuine 404 -- answering that
-		// with HTML would leave the browser parsing a page as a stylesheet
-		// and reporting a confusing MIME error instead of the real problem.
-		if path.Ext( name ) != "" {
-			err = c.Status( fiber.StatusNotFound ).SendString( "Not found" )
-			return
-		}
-		name = server.indexFile
-		if server.isFile( name ) == false {
-			err = c.Status( fiber.StatusNotFound ).SendString( "Not found" )
-			return
-		}
 	}
 
 	if alwaysFreshExtensions[ strings.ToLower( path.Ext( name ) ) ] == false {
@@ -147,7 +142,7 @@ func ( server *Server ) Handler( c fiber.Ctx ) ( err error ) {
 // browser app handles itself (the login link's confirmation page).
 func ( server *Server ) ServeIndex( c fiber.Ctx ) ( err error ) {
 	if server.isFile( server.indexFile ) == false {
-		err = c.Status( fiber.StatusNotFound ).SendString( "Not found" )
+		err = server.NotFound( c )
 		return
 	}
 	err = server.sendText( c , server.indexFile )
@@ -159,7 +154,7 @@ func ( server *Server ) ServeIndex( c fiber.Ctx ) ( err error ) {
 func ( server *Server ) sendText( c fiber.Ctx , name string ) ( err error ) {
 	body , read_err := fs.ReadFile( server.fsys , name )
 	if read_err != nil {
-		err = c.Status( fiber.StatusNotFound ).SendString( "Not found" )
+		err = server.NotFound( c )
 		return
 	}
 

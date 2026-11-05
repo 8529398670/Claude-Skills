@@ -19,6 +19,7 @@ adding a setting or writing a file anywhere.
 - [The activity log's settings](#the-activity-logs-settings)
 - [In containers](#in-containers)
 - [Backups](#backups)
+- [Webhook settings](#webhook-settings)
 - [Adding a setting](#adding-a-setting)
 
 ## One file, no environment variables
@@ -556,6 +557,16 @@ who was signed in from where.
 
 `metrics.enabled`, `[live]`, makes `GET /metrics` answer an admin API key. See
 Monitoring in `architecture.md`.
+
+## Webhook settings
+
+`webhooks.timeout_seconds` is how long one delivery attempt may take, 1 to 60.
+`webhooks.allow_private_targets` lets an endpoint be on this machine or a private
+network, and use plain `http`. Leave it off unless whoever is the owner should have
+that reach: with it on, the Webhooks screen can call anything this server can.
+Both apply at once, and a delivery checks the address again when it is sent, so
+turning it off stops an endpoint that relied on it. See
+[Webhooks](architecture.md#webhooks).
 
 ## Adding a setting
 

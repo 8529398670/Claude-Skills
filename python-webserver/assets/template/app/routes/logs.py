@@ -19,10 +19,8 @@ from app.core.config import trusted_proxy_networks
 from app.core.middleware import client_ip
 from app.core.security import actor_from, check_csrf, decrypt_cookie, log_actor, still_owner
 from app.models import users
-from app.routes.helpers import bad_request, conflict, error, forbidden, get_config, get_store, read_json, run
+from app.routes.helpers import PAGE_DEFAULT, PAGE_LIMIT_MESSAGE, PAGE_MAX, bad_request, conflict, error, forbidden, get_config, get_store, read_json, run, whole_number
 
-PAGE_DEFAULT = 200
-PAGE_MAX = 1000
 # Page events a browser may send per call, and per account per minute.
 EVENTS_PER_CALL = 50
 EVENTS_PER_MINUTE = 600
@@ -57,25 +55,16 @@ async def list_log_days(request: Request) -> Response:
     return JSONResponse({"days": days, "total_bytes": total, "dropped": logger.dropped, "settings": _settings(logger)})
 
 
-def _whole_number(raw: str | None, default: int) -> int | None:
-    if raw is None or raw == "":
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return None
-
-
 async def get_log_day(request: Request) -> Response:
     day = request.path_params["date"]
     if not logs.valid_day(day):
         return bad_request("bad_day")
-    before = _whole_number(request.query_params.get("before"), -1)
+    before = whole_number(request.query_params.get("before"), -1)
     if before is None or (before < 0 and request.query_params.get("before")):
         return bad_request("before must be a line number")
-    limit = _whole_number(request.query_params.get("limit"), PAGE_DEFAULT)
+    limit = whole_number(request.query_params.get("limit"), PAGE_DEFAULT)
     if limit is None or not 1 <= limit <= PAGE_MAX:
-        return bad_request("limit must be 1-1000")
+        return bad_request(PAGE_LIMIT_MESSAGE)
     query = logs.Query(request.query_params.get("q", ""))
     records, following = await run(get_logs(request).read_day, day, query, before, limit)
     return JSONResponse({"date": day, "entries": records, "next": following})

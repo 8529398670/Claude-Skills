@@ -3,6 +3,7 @@ package routes
 import (
 	time "time"
 
+
 	fiber "github.com/gofiber/fiber/v3"
 
 	logs "{{MODULE_PATH}}/server/logs"
@@ -51,7 +52,7 @@ func ( handlers *Handlers ) ListInviteLinks( c fiber.Ctx ) ( err error ) {
 		err = serverError( c , list_err )
 		return
 	}
-	err = c.JSON( rows )
+	err = sendPage( c , "invite_links" , rows )
 	return
 }
 
@@ -89,6 +90,7 @@ func ( handlers *Handlers ) CreateInviteLink( c fiber.Ctx ) ( err error ) {
 	row := handlers.inviteLinkRow( link )
 	row[ "join_path" ] = "/join/" + credential
 	handlers.audit( c , logs.KindAdmin , "invite link created" , fiber.Map{ "link_id": link.ID , "label": link.Label , "max_uses": link.MaxUses } )
+	handlers.Webhooks.Emit( models.EventInviteLinkCreated , map[string]any{ "link_id": link.ID , "label": link.Label } )
 	err = c.Status( fiber.StatusCreated ).JSON( row )
 	return
 }
@@ -109,6 +111,7 @@ func ( handlers *Handlers ) RevokeInviteLink( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "invite link revoked" , fiber.Map{ "link_id": c.Params( "link_id" ) } )
+	handlers.Webhooks.Emit( models.EventInviteLinkRevoked , map[string]any{ "link_id": c.Params( "link_id" ) } )
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }

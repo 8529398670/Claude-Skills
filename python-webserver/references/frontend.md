@@ -295,6 +295,22 @@ costs no requests. The stream closes when the Logs screen is left and reopens
 on return. A lost stream turns Live off and says so (`logs.live_lost`): the
 server ends one when the session is revoked.
 
+### The Webhooks screen
+
+`webhooks.js`, owner only: add an endpoint, turn it on or off, send a test, and
+see how its deliveries went. The signing secret appears once, in a box like a new
+key's. Event names are shown as they are, because they are what the receiver
+sees. See [Webhooks](architecture.md#webhooks).
+
+### Long lists
+
+`pager.js` fills a table from a paged route and offers "Load more" under it while
+there are rows left. `Pager.load( tableId , field , fetchPage , renderRow )`
+answers the page, or `null` if the call failed. A refresh is a load from the start,
+so a change on the screen never leaves a stale page behind. Use it for any new
+list: a plain `forEach` would quietly stop at the first page. See
+[Paging lists](architecture.md#paging-lists).
+
 ### The Jobs and Account sessions screens
 
 `jobs.js` is the owner's Jobs screen: each job from `GET /api/owner/jobs`, how

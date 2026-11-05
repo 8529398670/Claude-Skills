@@ -17,7 +17,7 @@ func ( handlers *Handlers ) ListTeam( c fiber.Ctx ) ( err error ) {
 		err = serverError( c , list_err )
 		return
 	}
-	err = c.JSON( members )
+	err = sendPage( c , "members" , members )
 	return
 }
 

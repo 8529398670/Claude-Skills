@@ -18,12 +18,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.core.logs import KIND_AUTH, LEVEL_INFO, LEVEL_WARN
-from app.models import invite_links, passwords, pins, users
+from app.models import invite_links, passwords, pins, users, webhooks
 from app.models.attempts import AttemptGuard
 from app.models.invite_links import InviteLink, InviteLinkFullError, InviteLinkInvalidError, NotInviteAccountError
 from app.models.sign_in import SignIn
 from app.routes.auth import same_origin_json, sign_in_response, sign_in_rules
-from app.routes.helpers import bad_request, error, forbidden, get_config, get_store, not_found, read_json, run
+from app.routes.helpers import bad_request, emit, error, forbidden, get_config, get_store, not_found, read_json, run
 from app.routes.logs import audit_as, user_actor
 
 # Per process, like the rate limiter. See AttemptGuard.
@@ -130,5 +130,6 @@ async def join_create(request: Request) -> Response:
     except InviteLinkFullError:
         return error(409, "invite_link_full")
     audit_as(request, await run(user_actor, store, user.id, "session"), KIND_AUTH, LEVEL_INFO, "joined through an invite link", {"link_id": link.id})
+    await emit(request, webhooks.EVENT_USER_CREATED, {"user_id": user.id, "display_name": user.display_name, "role": user.role, "invite_link_id": link.id})
     signed = SignIn(user_id=user.id, session_credential=session_credential)
     return await sign_in_response(request, signed, {"ok": True, "display_name": user.display_name}, 201)

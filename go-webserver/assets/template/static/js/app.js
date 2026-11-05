@@ -143,10 +143,11 @@ const App = {
       Dom.get( "copy-link-button" ).addEventListener( "click" , this.onCopyLink.bind( this ) );
       await this.refreshUsers();
       await Invites.init( me );
-      // Only the owner gets the Logs, Jobs and Settings screens; each init
+      // Only the owner gets the Logs, Jobs, Webhooks and Settings screens; each init
       // checks is_owner.
       await Logs.init( me );
       await Jobs.init( me );
+      await Webhooks.init( me );
       await Settings.init( me );
     }
 
@@ -242,16 +243,7 @@ const App = {
 
   async refreshUsers() {
     const body = Dom.get( "users-table" ).querySelector( "tbody" );
-    let users = [];
-    try {
-      users = await Api.listUsers();
-    } catch ( error ) {
-      this.showError( error.message );
-      return;
-    }
-
-    Dom.clear( body );
-    users.forEach( function ( user ) {
+    await Pager.load( "users-table" , "users" , ( offset ) => Api.listUsers( offset ) , function ( user ) {
       const statusKey = user.disabled ? "admin.status_disabled" : "admin.status_active";
       const statusTone = user.disabled ? "secondary" : "success";
 

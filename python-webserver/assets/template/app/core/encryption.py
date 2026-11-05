@@ -79,6 +79,11 @@ def sha256_hex(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def hmac_sha256_hex(key: str, message: str) -> str:
+    """Signs a message, as lowercase hex: what a webhook receiver checks."""
+    return hmac.new(key.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def constant_time_equal(a: str, b: str) -> bool:
     """Compare two digests or tokens without leaking, through how long the
     comparison takes, how many leading characters matched. `==` returns at

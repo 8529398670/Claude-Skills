@@ -13,10 +13,10 @@ from starlette.responses import JSONResponse, Response
 from app.core.db import Store
 from app.core.logs import KIND_ADMIN
 from app.core.security import actor_from, check_csrf
-from app.models import RestoreError, invite_links, users
+from app.models import RestoreError, invite_links, users, webhooks
 from app.models.invite_links import InviteLink
 from app.models.users import User
-from app.routes.helpers import bad_request, forbidden, get_store, not_found, read_json, restore_refused, run
+from app.routes.helpers import bad_request, emit, forbidden, get_store, not_found, read_json, restore_refused, run, send_page
 from app.routes.logs import audit
 
 
@@ -48,7 +48,7 @@ def invite_link_rows(store: Store) -> list[dict[str, Any]]:
 
 
 async def list_invite_links(request: Request) -> Response:
-    return JSONResponse(await run(invite_link_rows, get_store(request)))
+    return send_page(request, "invite_links", await run(invite_link_rows, get_store(request)))
 
 
 async def create_invite_link(request: Request) -> Response:
@@ -66,6 +66,7 @@ async def create_invite_link(request: Request) -> Response:
     row = _row(link, creator)
     row["join_path"] = f"/join/{credential}"
     audit(request, KIND_ADMIN, "invite link created", {"link_id": link.id, "label": link.label, "max_uses": link.max_uses})
+    await emit(request, webhooks.EVENT_INVITE_LINK_CREATED, {"link_id": link.id, "label": link.label})
     return JSONResponse(row, status_code=201)
 
 
@@ -79,6 +80,7 @@ async def revoke_invite_link(request: Request) -> Response:
     if not await run(invite_links.revoke_invite_link, get_store(request), request.path_params["link_id"]):
         return not_found("no such invite link")
     audit(request, KIND_ADMIN, "invite link revoked", {"link_id": request.path_params["link_id"]})
+    await emit(request, webhooks.EVENT_INVITE_LINK_REVOKED, {"link_id": request.path_params["link_id"]})
     return JSONResponse({"ok": True})
 
 

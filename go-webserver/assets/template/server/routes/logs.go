@@ -23,8 +23,6 @@ import (
 // /api/logs/events, since what they do is what gets logged.
 
 const (
-	logPageDefault = 200
-	logPageMax     = 1000
 	// Page events a browser may send per call, and per session per minute.
 	logEventsPerCall   = 50
 	logEventsPerMinute = 600
@@ -83,11 +81,11 @@ func ( handlers *Handlers ) GetLogDay( c fiber.Ctx ) ( err error ) {
 		}
 		before = parsed
 	}
-	limit := logPageDefault
+	limit := pageDefault
 	if raw := c.Query( "limit" ); raw != "" {
 		parsed , parse_err := strconv.Atoi( raw )
-		if parse_err != nil || parsed < 1 || parsed > logPageMax {
-			err = badRequest( c , "limit must be 1-1000" )
+		if parse_err != nil || parsed < 1 || parsed > pageMax {
+			err = badRequest( c , pageLimitMessage )
 			return
 		}
 		limit = parsed

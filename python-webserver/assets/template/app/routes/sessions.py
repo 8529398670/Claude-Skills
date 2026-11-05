@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse, Response
 from app.core.logs import KIND_AUTH
 from app.core.security import actor_from, check_csrf
 from app.models import sessions, to_iso
-from app.routes.helpers import bad_request, forbidden, get_store, not_found, read_json, run
+from app.routes.helpers import bad_request, forbidden, get_store, not_found, read_json, run, send_page
 from app.routes.logs import audit
 
 
@@ -39,7 +39,7 @@ def session_row(session: sessions.Session, current_id: str) -> dict[str, Any]:
 async def list_my_sessions(request: Request) -> Response:
     actor = actor_from(request)
     found = await run(sessions.list_sessions, get_store(request), actor.user.id)
-    return JSONResponse([session_row(session, actor.session.id) for session in found])
+    return send_page(request, "sessions", [session_row(session, actor.session.id) for session in found])
 
 
 async def revoke_one(request: Request) -> Response:

@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir --only-binary=:all: --prefix=/install -r requirem
 # --- runtime stage ---------------------------------------------------------
 FROM python:3.14-alpine AS runtime
 
+# ca-certificates is the only package added: webhooks call out over HTTPS, and
+# without it that fails with an opaque certificate error.
+#
 # The uid/gid are fixed at 10001 rather than left to Alpine's system range.
 # docker/run.sh grants this user the host's data directory, and this group
 # read-write access to config.yaml and read access to secret.key; a number in the low hundreds is likely to belong to a
@@ -25,7 +28,8 @@ FROM python:3.14-alpine AS runtime
 #
 # pip is removed: nothing installs packages at runtime, and a package manager
 # is one more tool for anyone who gets code execution in here.
-RUN addgroup -S -g 10001 app \
+RUN apk add --no-cache ca-certificates \
+ && addgroup -S -g 10001 app \
  && adduser -S -u 10001 -G app -h /app -s /sbin/nologin app \
  && python -m pip uninstall --yes --quiet pip
 

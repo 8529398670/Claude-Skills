@@ -29,10 +29,11 @@ from starlette.responses import JSONResponse, Response
 from app.core.db import Store
 from app.core.logs import KIND_ADMIN
 from app.core.security import Guard, actor_from, check_csrf
-from app.models import RestoreError, api_keys, to_iso, users
+from app.models import RestoreError, api_keys, to_iso, users, webhooks
 from app.routes.helpers import (
     bad_request,
     conflict,
+    emit,
     forbidden,
     get_config,
     get_store,
@@ -40,6 +41,7 @@ from app.routes.helpers import (
     read_json,
     restore_refused,
     run,
+    send_page,
 )
 from app.routes.logs import audit
 
@@ -85,7 +87,7 @@ async def list_my_keys(request: Request) -> Response:
     included, marked as such, because a key that used to exist is part of
     that answer."""
     keys = await run(api_keys.list_api_keys_for_user, get_store(request), actor_from(request).user.id)
-    return JSONResponse([api_key_row(key) for key in keys])
+    return send_page(request, "keys", [api_key_row(key) for key in keys])
 
 
 async def create_my_key(request: Request) -> Response:
@@ -132,6 +134,7 @@ async def create_my_key(request: Request) -> Response:
     row = api_key_row(key)
     row["credential"] = credential
     audit(request, KIND_ADMIN, "api key created", {"key_id": key.id, "name": key.name, "role": key.role})
+    await emit(request, webhooks.EVENT_API_KEY_CREATED, {"key_id": key.id, "user_id": key.user_id, "name": key.name, "role": key.role})
     return JSONResponse(row, status_code=201)
 
 
@@ -151,6 +154,7 @@ async def revoke_my_key(request: Request) -> Response:
         return not_found("no such api key")
     await run(api_keys.revoke_api_key, store, key.id)
     audit(request, KIND_ADMIN, "api key revoked", {"key_id": request.path_params["key_id"]})
+    await emit(request, webhooks.EVENT_API_KEY_REVOKED, {"key_id": key.id, "user_id": key.user_id})
     return JSONResponse({"ok": True})
 
 
@@ -216,7 +220,7 @@ async def list_all_keys(request: Request) -> Response:
     # One pass to build the lookup rather than a get_user per key: a read per
     # row is the shape that quietly becomes slow.
     names = {user.id: user.display_name for user in await run(users.list_users, store)}
-    return JSONResponse([api_key_row(key, names.get(key.user_id, "")) for key in keys])
+    return send_page(request, "keys", [api_key_row(key, names.get(key.user_id, "")) for key in keys])
 
 
 async def revoke_any_key(request: Request) -> Response:
@@ -228,9 +232,11 @@ async def revoke_any_key(request: Request) -> Response:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    if await run(api_keys.revoke_api_key, get_store(request), request.path_params["key_id"]) is None:
+    revoked = await run(api_keys.revoke_api_key, get_store(request), request.path_params["key_id"])
+    if revoked is None:
         return not_found("no such api key")
     audit(request, KIND_ADMIN, "api key revoked", {"key_id": request.path_params["key_id"]})
+    await emit(request, webhooks.EVENT_API_KEY_REVOKED, {"key_id": revoked.id, "user_id": revoked.user_id})
     return JSONResponse({"ok": True})
 
 
