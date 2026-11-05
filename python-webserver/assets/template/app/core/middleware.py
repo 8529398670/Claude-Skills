@@ -179,7 +179,16 @@ SIGN_IN_PATHS = frozenset({
 
 BUDGET_GENERAL = "general"
 BUDGET_SIGN_IN = "sign-in"
+BUDGET_UPLOAD = "upload"
 BUDGET_NONE = "none"
+
+
+def upload_chunk(method: str, normalised: str) -> bool:
+    """Exactly POST /api/files/<id>/chunks/<index>. A file arrives as many of
+    these, so they have a budget of their own: on the general one a big upload
+    would use up what the page needs and still crawl."""
+    parts = normalised.split("/")
+    return method == "POST" and len(parts) == 6 and parts[1:3] == ["api", "files"] and parts[4] == "chunks"
 
 
 def budget_for(method: str, path: str) -> str:
@@ -199,6 +208,8 @@ def budget_for(method: str, path: str) -> str:
         normalised = normalised.rstrip("/")
     if method == "POST" and normalised in SIGN_IN_PATHS:
         return BUDGET_SIGN_IN
+    if upload_chunk(method, normalised):
+        return BUDGET_UPLOAD
     if static_asset(method, normalised):
         return BUDGET_NONE
     return BUDGET_GENERAL
@@ -211,8 +222,8 @@ class RateLimit:
     each would allow the full budget -- move to a shared store at that point
     rather than assuming the limit still holds.
 
-    Each address has two budgets over the same window: one for signing in, and
-    one for everything else. Keeping them apart means a page full of API calls
+    Each address has three budgets over the same window: one for signing in,
+    one for the pieces of an upload, and one for everything else. Keeping them apart means a page full of API calls
     cannot lock someone out of signing in, and guessing at sign-in does not
     get the budget the rest of the app has.
 
@@ -221,7 +232,8 @@ class RateLimit:
 
     The budgets, the window and who counts as a proxy are read per request,
     so an edit to server.rate_limit_max, rate_limit_signin_max,
-    rate_limit_window_seconds or the proxy settings applies at once."""
+    rate_limit_upload_max, rate_limit_window_seconds or the proxy settings
+    applies at once."""
 
     def __init__(self, app: ASGIApp, settings: Holder) -> None:
         self.app = app
@@ -247,7 +259,7 @@ class RateLimit:
             await self.app(scope, receive, send)
             return
         cfg = self.settings.get()
-        limit = cfg.rate_limit_signin_max if budget == BUDGET_SIGN_IN else cfg.rate_limit_max
+        limit = {BUDGET_SIGN_IN: cfg.rate_limit_signin_max, BUDGET_UPLOAD: cfg.rate_limit_upload_max}.get(budget, cfg.rate_limit_max)
         window = float(cfg.rate_limit_window_seconds)
         now = time.monotonic()
         self._sweep(now, window)

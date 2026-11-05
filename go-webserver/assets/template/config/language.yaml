@@ -21,12 +21,19 @@ app:
 nav:
   menu: "Menu"
   close: "Close"
+  skip: "Skip to content"
+  theme_toggle: "Switch between light and dark"
+  # The browser tab, per screen. {screen} is the screen's heading.
+  page_title: "{screen} · {app}"
+  # Foot of the sidebar, for admins.
+  version: "Version {version}"
   account: "Account"
   appearance: "Appearance"
   pin: "PIN"
   password: "Password"
   two_factor: "Two-factor"
   api_keys: "API keys"
+  files: "Files"
   admin_heading: "Admin"
   users: "Users"
   invite_links: "Invite links"
@@ -40,7 +47,20 @@ nav:
 ui:
   saved: "Saved."
   copied: "Copied."
+  # Where the browser refuses to copy (plain http), the text is selected instead.
+  copy_hint: "Selected. Press Ctrl+C, or Cmd+C on a Mac, to copy."
   load_more: "Load more"
+  loading: "Loading"
+  cancel: "Cancel"
+  confirm: "Yes, go ahead"
+  qr_button: "QR code"
+  qr_label: "QR code for the link above"
+  show_password: "Show password"
+
+# Coming back to a tab that was left open (static/js/fresh.js).
+fresh:
+  new_version: "A new version is available."
+  reload: "Reload"
 
 # Ctrl+Z / Ctrl+Y (static/js/undo.js). The toast reads "<undone> <label>",
 # e.g. "Undone: theme change", with a Redo button. Actions that announce
@@ -62,6 +82,7 @@ undo:
   deleted_key: "API key deleted"
   deleted_invite: "invite link deleted"
   deleted_webhook: "webhook deleted"
+  deleted_file: "file deleted"
   settings: "settings change"
 
 # The Appearance card. Light is always the default; a pick is remembered in
@@ -87,6 +108,7 @@ signed_out:
   body: "There is no signup form here on purpose. Ask an admin for a one-time login link, or for your group's invite link."
   invalid_link: "That login link is invalid, expired, or has already been used. Ask for a new one."
   sign_in_expired: "That sign-in took too long and has expired. Start again."
+  session_ended: "You have been signed out. Your session ended, or it was signed out from another device."
   password_heading: "Sign in with a password"
   username_label: "Username"
   password_label: "Password"
@@ -136,6 +158,9 @@ account:
 
 # Where this account is signed in, on the Account screen (static/js/sessions.js).
 sessions:
+  empty: "No other devices."
+  user_empty: "Not signed in anywhere."
+  user_heading: "Where {name} is signed in"
   heading: "Where you're signed in"
   description: "Every device with this account open. If you don't recognise one, sign it out and change how you sign in."
   table_device: "Device"
@@ -173,6 +198,9 @@ password:
 # The two-factor panel, and the step every sign-in shows on an account with
 # it on.
 two_factor:
+  copy_secret_button: "Copy"
+  download_button: "Download"
+  recovery_filename: "recovery-codes.txt"
   heading: "Two-factor sign-in"
   description: "Ask for a code from an authenticator app every time you sign in in a browser, whichever way you sign in. API keys are not affected."
   status_on: "On"
@@ -192,6 +220,9 @@ two_factor:
   step_button: "Sign in"
 
 admin:
+  empty: "No one to show."
+  search_label: "Search by name or username"
+  sessions_button: "Sessions"
   heading: "Admin"
   description: "Create an account by minting a login link. Send the link to the person; it works once."
   new_name_label: "Name"
@@ -226,6 +257,8 @@ admin:
   owner_label: "owner"
 
 api_keys:
+  empty: "No API keys yet."
+  all_empty: "No one has an API key yet."
   heading: "API keys"
   description: "For scripts, cron jobs, and other services. A key does exactly what your account can do -- send it as an Authorization: Bearer header. It is shown once."
   name_label: "What is it for"
@@ -253,6 +286,36 @@ api_keys:
   revoke_confirm: "Revoke this key? Anything using it stops working immediately."
   delete_button: "Delete"
   # Empty this string to stop asking for confirmation before deleting.
+  # Under a key an admin made for someone else. {name} is that admin.
+  created_by: "Created by {name}"
+
+# The Files screen (static/js/files.js). {name} is the file's name, {percent} how
+# much has gone up, and {count} a number.
+files:
+  heading: "Files"
+  description: "Stored encrypted. Only you and the admins of this app can open them."
+  upload_label: "Upload files"
+  drop_hint: "Or drop files anywhere on this screen."
+  usage: "{used} of {quota} used"
+  # Under the everyone's files switch. _disk is when the system says what's left.
+  usage_all: "{used} stored across every account."
+  usage_all_disk: "{used} stored across every account, {free} free on disk."
+  # {names} is who failed, {reason} why the last of them did.
+  failed_list: "Not uploaded: {names}. {reason}"
+  uploading: "Uploading {name}: {percent}%"
+  everyone_label: "Show everyone's files"
+  table_name: "Name"
+  table_owner: "Owner"
+  table_size: "Size"
+  table_uploaded: "Uploaded"
+  table_actions: "Actions"
+  empty: "No files yet."
+  download_button: "Download"
+  delete_button: "Delete"
+  size_b: "{count} B"
+  size_kb: "{count} KB"
+  size_mb: "{count} MB"
+  size_gb: "{count} GB"
 
 # Only offered to non-admin accounts: an admin can never be signed in to
 # through an invite link, so a PIN would protect nothing.
@@ -267,6 +330,7 @@ pin:
   clear_button: "Remove PIN"
 
 invite_links:
+  empty: "No invite links yet."
   heading: "Invite links"
   description: "One link for a group: post it in a group chat and each person who opens it joins as a new user, until the places run out. People who joined through it can sign back in on a new device with the same link."
   label_label: "What is it for"
@@ -299,6 +363,9 @@ admin_keys:
   heading: "All API keys"
   description: "Every key in this app and who owns it. Revoke or delete one to cut off whatever is using it, right away."
   table_owner: "Owner"
+  create_heading: "Create a key for someone"
+  create_description: "The key acts as that person, at no more than their permission, and they can see that you made it."
+  user_label: "Account"
 
 # The Logs screen (owner only; static/js/logs.js). Placeholders in {braces}
 # are filled in by the page. Days are UTC dates; times are the viewer's own.
@@ -351,6 +418,7 @@ logs:
 # name here, as job_<name> with dashes as underscores; one without shows its
 # own name.
 jobs:
+  empty: "No background jobs."
   heading: "Jobs"
   description: "What this app does by itself in the background, and how each job went last. Only you, the owner, can see this."
   table_name: "Job"
@@ -370,11 +438,14 @@ jobs:
   job_prune_logs: "Apply log retention"
   job_backup: "Scheduled backup"
   job_webhooks: "Send webhooks"
+  job_files: "Clear out deleted and abandoned files"
 
 # The Webhooks screen (owner only; static/js/webhooks.js). {name} is the
 # endpoint's name. Event names are shown as they are: they are what the
 # receiver sees.
 webhooks:
+  empty: "No webhooks yet."
+  deliveries_empty: "Nothing sent yet."
   heading: "Webhooks"
   description: "Tell other systems when something happens here. Each event is signed and sent to the address you give it, and retried for a while if it does not arrive. Only you, the owner, can see this."
   name_label: "Name"
@@ -396,6 +467,8 @@ webhooks:
   disable_button: "Turn off"
   test_button: "Send test"
   test_sent: "Test event queued."
+  resend_button: "Resend"
+  resent: "Queued to send again."
   deliveries_button: "Deliveries"
   delete_button: "Delete"
   deliveries_heading: "Recent deliveries to {name}"
@@ -431,6 +504,8 @@ settings:
   locked: "Fixed inside the container. Change it in config/config.yaml on the host."
   save_button: "Save changes"
   reload_button: "Reload from file"
+  # Empty this string to stop asking for confirmation.
+  reload_confirm: "Reload and lose the changes you have not saved?"
   unsaved: "{count} unsaved"
   saved: "Saved."
   saved_restart: "Saved. Some changes take effect when the server restarts."
@@ -454,15 +529,23 @@ error_page:
   rate_limited_message: "Please wait a minute, then try again."
   server_error_title: "Something went wrong"
   server_error_message: "This is a problem on the server, not with anything you did. Please try again."
+  maintenance_title: "Down for maintenance"
+  maintenance_message: "This app is being worked on and will be back shortly. Please try again in a few minutes."
   other_title: "That did not work"
   other_message: "The server could not answer this request."
   reference: "Reference: {reference}"
+
+# The banner across the top of the app while server.maintenance is on.
+maintenance:
+  read_only_banner: "Maintenance mode: this app is read-only for now. Changes are refused."
+  full_banner: "Maintenance mode: only you can reach this app right now. Turn it off in Settings."
 
 errors:
   generic: "Something went wrong. Please try again."
   # {reference} finds this failure in the Logs screen's search.
   reference: "Something went wrong on the server. Reference: {reference}"
   network: "Could not reach the server."
+  delivery_not_failed: "That delivery has not failed, so there is nothing to resend."
   # Error codes the invite link and PIN routes answer with, by name.
   invite_link_invalid: "This invite link is invalid, expired, or has been switched off."
   invite_link_full: "This link has no places left."
@@ -488,6 +571,10 @@ errors:
   two_factor_off: "Two-factor sign-in is not on."
   challenge_invalid: "That sign-in has expired. Start again."
   logs_today: "Today's log is still being written, so it cannot be deleted."
+  # What an upload answers with.
+  file_too_large: "That file is over the size limit."
+  file_quota: "That would go over your storage limit."
+  upload_lost: "That upload was lost, so it has to start again."
   # The Settings screen's save, by code.
   settings_changed: "config.yaml was changed while you were editing. Reload from file to see it."
   settings_stale: "config.yaml was replaced on the host. Restart the container first."

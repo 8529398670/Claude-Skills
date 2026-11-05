@@ -8,8 +8,14 @@
 // user, and the all-keys table is the admin's answer to "who and what can get
 // in". A key created here carries a role from the same set users have, and can
 // never be given more than the account that owns it.
+//
+// An admin can also make a key that acts as someone else, on the all-keys
+// screen. The picker only offers the accounts the server would allow, and the
+// key says who made it in both tables, so the person it acts as can see that.
 const Keys = {
   me: null,
+  // The accounts in the picker, by id, for the role choice to look at.
+  targets: new Map(),
 
   async init( me ) {
     this.me = me;
@@ -23,12 +29,15 @@ const Keys = {
     // option, and an "admin" entry the server would refuse is worse than no
     // choice at all.
     Dom.show( Dom.get( "key-role-field" ) , me.role === "admin" );
-    Dom.get( "create-key-form" ).addEventListener( "submit" , this.onCreate.bind( this ) );
+    Dom.onSubmit( Dom.get( "create-key-form" ) , this.onCreate.bind( this ) );
     Dom.get( "copy-key-button" ).addEventListener( "click" , this.onCopy.bind( this ) );
     await this.refresh();
 
     if ( me.role !== "admin" ) return;
     Dom.show( Dom.get( "admin-keys-panel" ) , true );
+    Dom.onSubmit( Dom.get( "create-user-key-form" ) , this.onCreateFor.bind( this ) );
+    Dom.get( "user-key-user" ).addEventListener( "change" , this.onTargetChange.bind( this ) );
+    Dom.get( "copy-user-key-button" ).addEventListener( "click" , () => Dom.copy( Dom.get( "user-key-secret-value" ) ) );
     await this.refreshAll();
   },
 
@@ -66,13 +75,72 @@ const Keys = {
     }
   },
 
-  // Dates are rendered in the viewer's own timezone, and a key with no expiry
-  // says so rather than showing a blank cell.
-  formatWhen( value ) {
-    if ( !value ) return I18n.get( "api_keys.never" );
-    const parsed = new Date( value );
-    if ( isNaN( parsed.getTime() ) ) return I18n.get( "api_keys.never" );
-    return parsed.toLocaleString();
+  // Who an admin may make a key for: the server's rules, so nobody is offered
+  // a choice it would refuse. Admin accounts are the owner's to choose, nobody
+  // picks the owner, and a disabled account cannot hold a new key.
+  mayMintFor( user ) {
+    if ( user.id === this.me.id || user.owner || user.disabled ) return false;
+    return user.role !== "admin" || this.me.is_owner;
+  },
+
+  // Every page of accounts, since a picker missing someone looks like a bug.
+  async loadTargets() {
+    const users = [];
+    let offset = 0;
+    while ( offset !== null ) {
+      const page = await Api.listUsers( offset );
+      users.push( ...page.users );
+      offset = page.next;
+    }
+    const picker = Dom.get( "user-key-user" );
+    const chosen = picker.value;
+    this.targets = new Map();
+    picker.replaceChildren();
+    for ( const user of users ) {
+      if ( !this.mayMintFor( user ) ) continue;
+      this.targets.set( String( user.id ) , user );
+      picker.appendChild( Dom.el( "option" , { text: user.display_name , attrs: { value: String( user.id ) } } ) );
+    }
+    if ( this.targets.has( chosen ) ) picker.value = chosen;
+    this.onTargetChange();
+  },
+
+  // An admin role is only a real choice for an admin account.
+  onTargetChange() {
+    const target = this.targets.get( Dom.get( "user-key-user" ).value );
+    const role = Dom.get( "user-key-role" );
+    const admin = target !== undefined && target.role === "admin";
+    role.querySelector( "option[value=admin]" ).disabled = !admin;
+    if ( !admin ) role.value = "user";
+  },
+
+  async onCreateFor( event ) {
+    event.preventDefault();
+    const target = this.targets.get( Dom.get( "user-key-user" ).value );
+    if ( target === undefined ) return;
+    const rawDays = Dom.get( "user-key-days" ).value.trim();
+    const expiresInDays = rawDays === "" ? null : Number( rawDays );
+    try {
+      const created = await Api.createKeyFor( target.id , Dom.get( "user-key-name" ).value.trim() , Dom.get( "user-key-role" ).value , expiresInDays );
+      Dom.text( Dom.get( "user-key-secret-value" ) , created.credential );
+      Dom.show( Dom.get( "user-key-secret-box" ) , true );
+      Dom.get( "user-key-name" ).value = "";
+      await this.refreshAll();
+    } catch ( error ) {
+      App.showError( error.message );
+    }
+  },
+
+  // The name cell: a key someone else made says so under its name.
+  nameCell( key ) {
+    const cell = Dom.el( "td" , { text: key.name } );
+    if ( key.created_by ) {
+      cell.appendChild( Dom.el( "div" , {
+        class: "small text-body-secondary",
+        text: I18n.get( "api_keys.created_by" ).replace( "{name}" , key.created_by_name || ( "#" + key.created_by ) ),
+      } ) );
+    }
+    return cell;
   },
 
   statusText( key ) {
@@ -105,7 +173,7 @@ const Keys = {
         // An empty confirm message means "do not ask", following the same
         // language.yaml rule as every other string here.
         const question = I18n.get( "api_keys.revoke_confirm" );
-        if ( question !== "" && !window.confirm( question ) ) return;
+        if ( !( await Dom.confirm( question ) ) ) return;
         try {
           await revoke( key.id );
           await Keys.refresh();
@@ -148,11 +216,11 @@ const Keys = {
       // createElement + textContent throughout: a key's name is free text its
       // owner typed. See the note at the top of dom.js.
       body.appendChild( Dom.el( "tr" , { children: [
-        Dom.el( "td" , { text: key.name } ),
+        Keys.nameCell( key ),
         Dom.el( "td" , { text: key.role } ),
         Dom.el( "td" , { children: [ Keys.statusBadge( key ) ] } ),
-        Dom.el( "td" , { text: Keys.formatWhen( key.last_used_at ) } ),
-        Dom.el( "td" , { text: Keys.formatWhen( key.expires_at ) } ),
+        Dom.el( "td" , { children: [ Dom.when( key.last_used_at , I18n.get( "api_keys.never" ) ) ] } ),
+        Dom.el( "td" , { children: [ Dom.when( key.expires_at , I18n.get( "api_keys.never" ) ) ] } ),
         Dom.el( "td" , { children: [
           Dom.el( "div" , { class: "row-actions" , children: [
             Keys.revokeButton( key , function ( id ) { return Api.revokeKey( id ); } ),
@@ -164,14 +232,15 @@ const Keys = {
   },
 
   async refreshAll() {
+    await this.loadTargets();
     const body = Dom.get( "admin-keys-table" ).querySelector( "tbody" );
     await Pager.load( "admin-keys-table" , "keys" , ( offset ) => Api.listAllKeys( offset ) , function ( key ) {
       body.appendChild( Dom.el( "tr" , { children: [
         Dom.el( "td" , { text: key.display_name || ( "#" + key.user_id ) } ),
-        Dom.el( "td" , { text: key.name } ),
+        Keys.nameCell( key ),
         Dom.el( "td" , { text: key.role } ),
         Dom.el( "td" , { children: [ Keys.statusBadge( key ) ] } ),
-        Dom.el( "td" , { text: Keys.formatWhen( key.last_used_at ) } ),
+        Dom.el( "td" , { children: [ Dom.when( key.last_used_at , I18n.get( "api_keys.never" ) ) ] } ),
         Dom.el( "td" , { children: [
           Dom.el( "div" , { class: "row-actions" , children: [
             Keys.revokeButton( key , function ( id ) { return Api.revokeAnyKey( id ); } ),

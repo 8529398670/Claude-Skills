@@ -5,7 +5,8 @@ app/models/api_keys.py and references/architecture.md.
 
 Every signed-in user can mint their own keys, and revoke or delete them. An
 admin can additionally see, revoke, and delete everyone's, which is what makes
-"who has standing access to this app" an answerable question.
+"who has standing access to this app" an answerable question, and can mint one
+that acts as someone else (create_key_for_user).
 
 Revoking keeps the row, marked dead, so the listing still shows the key
 existed and when it stopped working; the purge drops it later. Deleting
@@ -79,15 +80,35 @@ def api_key_row(key: api_keys.APIKey, display_name: str = "") -> dict[str, Any]:
             row[field_name] = to_iso(value)
     if display_name:
         row["display_name"] = display_name
+    if key.created_by is not None:
+        row["created_by"] = key.created_by
     return row
+
+
+def name_creator(row: dict[str, Any], key: api_keys.APIKey, names: dict[int, str]) -> dict[str, Any]:
+    """Says who made a key on its owner's behalf. An admin deleted since has
+    no name, and the page shows their id instead."""
+    if key.created_by is not None and names.get(key.created_by):
+        row["created_by_name"] = names[key.created_by]
+    return row
+
+
+async def display_names(store: Store) -> dict[int, str]:
+    """Every account's name by id: one pass rather than a get_user per key,
+    since a read per row is the shape that quietly becomes slow."""
+    return {user.id: user.display_name for user in await run(users.list_users, store)}
 
 
 async def list_my_keys(request: Request) -> Response:
     """Answers "what has standing access as me". Revoked and expired keys are
     included, marked as such, because a key that used to exist is part of
     that answer."""
-    keys = await run(api_keys.list_api_keys_for_user, get_store(request), actor_from(request).user.id)
-    return send_page(request, "keys", [api_key_row(key) for key in keys])
+    store = get_store(request)
+    keys = await run(api_keys.list_api_keys_for_user, store, actor_from(request).user.id)
+    # Most people have no key someone else made, so the names are only loaded
+    # when one is there to be named.
+    names = await display_names(store) if any(key.created_by is not None for key in keys) else {}
+    return send_page(request, "keys", [name_creator(api_key_row(key), key, names) for key in keys])
 
 
 async def create_my_key(request: Request) -> Response:
@@ -135,6 +156,56 @@ async def create_my_key(request: Request) -> Response:
     row["credential"] = credential
     audit(request, KIND_ADMIN, "api key created", {"key_id": key.id, "name": key.name, "role": key.role})
     await emit(request, webhooks.EVENT_API_KEY_CREATED, {"key_id": key.id, "user_id": key.user_id, "name": key.name, "role": key.role})
+    return JSONResponse(row, status_code=201)
+
+
+async def create_key_for_user(request: Request) -> Response:
+    """Mints a key that acts as another account, for setting up someone's
+    integration for them. It needs a browser session, like every route that
+    makes a credential: the admin_keys group adds it, so a leaked admin key
+    cannot mint itself a way in as somebody else.
+
+    Who may mint for whom is api_keys.issue_api_key_for's to say. The key
+    records who made it, and shows that to the person it acts as."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    user_id = body.get("user_id")
+    if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+        return bad_request("user_id is required")
+    name = body.get("name")
+    if not api_keys.valid_name(name):
+        return bad_request("name must be 1-80 characters")
+    role = body.get("role") or users.ROLE_USER
+    if not users.valid_role(role):
+        return bad_request("role must be admin or user")
+    ttl_seconds = api_keys.ttl_from_days(body.get("expires_in_days"), get_config(request).api_key_ttl_seconds)
+    if ttl_seconds is None:
+        return bad_request(f"expires_in_days must be 0 (never) or up to {api_keys.API_KEY_MAX_DAYS}")
+
+    actor = actor_from(request).user
+    try:
+        credential, key = await run(
+            api_keys.issue_api_key_for, get_store(request), actor.id, user_id, name, role, ttl_seconds
+        )
+    except api_keys.APIKeyOwnerError:
+        return not_found("no such user")
+    except (api_keys.APIKeyForOwnerError, api_keys.APIKeyForAdminError) as refusal:
+        return forbidden(str(refusal))
+    except api_keys.APIKeyRoleError:
+        return forbidden("a key cannot have more permission than the account it belongs to")
+    except api_keys.APIKeyLimitError:
+        return bad_request("that account already has the maximum number of live API keys")
+    except api_keys.APIKeyDisabledError:
+        return forbidden("that account is disabled")
+
+    # The credential appears here and nowhere else, ever.
+    row = api_key_row(key)
+    row["credential"] = credential
+    audit(request, KIND_ADMIN, "api key created", {"key_id": key.id, "name": key.name, "role": key.role, "user_id": key.user_id, "created_by": actor.id})
+    await emit(request, webhooks.EVENT_API_KEY_CREATED, {"key_id": key.id, "user_id": key.user_id, "name": key.name, "role": key.role, "created_by": actor.id})
     return JSONResponse(row, status_code=201)
 
 
@@ -217,10 +288,8 @@ async def list_all_keys(request: Request) -> Response:
     can see keys they did not create."""
     store = get_store(request)
     keys = await run(api_keys.list_api_keys, store)
-    # One pass to build the lookup rather than a get_user per key: a read per
-    # row is the shape that quietly becomes slow.
-    names = {user.id: user.display_name for user in await run(users.list_users, store)}
-    return send_page(request, "keys", [api_key_row(key, names.get(key.user_id, "")) for key in keys])
+    names = await display_names(store)
+    return send_page(request, "keys", [name_creator(api_key_row(key, names.get(key.user_id, "")), key, names) for key in keys])
 
 
 async def revoke_any_key(request: Request) -> Response:

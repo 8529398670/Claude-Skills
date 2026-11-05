@@ -15,6 +15,7 @@ import (
 
 	config "{{MODULE_PATH}}/server/config"
 	db "{{MODULE_PATH}}/server/db"
+	errorpage "{{MODULE_PATH}}/server/errorpage"
 	jobs "{{MODULE_PATH}}/server/jobs"
 	language "{{MODULE_PATH}}/server/language"
 	logs "{{MODULE_PATH}}/server/logs"
@@ -61,7 +62,13 @@ type Handlers struct {
 	Metrics *metrics.Recorder
 	// LogStream is who has the Logs screen open with Live on, set by main.go.
 	LogStream *stream.Hub
+	// ErrorPages is what a browser gets while the app is in maintenance mode,
+	// set by main.go. Nil is fine: everyone gets the JSON answer.
+	ErrorPages *errorpage.Pages
+	// OpenAPI is config/openapi.json, set by main.go.
+	OpenAPI []byte
 
+	uploads       models.UploadLocks
 	uiEventBudget eventBudget
 	readiness     readiness
 }
@@ -87,6 +94,10 @@ func New( store *db.Store , settings *config.Holder , guard *security.Guard , la
 func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// Resolve the session once, before anything else looks at the request.
 	app.Use( handlers.Guard.LoadUser )
+
+	// Next, because it needs to know who is asking and has to come before
+	// every route below. See maintenance.go.
+	app.Use( handlers.Maintenance )
 
 	// Public: the login link's page and the call it makes, and the UI's text
 	// (needed to render the signed-out page at all). Opening a login link
@@ -130,10 +141,12 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// Your own signed-in devices. A session only: a key that could end
 	// sessions could lock its owner out of the screen that revokes it.
 	account.Get( "/account/sessions" , handlers.Guard.RequireSession , handlers.ListMySessions )
+	account.Get( "/account/storage" , handlers.RequireFiles , handlers.MyStorage )
 	account.Post( "/account/sessions/revoke-others" , handlers.Guard.RequireSession , handlers.RevokeMyOtherSessions )
 	account.Post( "/account/sessions/:session_id/revoke" , handlers.Guard.RequireSession , handlers.RevokeMySession )
 	account.Post( "/logout" , handlers.Logout )
 	account.Get( "/team" , handlers.ListTeam )
+	account.Get( "/openapi.json" , handlers.GetOpenAPI )
 	// What someone did on the page, sent by track.js. Theirs to send, the
 	// owner's to read (below).
 	if handlers.Logs.Enabled() {
@@ -156,6 +169,19 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	keys.Post( "/:key_id/revoke" , handlers.RevokeMyAPIKey )
 	keys.Post( "/:key_id/delete" , handlers.DeleteMyAPIKey )
 	keys.Post( "/:key_id/restore" , handlers.RestoreMyAPIKey )
+
+	// Uploaded files: everyone their own, API keys included. See files.go.
+	// Always registered, like /mcp: files.enabled can change while the server
+	// runs, so RequireFiles checks it per request.
+	files := app.Group( "/api/files" , handlers.RequireFiles , handlers.Guard.RequireLogin )
+	files.Get( "" , handlers.ListMyFiles )
+	files.Post( "" , handlers.CreateFile )
+	files.Get( "/:file_id" , handlers.GetMyFile )
+	files.Post( "/:file_id/chunks/:index" , handlers.PutFileChunk )
+	files.Post( "/:file_id/finish" , handlers.FinishFile )
+	files.Get( "/:file_id/download" , handlers.DownloadMyFile )
+	files.Post( "/:file_id/delete" , handlers.DeleteMyFile )
+	files.Post( "/:file_id/restore" , handlers.RestoreMyFile )
 
 	// Admin only: deciding who gets in. Note this is the *only* thing admin
 	// rights gate in the base template -- see architecture.md on defaulting
@@ -181,6 +207,11 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	admin.Post( "/users/:user_id/revoke-access" , handlers.RevokeAccess )
 	admin.Post( "/users/:user_id/delete" , handlers.Guard.RequireSession , handlers.DeleteUser )
 	admin.Post( "/users/:user_id/reset-two-factor" , handlers.Guard.RequireSession , handlers.ResetTwoFactor )
+	// A session only, like your own devices list: a key that could end
+	// sessions could end the one that would revoke it.
+	admin.Get( "/users/:user_id/sessions" , handlers.Guard.RequireSession , handlers.ListUserSessions )
+	admin.Post( "/users/:user_id/sessions/:session_id/revoke" , handlers.Guard.RequireSession , handlers.RevokeUserSession )
+	admin.Get( "/storage" , handlers.RequireFiles , handlers.AllStorage )
 
 	// Invite links: one link for a group, each person who opens it joins as a
 	// new user (see invite_links.go). Creating one needs a session for the
@@ -199,9 +230,19 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// routes too.
 	admin_keys := app.Group( "/api/admin/keys" , handlers.RequireAPIKeys , handlers.Guard.RequireAdmin , handlers.Guard.RequireSession )
 	admin_keys.Get( "" , handlers.ListAllAPIKeys )
+	admin_keys.Post( "" , handlers.CreateAPIKeyForUser )
 	admin_keys.Post( "/:key_id/revoke" , handlers.RevokeAnyAPIKey )
 	admin_keys.Post( "/:key_id/delete" , handlers.DeleteAnyAPIKey )
 	admin_keys.Post( "/:key_id/restore" , handlers.RestoreAnyAPIKey )
+
+	// Every account's files. An admin key may list them, but reading or
+	// deleting someone else's needs a session: a leaked key must not be a way
+	// to carry off the contents of every account.
+	admin_files := app.Group( "/api/admin/files" , handlers.RequireFiles , handlers.Guard.RequireAdmin )
+	admin_files.Get( "" , handlers.ListAllFiles )
+	admin_files.Get( "/:file_id/download" , handlers.Guard.RequireSession , handlers.DownloadAnyFile )
+	admin_files.Post( "/:file_id/delete" , handlers.Guard.RequireSession , handlers.DeleteAnyFile )
+	admin_files.Post( "/:file_id/restore" , handlers.Guard.RequireSession , handlers.RestoreAnyFile )
 
 	// config.yaml, as the owner's Settings screen: the owner only, from a
 	// browser session, like the activity log below. See settings.go.
@@ -241,6 +282,7 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	owner_webhooks.Post( "/:webhook_id/restore" , handlers.RestoreWebhook )
 	owner_webhooks.Post( "/:webhook_id/test" , handlers.TestWebhook )
 	owner_webhooks.Get( "/:webhook_id/deliveries" , handlers.ListWebhookDeliveries )
+	owner_webhooks.Post( "/:webhook_id/deliveries/:delivery_id/resend" , handlers.ResendWebhookDelivery )
 
 	// MCP: agents calling the app with an API key (see server/mcp and
 	// mcp_tools.go). Keys only -- RequireAPIKey turns a browser session away

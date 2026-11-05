@@ -32,6 +32,8 @@ EVENT_API_KEY_REVOKED = "api_key.revoked"
 EVENT_INVITE_LINK_CREATED = "invite_link.created"
 EVENT_INVITE_LINK_REVOKED = "invite_link.revoked"
 EVENT_JOB_FAILED = "job.failed"
+EVENT_FILE_UPLOADED = "file.uploaded"
+EVENT_FILE_DELETED = "file.deleted"
 # Only ever goes to the one endpoint being tested.
 EVENT_WEBHOOK_TEST = "webhook.test"
 
@@ -47,6 +49,8 @@ EVENTS = [
     EVENT_INVITE_LINK_CREATED,
     EVENT_INVITE_LINK_REVOKED,
     EVENT_JOB_FAILED,
+    EVENT_FILE_UPLOADED,
+    EVENT_FILE_DELETED,
 ]
 
 PENDING = "pending"
@@ -261,6 +265,38 @@ def _new_delivery(webhook_id: str, event: str, data: dict[str, Any] | None) -> D
     delivery_id = encryption.url_token(12)
     body = json.dumps({"id": delivery_id, "event": event, "created_at": to_iso(now), "data": data}, ensure_ascii=False, separators=(",", ":"))
     return Delivery(id=delivery_id, webhook_id=webhook_id, event=event, body=body, created_at=now, next_attempt_at=now)
+
+
+class DeliveryNotFailed(Exception):
+    """A resend of a delivery still pending or already delivered: only one that
+    was given up on has anything to resend."""
+
+
+def resend_delivery(store: Store, webhook_id: str, delivery_id: str) -> bool:
+    """Queue a delivery that was given up on for another go, once the receiver
+    is fixed. False when the endpoint has no such delivery. A new row, so the
+    failed attempts stay listed, but the same body, so its id still names one
+    event: a receiver that handled the event and only failed to answer can
+    tell this is the same one again."""
+    record = store.get(BUCKET_WEBHOOK_DELIVERIES, delivery_id)
+    if record is None:
+        return False
+    original = Delivery.from_record(record)
+    if original.webhook_id != webhook_id:
+        return False
+    if original.status != FAILED:
+        raise DeliveryNotFailed()
+    now = utc_now()
+    again = Delivery(
+        id=encryption.url_token(12),
+        webhook_id=webhook_id,
+        event=original.event,
+        body=original.body,
+        created_at=now,
+        next_attempt_at=now,
+    )
+    store.put(BUCKET_WEBHOOK_DELIVERIES, again.id, again.to_record())
+    return True
 
 
 def enqueue_event(store: Store, event: str, data: dict[str, Any] | None) -> int:

@@ -11,7 +11,7 @@ const Webhooks = {
   async init( me ) {
     if ( !me.is_owner ) return;
     Dom.show( Dom.get( "webhooks-panel" ) , true );
-    Dom.get( "create-webhook-form" ).addEventListener( "submit" , this.onCreate.bind( this ) );
+    Dom.onSubmit( Dom.get( "create-webhook-form" ) , this.onCreate.bind( this ) );
     Dom.get( "copy-webhook-button" ).addEventListener( "click" , this.onCopy.bind( this ) );
     Dom.get( "webhook-all-events" ).addEventListener( "change" , this.syncEvents.bind( this ) );
     try {
@@ -147,8 +147,24 @@ const Webhooks = {
         Dom.el( "td" , { children: [ this.deliveryBadge( delivery ) ] } ),
         Dom.el( "td" , { text: String( delivery.attempts ) } ),
         Dom.el( "td" , { class: "text-break" , text: delivery.last_error || ( delivery.last_status ? String( delivery.last_status ) : "" ) } ),
-        Dom.el( "td" , { text: new Date( delivery.created_at ).toLocaleString() } ),
+        Dom.el( "td" , { children: [ Dom.when( delivery.created_at ) ] } ),
+        Dom.el( "td" , { children: delivery.status === "failed" ? [ this.resendButton( hook , delivery ) ] : [] } ),
       ] } ) );
+    } );
+  },
+
+  // Once the receiver is fixed. The failed row stays, and a new one appears.
+  resendButton( hook , delivery ) {
+    return Dom.el( "button" , {
+      class: "btn btn-sm btn-outline-secondary",
+      text: I18n.get( "webhooks.resend_button" ),
+      on: { click: async () => {
+        try {
+          await Api.resendDelivery( hook.id , delivery.id );
+          Dom.toast( I18n.get( "webhooks.resent" ) , "ok" );
+          await this.showDeliveries( hook );
+        } catch ( error ) { App.showError( error.message ); }
+      } },
     } );
   },
 };

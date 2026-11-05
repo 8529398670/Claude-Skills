@@ -205,10 +205,14 @@ func liveConfig( boot *Config , boot_file *File , file *File ) ( next *Config ) 
 	next.RateLimitMax = file.Server.RateLimitMax
 	next.RateLimitWindow = seconds( file.Server.RateLimitWindowSeconds )
 	next.RateLimitSignInMax = file.Server.RateLimitSignInMax
+	next.RateLimitUploadMax = file.Server.RateLimitUploadMax
 	next.MCPEnabled = file.Server.MCP
+	next.Maintenance = file.Server.Maintenance
+	next.Announcement = file.Server.Announcement
 	next.MetricsEnabled = file.Metrics.Enabled
 
 	next.SessionTTL = seconds( file.Auth.SessionTTLSeconds )
+	next.SessionMaxAge = seconds( file.Auth.SessionMaxAgeSeconds )
 	next.LoginTokenTTL = seconds( file.Auth.LoginTokenTTLSeconds )
 	next.APIKeysEnabled = file.Auth.APIKeys
 	next.PasswordsEnabled = file.Auth.Passwords
@@ -225,6 +229,10 @@ func liveConfig( boot *Config , boot_file *File , file *File ) ( next *Config ) 
 
 	next.Webhooks.Timeout = seconds( file.Webhooks.TimeoutSeconds )
 	next.Webhooks.AllowPrivateTargets = file.Webhooks.AllowPrivateTargets
+	next.Files.Enabled = file.Files.Enabled
+	next.Files.MaxFileBytes = int64( file.Files.MaxFileBytes )
+	next.Files.QuotaBytesPerUser = int64( file.Files.QuotaBytesPerUser )
+	next.Files.AbandonedAfter = time.Duration( file.Files.AbandonedUploadHours ) * time.Hour
 	next.Backups.Enabled = file.Backups.Enabled
 	next.Backups.Interval = time.Duration( file.Backups.IntervalHours ) * time.Hour
 	next.Backups.Keep = file.Backups.Keep

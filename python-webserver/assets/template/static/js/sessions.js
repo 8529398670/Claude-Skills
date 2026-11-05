@@ -39,12 +39,9 @@ const Sessions = {
     return browser || system || agent || I18n.get( "sessions.unknown_device" );
   },
 
-  when( value ) {
-    const parsed = new Date( value || "" );
-    return isNaN( parsed.getTime() ) ? I18n.get( "sessions.unknown" ) : parsed.toLocaleString();
-  },
-
-  revokeButton( session ) {
+  // revoke is the call that ends this session and redraws its table: the
+  // button is the same on your own list and on an admin's view of someone's.
+  revokeButton( revoke ) {
     return Dom.el( "button" , {
       class: "btn btn-sm btn-outline-danger text-nowrap",
       text: I18n.get( "sessions.revoke_button" ),
@@ -52,10 +49,9 @@ const Sessions = {
         // An empty confirm message means "do not ask", following the same
         // language.yaml rule as every other string here.
         const question = I18n.get( "sessions.revoke_confirm" );
-        if ( question !== "" && !window.confirm( question ) ) return;
+        if ( !( await Dom.confirm( question ) ) ) return;
         try {
-          await Api.revokeSession( session.id );
-          await this.refresh();
+          await revoke();
         } catch ( error ) { App.showError( error.message ); }
       } },
     } );
@@ -63,7 +59,7 @@ const Sessions = {
 
   async onRevokeOthers() {
     const question = I18n.get( "sessions.revoke_others_confirm" );
-    if ( question !== "" && !window.confirm( question ) ) return;
+    if ( !( await Dom.confirm( question ) ) ) return;
     try {
       await Api.revokeOtherSessions();
       await this.refresh();
@@ -73,16 +69,42 @@ const Sessions = {
   async refresh() {
     const body = Dom.get( "sessions-table" ).querySelector( "tbody" );
     const page = await Pager.load( "sessions-table" , "sessions" , ( offset ) => Api.sessions( offset ) , ( session ) => {
-      const name = [ Dom.el( "span" , { text: this.device( session ) } ) ];
-      if ( session.current ) name.push( Dom.el( "span" , { class: "ms-2" , children: [ Dom.badge( I18n.get( "sessions.this_device" ) , "success" ) ] } ) );
-      body.appendChild( Dom.el( "tr" , { children: [
-        Dom.el( "td" , { children: name } ),
-        Dom.el( "td" , { text: session.ip || I18n.get( "sessions.unknown" ) } ),
-        Dom.el( "td" , { text: this.when( session.last_seen_at ) } ),
-        Dom.el( "td" , { text: this.when( session.created_at ) } ),
-        Dom.el( "td" , { children: session.current ? [] : [ this.revokeButton( session ) ] } ),
-      ] } ) );
+      body.appendChild( this.row( session , async () => {
+        await Api.revokeSession( session.id );
+        await this.refresh();
+      } ) );
     } );
     if ( page !== null ) Dom.show( Dom.get( "sessions-revoke-others" ) , page.total > 1 );
+  },
+
+  row( session , revoke ) {
+    const name = [ Dom.el( "span" , { text: this.device( session ) } ) ];
+    if ( session.current ) name.push( Dom.el( "span" , { class: "ms-2" , children: [ Dom.badge( I18n.get( "sessions.this_device" ) , "success" ) ] } ) );
+    return Dom.el( "tr" , { children: [
+      Dom.el( "td" , { children: name } ),
+      Dom.el( "td" , { text: session.ip || I18n.get( "sessions.unknown" ) } ),
+      Dom.el( "td" , { children: [ Dom.when( session.last_seen_at , I18n.get( "sessions.unknown" ) ) ] } ),
+      Dom.el( "td" , { children: [ Dom.when( session.created_at , I18n.get( "sessions.unknown" ) ) ] } ),
+      Dom.el( "td" , { children: session.current ? [] : [ this.revokeButton( revoke ) ] } ),
+    ] } );
+  },
+
+  // An admin's view of one account's devices, under the Users table: for ending
+  // one of them, where revoke access would end everything.
+  async showFor( user ) {
+    Dom.text( Dom.get( "user-sessions-heading" ) , I18n.get( "sessions.user_heading" ).replace( "{name}" , user.display_name ) );
+    Dom.show( Dom.get( "user-sessions" ) , true );
+    const body = Dom.get( "user-sessions-table" ).querySelector( "tbody" );
+    await Pager.load( "user-sessions-table" , "sessions" , ( offset ) => Api.userSessions( user.id , offset ) , ( session ) => {
+      body.appendChild( this.row( session , async () => {
+        await Api.revokeUserSession( user.id , session.id );
+        await this.showFor( user );
+      } ) );
+    } );
+    Dom.get( "user-sessions" ).scrollIntoView( { block: "nearest" } );
+  },
+
+  closeFor() {
+    Dom.show( Dom.get( "user-sessions" ) , false );
   },
 };

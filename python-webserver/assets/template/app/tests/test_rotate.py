@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.core import backup, config, config_secret, db, encryption, logs, rotate, server_lock
-from app.models import two_factor, users
+from app.models import files, two_factor, users
 
 
 class Deployment:
@@ -61,7 +61,48 @@ class Deployment:
         return cfg
 
 
+def store_file(d: Deployment, cfg: config.Config) -> str:
+    """Uploads into the deployment. The file's bytes never move in a rotation,
+    so only its sealed key changes."""
+    store = db.open_store(cfg.database_path, cfg.secret_key, cfg.encrypt_at_rest)
+    file = files.create_file(store, cfg, d.user.id, "a.txt", "", 5)
+    files.write_chunk(store, cfg, file, 0, b"hello")
+    files.finish_file(store, cfg, files.get_file(store, file.id))
+    return file.id
+
+
+def read_file(d: Deployment, file_id: str) -> bytes:
+    """As a fresh process would find it."""
+    cfg = config.load_path(d.path, True)
+    store = db.open_store(cfg.database_path, cfg.secret_key, cfg.encrypt_at_rest)
+    return b"".join(files.FileReader(cfg, files.get_file(store, file_id)))
+
+
 class RotateTest(unittest.TestCase):
+    def test_a_file_survives_rotation_with_record_encryption_on_or_off(self) -> None:
+        for encrypted in (True, False):
+            d = Deployment(self)
+            if not encrypted:
+                d.path.write_text(d.path.read_text(encoding="utf-8").replace("encrypt_at_rest: true", "encrypt_at_rest: false", 1), encoding="utf-8")
+                # The database was made with it on: start this one again.
+                d.cfg.database_path.unlink()
+                d.cfg = config.load_path(d.path, True)
+                store = db.open_store(d.cfg.database_path, d.cfg.secret_key, False)
+                d.user = users.create_user(store, "Plain", users.ROLE_USER)
+            file_id = store_file(d, d.cfg)
+            rotate.run(d.cfg)
+            self.assertEqual(read_file(d, file_id), b"hello")
+
+    def test_a_file_survives_a_restore_onto_a_new_key(self) -> None:
+        d = Deployment(self)
+        file_id = store_file(d, d.cfg)
+        store = db.open_store(d.cfg.database_path, d.cfg.secret_key, True)
+        made = backup.create(store, d.cfg)
+        result = rotate.run(d.cfg)
+        cfg = config.load_path(d.path, True)
+        backup.restore(cfg, str(made.path), key_file=str(result.retired_key))
+        self.assertEqual(read_file(d, file_id), b"hello")
+
     def test_keeps_everything_readable(self) -> None:
         d = Deployment(self)
         old_key = d.cfg.secret_key

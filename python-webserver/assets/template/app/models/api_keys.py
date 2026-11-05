@@ -30,7 +30,7 @@ from app.core import encryption
 from app.core.db import BUCKET_API_KEYS, BUCKET_USERS, Record, Store
 from app.models import RestoreGoneError, deleted_long_ago, from_iso, mark_deleted, to_iso, unmark_deleted, utc_now
 from app.models.sessions import split_credential
-from app.models.users import ROLE_ADMIN, ROLE_USER, User, get_user, valid_role
+from app.models.users import ROLE_ADMIN, ROLE_USER, User, get_user, owner_id_tx, valid_role
 
 # How many live keys one account can hold. Any signed-in user can mint keys,
 # so without a cap a single account can grow the bucket without limit. 25 is
@@ -87,6 +87,20 @@ class APIKeyOwnerError(APIKeyError):
         super().__init__(f"no user with id {user_id}")
 
 
+class APIKeyForOwnerError(APIKeyError):
+    """Nobody mints a key that acts as the owner from the web."""
+
+    def __init__(self) -> None:
+        super().__init__("a key for the owner can only be made by the owner, or from a shell")
+
+
+class APIKeyForAdminError(APIKeyError):
+    """Only the owner mints a key that acts as another admin."""
+
+    def __init__(self) -> None:
+        super().__init__("only the owner can create a key for an admin")
+
+
 @dataclass
 class APIKey:
     id: str
@@ -102,6 +116,11 @@ class APIKey:
     # but restore_api_key can bring it back for RESTORE_WINDOW.
     deleted_at: datetime | None = None
     deleted_by: int | None = None
+    # The admin who minted this key as its owner, through issue_api_key_for.
+    # None means the owner made it, or it came from a shell, and rows from
+    # before this field read as None too. It is what lets the person a key
+    # acts as see that someone else made it.
+    created_by: int | None = None
 
     @property
     def revoked(self) -> bool:
@@ -135,6 +154,7 @@ class APIKey:
             "revoked_at": to_iso(self.revoked_at),
             "deleted_at": to_iso(self.deleted_at),
             "deleted_by": self.deleted_by,
+            "created_by": self.created_by,
         }
 
     @classmethod
@@ -151,6 +171,7 @@ class APIKey:
             revoked_at=from_iso(record.get("revoked_at")),
             deleted_at=from_iso(record.get("deleted_at")),
             deleted_by=record.get("deleted_by"),
+            created_by=record.get("created_by"),
         )
 
 
@@ -190,7 +211,24 @@ def narrow_role(account_role: str, key_role: str) -> str:
     return ROLE_USER
 
 
-def issue_api_key(store: Store, user_id: int, name: str, role: str, ttl_seconds: int) -> tuple[str, APIKey]:
+def issue_api_key_for(store: Store, actor_id: int, user_id: int, name: str, role: str, ttl_seconds: int) -> tuple[str, APIKey]:
+    """An admin minting a key that acts as someone else, so it follows the
+    ladder deleting an account does, for the same reason -- acting as an
+    account is as much power over it as removing it:
+
+    - nobody mints for the owner (APIKeyForOwnerError) -- a shell still can,
+      through issue_api_key;
+    - only the owner mints for another admin (APIKeyForAdminError).
+
+    Your own account is simply your own key. The rules are checked inside the
+    issuing transaction, so ownership cannot move between the check and the
+    key."""
+    if actor_id == user_id:
+        return issue_api_key(store, user_id, name, role, ttl_seconds)
+    return issue_api_key(store, user_id, name, role, ttl_seconds, created_by=actor_id)
+
+
+def issue_api_key(store: Store, user_id: int, name: str, role: str, ttl_seconds: int, created_by: int | None = None) -> tuple[str, APIKey]:
     """Returns (credential, key). The credential exists exactly once, here: it
     is never stored and cannot be recovered -- if it is lost, revoke the key
     and mint another.
@@ -217,6 +255,7 @@ def issue_api_key(store: Store, user_id: int, name: str, role: str, ttl_seconds:
         secret_hash=encryption.sha256_hex(secret),
         created_at=now,
         expires_at=now + timedelta(seconds=ttl_seconds) if ttl_seconds > 0 else None,
+        created_by=created_by,
     )
 
     # The owner check, the quota check, and the insert share one transaction.
@@ -228,6 +267,12 @@ def issue_api_key(store: Store, user_id: int, name: str, role: str, ttl_seconds:
         if owner_record is None:
             raise APIKeyOwnerError(user_id)
         owner = User.from_record(owner_record)
+        if created_by is not None:
+            owner_id = owner_id_tx(tx)
+            if owner_id == user_id:
+                raise APIKeyForOwnerError()
+            if owner.is_admin and created_by != owner_id:
+                raise APIKeyForAdminError()
         if owner.disabled:
             raise APIKeyDisabledError()
         if role == ROLE_ADMIN and not owner.is_admin:

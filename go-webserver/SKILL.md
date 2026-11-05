@@ -1,6 +1,6 @@
 ---
 name: go-webserver
-description: Scaffold a new security-hardened Go + Fiber v3 web server with bolt (bbolt) storage, link-based login (no open signup -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), optional password login the owner switches on, optional two-factor sign-in, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + docker/run.sh with no docker-compose, a scripts/build.sh that cross-compiles single-file portable binaries with the whole frontend embedded, scripts/run.sh and scripts/login.sh that report the real URL, paths and state, one config/config.yaml that configures the server, Docker, and the build (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Go -- trigger on "build me a Go webserver", "new Fiber app", "golang backend with logins", "scaffold a Go web project with Docker", "I need a small internal tool in Go", or any Go web project that needs auth and static file serving rather than a bare HTTP handler. Also trigger when someone wants a Go web app shipped as one self-contained executable with no Docker and no runtime dependencies -- "single binary web app", "embed the frontend with go:embed", "cross-compile for linux and windows", "one file I can just hand someone", "where should the app keep its database and config". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, bolt storage, or Docker packaging to a Go web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Go API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my Fiber app", "service account for CI", "add an MCP server/endpoint", "let Claude (Code) use my app", "add password login", or "add 2FA / two-factor / TOTP". This is the Go counterpart to the `python-webserver` skill -- pick this one whenever Go, golang, or Fiber is mentioned, and that one for Python/Starlette.
+description: Scaffold a new security-hardened Go + Fiber v3 web server with bolt (bbolt) storage, link-based login (no open signup -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), optional password login the owner switches on, optional two-factor sign-in, encrypted file uploads, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + docker/run.sh with no docker-compose, a scripts/build.sh that cross-compiles single-file portable binaries with the whole frontend embedded, scripts/run.sh and scripts/login.sh that report the real URL, paths and state, one config/config.yaml that configures the server, Docker, and the build (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Go -- trigger on "build me a Go webserver", "new Fiber app", "golang backend with logins", "scaffold a Go web project with Docker", "I need a small internal tool in Go", or any Go web project that needs auth and static file serving rather than a bare HTTP handler. Also trigger when someone wants a Go web app shipped as one self-contained executable with no Docker and no runtime dependencies -- "single binary web app", "embed the frontend with go:embed", "cross-compile for linux and windows", "one file I can just hand someone", "where should the app keep its database and config". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, bolt storage, or Docker packaging to a Go web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Go API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my Fiber app", "service account for CI", "add an MCP server/endpoint", "let Claude (Code) use my app", "add password login", or "add 2FA / two-factor / TOTP". This is the Go counterpart to the `python-webserver` skill -- pick this one whenever Go, golang, or Fiber is mentioned, and that one for Python/Starlette.
 ---
 
 # Go webserver scaffolder
@@ -30,6 +30,10 @@ project.
   recovery codes, asked for on every browser sign-in: password, login link and
   invite link alike. API keys are exempt. `auth.two_factor` is the owner's
   switch, on by default.
+- **File uploads, encrypted.** Everyone gets a Files screen with progress, resume
+  and undoable delete; only the uploader and admins can open a file. Files arrive in
+  pieces under the normal body limit, each sealed as it arrives with the file's own
+  key, so rotating the secret key touches no file data. `files.enabled` switches it.
 - **Invite links for groups.** An admin can also make one multi-use link
   (`/join/<id>.<secret>`) to post in a group chat: each person types their
   name and joins as a `user`, up to a set number of places, until it expires
@@ -141,6 +145,12 @@ project.
   checks the database for a load balancer. Every response carries an
   `X-Request-ID`, and a 5xx shows it to the person, so it finds the log line.
   `/metrics`, off by default, is Prometheus text for an admin API key.
+- **Maintenance mode.** `server.maintenance` is `none`, `read_only` or `full`,
+  applied live from Settings. Everyone but the owner's browser session gets a
+  503 with `Retry-After`: a page in a browser, JSON for a script.
+- **An OpenAPI spec.** `config/openapi.json` describes every route, and
+  `GET /api/openapi.json` hands it to anyone signed in. A test fails until a
+  new route is in it.
 - **Live updates.** `server/stream` is a server-sent events helper that handles
   the write deadline, re-checks access on open streams and ends them on
   shutdown. The Logs screen's Live button runs on it, with no polling.
@@ -223,7 +233,8 @@ ports they ran on. Do not reset either to a shared value.
 ```
 <target-dir>/
   main.go                     # wiring only + the manage/config/version subcommands,
-                              #   and the go:embed of static/ and config/*.yaml
+                              #   and the go:embed of static/, config/*.yaml and
+                              #   config/openapi.json
   go.mod / go.sum             # pinned deps, so the first build is reproducible
   config/
     config.yaml               # THE config: server, docker, build -- no secret
@@ -231,6 +242,7 @@ ports they ran on. Do not reset either to a shared value.
                               #   editable live from the Settings screen)
     secret.key                # the key that encrypts the database (written by
                               #   scaffold.py; gitignored, 0600) -- back it up
+    openapi.json              # the API, by hand; a test keeps it in step
     config.example.yaml       # every default -- commit this; a fresh clone
                               #   copies it to config/config.yaml
                               #   (`go run . config example` regenerates it)
@@ -256,6 +268,7 @@ ports they ran on. Do not reset either to a shared value.
                               #   writer.go (async, rotating), store.go (read,
                               #   search, prune), query.go (search grammar)
     control/                  # unix socket so other processes reach the db
+    disk/                     # room left on a disk, per operating system
     encryption/encryption.go  # the ONLY place that touches crypto primitives
     models/                   # user.go, session.go, login_token.go, api_key.go,
                               #   invite_link.go, pin.go, password.go,
@@ -268,19 +281,22 @@ ports they ran on. Do not reset either to a shared value.
     static/static.go          # gzip-always-fresh text, long-cached images
     language/language.go      # loads language.yaml, serves it as JSON
     middleware/middleware.go  # CSP + security headers, rate limit (static files
-                              #   exempt, sign-in has its own budget), recover
+                              #   exempt, sign-in and upload pieces have their
+                              #   own budgets), recover
     middleware/request_log.go # one activity-log entry per request
     middleware/request_id.go  # the X-Request-ID reference on every response
+    middleware/maintenance.go # what each maintenance mode leaves open
     middleware/errors.go      # the ErrorHandler: generic text out, cause logged
     middleware/metrics.go     # counts every request for /metrics
     metrics/metrics.go        # the numbers, printed as Prometheus text
     jobs/                     # jobs.go: named background jobs on a schedule
                               # housekeeping.go: purge, prune-logs, backup
+                              # files.go: clears out deleted and abandoned files
     stream/stream.go          # server-sent events: Hub, Serve, heartbeats
     webhooks/webhooks.go      # the outbox's sender, signing, and the address guard
     errorpage/errorpage.go    # the page a browser gets when a page load fails
     routes/                   # routes.go (the URL map) + one file per group,
-                              #   including api_keys.go, mcp_tools.go
+                              #   including api_keys.go, files.go, mcp_tools.go
                               #   (the MCP tools, + mcp_test.go) and logs.go
                               #   (the owner's log API, page events, audit())
     bootstrap/bootstrap.go    # first-run admin + printing links as full URLs
@@ -298,7 +314,9 @@ ports they ran on. Do not reset either to a shared value.
     js/logs.js                # the owner's Logs screen
     js/jobs.js                # the owner's Jobs screen
     js/sessions.js            # "where you're signed in" on the Account screen
-    js/dom.js, i18n.js, api.js, app.js, keys.js,
+    js/fresh.js               # asks the server again on coming back to a tab
+    js/qr.js                  # QR codes for 2FA and for login and invite links
+    js/dom.js, i18n.js, api.js, app.js, keys.js, files.js,
       join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
       password.js, two_factor.js    # password form and panel; 2FA step and panel
     vendor/                   # self-hosted libs: Bootstrap 5, Bootstrap Icons (see its README)
@@ -390,6 +408,9 @@ but stay consistent with the patterns already there:
   `server/db/migrate.go`, once the app has data anyone cares about. A new
   optional field or a new bucket needs nothing. `architecture.md` has the rules
   and an example.
+- **User uploads** already have a home: build on `server/models/file.go` rather than writing
+  a route that takes a body. Add a field to the record for what the file belongs to,
+  and check it in `server/routes/files.go`.
 - **New files on disk** go under `cfg.StorageDir` (`<app dir>/storage/`),
   never a path relative to the working directory -- that changes depending on
   how the process was started, and would land outside what users back up.
@@ -408,6 +429,9 @@ but stay consistent with the patterns already there:
 - **A new event** goes in the list in `server/models/webhook.go`, and is sent with
   `handlers.Webhooks.Emit( name , data )` where the thing happens. Ids and names only
   in `data`, since it leaves the server, and never rename one once it has shipped.
+- **A new route** goes in `config/openapi.json` too: `go test ./server/routes` fails
+  until it is. A route that changes something must not be a GET, or `read_only`
+  maintenance will not stop it.
 - **A new list route** answers with `sendPage( c , "rows" , rows )`, and its screen
   uses `Pager.load`: a plain `forEach` would stop at the first page.
 - **A new page with a path of its own** needs a route using `handlers.Static.ServeIndex`
@@ -563,6 +587,30 @@ Then passwords and 2FA, because the point of them is what they refuse. Turn on
   `use_password`, and
 - `auth.passwords: false` makes `/api/login/password` answer 404, and turning
   it back on restores the password.
+
+Then the features an admin and the owner lean on:
+
+- with `server.maintenance: full`, a browser that is not the owner gets the
+  maintenance page and the owner's session still works,
+- an admin can make a key for a user on All keys, and that user sees who made it,
+- with two sessions signed in, ending one from the other and then clicking
+  anything in the ended one lands on the signed-out page saying why, not on a
+  banner reading "not authenticated",
+- the navbar's button switches light and dark, signed in and signed out; a fresh
+  browser opens light whatever the system is set to, and a choice survives a
+  reload,
+- double-clicking **Create login link** makes one account,
+- **QR code** beside a login or invite link shows a code that scans to that link,
+  and a new link hides the old code,
+- dropping files on the Files screen uploads them, Cancel leaves nothing behind,
+  and the bar under the upload field shows what is used of the quota,
+- with `server.announcement` set, the banner shows within five minutes of coming
+  back to an open tab; dismissing it sticks, and a changed message comes back,
+- **Sessions** on a user's row lists their devices and can end one; another admin
+  sees no addresses, and only the owner reaches the owner's,
+- a failed webhook delivery has a **Resend** button that adds a new row and leaves
+  the failed one listed,
+- `/api/openapi.json` is 401 signed out and 200 signed in.
 
 Then the logs, because the point of them is that nobody but the owner sees
 them and nothing secret is in them:

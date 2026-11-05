@@ -87,6 +87,7 @@ type rateBudget int
 const (
 	budgetGeneral rateBudget = iota
 	budgetSignIn
+	budgetUpload
 	budgetNone
 )
 
@@ -100,6 +101,15 @@ var signInPaths = map[string]bool{
 	"/api/join/match":       true,
 	"/api/join/claim":       true,
 	"/api/join/create":      true,
+}
+
+// uploadChunk is exactly POST /api/files/<id>/chunks/<index>. A file arrives as
+// many of these, so they have a budget of their own: on the general one a big
+// upload would use up what the page needs and still crawl.
+func uploadChunk( method string , normalised string ) ( result bool ) {
+	parts := strings.Split( normalised , "/" )
+	result = method == fiber.MethodPost && len( parts ) == 6 && parts[ 1 ] == "api" && parts[ 2 ] == "files" && parts[ 4 ] == "chunks"
+	return
 }
 
 // budgetFor sorts a request.
@@ -121,6 +131,8 @@ func budgetFor( method string , request_path string ) ( budget rateBudget ) {
 	switch {
 	case method == fiber.MethodPost && signInPaths[ normalised ]:
 		budget = budgetSignIn
+	case uploadChunk( method , normalised ):
+		budget = budgetUpload
 	case staticAsset( method , normalised ):
 		budget = budgetNone
 	}
@@ -133,14 +145,14 @@ func budgetFor( method string , request_path string ) ( budget rateBudget ) {
 // move to a shared store (limiter.Config.Storage) at that point rather than
 // assuming the limit still holds.
 //
-// Each address has two budgets over the same window: one for signing in, and
-// one for everything else. Keeping them apart means a page full of API calls
-// cannot lock someone out of signing in, and guessing at sign-in does not get
-// the budget the rest of the app has.
+// Each address has three budgets over the same window: one for signing in, one
+// for the chunks of an upload, and one for everything else. Keeping them apart
+// means a page full of API calls cannot lock someone out of signing in, and
+// guessing at sign-in does not get the budget the rest of the app has.
 //
 // The budgets and the window are read per request, so an edit to any of
-// server.rate_limit_max, rate_limit_signin_max or rate_limit_window_seconds
-// applies at once.
+// server.rate_limit_max, rate_limit_signin_max, rate_limit_upload_max or
+// rate_limit_window_seconds applies at once.
 func RateLimit( settings *config.Holder ) ( handler fiber.Handler ) {
 	limited := func( prefix string , limit func( cfg *config.Config ) int ) ( result fiber.Handler ) {
 		result = limiter.New( limiter.Config{
@@ -167,6 +179,7 @@ func RateLimit( settings *config.Holder ) ( handler fiber.Handler ) {
 	}
 	general := limited( "general:" , func( cfg *config.Config ) int { return cfg.RateLimitMax } )
 	sign_in := limited( "sign-in:" , func( cfg *config.Config ) int { return cfg.RateLimitSignInMax } )
+	upload := limited( "upload:" , func( cfg *config.Config ) int { return cfg.RateLimitUploadMax } )
 
 	handler = func( c fiber.Ctx ) ( err error ) {
 		switch budgetFor( c.Method() , c.Path() ) {
@@ -174,6 +187,8 @@ func RateLimit( settings *config.Holder ) ( handler fiber.Handler ) {
 			err = c.Next()
 		case budgetSignIn:
 			err = sign_in( c )
+		case budgetUpload:
+			err = upload( c )
 		default:
 			err = general( c )
 		}

@@ -84,7 +84,7 @@ const Password = {
     this.me = me;
     if ( !me.passwords_enabled || me.password_blocked || me.auth !== "session" ) return;
     Dom.show( Dom.get( "password-panel" ) , true );
-    Dom.get( "password-form" ).addEventListener( "submit" , this.onSave.bind( this ) );
+    Dom.onSubmit( Dom.get( "password-form" ) , this.onSave.bind( this ) );
     Dom.get( "password-remove-button" ).addEventListener( "click" , this.onRemove.bind( this ) );
     Dom.get( "password-username" ).value = me.username;
     this.render();
@@ -129,7 +129,7 @@ const Password = {
 
   async onRemove() {
     const question = I18n.get( "password.remove_confirm" );
-    if ( question !== "" && !window.confirm( question ) ) return;
+    if ( !( await Dom.confirm( question ) ) ) return;
     try {
       await Api.setPassword( "" , "" , Dom.get( "password-code" ).value );
       this.me.has_password = false;

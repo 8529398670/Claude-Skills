@@ -31,6 +31,7 @@ from app.routes import (
     admin,
     api_keys,
     auth,
+    files,
     invite_links,
     jobs,
     join,
@@ -38,6 +39,7 @@ from app.routes import (
     mcp_tools,
     meta,
     metrics,
+    openapi,
     passwords,
     sessions,
     settings,
@@ -46,6 +48,7 @@ from app.routes import (
     webhooks,
 )
 from app.routes.api_keys import RequireAPIKeys
+from app.routes.files import RequireFiles
 from app.routes.helpers import get_config, not_found
 
 
@@ -109,6 +112,13 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
     sessions_only = group(RequireLogin, RequireSession)
     # API keys: any signed-in user manages their own, from a browser session.
     my_keys = group(RequireAPIKeys, RequireLogin, RequireSession)
+    # Uploaded files: everyone their own, API keys included. See files.py.
+    my_files = group(RequireFiles, RequireLogin)
+    # Every account's files. An admin key may list them, but reading or
+    # deleting someone else's needs a session: a leaked key must not be a way
+    # to carry off the contents of every account.
+    admin_files = group(RequireFiles, RequireAdmin)
+    admin_file_sessions = group(RequireFiles, RequireAdmin, RequireSession)
     # Admin only: deciding who gets in.
     admins = group(RequireAdmin)
     # The two admin routes that hand out a login link also require a browser
@@ -171,6 +181,7 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         # The account's own sessions. A session only: a key has none, and
         # signing devices out is a person's decision.
         sessions_only("/api/account/sessions", sessions.list_my_sessions),
+        my_files("/api/account/storage", files.my_storage),
         sessions_only("/api/account/sessions/revoke-others", sessions.revoke_others, ["POST"]),
         sessions_only("/api/account/sessions/{session_id}/revoke", sessions.revoke_one, ["POST"]),
         my_password("/api/account/password", passwords.set_password, ["POST"]),
@@ -179,11 +190,24 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         my_two_factor("/api/account/two-factor/disable", two_factor.disable, ["POST"]),
         signed_in("/api/logout", account.logout, ["POST"]),
         signed_in("/api/team", team.list_team),
+        signed_in("/api/openapi.json", openapi.get_openapi),
         my_keys("/api/keys", api_keys.list_my_keys),
         my_keys("/api/keys", api_keys.create_my_key, ["POST"]),
         my_keys("/api/keys/{key_id}/revoke", api_keys.revoke_my_key, ["POST"]),
         my_keys("/api/keys/{key_id}/delete", api_keys.delete_my_key, ["POST"]),
         my_keys("/api/keys/{key_id}/restore", api_keys.restore_my_key, ["POST"]),
+        my_files("/api/files", files.list_my_files),
+        my_files("/api/files", files.create_file, ["POST"]),
+        my_files("/api/files/{file_id}", files.get_my_file),
+        my_files("/api/files/{file_id}/chunks/{index}", files.put_chunk, ["POST"]),
+        my_files("/api/files/{file_id}/finish", files.finish_file, ["POST"]),
+        my_files("/api/files/{file_id}/download", files.download_my_file),
+        my_files("/api/files/{file_id}/delete", files.delete_my_file, ["POST"]),
+        my_files("/api/files/{file_id}/restore", files.restore_my_file, ["POST"]),
+        admin_files("/api/admin/files", files.list_all_files),
+        admin_file_sessions("/api/admin/files/{file_id}/download", files.download_any_file),
+        admin_file_sessions("/api/admin/files/{file_id}/delete", files.delete_any_file, ["POST"]),
+        admin_file_sessions("/api/admin/files/{file_id}/restore", files.restore_any_file, ["POST"]),
         admins("/api/admin/users", admin.list_users),
         admin_sessions("/api/admin/users", admin.create_user, ["POST"]),
         admin_sessions("/api/admin/users/{user_id}/reissue-login", admin.reissue_login, ["POST"]),
@@ -191,6 +215,11 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         admins("/api/admin/users/{user_id}/revoke-access", admin.revoke_access, ["POST"]),
         admin_sessions("/api/admin/users/{user_id}/delete", admin.delete_user, ["POST"]),
         admin_sessions("/api/admin/users/{user_id}/reset-two-factor", admin.reset_two_factor, ["POST"]),
+        # A session only, like your own devices list: a key that could end
+        # sessions could end the one that would revoke it.
+        admin_sessions("/api/admin/users/{user_id}/sessions", sessions.list_user_sessions),
+        admin_sessions("/api/admin/users/{user_id}/sessions/{session_id}/revoke", sessions.revoke_user_session, ["POST"]),
+        admin_files("/api/admin/storage", files.all_storage),
         # Invite links: one link for a group, each person who opens it joins
         # as a new user (see invite_links.py). Creating one needs a session for
         # the same reason as creating a user -- the link mints accounts and
@@ -202,6 +231,7 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         admin_sessions("/api/admin/invite-links/{link_id}/delete", invite_links.delete_invite_link, ["POST"]),
         admin_sessions("/api/admin/invite-links/{link_id}/restore", invite_links.restore_invite_link, ["POST"]),
         admin_keys("/api/admin/keys", api_keys.list_all_keys),
+        admin_keys("/api/admin/keys", api_keys.create_key_for_user, ["POST"]),
         admin_keys("/api/admin/keys/{key_id}/revoke", api_keys.revoke_any_key, ["POST"]),
         admin_keys("/api/admin/keys/{key_id}/delete", api_keys.delete_any_key, ["POST"]),
         admin_keys("/api/admin/keys/{key_id}/restore", api_keys.restore_any_key, ["POST"]),
@@ -220,6 +250,7 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         owner("/api/owner/webhooks/{webhook_id}/restore", webhooks.restore_webhook, ["POST"]),
         owner("/api/owner/webhooks/{webhook_id}/test", webhooks.send_test, ["POST"]),
         owner("/api/owner/webhooks/{webhook_id}/deliveries", webhooks.list_deliveries),
+        owner("/api/owner/webhooks/{webhook_id}/deliveries/{delivery_id}/resend", webhooks.resend_delivery, ["POST"]),
         # The per-account password switch. See passwords.py.
         owner_passwords("/api/owner/users/{user_id}/password-access", passwords.set_password_access, ["POST"]),
     ]

@@ -48,6 +48,8 @@ BUCKET_JOBS = "jobs"
 BUCKET_WEBHOOKS = "webhooks"
 # The outbox: see app/core/webhooks.py.
 BUCKET_WEBHOOK_DELIVERIES = "webhook_deliveries"
+# Describes uploads; the bytes are on disk. See app/models/files.py.
+BUCKET_FILES = "files"
 BUCKET_META = "meta"
 
 BUCKETS = (
@@ -60,6 +62,7 @@ BUCKETS = (
     BUCKET_JOBS,
     BUCKET_WEBHOOKS,
     BUCKET_WEBHOOK_DELIVERIES,
+    BUCKET_FILES,
     BUCKET_META,
 )
 

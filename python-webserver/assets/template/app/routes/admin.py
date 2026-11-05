@@ -28,13 +28,17 @@ from app.routes.logs import audit
 
 async def list_users(request: Request) -> Response:
     """Marks the owner on its row, so the UI can tell which delete, disable,
-    and revoke buttons the server would refuse."""
-    return send_page(request, "users", await run(user_rows, get_store(request)))
+    and revoke buttons the server would refuse.
+
+    ?q= keeps the accounts whose name or username contains it, in any case.
+    Here and not in the browser, which only ever holds one page of them."""
+    return send_page(request, "users", await run(user_rows, get_store(request), request.query_params.get("q", "")))
 
 
-def user_rows(store: Store) -> list[dict[str, Any]]:
+def user_rows(store: Store, query: str = "") -> list[dict[str, Any]]:
     """Shared with the MCP admin_list_users tool."""
     owner_id = users.get_owner_id(store)
+    wanted = query.strip().lower()
     return [
         {
             "id": u.id,
@@ -47,6 +51,7 @@ def user_rows(store: Store) -> list[dict[str, Any]]:
             "two_factor": two_factor.is_on(u),
         }
         for u in users.list_users(store)
+        if wanted in u.display_name.lower() or wanted in (u.username or "").lower()
     ]
 
 

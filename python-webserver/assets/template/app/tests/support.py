@@ -44,6 +44,7 @@ def sample_value(key: Any) -> Any:
         "server.public_url": "https://app.example.com",
         "server.trusted_proxies": ["10.0.0.0/8"],
         "server.proxy_header": "X-Real-IP",
+        "server.maintenance": "read_only",
         "server.host": "0.0.0.0",
         "server.port": 9999,
         "logs.max_file_mb": 10,

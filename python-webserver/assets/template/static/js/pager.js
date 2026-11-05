@@ -18,6 +18,7 @@ const Pager = {
     }
     if ( !offset ) Dom.clear( element.querySelector( "tbody" ) );
     page[ field ].forEach( renderRow );
+    if ( !offset && page[ field ].length === 0 ) this.empty( element );
 
     const holder = element.closest( ".table-responsive" ) || element;
     const old = holder.parentElement.querySelector( ".pager-more[data-for='" + table + "']" );
@@ -31,5 +32,19 @@ const Pager = {
       } ) );
     }
     return page;
+  },
+
+  // One row saying there is nothing here, worded by the table's data-empty
+  // key, so a bare heading row does not look like a screen that failed to load.
+  empty( table ) {
+    const text = I18n.get( table.getAttribute( "data-empty" ) || "" );
+    if ( text === "" ) return;
+    table.querySelector( "tbody" ).appendChild( Dom.el( "tr" , { children: [
+      Dom.el( "td" , {
+        class: "text-body-secondary",
+        text: text,
+        attrs: { colspan: String( table.querySelectorAll( "thead th:not([hidden])" ).length ) },
+      } ),
+    ] } ) );
   },
 };

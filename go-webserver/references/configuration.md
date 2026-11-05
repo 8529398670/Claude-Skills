@@ -19,7 +19,9 @@ adding a setting or writing a file anywhere.
 - [The activity log's settings](#the-activity-logs-settings)
 - [In containers](#in-containers)
 - [Backups](#backups)
+- [Maintenance mode](#maintenance-mode)
 - [Webhook settings](#webhook-settings)
+- [File settings](#file-settings)
 - [Adding a setting](#adding-a-setting)
 
 ## One file, no environment variables
@@ -29,13 +31,16 @@ app:     name
 server:  host, port, public_url, app_dir, static_dir, language_file,
          encrypt_at_rest, secure_cookies, cookie_name, trust_proxy,
          trusted_proxies, proxy_header, body_limit_bytes, rate_limit_max,
-         rate_limit_window_seconds, rate_limit_signin_max, control_socket, mcp
-auth:    session_ttl_seconds, login_token_ttl_seconds, api_keys,
+         rate_limit_window_seconds, rate_limit_signin_max,
+         rate_limit_upload_max, control_socket, mcp
+auth:    session_ttl_seconds, session_max_age_seconds,
+         login_token_ttl_seconds, api_keys,
          api_key_ttl_seconds, passwords, two_factor
 logs:    enabled, retention_days, max_total_mb, max_file_mb,
          compress_after_days, static_assets, ui_clicks, echo
 backups: enabled, interval_hours, keep
 metrics: enabled
+files:   enabled, max_file_bytes, quota_bytes_per_user, abandoned_upload_hours
 docker:  image, container, bind_address, host_port, data_dir, restart,
          memory, cpus, pids_limit, tmpfs_size
 build:   binary_name, output_dir, targets
@@ -286,6 +291,7 @@ Losing the key loses the data. There is no recovery.
 |---|---|
 | Database records | re-encrypted, with `encrypt_at_rest` on |
 | Two-factor secrets | re-encrypted, always: they are encrypted on their own inside the record |
+| Uploaded files | each file's own key is re-encrypted, always; the file data does not change |
 | Activity log lines | re-encrypted, gzipped days included |
 | Session cookies | stop working: everyone signs in again |
 | Backups | left as they are: each keeps the key it was made with |
@@ -341,7 +347,7 @@ Every key in `defaults.yaml` carries a tag in its comments:
 
 | tag | meaning | keys |
 |---|---|---|
-| `[live]` | the next request sees it | `server.public_url`, `secure_cookies`, `rate_limit_max`, `rate_limit_window_seconds`, `rate_limit_signin_max`, `mcp`; all of `auth:`, `backups:` and `metrics:`; `logs:` except `enabled` |
+| `[live]` | the next request sees it | `server.public_url`, `secure_cookies`, `rate_limit_max`, `rate_limit_window_seconds`, `rate_limit_signin_max`, `rate_limit_upload_max`, `mcp`; all of `auth:`, `backups:`, `metrics:` and `files:`; `logs:` except `enabled` |
 | `[restart]` | saved now, read at startup | `app.name`, `server.host`, `port`, `app_dir`, `static_dir`, `language_file`, `encrypt_at_rest`, `cookie_name`, `trust_proxy`, `trusted_proxies`, `proxy_header`, `body_limit_bytes`, `control_socket`, `logs.enabled` |
 | `[scripts]` | read by `docker/run.sh` or `scripts/build.sh` only | `docker:`, `build:` |
 
@@ -397,7 +403,8 @@ it is rewritten in place, after the previous version is copied to
 ~/.config/<app-slug>/
   app.db           the bolt database
   control.sock     unix socket, mode 0600, only while the server is running
-  storage/         application files (uploads, exports, generated artifacts)
+  storage/         application files; finished uploads are in storage/files/
+  uploads/         uploads still arriving; not backed up
   logs/            the activity log, one file per UTC day (see below)
   language.yaml    optional; overrides the embedded UI text
   config.yaml      when the binary created it here (see above)
@@ -458,8 +465,9 @@ says so plainly rather than passing the kernel's bare "invalid argument" along.
 ## Storage for application files
 
 `cfg.StorageDir` (`<app dir>/storage/`) is created at startup and is where
-features added later should write files -- uploads, exports, generated
-artifacts. Nothing in the base template writes there.
+features should write files -- exports, generated artifacts. Finished uploads are
+in `storage/files/`, which belongs to the Files feature: see
+[File uploads](architecture.md#file-uploads).
 
 It exists so that the first feature needing to save a file has an obvious
 place to put it, rather than inventing a path that then has to be discovered
@@ -558,6 +566,26 @@ who was signed in from where.
 `metrics.enabled`, `[live]`, makes `GET /metrics` answer an admin API key. See
 Monitoring in `architecture.md`.
 
+## Maintenance mode
+
+`server.maintenance`, `[live]`: `none`, `read_only` or `full`. The owner can set
+it on the Settings screen, and it works the same from `config set` or a hand edit.
+See Maintenance mode in `architecture.md` for what each value leaves open.
+
+`server.announcement`, `[live]`: one line of up to 500 characters at the top of
+every signed-in page, or empty for none. It is the owner's own text, so it does not
+go through `language.yaml`. Anyone can dismiss it in their browser, and a changed
+message comes back. An open tab picks it up the next time someone returns to it.
+
+## How long a sign-in lasts
+
+`auth.session_ttl_seconds`, `[live]`, counts from the last time a session was used,
+so only an idle one ends then. `auth.session_max_age_seconds`, `[live]`, counts from
+signing in, and is the most a session can last however much it is used. It must be
+at least the ttl. Set the two equal for a session that ends at a fixed age. Without
+a password, someone whose session ends needs a new link from an admin, so a short
+limit costs an admin's time.
+
 ## Webhook settings
 
 `webhooks.timeout_seconds` is how long one delivery attempt may take, 1 to 60.
@@ -567,6 +595,23 @@ that reach: with it on, the Webhooks screen can call anything this server can.
 Both apply at once, and a delivery checks the address again when it is sent, so
 turning it off stops an endpoint that relied on it. See
 [Webhooks](architecture.md#webhooks).
+
+## File settings
+
+All apply at once.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `files.enabled` | `true` | Off hides the screen and makes `/api/files` answer 404. Files stay on disk. |
+| `files.max_file_bytes` | 100 MiB | The largest single file. |
+| `files.quota_bytes_per_user` | 1 GiB | What one account may keep, counting uploads still arriving. |
+| `files.abandoned_upload_hours` | 24 | How long an upload may sit idle before the `files` job removes it. |
+| `server.rate_limit_upload_max` | 1200 | Pieces per address per rate-limit window. A piece is 768 KiB. |
+
+With `files.enabled` on, `server.body_limit_bytes` must be at least 786432, the size
+of one piece, or the server refuses to start. Backups hold every file in full, so
+think about `backups.keep` before raising the limits. See
+[File uploads](architecture.md#file-uploads).
 
 ## Adding a setting
 

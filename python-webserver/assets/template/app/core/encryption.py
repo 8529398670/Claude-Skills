@@ -214,13 +214,25 @@ def xchacha_encrypt_bytes(key_hex: str, plain_text: bytes) -> bytes:
     per message without any realistic risk of collision. The nonce is
     prepended to the cipher text; the Poly1305 tag means a modified value fails
     to open rather than decrypting to garbage."""
-    key = _decode_key(key_hex)
-    nonce = random_bytes(_XCHACHA_NONCE_BYTES)
-    sealed = _sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(plain_text, None, nonce, key)
-    return nonce + sealed
+    return xchacha_encrypt_bound(key_hex, plain_text, None)
 
 
 def xchacha_decrypt_bytes(key_hex: str, encrypted: bytes) -> bytes:
+    return xchacha_decrypt_bound(key_hex, encrypted, None)
+
+
+def xchacha_encrypt_bound(key_hex: str, plain_text: bytes, bound: bytes | None) -> bytes:
+    """Seals plain_text to bound as well as to the key: it opens only with the
+    same bound, which is itself not stored. A file's chunks use this, bound to
+    their place in the file, so that one moved, swapped with another file's or
+    dropped from the end fails to open instead of decrypting to the wrong file."""
+    key = _decode_key(key_hex)
+    nonce = random_bytes(_XCHACHA_NONCE_BYTES)
+    sealed = _sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(plain_text, bound, nonce, key)
+    return nonce + sealed
+
+
+def xchacha_decrypt_bound(key_hex: str, encrypted: bytes, bound: bytes | None) -> bytes:
     key = _decode_key(key_hex)
     # Too short to hold a nonce and a tag is refused here: libsodium's binding
     # reports that case as a ValueError rather than a decryption failure, and
@@ -229,7 +241,7 @@ def xchacha_decrypt_bytes(key_hex: str, encrypted: bytes) -> bytes:
         raise CipherTextError()
     nonce, sealed = encrypted[:_XCHACHA_NONCE_BYTES], encrypted[_XCHACHA_NONCE_BYTES:]
     try:
-        return _sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(sealed, None, nonce, key)
+        return _sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(sealed, bound, nonce, key)
     except (_CryptoError, ValueError, TypeError):
         raise CipherTextError() from None
 

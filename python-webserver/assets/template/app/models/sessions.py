@@ -142,24 +142,42 @@ def remember_client(store: Store, session_id: str, ip: str, user_agent: str) -> 
     store.update_value(BUCKET_SESSIONS, session_id, mutate)
 
 
-def touch_session(store: Store, session: Session) -> None:
-    """Record use at most once per SESSION_TOUCH_INTERVAL. Called when a
-    request is resolved, not from load_session, so re-checking an open stream
-    does not count as the person doing something. Failures are ignored on
-    purpose, like api_keys._touch: a timestamp is not worth failing a request
-    for."""
+def session_expiry(session: Session, now: datetime, ttl_seconds: int, max_age_seconds: int) -> datetime:
+    """When a session used now should end: ttl from now, but never later than
+    max_age after it was signed in, and never earlier than it already ends, so
+    shortening the ttl does not cut off a session mid-use."""
+    limit = session.created_at + timedelta(seconds=max_age_seconds)
+    return max(min(now + timedelta(seconds=ttl_seconds), limit), session.expires_at)
+
+
+def touch_session(store: Store, session: Session, ttl_seconds: int, max_age_seconds: int) -> bool:
+    """Record use at most once per SESSION_TOUCH_INTERVAL, and move the
+    session's end out in the same write, so someone using the app every day is
+    not signed out at a date set when they signed in. Without a password that
+    would mean asking an admin for a new link. True means the end moved, which
+    is the caller's cue to send the cookie again: it has its own expiry.
+
+    Called when a request is resolved, not from load_session, so re-checking
+    an open stream does not count as the person doing something. Failures are
+    ignored on purpose, like api_keys._touch: a timestamp is not worth failing
+    a request for."""
     now = utc_now()
     if session.last_seen_at is not None and now - session.last_seen_at < SESSION_TOUCH_INTERVAL:
-        return
+        return False
+    expires = session_expiry(session, now, ttl_seconds, max_age_seconds)
 
     def mutate(record: Record) -> None:
         record["last_seen_at"] = to_iso(now)
+        record["expires_at"] = to_iso(expires)
 
     try:
         store.update_value(BUCKET_SESSIONS, session.id, mutate)
     except Exception:  # noqa: BLE001 -- bookkeeping only, see above
-        return
+        return False
     session.last_seen_at = now
+    extended = expires > session.expires_at
+    session.expires_at = expires
+    return extended
 
 
 def list_sessions(store: Store, user_id: int) -> list[Session]:

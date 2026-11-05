@@ -17,7 +17,7 @@ const TwoFactor = {
     Dom.show( Dom.get( "two-factor-step" ) , true );
     if ( !this.bound ) {
       this.bound = true;
-      Dom.get( "two-factor-step-form" ).addEventListener( "submit" , this.onCode.bind( this ) );
+      Dom.onSubmit( Dom.get( "two-factor-step-form" ) , this.onCode.bind( this ) );
     }
     Dom.get( "two-factor-step-code" ).focus();
   },
@@ -47,9 +47,13 @@ const TwoFactor = {
     if ( !me.two_factor_enabled || me.auth !== "session" ) return;
     Dom.show( Dom.get( "two-factor-panel" ) , true );
     Dom.get( "two-factor-start-button" ).addEventListener( "click" , this.onStart.bind( this ) );
-    Dom.get( "two-factor-confirm-form" ).addEventListener( "submit" , this.onConfirm.bind( this ) );
-    Dom.get( "two-factor-disable-form" ).addEventListener( "submit" , this.onDisable.bind( this ) );
+    Dom.onSubmit( Dom.get( "two-factor-confirm-form" ) , this.onConfirm.bind( this ) );
+    Dom.onSubmit( Dom.get( "two-factor-disable-form" ) , this.onDisable.bind( this ) );
     Dom.get( "two-factor-recovery-copy" ).addEventListener( "click" , () => Dom.copy( Dom.get( "two-factor-recovery-codes" ) ) );
+    Dom.get( "two-factor-recovery-download" ).addEventListener( "click" , () => {
+      Dom.download( I18n.get( "two_factor.recovery_filename" ) , Dom.get( "two-factor-recovery-codes" ).textContent );
+    } );
+    Dom.get( "two-factor-secret-copy" ).addEventListener( "click" , () => Dom.copy( Dom.get( "two-factor-secret" ) ) );
     Dom.get( "two-factor-recovery-done" ).addEventListener( "click" , () => this.show( "status" ) );
     this.show( "status" );
   },
@@ -70,7 +74,7 @@ const TwoFactor = {
     try {
       const started = await Api.startTwoFactor();
       Dom.text( Dom.get( "two-factor-secret" ) , started.secret );
-      this.drawQr( this.otpauthUri( started.secret ) );
+      Qr.draw( Dom.get( "two-factor-qr" ) , this.otpauthUri( started.secret ) );
       Dom.get( "two-factor-code" ).value = "";
       this.show( "setup" );
       Dom.get( "two-factor-code" ).focus();
@@ -87,30 +91,6 @@ const TwoFactor = {
     const label = encodeURIComponent( issuer ) + ":" + encodeURIComponent( account );
     return "otpauth://totp/" + label + "?secret=" + secret + "&issuer=" + encodeURIComponent( issuer )
       + "&algorithm=SHA1&digits=6&period=30";
-  },
-
-  // Black on white whatever the theme: scanners want the contrast, and four
-  // modules of margin.
-  drawQr( text ) {
-    const code = qrcode( 0 , "M" );
-    code.addData( text );
-    code.make();
-    const quiet = 4;
-    const scale = 5;
-    const count = code.getModuleCount();
-    const canvas = Dom.get( "two-factor-qr" );
-    canvas.width = canvas.height = ( count + quiet * 2 ) * scale;
-    const context = canvas.getContext( "2d" );
-    context.fillStyle = "#ffffff";
-    context.fillRect( 0 , 0 , canvas.width , canvas.height );
-    context.fillStyle = "#000000";
-    for ( let row = 0; row < count; row++ ) {
-      for ( let column = 0; column < count; column++ ) {
-        if ( code.isDark( row , column ) ) {
-          context.fillRect( ( column + quiet ) * scale , ( row + quiet ) * scale , scale , scale );
-        }
-      }
-    }
   },
 
   async onConfirm( event ) {

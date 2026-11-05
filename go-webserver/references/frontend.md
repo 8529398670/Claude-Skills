@@ -97,15 +97,28 @@ Plain scripts, loaded in dependency order, each adding one global:
 | File | Responsibility |
 |---|---|
 | `theme.js` | Light, dark, or a preset theme. Loaded in `<head>`; see below. |
-| `dom.js` | Element helpers, `Dom.copy`, `Dom.toast`. No app logic. |
+| `dom.js` | Element helpers, `Dom.copy`, `Dom.toast`, `Dom.onSubmit`, `Dom.confirm`, `Dom.when`. No app logic. |
+| `qr.js` | QR codes, for the authenticator app and for login and invite links. |
 | `i18n.js` | Loads and applies `language.yaml`. |
-| `api.js` | Every call to the server. Attaches cookies and the CSRF token. |
 | `undo.js` | Ctrl+Z / Ctrl+Y: the undo/redo history every screen records into. |
+| `api.js` | Every call to the server. Attaches cookies and the CSRF token. |
+| `track.js` | Sends the screens and clicks the activity log records. |
 | `nav.js` | The sidebar: which screen the URL hash shows. |
-| `app.js` | The account + admin screen. |
+| `pager.js` | Fills a table from a paged route, with Load more and an empty row. |
 | `keys.js` | The API keys screen. An example of the rule below. |
+| `sessions.js` | Signed-in devices: your own, and an admin's view of an account's. |
+| `files.js` | The Files screen: uploads in pieces, with progress, resume and drops. |
+| `join.js` | Joining through an invite link. |
+| `pin.js` | The PIN screen. |
+| `password.js` | Password sign-in, and the Password screen. |
+| `two_factor.js` | The two-factor step at sign-in, and its screen. |
+| `invites.js` | The Invite links screen. |
 | `logs.js` | The owner's Logs screen. |
+| `jobs.js` | The owner's Jobs screen. |
+| `webhooks.js` | The owner's Webhooks screen. |
 | `settings.js` | The owner's Settings screen: config.yaml as a form. |
+| `fresh.js` | Asks the server again when someone comes back to the tab. |
+| `app.js` | The account + admin screen. Last, because it starts everything. |
 
 **Give each new screen its own file with its own `init()`**, included from
 that page's HTML. Do not keep appending to `app.js` -- the whole layout exists
@@ -114,7 +127,7 @@ build one.
 
 `keys.js` is the worked example: it owns its own screen, its own tables, and its
 own refresh, and `app.js` knows it exists in exactly one line
-(`await Keys.init( me )`). Copy that shape rather than the alternative.
+(`Keys.init( me )`). Copy that shape rather than the alternative.
 
 Anything talking to the server goes through `api.js`. `Api.post` attaches the
 CSRF token automatically, so a new endpoint cannot forget it.
@@ -192,8 +205,8 @@ Ctrl+Shift+Z redoes it. Actions that matter -- a delete, a rename -- also
 show a toast with an **Undo** button, which is how a phone or anyone who does
 not know the shortcut gets the same thing. `static/js/undo.js` owns the
 history, the keys and the button; screens only hand it their actions. Out of
-the box it covers theme picks, folding the sidebar, renaming the account, and
-deleting an API key or invite link.
+the box it covers theme picks, folding the sidebar, renaming the account,
+deleting an API key, invite link, webhook or file, and saving Settings.
 
 ```js
 const previous = this.current;
@@ -303,6 +316,15 @@ adds appears with no frontend change. Give one a friendlier name with
 call that starts it, so the screen looks again every `refreshMs` while something
 is running there.
 
+### The Files screen
+
+`files.js`, for everyone unless `files.enabled` is off: upload, download, and delete
+with Undo. An admin gets a switch to see everyone's files, with an Owner column.
+An upload retries a failed piece and goes on from the `received` the server reports,
+and deletes itself if it gives up, so it does not hold the quota. `Api.request` takes
+`raw` and `headers` for this: the one body that is not JSON. See
+[File uploads](architecture.md#file-uploads).
+
 ### The Webhooks screen
 
 `webhooks.js`, owner only: add an endpoint, turn it on or off, send a test, and
@@ -371,6 +393,52 @@ The choice lives in this browser's `localStorage` only -- no server state.
 To make it follow a person across devices, store the preset key on the
 account and call `Theme.set( key )` after `/api/me`. Whatever you do, first
 load is always light.
+
+## What every screen gets
+
+These live in `dom.js`, `api.js` and `nav.js`, so a new screen has them by using
+them rather than by writing them again.
+
+- **`Dom.onSubmit( form , handler )`** is a form's submit handler, with its
+  button disabled and showing a spinner until `handler` finishes, so a second
+  click sends nothing twice. `handler` has to be async and to await what it
+  sends, or the button comes back early. `Dom.busy( button , work )` is the same
+  thing for a button outside a form.
+- **`Dom.confirm( question )`** answers true or false from a themed modal. An
+  empty question answers true, so a `language.yaml` key set to `""` stops the
+  asking. Cancel has the focus: Enter on a question nobody read deletes nothing.
+- **`Dom.when( value , fallback )`** is a table cell's time: "3 hours ago", or a
+  date past a month, with the exact time on hover. `fallback` is what a missing
+  time says ("Never").
+- **Empty tables.** Give a `Pager` table a `data-empty` language key and an empty
+  list says so in one row. A table filled some other way calls `Pager.empty`.
+- **`Qr.toggle( button , canvas , value )`** shows the link in `value` as a QR
+  code. Whoever shows a new link calls `Qr.hide`, or the code on screen is still
+  the old link's. Links are spent once used.
+- **`Dom.download( name , text )`** saves text as a file.
+- **A session that ends.** A 401 from any call but `/api/me`, while someone is
+  signed in, goes to `/?login=ended`, which says why. 401 only ever means "no
+  session": a wrong password is a 400 and a wrong code a 403. A new route must
+  keep it that way, or a mistyped code would sign someone out.
+- **The network.** A call that never reached the server fails with
+  `errors.network`, not the browser's "Failed to fetch".
+- **Coming back to a tab.** `fresh.js` asks `/api/me` again when a tab becomes
+  visible after five minutes or more, and acts on the session, the maintenance
+  and announcement banners, and a new `version`. Only then, and never on a timer:
+  a tab nobody is looking at must not count as use, or it would keep its session
+  alive.
+- **Leaving.** Files and Settings each add a `beforeunload` while an upload is
+  running or there are unsaved changes. A new screen with work to lose does the
+  same.
+- **Password fields.** `App.init` gives every `input[type=password]` a show/hide
+  button through `Dom.revealable`. It goes back to dots when its form is sent.
+- **Moving between screens.** `Nav.announce` puts the screen's `h2` in the tab's
+  title and moves the focus to it, for a screen reader's sake. So a screen needs
+  an `h2`.
+
+Light stays the default through all of this. The navbar's light/dark button goes
+through `Theme.pick`, which is undoable, and `prefers-color-scheme` is still never
+read.
 
 ## CSS structure
 

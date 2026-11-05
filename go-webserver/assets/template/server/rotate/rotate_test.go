@@ -5,6 +5,7 @@ import (
 	base64 "encoding/base64"
 	json "encoding/json"
 	errors "errors"
+	io "io"
 	os "os"
 	filepath "path/filepath"
 	strings "strings"
@@ -127,6 +128,79 @@ func TestRotationKeepsEverythingReadable( t *testing.T ) {
 	// A line nothing could read stays, rather than being dropped.
 	raw , err := os.ReadFile( filepath.Join( cfg.Logs.Dir , "2026-11-01.jsonl" ) )
 	if err != nil || strings.HasSuffix( string( raw ) , "this line was cut sho" ) == false { t.Fatalf( "broken line: %q %v" , raw , err ) }
+}
+
+// storeFile uploads into the deployment, and assertFile reads it back as a fresh
+// process would: the file's bytes never move, so only its sealed key changes.
+func ( d *deployment ) storeFile( t *testing.T ) ( file_id string ) {
+	t.Helper()
+	store , err := db.Open( d.cfg )
+	if err != nil { t.Fatal( err ) }
+	defer store.Close()
+	file , err := models.CreateFile( store , d.cfg , d.userID , "a.txt" , "" , 5 )
+	if err != nil { t.Fatal( err ) }
+	if err = models.WriteFileChunk( store , d.cfg , file , 0 , []byte( "hello" ) ); err != nil { t.Fatal( err ) }
+	if file , err = models.GetFile( store , file.ID ); err != nil { t.Fatal( err ) }
+	if _ , err = models.FinishFile( store , d.cfg , file ); err != nil { t.Fatal( err ) }
+	file_id = file.ID
+	return
+}
+
+func ( d *deployment ) assertFile( t *testing.T , file_id string ) {
+	t.Helper()
+	cfg , err := config.LoadPath( d.path , true )
+	if err != nil { t.Fatal( err ) }
+	store , err := db.Open( cfg )
+	if err != nil { t.Fatal( err ) }
+	defer store.Close()
+	file , err := models.GetFile( store , file_id )
+	if err != nil { t.Fatal( err ) }
+	reader , err := models.OpenFile( cfg , file )
+	if err != nil { t.Fatal( err ) }
+	defer reader.Close()
+	content , err := io.ReadAll( reader )
+	if err != nil || string( content ) != "hello" { t.Fatalf( "%q %v" , content , err ) }
+}
+
+func TestAFileSurvivesRotationWithRecordEncryptionOnOrOff( t *testing.T ) {
+	for _ , encrypted := range []bool{ true , false } {
+		d := newDeployment( t )
+		if encrypted == false {
+			raw , err := os.ReadFile( d.path )
+			if err != nil { t.Fatal( err ) }
+			edited := strings.Replace( string( raw ) , "encrypt_at_rest: true" , "encrypt_at_rest: false" , 1 )
+			if err := os.WriteFile( d.path , []byte( edited ) , 0o600 ); err != nil { t.Fatal( err ) }
+			// The database was made with it on: start this one again.
+			if err := os.Remove( d.cfg.DatabasePath ); err != nil { t.Fatal( err ) }
+			if d.cfg , err = config.LoadPath( d.path , true ); err != nil { t.Fatal( err ) }
+			store , err := db.Open( d.cfg )
+			if err != nil { t.Fatal( err ) }
+			user , err := models.CreateUser( store , "Plain" , models.RoleUser )
+			if err != nil { t.Fatal( err ) }
+			d.userID = user.ID
+			store.Close()
+		}
+		file_id := d.storeFile( t )
+		if _ , err := Run( d.cfg , Options{} ); err != nil { t.Fatal( err ) }
+		d.assertFile( t , file_id )
+	}
+}
+
+func TestAFileSurvivesARestoreOntoANewKey( t *testing.T ) {
+	d := newDeployment( t )
+	file_id := d.storeFile( t )
+	store , err := db.Open( d.cfg )
+	if err != nil { t.Fatal( err ) }
+	made , err := backup.Create( store , d.cfg , backup.Options{} )
+	store.Close()
+	if err != nil { t.Fatal( err ) }
+	time.Sleep( 1100 * time.Millisecond )
+	result , err := Run( d.cfg , Options{} )
+	if err != nil { t.Fatal( err ) }
+	cfg , err := config.LoadPath( d.path , true )
+	if err != nil { t.Fatal( err ) }
+	if _ , err = backup.Restore( cfg , backup.RestoreOptions{ From: made.Path , KeyFile: result.RetiredKey } ); err != nil { t.Fatal( err ) }
+	d.assertFile( t , file_id )
 }
 
 func TestRotationRefusesARunningServer( t *testing.T ) {

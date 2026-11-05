@@ -24,6 +24,7 @@ func Housekeeping( registry *Registry , store *db.Store , logger *logs.Logger , 
 		registry.Register( "prune-logs" , housekeepingInterval , pruneLogs( logger ) )
 	}
 	registry.Register( "backup" , housekeepingInterval , scheduledBackup( store , logger , settings ) )
+	registry.Register( "files" , housekeepingInterval , sweepFiles( store , settings ) )
 }
 
 // purge drops expired sessions, login links and sign-in challenges, the API

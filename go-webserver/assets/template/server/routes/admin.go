@@ -3,6 +3,7 @@ package routes
 import (
 	errors "errors"
 	strconv "strconv"
+	strings "strings"
 
 	fiber "github.com/gofiber/fiber/v3"
 
@@ -29,8 +30,11 @@ type setDisabledRequest struct {
 
 // ListUsers marks the owner on its row, so the UI can tell which delete,
 // disable, and revoke buttons the server would refuse -- see models/owner.go.
+//
+// ?q= keeps the accounts whose name or username contains it, in any case. Here
+// and not in the browser, which only ever holds one page of them.
 func ( handlers *Handlers ) ListUsers( c fiber.Ctx ) ( err error ) {
-	rows , list_err := handlers.userRows()
+	rows , list_err := handlers.userRowsMatching( c.Query( "q" ) )
 	if list_err != nil {
 		err = serverError( c , list_err )
 		return
@@ -41,12 +45,20 @@ func ( handlers *Handlers ) ListUsers( c fiber.Ctx ) ( err error ) {
 
 // userRows is shared with the MCP admin_list_users tool.
 func ( handlers *Handlers ) userRows() ( rows []fiber.Map , err error ) {
+	rows , err = handlers.userRowsMatching( "" )
+	return
+}
+
+func ( handlers *Handlers ) userRowsMatching( query string ) ( rows []fiber.Map , err error ) {
 	users , err := models.ListUsers( handlers.Store )
 	if err != nil { return }
 	owner_id , err := models.OwnerID( handlers.Store )
 	if err != nil { return }
+	query = strings.ToLower( strings.TrimSpace( query ) )
 	rows = []fiber.Map{}
 	for _ , user := range users {
+		if strings.Contains( strings.ToLower( user.DisplayName ) , query ) == false &&
+			strings.Contains( strings.ToLower( user.Username ) , query ) == false { continue }
 		rows = append( rows , fiber.Map{
 			"id":           user.ID,
 			"display_name": user.DisplayName,

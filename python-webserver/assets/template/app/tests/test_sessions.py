@@ -73,6 +73,75 @@ class TouchTest(RoutesTestCase):
         security.resolve_actor(self.store, self.cfg, cookie, "")
         self.assertGreater(self.record(session_id)["last_seen_at"], stale)
 
+    def age(self, session_id: str, signed_in: timedelta, remaining: timedelta) -> None:
+        """Backdate a session so the next request counts as use."""
+        now = utc_now()
+        self.store.update_value(db.BUCKET_SESSIONS, session_id, lambda record: record.update(
+            created_at=to_iso(now - signed_in),
+            expires_at=to_iso(now + remaining),
+            last_seen_at=to_iso(now - timedelta(hours=1)),
+        ))
+
+    def sealed(self, credential: str) -> str:
+        return f"{self.cfg.cookie_name}={encryption.xchacha_encrypt_string(self.cfg.secret_key, credential)}"
+
+    def session_cookies(self, response) -> list[str]:
+        name = self.cfg.cookie_name + "="
+        return [value for value in response.headers.get_list("set-cookie") if value.startswith(name)]
+
+    def test_use_extends_the_record_and_the_cookie(self) -> None:
+        self.set_config(session_ttl_seconds=3600, session_max_age_seconds=86400)
+        credential, session_id = self.credential()
+        self.age(session_id, timedelta(hours=2), timedelta(minutes=10))
+
+        client = TestClient(self.app, raise_server_exceptions=False)
+        response = client.get("/api/me", headers={"Cookie": self.sealed(credential)})
+        cookies = self.session_cookies(response)
+        self.assertEqual(len(cookies), 1, "the record moved but the browser would still drop the cookie")
+        self.assertIn("httponly", cookies[0].lower())
+        max_age = int(cookies[0].lower().partition("max-age=")[2].partition(";")[0])
+        self.assertTrue(3500 <= max_age <= 3600, max_age)
+        ends = sessions.Session.from_record(self.record(session_id)).expires_at
+        self.assertGreater(ends, utc_now() + timedelta(minutes=59))
+
+        again = client.get("/api/me", headers={"Cookie": self.sealed(credential)})
+        self.assertEqual(self.session_cookies(again), [], "sent again inside the interval")
+
+    def test_a_session_stops_extending_at_its_limit(self) -> None:
+        self.set_config(session_ttl_seconds=3600, session_max_age_seconds=86400)
+        credential, session_id = self.credential()
+        self.age(session_id, timedelta(hours=23, minutes=50), timedelta(minutes=5))
+        client = TestClient(self.app, raise_server_exceptions=False)
+        response = client.get("/api/me", headers={"Cookie": self.sealed(credential)})
+        self.assertEqual(len(self.session_cookies(response)), 1)
+        ends = sessions.Session.from_record(self.record(session_id)).expires_at
+        self.assertLess(ends, utc_now() + timedelta(minutes=11), "ran past the limit")
+
+        self.age(session_id, timedelta(hours=25), timedelta(minutes=5))
+        response = client.get("/api/me", headers={"Cookie": self.sealed(credential)})
+        self.assertEqual(self.session_cookies(response), [], "a session past its limit was extended")
+
+    def test_a_live_stream_check_is_not_use(self) -> None:
+        self.set_config(session_ttl_seconds=3600, session_max_age_seconds=86400)
+        credential, session_id = self.credential()
+        self.age(session_id, timedelta(hours=2), timedelta(minutes=10))
+        before = self.record(session_id)["expires_at"]
+        self.assertTrue(security.still_owner(self.store, credential))
+        self.assertEqual(self.record(session_id)["expires_at"], before)
+
+    def test_logging_out_on_a_request_that_extends_still_clears_the_cookie(self) -> None:
+        self.set_config(session_ttl_seconds=3600, session_max_age_seconds=86400)
+        credential, session_id = self.credential()
+        cookie = self.sealed(credential)
+        client = TestClient(self.app, raise_server_exceptions=False)
+        csrf = client.get("/api/me", headers={"Cookie": cookie}).json()["csrf_token"]
+        self.age(session_id, timedelta(hours=2), timedelta(minutes=10))
+        response = client.post("/api/logout", json={"csrf_token": csrf}, headers={"Cookie": cookie})
+        self.assertEqual(response.status_code, 200)
+        cookies = self.session_cookies(response)
+        self.assertEqual(len(cookies), 1, cookies)
+        self.assertIn("max-age=0", cookies[0].lower())
+
     def test_a_failed_touch_does_not_fail_the_request(self) -> None:
         credential, _ = self.credential()
         cookie = {self.cfg.cookie_name: encryption.xchacha_encrypt_string(self.cfg.secret_key, credential)}
@@ -256,3 +325,66 @@ class CredentialsStillEndSessionsTest(RoutesTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AdminSessionTest(RoutesTestCase):
+    def route(self, user_id: int) -> str:
+        return f"/api/admin/users/{user_id}/sessions"
+
+    def post(self, path: str, cookie: str, csrf: bool = True) -> int:
+        body = {"csrf_token": self.csrf(cookie)} if csrf else {}
+        return self.call("POST", path, cookie=cookie, body=body)[0]
+
+    def test_an_admin_ends_one_of_someones_devices(self) -> None:
+        second = self.session(self.user.id)
+        status, page = self.call("GET", self.route(self.user.id), cookie=self.owner_cookie)
+        self.assertEqual((status, page["total"]), (200, 2))
+        self.assertNotIn("secret_hash", str(page))
+        self.assertNotIn("csrf", str(page))
+
+        chosen = page["sessions"][0]["id"]
+        self.assertEqual(self.post(f"{self.route(self.user.id)}/{chosen}/revoke", self.owner_cookie), 200)
+        alive = [self.call("GET", "/api/me", cookie=cookie)[0] == 200 for cookie in (self.user_cookie, second)]
+        self.assertEqual(sorted(alive), [False, True])
+
+    def test_only_the_owner_reaches_the_owners_sessions_and_addresses(self) -> None:
+        self.assertEqual(self.call("GET", self.route(self.owner.id), cookie=self.admin_cookie)[0], 403)
+        sessions.remember_client(self.store, self.only_session(self.user.id), "10.0.0.1", "curl")
+        _, page = self.call("GET", self.route(self.user.id), cookie=self.admin_cookie)
+        self.assertNotIn("ip", page["sessions"][0])
+        _, page = self.call("GET", self.route(self.user.id), cookie=self.owner_cookie)
+        self.assertEqual(page["sessions"][0]["ip"], "10.0.0.1")
+
+    def only_session(self, user_id: int) -> str:
+        found = sessions.list_sessions(self.store, user_id)
+        self.assertEqual(len(found), 1)
+        return found[0].id
+
+    def test_the_routes_refuse(self) -> None:
+        path = self.route(self.user.id)
+        self.assertEqual(self.call("GET", path, cookie=self.user_cookie)[0], 403)
+        self.assertEqual(self.call("GET", path, key=self.admin_key)[0], 403)
+        self.assertEqual(self.call("GET", self.route(9999), cookie=self.owner_cookie)[0], 404)
+        self.assertEqual(self.post(f"{path}/nothing/revoke", self.owner_cookie), 404)
+        theirs = self.only_session(self.user.id)
+        self.assertEqual(self.post(f"{path}/{theirs}/revoke", self.owner_cookie, csrf=False), 403)
+        mine = self.only_session(self.owner.id)
+        self.assertEqual(self.post(f"{self.route(self.owner.id)}/{mine}/revoke", self.owner_cookie), 400)
+
+
+class UserSearchTest(RoutesTestCase):
+    def test_searching_keeps_paging_honest(self) -> None:
+        for name in ("Zed One", "zed two", "Zed Three"):
+            users.create_user(self.store, name, users.ROLE_USER)
+        _, page = self.call("GET", "/api/admin/users?q=ZED&limit=2", cookie=self.owner_cookie)
+        self.assertEqual((len(page["users"]), page["total"], page["next"]), (2, 3, 2))
+        _, page = self.call("GET", "/api/admin/users?q=nobody", cookie=self.owner_cookie)
+        self.assertEqual(page["total"], 0)
+
+
+class MeFieldsTest(RoutesTestCase):
+    config_changes = {"announcement": "Down at noon"}
+
+    def test_me_says_the_version_and_the_announcement(self) -> None:
+        _, me = self.call("GET", "/api/me", cookie=self.user_cookie)
+        self.assertEqual((me["version"], me["announcement"]), ("dev", "Down at noon"))

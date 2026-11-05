@@ -5,8 +5,9 @@ const Invites = {
   async init( me ) {
     if ( me.role !== "admin" ) return;
     Dom.show( Dom.get( "invite-links-panel" ) , true );
-    Dom.get( "create-invite-form" ).addEventListener( "submit" , this.onCreate.bind( this ) );
+    Dom.onSubmit( Dom.get( "create-invite-form" ) , this.onCreate.bind( this ) );
     Dom.get( "copy-invite-button" ).addEventListener( "click" , this.onCopy.bind( this ) );
+    Qr.toggle( Dom.get( "invite-link-qr-button" ) , Dom.get( "invite-link-qr" ) , Dom.get( "invite-link-value" ) );
     await this.refresh();
   },
 
@@ -20,6 +21,7 @@ const Invites = {
       // A path, not a URL, for the same reason as a login link: the browser
       // knows its public origin, the server behind a proxy may not.
       Dom.text( Dom.get( "invite-link-value" ) , window.location.origin + created.join_path );
+      Qr.hide( Dom.get( "invite-link-qr" ) );
       Dom.show( Dom.get( "invite-link-box" ) , true );
       Dom.get( "invite-label" ).value = "";
       await this.refresh();
@@ -48,7 +50,7 @@ const Invites = {
         text: I18n.get( "invite_links.revoke_button" ),
         on: { click: async function () {
           const question = I18n.get( "invite_links.revoke_confirm" );
-          if ( question !== "" && !window.confirm( question ) ) return;
+          if ( !( await Dom.confirm( question ) ) ) return;
           try {
             await Api.revokeInvite( link.id );
             await Invites.refresh();
@@ -89,7 +91,7 @@ const Invites = {
         Dom.el( "td" , { text: link.label } ),
         Dom.el( "td" , { text: joined } ),
         Dom.el( "td" , { children: [ Invites.status( link ) ] } ),
-        Dom.el( "td" , { text: new Date( link.expires_at ).toLocaleDateString() } ),
+        Dom.el( "td" , { children: [ Dom.when( link.expires_at ) ] } ),
         Dom.el( "td" , { children: [
           Dom.el( "div" , { class: "row-actions" , children: [ revokeButton , deleteButton ].filter( Boolean ) } ),
         ] } ),

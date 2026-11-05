@@ -87,6 +87,8 @@ func TestSaveRefusesInvalidValues( t *testing.T ) {
 		{ "server.port": json.Number( "0" ) },
 		{ "server.port": "eighty" },
 		{ "server.trust_proxy": true },
+		{ "files.max_file_bytes": json.Number( "0" ) },
+		{ "server.rate_limit_upload_max": json.Number( "0" ) },
 	} {
 		_ , err := holder.Save( currentVersion( t , path ) , changes )
 		var validation *ValidationError

@@ -123,22 +123,48 @@ func RecordSessionDevice( store *db.Store , credential string , ip string , user
 		} )
 }
 
-// TouchSession records use at most once per sessionTouchInterval. It is called
-// for requests a person made, not from LoadSession: a live stream re-checking
-// its session every few seconds is not the person being there. Failures are
-// ignored for the same reason as touchAPIKey.
-func TouchSession( store *db.Store , session *Session ) {
+// sessionExpiry is when a session used now should end: ttl from now, but never
+// later than max_age after it was signed in, and never earlier than it already
+// ends, so shortening the ttl does not cut off a session mid-use.
+func sessionExpiry( session *Session , now time.Time , ttl time.Duration , max_age time.Duration ) ( expires time.Time ) {
+	expires = now.Add( ttl )
+	if limit := session.CreatedAt.Add( max_age ); expires.After( limit ) {
+		expires = limit
+	}
+	if expires.Before( session.ExpiresAt ) {
+		expires = session.ExpiresAt
+	}
+	return
+}
+
+// TouchSession records use at most once per sessionTouchInterval, and moves the
+// session's end out in the same write, so someone using the app every day is
+// not signed out at a date set when they signed in. Without a password that
+// would mean asking an admin for a new link. extended says the end moved, which
+// is the caller's cue to send the cookie again: it has its own expiry.
+//
+// It is called for requests a person made, not from LoadSession: a live stream
+// re-checking its session every few seconds is not the person being there.
+// Failures are ignored for the same reason as touchAPIKey.
+func TouchSession( store *db.Store , session *Session , ttl time.Duration , max_age time.Duration ) ( extended bool ) {
 	now := time.Now().UTC()
 	if session.LastSeenAt != nil && now.Sub( *session.LastSeenAt ) < sessionTouchInterval {
 		return
 	}
-	store.UpdateValue( db.BucketSessions , []byte( session.ID ) ,
+	expires := sessionExpiry( session , now , ttl , max_age )
+	update_err := store.UpdateValue( db.BucketSessions , []byte( session.ID ) ,
 		func() any { return &Session{} } ,
 		func( item any ) ( mutate_err error ) {
-			item.( *Session ).LastSeenAt = &now
+			stored := item.( *Session )
+			stored.LastSeenAt = &now
+			stored.ExpiresAt = expires
 			return
 		} )
 	session.LastSeenAt = &now
+	if update_err != nil { return }
+	extended = expires.After( session.ExpiresAt )
+	session.ExpiresAt = expires
+	return
 }
 
 // ListSessionsForUser is an account's live sessions, newest first.

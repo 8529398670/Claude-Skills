@@ -274,6 +274,21 @@ func SecretBoxDecrypt( key_hex string , encrypted string ) ( result string , err
 // nonce is prepended to the cipher text; the Poly1305 tag means a modified
 // value fails to open rather than decrypting to garbage.
 func ChaChaEncryptBytes( key_hex string , plain_text []byte ) ( result []byte , err error ) {
+	result , err = ChaChaEncryptBound( key_hex , plain_text , nil )
+	return
+}
+
+func ChaChaDecryptBytes( key_hex string , encrypted []byte ) ( result []byte , err error ) {
+	result , err = ChaChaDecryptBound( key_hex , encrypted , nil )
+	return
+}
+
+// ChaChaEncryptBound seals plain_text to bound as well as to the key: it opens
+// only with the same bound, which is itself not stored. A file's chunks use
+// this, bound to their place in the file, so that one moved, swapped with
+// another file's or dropped from the end fails to open instead of decrypting
+// to the wrong file.
+func ChaChaEncryptBound( key_hex string , plain_text []byte , bound []byte ) ( result []byte , err error ) {
 	key , err := decodeKey( key_hex )
 	if err != nil { return }
 	aead , aead_err := chacha.NewX( key[ : ] )
@@ -282,11 +297,11 @@ func ChaChaEncryptBytes( key_hex string , plain_text []byte ) ( result []byte , 
 		return
 	}
 	nonce := GenerateRandomBytes( aead.NonceSize() )
-	result = aead.Seal( nonce , nonce , plain_text , nil )
+	result = aead.Seal( nonce , nonce , plain_text , bound )
 	return
 }
 
-func ChaChaDecryptBytes( key_hex string , encrypted []byte ) ( result []byte , err error ) {
+func ChaChaDecryptBound( key_hex string , encrypted []byte , bound []byte ) ( result []byte , err error ) {
 	key , err := decodeKey( key_hex )
 	if err != nil { return }
 	aead , aead_err := chacha.NewX( key[ : ] )
@@ -299,7 +314,7 @@ func ChaChaDecryptBytes( key_hex string , encrypted []byte ) ( result []byte , e
 		return
 	}
 	nonce := encrypted[ :aead.NonceSize() ]
-	opened , open_err := aead.Open( nil , nonce , encrypted[ aead.NonceSize(): ] , nil )
+	opened , open_err := aead.Open( nil , nonce , encrypted[ aead.NonceSize(): ] , bound )
 	if open_err != nil {
 		err = ErrCipherText
 		return

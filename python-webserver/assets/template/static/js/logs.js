@@ -336,7 +336,7 @@ const Logs = {
 
   async onPrune() {
     const question = I18n.get( "logs.prune_confirm" );
-    if ( question !== "" && !window.confirm( question ) ) return;
+    if ( !( await Dom.confirm( question ) ) ) return;
     try {
       const result = await Api.pruneLogs();
       Dom.toast( I18n.get( "logs.pruned" )
@@ -351,7 +351,7 @@ const Logs = {
   // No undo: the day's files are gone from disk.
   async onDeleteDay( date ) {
     const question = I18n.get( "logs.delete_confirm" ).replace( "{date}" , this.dayLabel( date ) );
-    if ( question !== "" && !window.confirm( question ) ) return;
+    if ( !( await Dom.confirm( question ) ) ) return;
     try {
       await Api.deleteLogDay( date );
       await this.refresh();

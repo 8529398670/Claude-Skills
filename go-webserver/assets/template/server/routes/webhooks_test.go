@@ -95,3 +95,57 @@ func TestDisablingAUserEmitsFromTheSharedHelper( t *testing.T ) {
 	rows , _ := models.ListWebhookDeliveries( fixture.store , hook.ID )
 	if len( rows ) != 1 || strings.Contains( rows[ 0 ].Body , `"disabled":true` ) == false { t.Fatalf( "%+v" , rows ) }
 }
+
+// failedDelivery is a delivery for hook that has been given up on.
+func failedDelivery( t *testing.T , fixture *authFixture , hook string ) ( id string ) {
+	t.Helper()
+	stored , err := models.GetWebhook( fixture.store , hook )
+	if err != nil { t.Fatal( err ) }
+	if err = models.EnqueueWebhookTest( fixture.store , stored ); err != nil { t.Fatal( err ) }
+	deliveries , err := models.ListWebhookDeliveries( fixture.store , hook )
+	if err != nil || len( deliveries ) != 1 { t.Fatalf( "%d %v" , len( deliveries ) , err ) }
+	id = deliveries[ 0 ].ID
+	if err = models.RecordWebhookAttempt( fixture.store , id , 500 , "boom" , false ); err != nil { t.Fatal( err ) }
+	return
+}
+
+func TestResendingQueuesTheSameEventAsANewDelivery( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	fixture.handlers.Webhooks = webhooks.New( fixture.store , fixture.handlers.Settings )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	hook , _ := createdWebhook( t , owner )
+	failed := failedDelivery( t , fixture , hook )
+	path := "/api/owner/webhooks/" + hook + "/deliveries/"
+
+	status , reply := send( t , owner , path + failed + "/resend" , fiber.Map{} )
+	if status != fiber.StatusAccepted { t.Fatalf( "%d %v" , status , reply ) }
+	deliveries , _ := models.ListWebhookDeliveries( fixture.store , hook )
+	if len( deliveries ) != 2 { t.Fatalf( "%d deliveries" , len( deliveries ) ) }
+	var again , original *models.WebhookDelivery
+	for _ , delivery := range deliveries {
+		if delivery.ID == failed { original = delivery } else { again = delivery }
+	}
+	if original == nil || again == nil || original.Status != models.WebhookFailed {
+		t.Fatalf( "the failed attempt should stay listed: %+v %+v" , original , again )
+	}
+	if again.Status != models.WebhookPending || again.Attempts != 0 || again.Body != original.Body || again.Event != original.Event {
+		t.Fatalf( "%+v" , again )
+	}
+	if status , _ = send( t , owner , path + again.ID + "/resend" , fiber.Map{} ); status != fiber.StatusConflict {
+		t.Fatalf( "a pending one: %d" , status )
+	}
+	if status , _ = send( t , owner , path + "nothing/resend" , fiber.Map{} ); status != fiber.StatusNotFound {
+		t.Fatalf( "no such delivery: %d" , status )
+	}
+}
+
+func TestADeliveryCannotBeResentThroughAnotherEndpoint( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	fixture.handlers.Webhooks = webhooks.New( fixture.store , fixture.handlers.Settings )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	first , _ := createdWebhook( t , owner )
+	second , _ := createdWebhook( t , owner )
+	failed := failedDelivery( t , fixture , first )
+	status , _ := send( t , owner , "/api/owner/webhooks/" + second + "/deliveries/" + failed + "/resend" , fiber.Map{} )
+	if status != fiber.StatusNotFound { t.Fatalf( "%d" , status ) }
+}

@@ -20,8 +20,11 @@ when you are changing the template itself rather than building features on it.
 - [Live updates](#live-updates)
 - [Paging lists](#paging-lists)
 - [Error pages](#error-pages)
+- [Maintenance mode](#maintenance-mode)
+- [The OpenAPI spec](#the-openapi-spec)
 - [Webhooks](#webhooks)
 - [Stopping cleanly](#stopping-cleanly)
+- [File uploads](#file-uploads)
 - [Why credentials are shaped `<id>.<secret>`](#why-credentials-are-shaped-idsecret)
 - [Which crypto is used where, and why](#which-crypto-is-used-where-and-why)
 - [Encrypted records in SQLite](#encrypted-records-in-sqlite)
@@ -430,6 +433,24 @@ its own successors -- and write it down in that app's docs.
   believed, existing keys stop authenticating, and the management endpoints
   404. The records survive, so turning it back on restores them.
 
+### A key made for someone else
+
+An admin can make a key that acts as another account, for setting up someone's
+integration for them: `POST /api/admin/keys` with a `user_id`, or the form on
+the All keys screen. A key made this way *is* that person to the server, so it
+follows the ladder deleting an account does:
+
+- any admin can make one for an ordinary user;
+- only the owner can make one for another admin;
+- nobody can make one for the owner over HTTP. A shell still can, with
+  `manage create-key`.
+
+The ordinary ceiling applies too: it cannot outrank the account. The route needs
+a browser session, so a leaked admin key cannot mint itself a way in as somebody
+else. The key records `created_by`, the person it acts as sees "Created by ..."
+in their own list, and the audit entry and the `api_key.created` webhook both
+carry it. A key from before this field, or one a person made themselves, has none.
+
 ### Where the code is
 
 | Concern | File |
@@ -690,6 +711,18 @@ stream: a tab left on the Logs screen is not someone using the app.
 `Session.id` exists only in memory: `load_session` sets it, `to_record` leaves
 it out.
 
+- **A session in use extends itself.** The same write that records last seen
+  moves the end to `auth.session_ttl_seconds` from now, so only an idle session
+  ends at that age. Someone without a password would otherwise have to ask an
+  admin for a new link every two weeks. `auth.session_max_age_seconds` is the
+  limit, counted from signing in, so a stolen cookie cannot be kept alive forever.
+  The cookie has its own expiry, so the response to a request that extended the
+  session sends it again; a route that sets the cookie itself, logging out or
+  switching account, wins. Set the two equal for a fixed lifetime.
+  `LoadActor` adds the header on the way out, and leaves it off when the route set
+  the cookie itself, since two headers for one cookie would leave the answer to
+  their order.
+
 - `GET /api/account/sessions` builds each row field by field, so `secret_hash`
   and `csrf_token` cannot leak through a record gaining a field.
 - `POST /api/account/sessions/<id>/revoke` looks and deletes in one
@@ -698,6 +731,12 @@ it out.
   in use is refused with a 400: signing out is what ends that one, and it also
   clears the cookie.
 - `POST /api/account/sessions/revoke-others` ends the rest.
+- `GET /api/admin/users/<id>/sessions` and `POST .../<session_id>/revoke` are an
+  admin's view of someone else's, from the **Sessions** button on the Users screen,
+  for ending one device where `revoke-access` would end everything. A browser
+  session is required, as for your own. Only the owner reaches the owner's, and
+  only the owner sees addresses, as in the activity log, which keeps them from
+  other admins too.
 
 These are revokes, so they ask first and offer no undo. The IPs and user agents
 are personal data, and unlike the activity log the sessions bucket is in every
@@ -862,6 +901,54 @@ paths it reads are `/login/...` and `/join/...`, which have routes of their own.
 Anything else is a real 404. An app that adds a page with a path of its own must
 give it a route before the catch-all, as `serve_login_page` does.
 
+## Maintenance mode
+
+`server.maintenance` takes three values, and is `[live]`, so Settings, `config
+set` and a hand edit all apply on the next request. The normal value is `none`
+rather than `off` because YAML 1.1 readers take a bare `off` as false.
+
+| | `read_only` | `full` |
+|---|---|---|
+| Reads (GET, HEAD) | allowed | 503 |
+| Writes | 503 | 503 |
+| Joining through an invite link, `/mcp` | 503 | 503 |
+| The owner's browser session | everything | everything |
+
+Open in both modes: files the page loads, `/api/health`, `/api/ready`,
+`/metrics`, `/api/language`, `/api/me`, signing in and out, and `/login/*`.
+That list is what lets the owner get back to the switch, so an owner who has
+signed out comes in through a login link (`scripts/login.sh`). A refusal is a
+503 with `Retry-After`: the maintenance page for a browser, and
+`{"error": ..., "maintenance": "<mode>"}` for everything else. `/api/me` reports
+the mode, and the app shows a banner, so the owner cannot leave it on by
+accident. The owner's API keys are refused like anyone's, as on every owner route.
+
+`/mcp` is shut in both modes because one POST there can be a read or a write.
+
+State these to the user:
+
+- **`read_only` trusts GET routes not to write.** A route that changes something
+  on a GET will keep doing so. Bookkeeping such as a session's last-seen time
+  does carry on.
+- **A one-time login link opened during `full` is spent.** A person who is not
+  the owner lands on the maintenance page, and needs a new link afterwards.
+- **Background jobs and webhooks keep running**, and `manage` is not affected.
+
+The rules are in `app/core/maintenance.py`, and the check is in `app/core/maintenance.py`.
+
+## The OpenAPI spec
+
+`config/openapi.json` is OpenAPI 3.1, written by hand so it can say what each
+route takes and returns, which a route table cannot. `GET /api/openapi.json`
+serves it to any signed-in caller, session or key: it maps the admin surface,
+and nobody who cannot sign in has a use for it. `x-required-role` on an
+operation says when it needs an admin or the owner.
+
+Hand-written files drift, so `app/tests/test_openapi.py` compares it to the
+route table in both directions and names each route that differs. The pages at
+`/login/*` and `/join/*` and the catch-alls are the only routes left out. Add an
+app's own routes to the same file.
+
 ## Webhooks
 
 The owner's Webhooks screen lists endpoints that want to hear about things. The
@@ -932,6 +1019,117 @@ allows plain `http`, for a receiver on the same network.
 A delivery's error text never holds the URL, which may carry a token. The audit
 log records an endpoint's name and id only, for the same reason.
 
+## File uploads
+
+Everyone gets a Files screen and `/api/files`, on by default, switched with
+`files.enabled`. The code is `app/models/files.py` (storage) and `app/routes/files.py` (who may
+do what).
+
+### A file arrives in pieces
+
+```
+POST /api/files                       {name, size, type} -> {id, chunks, chunk_bytes}
+POST /api/files/<id>/chunks/<index>   the raw bytes of one piece, in order from 0
+POST /api/files/<id>/finish
+GET  /api/files/<id>                  received: the next piece to send
+```
+
+A piece is 768 KiB, under the 1 MiB `server.body_limit_bytes`, so **no route needs
+a bigger limit than any other.** That is the reason for the shape. One big
+request would mean raising the limit for every route, public sign-in included,
+or streaming bodies, which takes the limit away from every route in Go; and a
+multipart body spills to the temp directory, which is 16 MiB in the container and
+would hold the file in the clear. Both templates speak this same protocol.
+
+`index` has to be the next piece. Anything else is a 409 carrying `received`,
+which is also what a retry of a piece that did arrive gets, so a client resumes
+by doing what the server says. The server keeps the count; `files.js` never
+trusts its own. A second request writing the same upload is a 409 too.
+
+A piece's body is the file, so its CSRF token comes in an `X-CSRF-Token` header.
+API keys are exempt, as everywhere. Pieces have their own rate limit,
+`server.rate_limit_upload_max`, because on the general budget an upload would
+both crawl and use up what the page needs.
+
+uvicorn has no timeout on reading a body, so a slow client can hold a connection
+for as long as one piece takes. A piece is small, which bounds how long that is
+for any honest client; `Starlette`'s multipart parser is not used, so nothing
+spills to the temp directory.
+
+### Encryption: one key per file
+
+Each file has a random key, and only that key is sealed with the secret key, in
+the record. So **a rotation or a restore onto a new key rewrites one field and no
+file data**: the field is in `SEALED_FIELDS` in `app/models/two_factor.py`, and neither
+`rotate-key` nor restore has any code for files. Sealing files with the secret
+key directly would have meant rewriting all of `storage/` on every rotation, at
+twice the disk.
+
+Each piece is sealed with XChaCha20-Poly1305 on its own, with `<id>|<index>|<total
+pieces>` as additional data (`xchacha_encrypt_bound`). A piece moved, swapped with another
+file's or cut off the end fails to open. Files are always sealed, with
+`encrypt_at_rest` on or off, like TOTP secrets. The name and type are in the
+record, so they follow `encrypt_at_rest`.
+
+Every piece but the last is the same size, so offsets are arithmetic and the file
+on disk is nothing but sealed pieces.
+
+### Who can reach what
+
+| Route | Who |
+|---|---|
+| `/api/files...` | The uploader, and their API keys. Anyone else gets 404. |
+| `GET /api/admin/files` | Admins, with an admin key too. Names, sizes, owners. |
+| `/api/admin/files/<id>/download`, `/delete`, `/restore` | Admins, from a browser session. |
+
+An admin key can list but not open: a leaked key must not be a way to carry off
+every account's files. An admin opening someone else's file is written to the
+activity log.
+
+A download is always `Content-Disposition: attachment`, always
+`application/octet-stream` and `Cache-Control: private, no-store`, with `nosniff`
+from the usual headers. The type an uploader declares is shown and never served,
+so an uploaded page cannot run as this site. Don't add an inline preview without
+serving it from another origin. Pieces are decrypted one at a time while
+streaming, so memory stays flat, and a piece that fails to open ends the connection
+short rather than sending anything unverified.
+
+### On disk and cleaning up
+
+Pieces go to `<app dir>/uploads/<id>`, outside `storage/`, so backups skip them, and
+`finish` renames the file to `storage/files/<id>`. Finished files never change,
+which suits a backup copying them while the server runs. Client names never reach
+a path: paths use the id.
+
+`files.quota_bytes_per_user` is checked in the transaction that creates the record
+and counts uploads still arriving, so parallel uploads cannot pass it. A deleted
+file stops counting; restoring one checks again.
+
+Delete is the usual [soft delete](#soft-delete-and-restore). The `files` job, hourly,
+removes files past the undo window, uploads idle for
+`files.abandoned_upload_hours`, files whose account has gone, and data on disk with
+no record once it is a day old. It removes the record first, so a crash leaves a
+stray for the next run rather than a record pointing at nothing. That is also why
+deleting an account needs no code for files.
+
+`file.uploaded` and `file.deleted` go to webhooks. There are no MCP tools.
+
+### Sending a file from a script
+
+```bash
+base=https://app.example.com key=<id>.<secret> file=report.pdf
+size=$(wc -c < "$file")
+started=$(curl -sf -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"$file\",\"size\":$size}" "$base/api/files")
+id=$(jq -r .id <<<"$started"); chunk=$(jq -r .chunk_bytes <<<"$started"); chunks=$(jq -r .chunks <<<"$started")
+for ((index = 0; index < chunks; index++)); do
+  dd if="$file" bs="$chunk" skip="$index" count=1 2>/dev/null |
+    curl -sf -o /dev/null -H "Authorization: Bearer $key" -H 'Content-Type: application/octet-stream' \
+      --data-binary @- "$base/api/files/$id/chunks/$index"
+done
+curl -sf -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -d '{}' "$base/api/files/$id/finish"
+```
+
 ## Why credentials are shaped `<id>.<secret>`
 
 Login tokens, sessions, API keys, and invite links all use `<id>.<secret>`,
@@ -973,7 +1171,7 @@ imports `secrets`, `hashlib`, `hmac`, `bcrypt`, or `nacl` -- that is what makes
 | OS CSPRNG | `secrets` | Every credential, key, and nonce |
 | bcrypt | `bcrypt` | Hashing one-time login secrets, PINs, and password digests |
 | HMAC-SHA1 | stdlib | TOTP codes (RFC 6238) |
-| XChaCha20-Poly1305 | PyNaCl (libsodium) | Session cookie payloads, records at rest |
+| XChaCha20-Poly1305 | PyNaCl (libsodium) | Session cookie payloads, records at rest, uploaded files |
 | sha256 + `hmac.compare_digest` | stdlib | Session, API key, and invite link secret lookup, constant-time compare |
 | secretbox (XSalsa20-Poly1305) | PyNaCl | Available for authenticated blobs; unused by the base template |
 | X25519 | PyNaCl | Available for key exchange; unused by the base template |
@@ -1387,9 +1585,10 @@ State these to the user rather than letting them be discovered in production:
   second factor and no origin binding. That is what a key is for, but it means
   the admin key listing is a real answer to "what could get in right now", and
   worth looking at rather than assuming.
-- **Rate limiting has two budgets, and static files have none.** Each address
-  gets `server.rate_limit_max` for most requests, and a separate
-  `server.rate_limit_signin_max` for signing in and for the invite-link calls.
+- **Rate limiting has three budgets, and static files have none.** Each address
+  gets `server.rate_limit_max` for most requests, a separate
+  `server.rate_limit_signin_max` for signing in and for the invite-link calls,
+  and `server.rate_limit_upload_max` for the pieces of an upload.
   Files the page loads are not counted, because `index.html` alone pulls in
   over twenty, all `no-store`. That leaves them unlimited here: a flood of them
   costs a read and a gzip each, with no database involved, so anything exposed
@@ -1398,6 +1597,23 @@ State these to the user rather than letting them be discovered in production:
   are what actually stop guessing. Everyone behind one office network shares an
   address, so a group joining together can hit it: raise
   `rate_limit_signin_max` for that rather than the general budget.
+- **Rotating the key re-wraps file keys, not file data.** Someone holding the old
+  secret key and an old copy of the database can still open files from that time.
+  If both have leaked, rotating is not enough: the files have to be uploaded again.
+- **A backup's database and files are not from one instant.** A record without
+  its file answers 404, and a file without a record is removed by the `files` job
+  a day later.
+- **Backups hold every file, in full.** Scheduled backups are full copies on the
+  same disk, so `backups.keep: 7` means about seven times the storage. Lower it, or
+  copy backups elsewhere, before uploads get large.
+- **Nothing stops an upload on a nearly full disk.** The quota is per account, so a
+  full disk shows up as a failed piece. An admin sees what is free under the
+  everyone's files switch, from `GET /api/admin/storage`, but nothing acts on it.
+  Set `files.quota_bytes_per_user` with the disk in mind.
+- **An abandoned upload holds its quota.** The Files screen gives up its own failed
+  uploads, but one left by a closed tab counts until the `files` job removes it.
+- **A download cannot resume.** There is no Range support, so an interrupted
+  download starts again.
 - **Rate limiting counts by IP, not by key.** A key called from many hosts is
   not throttled as one caller, and several keys behind one NAT share a budget.
   The limiter runs before the request is authenticated, which is what keeps an
@@ -1421,8 +1637,10 @@ State these to the user rather than letting them be discovered in production:
   template's scale; past that, the list needs an index of its own.
 - **A webhook can arrive twice, or late.** Delivery is at least once and in no
   guaranteed order, and a new event can wait up to a minute behind a run already
-  going. Six failures over about fifteen hours and it is given up on, with no
-  button to send it again. The job works through deliveries one at a time, so a
+  going. Six failures over about fifteen hours and it is given up on, until the
+  owner presses **Resend** on the Webhooks screen. That queues a new delivery with
+  the same body, so its `id` still names one event for a receiver that keeps track,
+  while `X-Webhook-Delivery` is new. The job works through deliveries one at a time, so a
   receiver that hangs costs `webhooks.timeout_seconds` each, at most 50 a run.
 - **`manage` does not fire webhooks.** Only the HTTP routes and MCP tools do, and
   there are no `manage` commands for endpoints. To change a signing secret, delete

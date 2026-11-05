@@ -540,6 +540,13 @@ get in the way:
 - **Idle timeouts.** A `: ping` goes out every 15 seconds, so a proxy read
   timeout of 30 seconds or more is fine. nginx's default of 60 is.
 
+## Behind a proxy: uploads
+
+Nothing special is needed: a file arrives as pieces of 768 KiB, under the default
+limits of nginx (`client_max_body_size 1m`) and most other proxies. Raising
+`files.max_file_bytes` does not change that. A proxy rate limit does need to allow
+for the pieces, about 1.3 requests per megabyte.
+
 ## Tuning
 
 Every knob is a key in `config.yaml` -- session and login-token lifetimes,

@@ -59,7 +59,7 @@ def _page(call: Call, name: str, load: Callable[[Store], list[Any]]) -> dict[str
 
 def whoami(call: Call) -> dict[str, Any]:
     _no_args(call)
-    return me_row(call.store, call.config, call.actor)
+    return me_row(call.store, call.config, call.actor, call.request.app.state.version)
 
 
 def list_team(call: Call) -> dict[str, Any]:

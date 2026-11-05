@@ -1,10 +1,11 @@
 // Page logic for the account + admin screen this template ships with.
 //
 // Most projects will replace much of this file. What is worth keeping is the
-// shape: load the language file, ask /api/me once, then branch on
-// authenticated/role. Do not re-check the session anywhere else -- the server
-// is the authority, and a second client-side notion of "am I logged in" is
-// how the two drift apart.
+// shape: load the language file, ask /api/me, then branch on
+// authenticated/role. Do not keep a second client-side notion of "am I logged
+// in" -- the server is the authority, and guessing is how the two drift apart.
+// When the page needs to know again it asks again: see fresh.js, and the 401
+// handling in api.js.
 //
 // New screens belong in their own file under /js/ with their own init(),
 // rather than being appended here until this becomes the monolith the rest of
@@ -23,6 +24,14 @@ const App = {
       Dom.text( Dom.get( "error-banner" ) , "Could not load language file." );
       Dom.show( Dom.get( "error-banner" ) , true );
     }
+
+    Theme.watchToggle( Dom.get( "theme-toggle" ) );
+    Dom.all( "input[type=password]" ).forEach( ( input ) => Dom.revealable( input ) );
+    // Not a plain #main link: the hash is which screen is showing.
+    Dom.get( "skip-link" ).addEventListener( "click" , ( event ) => {
+      event.preventDefault();
+      Dom.get( "main" ).focus();
+    } );
 
     let me = { authenticated: false };
     try {
@@ -60,6 +69,9 @@ const App = {
     }
     if ( params.get( "login" ) === "expired" ) {
       Dom.show( Dom.get( "sign-in-expired" ) , I18n.get( "signed_out.sign_in_expired" ) !== "" );
+    }
+    if ( params.get( "login" ) === "ended" ) {
+      Dom.show( Dom.get( "session-ended" ) , I18n.get( "signed_out.session_ended" ) !== "" );
     }
     Password.initLogin();
   },
@@ -116,17 +128,50 @@ const App = {
     } );
   },
 
+  // Says so on every screen, so nobody wonders why a change was refused and
+  // the owner, whom the mode lets through, cannot leave it on by accident.
+  showMaintenance( me ) {
+    const banner = Dom.get( "maintenance-banner" );
+    const on = me.maintenance === "read_only" || me.maintenance === "full";
+    if ( on ) Dom.text( banner , I18n.get( "maintenance." + me.maintenance + "_banner" ) );
+    Dom.show( banner , on );
+  },
+
+  // What the owner wants everyone to read. Dismissing it is remembered against
+  // its text, so the next message shows up however the last one went.
+  showAnnouncement( me ) {
+    const text = me.announcement || "";
+    let dismissed = "";
+    try {
+      dismissed = window.localStorage.getItem( "announcement-dismissed" ) || "";
+    } catch ( error ) { /* storage blocked: it comes back on the next load */ }
+    Dom.text( Dom.get( "announcement-text" ) , text );
+    Dom.show( Dom.get( "announcement-banner" ) , text !== "" && text !== dismissed );
+  },
+
+  onDismissAnnouncement() {
+    Dom.show( Dom.get( "announcement-banner" ) , false );
+    try {
+      window.localStorage.setItem( "announcement-dismissed" , Dom.get( "announcement-text" ).textContent );
+    } catch ( error ) { /* storage blocked: it comes back on the next load */ }
+  },
+
   async renderSignedIn( me ) {
+    Dom.show( Dom.get( "app-loading" ) , true );
     Dom.show( Dom.get( "signed-in" ) , true );
+    this.showMaintenance( me );
+    this.showAnnouncement( me );
+    Dom.get( "announcement-dismiss" ).addEventListener( "click" , () => this.onDismissAnnouncement() );
     Dom.show( Dom.get( "app-nav" ) , true );
     this.labelAccount();
     Theme.render( Dom.get( "theme-picker" ) );
     Dom.get( "display-name" ).value = me.display_name;
 
-    Dom.get( "rename-form" ).addEventListener( "submit" , this.onRename.bind( this ) );
+    Dom.onSubmit( Dom.get( "rename-form" ) , this.onRename.bind( this ) );
     Dom.get( "logout-button" ).addEventListener( "click" , this.onLogout.bind( this ) );
     Dom.get( "my-link-button" ).addEventListener( "click" , this.onMyLoginLink.bind( this ) );
     Dom.get( "my-link-copy-button" ).addEventListener( "click" , () => Dom.copy( Dom.get( "my-link-value" ) ) );
+    Qr.toggle( Dom.get( "my-link-qr-button" ) , Dom.get( "my-link-qr" ) , Dom.get( "my-link-value" ) );
 
     // Each screen owns its own file and its own init(). This is the one line
     // that knows the API keys screen exists.
@@ -134,22 +179,37 @@ const App = {
     Pin.init( me );
     Password.init( me );
     TwoFactor.init( me );
-    await Keys.init( me );
-    await Sessions.init();
+    Fresh.init( me );
+    // Side by side: the wait is the slowest screen, not all of them added up.
+    const loading = [ Keys.init( me ) , Sessions.init() , Files.init( me ) ];
 
     if ( me.role === "admin" ) {
       Dom.show( Dom.get( "admin-panel" ) , true );
-      Dom.get( "create-user-form" ).addEventListener( "submit" , this.onCreateUser.bind( this ) );
+      Dom.onSubmit( Dom.get( "create-user-form" ) , this.onCreateUser.bind( this ) );
       Dom.get( "copy-link-button" ).addEventListener( "click" , this.onCopyLink.bind( this ) );
-      await this.refreshUsers();
-      await Invites.init( me );
+      Qr.toggle( Dom.get( "login-link-qr-button" ) , Dom.get( "login-link-qr" ) , Dom.get( "login-link-value" ) );
+      Dom.get( "users-search" ).addEventListener( "input" , () => {
+        window.clearTimeout( this.searchTimer );
+        this.searchTimer = window.setTimeout( () => this.refreshUsers() , 300 );
+      } );
+      Dom.get( "user-sessions-close" ).addEventListener( "click" , () => Sessions.closeFor() );
       // Only the owner gets the Logs, Jobs, Webhooks and Settings screens; each init
       // checks is_owner.
-      await Logs.init( me );
-      await Jobs.init( me );
-      await Webhooks.init( me );
-      await Settings.init( me );
+      loading.push( this.refreshUsers() , Invites.init( me ) , Logs.init( me ) , Jobs.init( me ) , Webhooks.init( me ) , Settings.init( me ) );
+      const version = I18n.get( "nav.version" );
+      if ( version !== "" ) {
+        Dom.text( Dom.get( "sidebar-version" ) , version.replace( "{version}" , me.version ) );
+        Dom.show( Dom.get( "sidebar-version" ) , true );
+      }
     }
+
+    // allSettled, not all: Nav.init has to run whatever else went wrong, or
+    // one screen's failure would leave no screen showing at all.
+    const results = await Promise.allSettled( loading );
+    results.forEach( ( result ) => {
+      if ( result.status === "rejected" ) this.showError( result.reason.message );
+    } );
+    Dom.show( Dom.get( "app-loading" ) , false );
 
     // Last, so the sidebar offers exactly the screens the lines above un-hid.
     Nav.init();
@@ -200,6 +260,7 @@ const App = {
     try {
       const issued = await Api.createMyLoginLink();
       Dom.text( Dom.get( "my-link-value" ) , window.location.origin + issued.login_path );
+      Qr.hide( Dom.get( "my-link-qr" ) );
       Dom.show( Dom.get( "my-link-box" ) , true );
     } catch ( error ) {
       this.showError( error.message );
@@ -234,6 +295,7 @@ const App = {
   // not reliably know its own public origin, whereas the browser always does.
   showLoginLink( loginPath ) {
     Dom.text( Dom.get( "login-link-value" ) , window.location.origin + loginPath );
+    Qr.hide( Dom.get( "login-link-qr" ) );
     Dom.show( Dom.get( "login-link-box" ) , true );
   },
 
@@ -243,7 +305,8 @@ const App = {
 
   async refreshUsers() {
     const body = Dom.get( "users-table" ).querySelector( "tbody" );
-    await Pager.load( "users-table" , "users" , ( offset ) => Api.listUsers( offset ) , function ( user ) {
+    const search = Dom.get( "users-search" ).value.trim();
+    await Pager.load( "users-table" , "users" , ( offset ) => Api.listUsers( offset , search ) , function ( user ) {
       const statusKey = user.disabled ? "admin.status_disabled" : "admin.status_active";
       const statusTone = user.disabled ? "secondary" : "success";
 
@@ -273,7 +336,7 @@ const App = {
         text: I18n.get( "admin.revoke_button" ),
         on: { click: async function () {
           const question = I18n.get( "admin.revoke_confirm" ).replace( "{name}" , user.display_name );
-          if ( question !== "" && !window.confirm( question ) ) return;
+          if ( !( await Dom.confirm( question ) ) ) return;
           try {
             await Api.revokeAccess( user.id );
             if ( App.currentUser.api_keys_enabled ) await Keys.refreshAll();
@@ -300,7 +363,7 @@ const App = {
         text: I18n.get( "admin.delete_button" ),
         on: { click: async function () {
           const question = I18n.get( "admin.delete_confirm" ).replace( "{name}" , user.display_name );
-          if ( question !== "" && !window.confirm( question ) ) return;
+          if ( !( await Dom.confirm( question ) ) ) return;
           try {
             await Api.deleteUser( user.id );
             await App.refreshUsers();
@@ -317,12 +380,20 @@ const App = {
         text: I18n.get( "admin.reset_two_factor_button" ),
         on: { click: async function () {
           const question = I18n.get( "admin.reset_two_factor_confirm" ).replace( "{name}" , user.display_name );
-          if ( question !== "" && !window.confirm( question ) ) return;
+          if ( !( await Dom.confirm( question ) ) ) return;
           try {
             await Api.resetTwoFactor( user.id );
             await App.refreshUsers();
           } catch ( error ) { App.showError( error.message ); }
         } },
+      } );
+
+      // Where they are signed in. The owner's are the owner's own, which the
+      // server would refuse.
+      const sessionsButton = user.owner && !App.currentUser.is_owner ? null : Dom.el( "button" , {
+        class: "btn btn-sm btn-outline-secondary",
+        text: I18n.get( "admin.sessions_button" ),
+        on: { click: () => Sessions.showFor( user ) },
       } );
 
       // The owner's per-account password switch. Everyone else gets a 404
@@ -349,7 +420,7 @@ const App = {
         Dom.el( "td" , { text: roleText } ),
         Dom.el( "td" , { children: [ Dom.badge( I18n.get( statusKey ) , statusTone ) ] } ),
         Dom.el( "td" , { children: [
-          Dom.el( "div" , { class: "row-actions" , children: [ reissueButton , passwordButton , resetButton , revokeButton , toggleButton , deleteButton ].filter( Boolean ) } ),
+          Dom.el( "div" , { class: "row-actions" , children: [ reissueButton , sessionsButton , passwordButton , resetButton , revokeButton , toggleButton , deleteButton ].filter( Boolean ) } ),
         ] } ),
       ] } ) );
     } );
@@ -363,6 +434,8 @@ const App = {
     Dom.text( banner , worded || message || I18n.get( "errors.generic" ) );
     // Long enough to copy a reference down.
     Dom.flash( banner , 12000 );
+    // It sits at the top of the screen, which may be scrolled well past.
+    banner.scrollIntoView( { block: "nearest" } );
   },
 };
 

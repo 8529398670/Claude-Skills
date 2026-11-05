@@ -15,7 +15,7 @@ import time
 from typing import Callable
 
 from app.core import encryption
-from app.core.db import BUCKET_USERS, BUCKET_WEBHOOKS, Record, Store
+from app.core.db import BUCKET_FILES, BUCKET_USERS, BUCKET_WEBHOOKS, Record, Store
 from app.models.users import User
 
 RECOVERY_CODE_COUNT = 10
@@ -152,6 +152,7 @@ def disable(store: Store, user_id: int, code: object, secret_key: str) -> bool:
 SEALED_FIELDS = {
     BUCKET_USERS: ("totp_secret", "totp_pending"),
     BUCKET_WEBHOOKS: ("secret",),
+    BUCKET_FILES: ("key",),
 }
 
 

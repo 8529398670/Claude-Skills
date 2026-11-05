@@ -13,13 +13,14 @@ const Api = {
         // The session cookie is the only credential; without this an
         // authenticated request silently arrives as an anonymous one.
         credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: settings.body ? JSON.stringify( settings.body ) : undefined,
+        headers: settings.headers || { "Content-Type": "application/json" },
+        body: settings.raw || ( settings.body ? JSON.stringify( settings.body ) : undefined ),
       } );
     } catch ( networkError ) {
-      // Never reached the server, so only the browser can log it.
+      // Never reached the server, so only the browser can log it. Its own
+      // words for this ("Failed to fetch") mean nothing to anyone reading them.
       Track.failed( path , 0 );
-      throw networkError;
+      throw new Error( I18n.get( "errors.network" ) || networkError.message );
     }
 
     let payload = {};
@@ -31,6 +32,9 @@ const Api = {
 
     if ( !response.ok ) {
       if ( response.status >= 500 ) Track.failed( path , response.status );
+      // 401 only ever means "no session": a wrong password is a 400 and a
+      // wrong code a 403. Api.me() reports it instead, for the page to decide.
+      if ( response.status === 401 && path !== "/api/me" && App.currentUser ) this.sessionEnded();
       const error = new Error( this.failureText( payload , response ) );
       error.status = response.status;
       // The whole body, for callers that need more than the code (the
@@ -39,6 +43,13 @@ const Api = {
       throw error;
     }
     return payload;
+  },
+
+  // The session is gone (it expired, or was signed out from another device), so
+  // nothing on this page can work. Say so, rather than leaving every button to
+  // fail one at a time.
+  sessionEnded() {
+    window.location.replace( "/?login=ended" );
   },
 
   // A failure on the server's side comes with a reference, which is the one
@@ -118,7 +129,11 @@ const Api = {
   createMyLoginLink()          { return this.post( "/api/account/login-link" ); },
   logout()                     { return this.post( "/api/logout" ); },
   listTeam( offset )           { return this.request( "/api/team" + this.query( { offset: offset } ) ); },
-  listUsers( offset )          { return this.request( "/api/admin/users" + this.query( { offset: offset } ) ); },
+  listUsers( offset , search ) { return this.request( "/api/admin/users" + this.query( { offset: offset , q: search } ) ); },
+  userSessions( userId , offset ) { return this.request( "/api/admin/users/" + userId + "/sessions" + this.query( { offset: offset } ) ); },
+  revokeUserSession( userId , sessionId ) {
+    return this.post( "/api/admin/users/" + userId + "/sessions/" + encodeURIComponent( sessionId ) + "/revoke" );
+  },
   createUser( name , role )    { return this.post( "/api/admin/users" , { display_name: name , role: role } ); },
   reissueLogin( userId )       { return this.post( "/api/admin/users/" + userId + "/reissue-login" ); },
   setDisabled( userId , flag ) { return this.post( "/api/admin/users/" + userId + "/disabled" , { disabled: flag } ); },
@@ -147,6 +162,9 @@ const Api = {
   deleteKey( keyId )           { return this.post( "/api/keys/" + encodeURIComponent( keyId ) + "/delete" ); },
   restoreKey( keyId )          { return this.post( "/api/keys/" + encodeURIComponent( keyId ) + "/restore" ); },
   listAllKeys( offset )        { return this.request( "/api/admin/keys" + this.query( { offset: offset } ) ); },
+  createKeyFor( userId , name , role , expiresInDays ) {
+    return this.post( "/api/admin/keys" , { user_id: userId , name: name , role: role , expires_in_days: expiresInDays } );
+  },
   revokeAnyKey( keyId )        { return this.post( "/api/admin/keys/" + encodeURIComponent( keyId ) + "/revoke" ); },
   deleteAnyKey( keyId )        { return this.post( "/api/admin/keys/" + encodeURIComponent( keyId ) + "/delete" ); },
   restoreAnyKey( keyId )       { return this.post( "/api/admin/keys/" + encodeURIComponent( keyId ) + "/restore" ); },
@@ -164,6 +182,28 @@ const Api = {
   deleteLogDay( date )         { return this.post( "/api/owner/logs/days/" + encodeURIComponent( date ) + "/delete" ); },
   pruneLogs()                  { return this.post( "/api/owner/logs/prune" ); },
 
+  // Files. A piece's body is the file's own bytes, so unlike every other POST
+  // its CSRF token goes in a header.
+  files( offset )              { return this.request( "/api/files" + this.query( { offset: offset } ) ); },
+  allFiles( offset )           { return this.request( "/api/admin/files" + this.query( { offset: offset } ) ); },
+  storage()                    { return this.request( "/api/account/storage" ); },
+  allStorage()                 { return this.request( "/api/admin/storage" ); },
+  createFile( name , size , type ) { return this.post( "/api/files" , { name: name , size: size , type: type } ); },
+  sendFileChunk( id , index , piece ) {
+    return this.request( "/api/files/" + encodeURIComponent( id ) + "/chunks/" + index , {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" , "X-CSRF-Token": this.csrfToken },
+      raw: piece,
+    } );
+  },
+  finishFile( id )             { return this.post( "/api/files/" + encodeURIComponent( id ) + "/finish" ); },
+  deleteFile( id )             { return this.post( "/api/files/" + encodeURIComponent( id ) + "/delete" ); },
+  restoreFile( id )            { return this.post( "/api/files/" + encodeURIComponent( id ) + "/restore" ); },
+  deleteAnyFile( id )          { return this.post( "/api/admin/files/" + encodeURIComponent( id ) + "/delete" ); },
+  restoreAnyFile( id )         { return this.post( "/api/admin/files/" + encodeURIComponent( id ) + "/restore" ); },
+  fileDownloadPath( id )       { return "/api/files/" + encodeURIComponent( id ) + "/download"; },
+  anyFileDownloadPath( id )    { return "/api/admin/files/" + encodeURIComponent( id ) + "/download"; },
+
   // Webhooks (owner only). A test is queued, not sent, by the time this answers.
   webhooks( offset )           { return this.request( "/api/owner/webhooks" + this.query( { offset: offset } ) ); },
   webhookEvents()              { return this.request( "/api/owner/webhooks/events" ); },
@@ -176,6 +216,10 @@ const Api = {
   testWebhook( id )            { return this.post( "/api/owner/webhooks/" + encodeURIComponent( id ) + "/test" ); },
   webhookDeliveries( id , offset ) {
     return this.request( "/api/owner/webhooks/" + encodeURIComponent( id ) + "/deliveries" + this.query( { offset: offset } ) );
+  },
+
+  resendDelivery( id , deliveryId ) {
+    return this.post( "/api/owner/webhooks/" + encodeURIComponent( id ) + "/deliveries/" + encodeURIComponent( deliveryId ) + "/resend" );
   },
 
   // Background jobs (owner only). A run outlives the call that starts it.

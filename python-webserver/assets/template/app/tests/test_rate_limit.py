@@ -6,13 +6,14 @@ import asyncio
 import unittest
 from dataclasses import dataclass, field
 
-from app.core.middleware import BUDGET_GENERAL, BUDGET_NONE, BUDGET_SIGN_IN, RateLimit, budget_for
+from app.core.middleware import BUDGET_GENERAL, BUDGET_NONE, BUDGET_SIGN_IN, BUDGET_UPLOAD, RateLimit, budget_for
 
 
 @dataclass
 class Settings:
     rate_limit_max: int = 2
     rate_limit_signin_max: int = 2
+    rate_limit_upload_max: int = 3
     rate_limit_window_seconds: int = 60
     trust_proxy: bool = False
     trusted_proxies: tuple = field(default_factory=tuple)
@@ -56,6 +57,11 @@ class BudgetTest(unittest.TestCase):
             ("GET", "/"): BUDGET_GENERAL,
             ("GET", "/settings"): BUDGET_GENERAL,
             ("GET", "/api/me"): BUDGET_GENERAL,
+            ("POST", "/api/files/abc/chunks/1"): BUDGET_UPLOAD,
+            ("POST", "/API/Files/abc/chunks/1/"): BUDGET_UPLOAD,
+            ("GET", "/api/files/abc/chunks/1"): BUDGET_GENERAL,
+            ("POST", "/api/files/abc/finish"): BUDGET_GENERAL,
+            ("POST", "/api/files/abc/chunks"): BUDGET_GENERAL,
             ("GET", "/api/login/options"): BUDGET_GENERAL,
             ("POST", "/js/app.js"): BUDGET_GENERAL,
             ("GET", "/login/abc.def"): BUDGET_GENERAL,

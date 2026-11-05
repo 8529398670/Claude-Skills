@@ -16,12 +16,13 @@ from dataclasses import dataclass
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core import encryption
 from app.core.config import Config
 from app.core.config_live import Holder
 from app.core.db import Store
+from app.models import utc_now
 from app.models.api_keys import APIKey, load_api_key, narrow_role
 from app.models.sessions import Session, load_session, touch_session
 from app.models.users import ROLE_ADMIN, User, get_owner_id
@@ -44,6 +45,9 @@ class Actor:
     role: str
     session: Session | None = None
     api_key: APIKey | None = None
+    # This request moved the session's end, so the response carries the cookie
+    # again. See LoadActor.
+    session_extended: bool = False
 
     @property
     def is_admin(self) -> bool:
@@ -71,10 +75,16 @@ def set_session_cookie(response: Response, cfg: Config, credential: str) -> None
     not what makes the session unforgeable -- it means the cookie is opaque to
     anyone reading it out of a browser profile or a proxy log, and that a
     tampered cookie fails to decrypt instead of reaching the lookup."""
+    _write_session_cookie(response, cfg, encryption.xchacha_encrypt_string(cfg.secret_key, credential), cfg.session_ttl_seconds)
+
+
+def _write_session_cookie(response: Response, cfg: Config, sealed: str, max_age: int) -> None:
+    """The one place the cookie's attributes are spelled, so the copy sent when
+    a session extends cannot drift from the one sent at sign-in."""
     response.set_cookie(
         cfg.cookie_name,
-        encryption.xchacha_encrypt_string(cfg.secret_key, credential),
-        max_age=cfg.session_ttl_seconds,
+        sealed,
+        max_age=max_age,
         path="/",
         secure=cfg.secure_cookies,
         httponly=True,
@@ -111,8 +121,8 @@ def _resolve_session(store: Store, cfg: Config, cookies: dict[str, str]) -> Acto
     if loaded is None:
         return None
     session, user = loaded
-    touch_session(store, session)
-    return Actor(user=user, role=user.role, session=session)
+    extended = touch_session(store, session, cfg.session_ttl_seconds, cfg.session_max_age_seconds)
+    return Actor(user=user, role=user.role, session=session, session_extended=extended)
 
 
 def _resolve_api_key(store: Store, cfg: Config, authorization: str) -> Actor | None:
@@ -173,7 +183,31 @@ class LoadActor:
                 resolve_actor, self.store, self.settings.get(), dict(request.cookies), request.headers.get("authorization", "")
             )
             request.state.actor = actor
+            if actor is not None and actor.session_extended:
+                send = self._sending_cookie(send, request.cookies[self.settings.get().cookie_name], actor.session)
         await self.app(scope, receive, send)
+
+    def _sending_cookie(self, send: Send, sealed: str, session: Session) -> Send:
+        """The browser drops the cookie at its own expiry, so extending only
+        the record would still sign this person out when that arrived. Unless
+        the route set the cookie itself: logging out or switching account on
+        the request that extended has to win, and two headers for one cookie
+        would leave the answer to their order."""
+        cfg = self.settings.get()
+        carrier = Response()
+        _write_session_cookie(carrier, cfg, sealed, int((session.expires_at - utc_now()).total_seconds()))
+        header = next(item for item in carrier.raw_headers if item[0] == b"set-cookie")
+        name = cfg.cookie_name.encode("latin-1") + b"="
+
+        async def send_with_cookie(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                if not any(key.lower() == b"set-cookie" and value.startswith(name) for key, value in headers):
+                    headers.append(header)
+                message["headers"] = headers
+            await send(message)
+
+        return send_with_cookie
 
 
 def actor_from(request: Request) -> Actor | None:

@@ -384,6 +384,13 @@ The socket lives inside the mounted data directory, so it is covered by the
 volume's permissions and never crosses the container boundary. Nothing about
 it is published to the network, and it needs no port.
 
+### Behind a proxy: uploads
+
+Nothing special is needed: a file arrives as pieces of 768 KiB, under the default
+limits of nginx (`client_max_body_size 1m`) and most other proxies. Raising
+`files.max_file_bytes` does not change that. A proxy rate limit does need to allow
+for the pieces, about 1.3 requests per megabyte.
+
 ### Behind a proxy: live updates
 
 A stream is one long response, and two proxy defaults break it. nginx buffers

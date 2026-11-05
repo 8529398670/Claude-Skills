@@ -49,6 +49,40 @@ const Dom = {
     return node;
   },
 
+  // Runs work with button showing that it is busy: disabled, so a second click
+  // cannot send the same thing twice, and with a spinner, so a slow answer does
+  // not look like a press that did nothing. A press while it is busy is
+  // ignored. Answers what work answers.
+  async busy( button , work ) {
+    if ( !button ) return work();
+    if ( button.getAttribute( "aria-busy" ) === "true" ) return undefined;
+    const spinner = this.el( "span" , { class: "spinner-border spinner-border-sm me-2" , attrs: { "aria-hidden": "true" } } );
+    button.disabled = true;
+    button.setAttribute( "aria-busy" , "true" );
+    button.prepend( spinner );
+    try {
+      return await work();
+    } finally {
+      spinner.remove();
+      button.removeAttribute( "aria-busy" );
+      button.disabled = false;
+    }
+  },
+
+  // A form's submit handler, with its submit button busy until it finishes.
+  // handler has to be async and to await what it sends, or the button comes
+  // back early.
+  onSubmit( form , handler ) {
+    form.addEventListener( "submit" , ( event ) => {
+      const button = event.submitter || form.querySelector( "[type=submit]" );
+      if ( button && button.getAttribute( "aria-busy" ) === "true" ) {
+        event.preventDefault();
+        return;
+      }
+      this.busy( button , () => handler( event ) );
+    } );
+  },
+
   // Copy an element's text, with a selection fallback. The fallback is not
   // optional politeness: navigator.clipboard needs a secure context, so every
   // plain-http://localhost run lands there, and a copy button that silently
@@ -65,7 +99,96 @@ const Dom = {
       const selection = window.getSelection();
       selection.removeAllRanges();
       selection.addRange( range );
+      this.toast( I18n.get( "ui.copy_hint" ) , "ok" );
     }
+  },
+
+  // Saves text as a file, for what is better kept than copied.
+  download( name , text ) {
+    const url = URL.createObjectURL( new Blob( [ text ] , { type: "text/plain" } ) );
+    const link = this.el( "a" , { attrs: { href: url , download: name } } );
+    document.body.appendChild( link );
+    link.click();
+    link.remove();
+    URL.revokeObjectURL( url );
+  },
+
+  // "3 hours ago", in the browser's own language. Past a month the date says
+  // more than a count of days does.
+  ago( date ) {
+    const seconds = ( date.getTime() - Date.now() ) / 1000;
+    const size = Math.abs( seconds );
+    if ( size >= 30 * 86400 ) return date.toLocaleDateString();
+    const format = new Intl.RelativeTimeFormat( undefined , { numeric: "auto" } );
+    for ( const [ scale , unit ] of [ [ 86400 , "day" ] , [ 3600 , "hour" ] , [ 60 , "minute" ] ] ) {
+      if ( size >= scale ) return format.format( Math.round( seconds / scale ) , unit );
+    }
+    return format.format( 0 , "second" );
+  },
+
+  // A time for a table cell: how long ago at a glance, the exact time on hover.
+  // fallback is what a missing or unreadable time says instead ("Never").
+  when( value , fallback ) {
+    const parsed = new Date( value || "" );
+    if ( isNaN( parsed.getTime() ) ) return this.el( "span" , { text: fallback || "" } );
+    return this.el( "time" , {
+      text: this.ago( parsed ),
+      attrs: { datetime: parsed.toISOString() , title: parsed.toLocaleString() },
+    } );
+  },
+
+  // Asks before something that cannot be taken back, in the app's own theme,
+  // which window.confirm cannot be. Answers true or false. An empty question
+  // answers true, so a language.yaml key set to "" stops the asking. Cancel
+  // has the focus: Enter on a question nobody read should not delete anything.
+  confirm( question ) {
+    if ( !question ) return Promise.resolve( true );
+    const element = this.get( "confirm-modal" );
+    if ( element._open ) return Promise.resolve( false );
+    element._open = true;
+    const returnTo = document.activeElement;
+    this.text( this.get( "confirm-text" ) , question );
+    const modal = bootstrap.Modal.getOrCreateInstance( element );
+    return new Promise( ( resolve ) => {
+      let answer = false;
+      const ok = this.get( "confirm-ok" );
+      const onOk = () => {
+        answer = true;
+        modal.hide();
+      };
+      ok.addEventListener( "click" , onOk );
+      element.addEventListener( "shown.bs.modal" , () => this.get( "confirm-cancel" ).focus() , { once: true } );
+      element.addEventListener( "hidden.bs.modal" , () => {
+        ok.removeEventListener( "click" , onOk );
+        element._open = false;
+        if ( returnTo && returnTo.focus ) returnTo.focus();
+        resolve( answer );
+      } , { once: true } );
+      modal.show();
+    } );
+  },
+
+  // Adds a show/hide button to a password field. A key set to "" leaves it out.
+  revealable( input ) {
+    const label = I18n.get( "ui.show_password" );
+    if ( label === "" ) return;
+    const icon = this.el( "i" , { class: "bi bi-eye" , attrs: { "aria-hidden": "true" } } );
+    const set = ( shown ) => {
+      input.type = shown ? "text" : "password";
+      icon.className = "bi " + ( shown ? "bi-eye-slash" : "bi-eye" );
+      button.setAttribute( "aria-pressed" , String( shown ) );
+    };
+    const button = this.el( "button" , {
+      class: "btn btn-outline-secondary",
+      attrs: { type: "button" , "aria-label": label , title: label , "aria-pressed": "false" },
+      children: [ icon ],
+      on: { click: () => set( input.type === "password" ) },
+    } );
+    const group = this.el( "div" , { class: "input-group" } );
+    input.replaceWith( group );
+    group.append( input , button );
+    // Sent, it goes back to dots: whoever walks past later should not read it.
+    if ( input.form ) input.form.addEventListener( "submit" , () => set( false ) );
   },
 
   // Briefly reveal a confirmation ("Saved.", "Copied.") without leaving it on

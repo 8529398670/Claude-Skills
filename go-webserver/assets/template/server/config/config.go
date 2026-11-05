@@ -58,6 +58,11 @@ const (
 	DatabaseFileName  = "app.db"
 	ControlSocketName = "control.sock"
 	StorageDirName    = "storage"
+	// FilesDirName is inside storage, so backups carry finished files.
+	FilesDirName      = "files"
+	// UploadsDirName is beside storage, not in it: a half-sent file is not
+	// worth a backup, and is still changing while one runs.
+	UploadsDirName    = "uploads"
 	LogsDirName       = "logs"
 	BackupsDirName    = "backups"
 	LanguageFileName  = "language.yaml"
@@ -107,6 +112,7 @@ type File struct {
 	Backups BackupsSection `yaml:"backups"`
 	Metrics MetricsSection `yaml:"metrics"`
 	Webhooks WebhooksSection `yaml:"webhooks"`
+	Files    FilesSection    `yaml:"files"`
 	Docker DockerSection `yaml:"docker"`
 	Build  BuildSection  `yaml:"build"`
 }
@@ -136,12 +142,16 @@ type ServerSection struct {
 	RateLimitMax           int    `yaml:"rate_limit_max"`
 	RateLimitWindowSeconds int    `yaml:"rate_limit_window_seconds"`
 	RateLimitSignInMax     int    `yaml:"rate_limit_signin_max"`
+	RateLimitUploadMax     int    `yaml:"rate_limit_upload_max"`
 	ControlSocket          bool   `yaml:"control_socket"`
 	MCP                    bool   `yaml:"mcp"`
+	Maintenance            string `yaml:"maintenance"`
+	Announcement           string `yaml:"announcement"`
 }
 
 type AuthSection struct {
 	SessionTTLSeconds    int  `yaml:"session_ttl_seconds"`
+	SessionMaxAgeSeconds int  `yaml:"session_max_age_seconds"`
 	LoginTokenTTLSeconds int  `yaml:"login_token_ttl_seconds"`
 	APIKeys              bool `yaml:"api_keys"`
 	APIKeyTTLSeconds     int  `yaml:"api_key_ttl_seconds"`
@@ -173,6 +183,13 @@ type MetricsSection struct {
 type WebhooksSection struct {
 	TimeoutSeconds      int  `yaml:"timeout_seconds"`
 	AllowPrivateTargets bool `yaml:"allow_private_targets"`
+}
+
+type FilesSection struct {
+	Enabled              bool `yaml:"enabled"`
+	MaxFileBytes         int  `yaml:"max_file_bytes"`
+	QuotaBytesPerUser    int  `yaml:"quota_bytes_per_user"`
+	AbandonedUploadHours int  `yaml:"abandoned_upload_hours"`
 }
 
 type DockerSection struct {
@@ -270,9 +287,9 @@ type Config struct {
 	ControlSocketPath    string
 	ControlSocketEnabled bool
 
-	// StorageDir is for application files -- uploads, exports, generated
-	// artifacts. Nothing in the base template writes here; it exists so that
-	// features added later have an obvious, backed-up place to put files
+	// StorageDir is for application files -- exports, generated artifacts.
+	// Finished uploads are in storage/files (see Files.Dir); the rest exists
+	// so that features added later have an obvious, backed-up place to put files
 	// instead of inventing one.
 	StorageDir string
 
@@ -295,6 +312,7 @@ type Config struct {
 	CookieName    string
 
 	SessionTTL    time.Duration
+	SessionMaxAge time.Duration
 	LoginTokenTTL time.Duration
 
 	// APIKeysEnabled decides whether the Authorization: Bearer header is
@@ -331,8 +349,15 @@ type Config struct {
 
 	RateLimitMax    int
 	RateLimitWindow time.Duration
+	// Maintenance is server.maintenance: read it through MaintenanceMode.
+	Maintenance string
+	// Announcement is server.announcement: shown on every signed-in page.
+	Announcement string
+
 	// RateLimitSignInMax is the separate budget for signing in and joining.
 	RateLimitSignInMax int
+	// RateLimitUploadMax is the separate budget for the chunks of an upload.
+	RateLimitUploadMax int
 	BodyLimit       int
 
 	// TrustProxy tells fiber to believe ProxyHeader -- but only on a
@@ -352,6 +377,8 @@ type Config struct {
 	Backups BackupsConfig
 	// Webhooks is how outbound webhooks are sent; see server/webhooks.
 	Webhooks WebhooksConfig
+	// Files is how uploads are limited; see models/file.go.
+	Files FilesConfig
 
 	// file and raw are what this was built from, for NewHolder.
 	file *File
@@ -375,6 +402,23 @@ type LogsConfig struct {
 // ErrRotationPending is what everything but the rotation itself says when one
 // was left half way inside the container.
 var ErrRotationPending = errors.New( "a key rotation was cut short -- run docker/rotate-key.sh on the host to finish it" )
+
+// FileChunkBytes is the size of every piece of an upload but the last. It sits
+// under server.body_limit_bytes on purpose: a file of any size arrives as
+// ordinary small requests, so nothing has to raise a limit that also protects
+// the public routes. See models/file.go.
+const FileChunkBytes = 768 * 1024
+
+// FilesConfig is config.yaml's files section, resolved.
+type FilesConfig struct {
+	Enabled           bool
+	MaxFileBytes      int64
+	QuotaBytesPerUser int64
+	AbandonedAfter    time.Duration
+	// Dir holds finished files, and UploadsDir the ones still arriving.
+	Dir        string
+	UploadsDir string
+}
 
 // WebhooksConfig is config.yaml's webhooks section, resolved.
 type WebhooksConfig struct {
@@ -565,6 +609,24 @@ var (
 // out of range, a Docker size the daemon would refuse, a build target go
 // cannot parse. The docker and build values also end up in shell commands,
 // so they are held to strict patterns rather than trusted.
+// The values of server.maintenance. "none" rather than "off": YAML 1.1 readers
+// take a bare off as false, and the Python template's reader is one of those.
+const (
+	MaintenanceNone     = "none"
+	MaintenanceReadOnly = "read_only"
+	MaintenanceFull     = "full"
+)
+
+// MaintenanceMode is server.maintenance, with a Config built by hand reading
+// as normal running.
+func ( cfg *Config ) MaintenanceMode() ( mode string ) {
+	mode = cfg.Maintenance
+	if mode == "" {
+		mode = MaintenanceNone
+	}
+	return
+}
+
 func ( file *File ) Validate() ( err error ) {
 	var problems []string
 	check := func( ok bool , format string , values ...any ) {
@@ -596,9 +658,14 @@ func ( file *File ) Validate() ( err error ) {
 	check( server.RateLimitMax > 0 , "server.rate_limit_max must be positive" )
 	check( server.RateLimitWindowSeconds > 0 , "server.rate_limit_window_seconds must be positive" )
 	check( server.RateLimitSignInMax > 0 , "server.rate_limit_signin_max must be positive" )
+	check( server.RateLimitUploadMax > 0 , "server.rate_limit_upload_max must be positive" )
+	check( server.Maintenance == MaintenanceNone || server.Maintenance == MaintenanceReadOnly || server.Maintenance == MaintenanceFull ,
+		"server.maintenance must be none, read_only or full" )
+	check( len( server.Announcement ) <= 500 , "server.announcement must be 500 characters or fewer" )
 
 	auth := file.Auth
 	check( auth.SessionTTLSeconds > 0 , "auth.session_ttl_seconds must be positive" )
+	check( auth.SessionMaxAgeSeconds >= auth.SessionTTLSeconds , "auth.session_max_age_seconds must be at least auth.session_ttl_seconds" )
 	check( auth.LoginTokenTTLSeconds > 0 , "auth.login_token_ttl_seconds must be positive" )
 	check( auth.APIKeyTTLSeconds > 0 , "auth.api_key_ttl_seconds must be positive" )
 
@@ -609,6 +676,10 @@ func ( file *File ) Validate() ( err error ) {
 	check( logs.CompressAfterDays >= 0 , "logs.compress_after_days must be 0 (never) or more" )
 
 	check( file.Webhooks.TimeoutSeconds >= 1 && file.Webhooks.TimeoutSeconds <= 60 , "webhooks.timeout_seconds must be 1-60, got %d" , file.Webhooks.TimeoutSeconds )
+	check( file.Files.MaxFileBytes > 0 , "files.max_file_bytes must be positive" )
+	check( file.Files.QuotaBytesPerUser > 0 , "files.quota_bytes_per_user must be positive" )
+	check( file.Files.AbandonedUploadHours > 0 , "files.abandoned_upload_hours must be positive" )
+	check( file.Files.Enabled == false || server.BodyLimitBytes >= FileChunkBytes , "server.body_limit_bytes must be at least %d while files.enabled is on: that is the size of one piece of an upload" , FileChunkBytes )
 	backups := file.Backups
 	check( backups.IntervalHours >= 1 , "backups.interval_hours must be at least 1, got %d" , backups.IntervalHours )
 	check( backups.Keep >= 1 , "backups.keep must be at least 1, got %d" , backups.Keep )
@@ -917,6 +988,7 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		CookieName:    file.Server.CookieName,
 
 		SessionTTL:    seconds( file.Auth.SessionTTLSeconds ),
+		SessionMaxAge: seconds( file.Auth.SessionMaxAgeSeconds ),
 		LoginTokenTTL: seconds( file.Auth.LoginTokenTTLSeconds ),
 
 		APIKeysEnabled: file.Auth.APIKeys,
@@ -924,6 +996,8 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		TwoFactorEnabled: file.Auth.TwoFactor,
 		APIKeyTTL:      seconds( file.Auth.APIKeyTTLSeconds ),
 		MCPEnabled:     file.Server.MCP,
+		Maintenance:    file.Server.Maintenance,
+		Announcement:   file.Server.Announcement,
 		MetricsEnabled: file.Metrics.Enabled,
 
 		SecretKey:     secret_key,
@@ -932,6 +1006,7 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		RateLimitMax:    file.Server.RateLimitMax,
 		RateLimitWindow: seconds( file.Server.RateLimitWindowSeconds ),
 		RateLimitSignInMax: file.Server.RateLimitSignInMax,
+		RateLimitUploadMax: file.Server.RateLimitUploadMax,
 		BodyLimit:       file.Server.BodyLimitBytes,
 
 		TrustProxy:     file.Server.TrustProxy,
@@ -953,6 +1028,14 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		Webhooks: WebhooksConfig{
 			Timeout:             time.Duration( file.Webhooks.TimeoutSeconds ) * time.Second,
 			AllowPrivateTargets: file.Webhooks.AllowPrivateTargets,
+		},
+		Files: FilesConfig{
+			Enabled:           file.Files.Enabled,
+			MaxFileBytes:      int64( file.Files.MaxFileBytes ),
+			QuotaBytesPerUser: int64( file.Files.QuotaBytesPerUser ),
+			AbandonedAfter:    time.Duration( file.Files.AbandonedUploadHours ) * time.Hour,
+			Dir:               filepath.Join( paths.AppDir , StorageDirName , FilesDirName ),
+			UploadsDir:        filepath.Join( paths.AppDir , UploadsDirName ),
 		},
 		Backups: BackupsConfig{
 			Enabled:  file.Backups.Enabled,

@@ -225,6 +225,13 @@ class Dispatcher:
         models.enqueue_test(self.store, hook)
         self.nudge()
 
+    def resend(self, webhook_id: str, delivery_id: str) -> bool:
+        """Queue a failed delivery again. See models.resend_delivery."""
+        sent = models.resend_delivery(self.store, webhook_id, delivery_id)
+        if sent:
+            self.nudge()
+        return sent
+
     def nudge(self) -> None:
         """Ask for a run now. A run already going leaves this to the next one;
         a loop already closed means the server is on its way out."""

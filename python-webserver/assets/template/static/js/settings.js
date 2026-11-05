@@ -36,13 +36,22 @@ const Settings = {
       event.preventDefault();
       this.save();
     } );
-    Dom.get( "settings-reload" ).addEventListener( "click" , () => this.load() );
+    Dom.get( "settings-reload" ).addEventListener( "click" , () => this.onReload() );
+    window.addEventListener( "beforeunload" , ( event ) => {
+      if ( this.changes().count > 0 ) event.preventDefault();
+    } );
     await this.load();
     // Pick up hand edits while the screen is open, unless that would throw
     // away something typed here.
     this.timer = window.setInterval( () => {
       if ( Nav.current() === "settings" && !document.hidden && this.changes().count === 0 ) this.load( true );
     } , this.refreshMs );
+  },
+
+  // Reloading redraws the form, which throws away anything typed into it.
+  async onReload() {
+    if ( this.changes().count > 0 && !( await Dom.confirm( I18n.get( "settings.reload_confirm" ) ) ) ) return;
+    await this.load();
   },
 
   // quiet: no error banner if it fails, and (unless force) no redraw when

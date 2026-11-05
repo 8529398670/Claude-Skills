@@ -19,7 +19,8 @@ import (
 //
 // Every signed-in user can mint their own keys, and revoke or delete them. An
 // admin can additionally see, revoke, and delete everyone's, which is what
-// makes "who has standing access to this app" an answerable question.
+// makes "who has standing access to this app" an answerable question, and can
+// mint one that acts as someone else (CreateAPIKeyForUser).
 //
 // Revoking keeps the row, marked dead, so the listing still shows the key
 // existed and when it stopped working; the `purge` job drops it later.
@@ -39,6 +40,12 @@ type createAPIKeyRequest struct {
 	// would be the same request.
 	ExpiresInDays *int   `json:"expires_in_days"`
 	CSRFToken     string `json:"csrf_token"`
+}
+
+// createUserAPIKeyRequest is createAPIKeyRequest plus whose key it is.
+type createUserAPIKeyRequest struct {
+	createAPIKeyRequest
+	UserID uint64 `json:"user_id"`
 }
 
 // RequireAPIKeys hides the key-management endpoints when the feature is
@@ -78,6 +85,9 @@ func apiKeyRow( key *models.APIKey , display_name string ) ( row fiber.Map ) {
 	if key.RevokedAt != nil {
 		row[ "revoked_at" ] = key.RevokedAt
 	}
+	if key.CreatedBy != 0 {
+		row[ "created_by" ] = key.CreatedBy
+	}
 	if display_name != "" {
 		row[ "display_name" ] = display_name
 	}
@@ -94,12 +104,45 @@ func ( handlers *Handlers ) ListMyAPIKeys( c fiber.Ctx ) ( err error ) {
 		err = serverError( c , list_err )
 		return
 	}
+	// Most people have no key someone else made, so the names are only loaded
+	// when one is there to be named.
+	names := map[ uint64 ]string{}
+	for _ , key := range keys {
+		if key.CreatedBy == 0 { continue }
+		if names , list_err = handlers.displayNames(); list_err != nil {
+			err = serverError( c , list_err )
+			return
+		}
+		break
+	}
 	rows := []fiber.Map{}
 	for _ , key := range keys {
-		rows = append( rows , apiKeyRow( key , "" ) )
+		row := apiKeyRow( key , "" )
+		nameCreator( row , key , names )
+		rows = append( rows , row )
 	}
 	err = sendPage( c , "keys" , rows )
 	return
+}
+
+// displayNames is every account's name by id: one pass rather than a GetUser
+// per key, since a bucket read per row is the shape that quietly becomes slow.
+func ( handlers *Handlers ) displayNames() ( names map[ uint64 ]string , err error ) {
+	users , err := models.ListUsers( handlers.Store )
+	if err != nil { return }
+	names = map[ uint64 ]string{}
+	for _ , user := range users {
+		names[ user.ID ] = user.DisplayName
+	}
+	return
+}
+
+// nameCreator says who made a key on its owner's behalf. An admin deleted
+// since has no name, and the page shows their id instead.
+func nameCreator( row fiber.Map , key *models.APIKey , names map[ uint64 ]string ) {
+	if name := names[ key.CreatedBy ]; key.CreatedBy != 0 && name != "" {
+		row[ "created_by_name" ] = name
+	}
 }
 
 // CreateMyAPIKey mints a key for the signed-in user and returns the credential
@@ -163,6 +206,76 @@ func ( handlers *Handlers ) CreateMyAPIKey( c fiber.Ctx ) ( err error ) {
 	row[ "credential" ] = credential
 	handlers.audit( c , logs.KindAdmin , "api key created" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role } )
 	handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role } )
+	err = c.Status( fiber.StatusCreated ).JSON( row )
+	return
+}
+
+// CreateAPIKeyForUser mints a key that acts as another account, for setting up
+// someone's integration for them. It needs a browser session, like every route
+// that makes a credential: the admin_keys group in routes.go adds it, so a
+// leaked admin key cannot mint itself a way in as somebody else.
+//
+// Who may mint for whom is models.IssueAPIKeyFor's to say. The key records who
+// made it, and shows that to the person it acts as.
+func ( handlers *Handlers ) CreateAPIKeyForUser( c fiber.Ctx ) ( err error ) {
+	var body createUserAPIKeyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	if body.UserID == 0 {
+		err = badRequest( c , "user_id is required" )
+		return
+	}
+	if models.ValidAPIKeyName( body.Name ) == false {
+		err = badRequest( c , "name must be 1-80 characters" )
+		return
+	}
+	role := body.Role
+	if role == "" {
+		role = models.RoleUser
+	}
+	if models.ValidRole( role ) == false {
+		err = badRequest( c , "role must be admin or user" )
+		return
+	}
+	ttl , ok := models.APIKeyTTLFromDays( body.ExpiresInDays , handlers.cfg().APIKeyTTL )
+	if ok == false {
+		err = badRequest( c , "expires_in_days must be 0 (never) or up to 3650" )
+		return
+	}
+
+	actor := security.UserFrom( c )
+	credential , key , issue_err := models.IssueAPIKeyFor( handlers.Store , actor.ID , body.UserID , body.Name , role , ttl )
+	if issue_err != nil {
+		switch {
+		case errors.Is( issue_err , db.ErrNotFound ):
+			err = notFound( c , "no such user" )
+		case errors.Is( issue_err , models.ErrOwnerProtected ):
+			err = forbidden( c , "a key for the owner can only be made by the owner, or from a shell" )
+		case errors.Is( issue_err , models.ErrOwnerRequired ):
+			err = forbidden( c , "only the owner can create a key for an admin" )
+		case errors.Is( issue_err , models.ErrAPIKeyRole ):
+			err = forbidden( c , "a key cannot have more permission than the account it belongs to" )
+		case errors.Is( issue_err , models.ErrAPIKeyLimit ):
+			err = badRequest( c , "that account already has the maximum number of live API keys" )
+		case errors.Is( issue_err , models.ErrAPIKeyDisabled ):
+			err = forbidden( c , "that account is disabled" )
+		default:
+			err = serverError( c , issue_err )
+		}
+		return
+	}
+
+	// The credential appears here and nowhere else, ever.
+	row := apiKeyRow( key , "" )
+	row[ "credential" ] = credential
+	handlers.audit( c , logs.KindAdmin , "api key created" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role , "user_id": key.UserID , "created_by": actor.ID } )
+	handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role , "created_by": actor.ID } )
 	err = c.Status( fiber.StatusCreated ).JSON( row )
 	return
 }
@@ -297,22 +410,17 @@ func ( handlers *Handlers ) ListAllAPIKeys( c fiber.Ctx ) ( err error ) {
 		err = serverError( c , list_err )
 		return
 	}
-	users , users_err := models.ListUsers( handlers.Store )
-	if users_err != nil {
-		err = serverError( c , users_err )
+	names , names_err := handlers.displayNames()
+	if names_err != nil {
+		err = serverError( c , names_err )
 		return
-	}
-
-	// One pass to build the lookup rather than a GetUser per key: a bucket
-	// read per row is the shape that quietly becomes slow.
-	names := map[ uint64 ]string{}
-	for _ , user := range users {
-		names[ user.ID ] = user.DisplayName
 	}
 
 	rows := []fiber.Map{}
 	for _ , key := range keys {
-		rows = append( rows , apiKeyRow( key , names[ key.UserID ] ) )
+		row := apiKeyRow( key , names[ key.UserID ] )
+		nameCreator( row , key , names )
+		rows = append( rows , row )
 	}
 	err = sendPage( c , "keys" , rows )
 	return

@@ -28,10 +28,10 @@ async def me(request: Request) -> Response:
     rare caller that needs to tell the two apart. Reporting the account's role
     as "role" would have a client believe it has permissions the server will
     refuse to act on."""
-    return JSONResponse(await run(me_row, get_store(request), get_config(request), actor_from(request)))
+    return JSONResponse(await run(me_row, get_store(request), get_config(request), actor_from(request), request.app.state.version))
 
 
-def me_row(store: Store, cfg: Config, actor: Actor) -> dict[str, Any]:
+def me_row(store: Store, cfg: Config, actor: Actor, version: str) -> dict[str, Any]:
     """me's answer, shared with the MCP whoami tool so the two cannot describe
     the same caller differently."""
     # is_owner tells the UI which account-management buttons to offer; the
@@ -44,6 +44,9 @@ def me_row(store: Store, cfg: Config, actor: Actor) -> dict[str, Any]:
         "role": actor.role,
         "account_role": actor.user.role,
         "is_owner": actor.user.id == owner_id,
+        "maintenance": cfg.maintenance,
+        "version": version,
+        "announcement": cfg.announcement,
         "has_pin": pins.has_pin(actor.user),
         "username": actor.user.username,
         "has_password": passwords.has_password(actor.user),
@@ -53,6 +56,7 @@ def me_row(store: Store, cfg: Config, actor: Actor) -> dict[str, Any]:
         "two_factor_enabled": cfg.two_factor_enabled,
         "auth": actor.method,
         "api_keys_enabled": cfg.api_keys_enabled,
+        "files_enabled": cfg.files.enabled,
         # Whether track.js sends anything, and whether it sends clicks.
         "logs_enabled": cfg.logs.enabled,
         "logs_ui_clicks": cfg.logs.enabled and cfg.logs.ui_clicks,

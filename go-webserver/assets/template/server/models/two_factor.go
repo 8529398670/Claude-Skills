@@ -214,6 +214,7 @@ func DisableTwoFactor( store *db.Store , user_id uint64 , code string , secret_k
 var rekeyFields = map[string][]string{
 	db.BucketUsers:    { "totp_secret" , "totp_pending" },
 	db.BucketWebhooks: { "secret" },
+	db.BucketFiles:    { "key" },
 }
 
 // RekeyRecord is what moving the database to a new key has to do beyond the

@@ -49,10 +49,10 @@ const Join = {
       }
     }
 
-    Dom.get( "join-name-form" ).addEventListener( "submit" , this.onName.bind( this ) );
+    Dom.onSubmit( Dom.get( "join-name-form" ) , this.onName.bind( this ) );
     Dom.get( "join-create-button" ).addEventListener( "click" , this.onCreate.bind( this ) );
     Dom.get( "join-back-button" ).addEventListener( "click" , this.step.bind( this , "name" ) );
-    Dom.get( "join-pin-form" ).addEventListener( "submit" , this.onPin.bind( this ) );
+    Dom.onSubmit( Dom.get( "join-pin-form" ) , this.onPin.bind( this ) );
     Dom.get( "join-pin-back-button" ).addEventListener( "click" , this.step.bind( this , "choose" ) );
     this.step( "name" );
   },
@@ -129,7 +129,7 @@ const Join = {
 
   onPin( event ) {
     event.preventDefault();
-    this.claim( Dom.get( "join-pin" ).value );
+    return this.claim( Dom.get( "join-pin" ).value );
   },
 
   async claim( pin ) {

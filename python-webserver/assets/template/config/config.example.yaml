@@ -136,15 +136,38 @@ server:
   # handing an invite link to a large group in one room. [live]
   rate_limit_signin_max: 60
 
+  # One piece of an upload counts against this budget instead, out of the same
+  # window. A piece is 768 KiB, so 1200 is about 900 MB a minute per address.
+  # [live]
+  rate_limit_upload_max: 1200
+
   # POST /mcp: the Model Context Protocol, so an agent (Claude Code, any MCP
   # client that can send a header) can use this app with an API key, at that
   # key's role. Only keys are accepted there, never a browser session. Needs
   # auth.api_keys; false makes /mcp answer 404. [live]
   mcp: true
 
+  # Maintenance mode. none is normal running. read_only keeps the app readable
+  # and refuses every write; full refuses everything. Either way the owner's
+  # browser session still works, signing in still works (scripts/login.sh gets
+  # the owner in), and /api/health, /api/ready and /metrics keep answering.
+  # Everyone else gets a 503 with Retry-After. Background jobs keep running.
+  # [live]
+  maintenance: none
+
+  # One line at the top of every signed-in page: planned downtime, say. Empty
+  # shows nothing. Anyone can dismiss it, and a changed message comes back.
+  # [live]
+  announcement: ""
+
 # How long a sign-in lasts, and a login link stays usable. [live]
+# A sign-in that is in use extends itself: session_ttl_seconds counts from the
+# last time it was used, so only an idle one ends then. session_max_age_seconds
+# is the limit on that, counted from signing in, so a stolen cookie cannot be
+# kept alive forever. Set the two equal for a fixed lifetime.
 auth:
   session_ttl_seconds: 1209600     # 14 days
+  session_max_age_seconds: 7776000 # 90 days
   login_token_ttl_seconds: 1800    # 30 minutes
 
   # API keys let a script, a cron job, or another service call the API at the
@@ -216,6 +239,20 @@ webhooks:
   # http. Off, nothing on the Webhooks screen can reach anything internal.
   # Only turn this on if whoever is the owner should have that reach.
   allow_private_targets: false     # [live]
+
+# The Files screen and /api/files. Files are always encrypted on disk, whatever
+# encrypt_at_rest says.
+files:
+  # false hides the screen and makes every /api/files route answer 404. Files
+  # already uploaded stay on disk.
+  enabled: true                    # [live]
+  # The largest single file, in bytes. 104857600 is 100 MiB.
+  max_file_bytes: 104857600        # [live]
+  # How much one account may keep, in bytes, counting uploads still arriving.
+  # 1073741824 is 1 GiB.
+  quota_bytes_per_user: 1073741824 # [live]
+  # An upload that has had nothing new for this long is removed.
+  abandoned_upload_hours: 24       # [live]
 
 # [scripts] Read by docker/run.sh, which applies a change the next time it
 # runs. Edit these on the host: inside the container they are read-only.

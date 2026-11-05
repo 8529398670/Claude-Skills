@@ -303,6 +303,35 @@ class RouteTests(RoutesTestCase):
             self.assertEqual(self.post("/api/owner/webhooks", name="x", url=target, events=["*"])[0], 400, target)
         self.assertEqual(self.post("/api/owner/webhooks", name="x", url="https://a.example", events=["made.up"])[0], 400)
 
+    def failed_delivery(self, hook_id: str) -> str:
+        """A delivery for hook_id that has been given up on."""
+        models.enqueue_test(self.store, models.get_webhook(self.store, hook_id))
+        delivery = models.list_deliveries(self.store, hook_id)[0]
+        models.record_attempt(self.store, delivery.id, 500, "boom", False)
+        return delivery.id
+
+    def test_resending_queues_the_same_event_as_a_new_delivery(self) -> None:
+        hook = self.created()["id"]
+        failed = self.failed_delivery(hook)
+        path = f"/api/owner/webhooks/{hook}/deliveries/"
+        self.assertEqual(self.post(f"{path}{failed}/resend")[0], 202)
+
+        rows = {row.id: row for row in models.list_deliveries(self.store, hook)}
+        self.assertEqual(len(rows), 2)
+        original = rows.pop(failed)
+        again = next(iter(rows.values()))
+        self.assertEqual(original.status, models.FAILED)
+        self.assertEqual((again.status, again.attempts), (models.PENDING, 0))
+        self.assertEqual((again.body, again.event), (original.body, original.event))
+
+        self.assertEqual(self.post(f"{path}{again.id}/resend")[0], 409)
+        self.assertEqual(self.post(f"{path}nothing/resend")[0], 404)
+
+    def test_a_delivery_cannot_be_resent_through_another_endpoint(self) -> None:
+        first, second = self.created()["id"], self.created()["id"]
+        failed = self.failed_delivery(first)
+        self.assertEqual(self.post(f"/api/owner/webhooks/{second}/deliveries/{failed}/resend")[0], 404)
+
     def test_a_test_event_queues_a_delivery_and_lists_it(self) -> None:
         created = self.created()
         path = "/api/owner/webhooks/" + created["id"]

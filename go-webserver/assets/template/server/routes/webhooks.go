@@ -220,6 +220,43 @@ func ( handlers *Handlers ) TestWebhook( c fiber.Ctx ) ( err error ) {
 	return
 }
 
+// ResendWebhookDelivery queues a delivery that was given up on.
+func ( handlers *Handlers ) ResendWebhookDelivery( c fiber.Ctx ) ( err error ) {
+	var body csrfOnlyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	hook , get_err := handlers.liveWebhook( c.Params( "webhook_id" ) )
+	switch {
+	case errors.Is( get_err , db.ErrNotFound ):
+		err = notFound( c , "no such webhook" )
+		return
+	case get_err != nil:
+		err = serverError( c , get_err )
+		return
+	}
+	// Clone: the log entry outlives this request, and fiber reuses the buffer.
+	delivery_id := strings.Clone( c.Params( "delivery_id" ) )
+	send_err := handlers.Webhooks.Resend( hook.ID , delivery_id )
+	switch {
+	case errors.Is( send_err , db.ErrNotFound ):
+		err = notFound( c , "no such delivery" )
+	case errors.Is( send_err , models.ErrDeliveryNotFailed ):
+		err = conflict( c , "delivery_not_failed" , nil )
+	case send_err != nil:
+		err = serverError( c , send_err )
+	default:
+		handlers.audit( c , logs.KindAdmin , "webhook delivery resent" , fiber.Map{ "webhook_id": hook.ID , "delivery_id": delivery_id } )
+		err = c.Status( fiber.StatusAccepted ).JSON( fiber.Map{ "ok": true } )
+	}
+	return
+}
+
 func ( handlers *Handlers ) ListWebhookDeliveries( c fiber.Ctx ) ( err error ) {
 	hook , get_err := handlers.liveWebhook( c.Params( "webhook_id" ) )
 	switch {

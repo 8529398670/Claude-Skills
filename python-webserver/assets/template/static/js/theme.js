@@ -13,6 +13,8 @@
 // saved dark theme never flashes light on the way in.
 const Theme = {
   storageKey: "theme",
+  // What redraws when the theme changes: the picker and the navbar button.
+  onChange: [],
 
   // Each preset sets the mode plus, optionally, its own colours. Field ->
   // custom property in style.css, which hands them on to Bootstrap: accent ->
@@ -80,6 +82,37 @@ const Theme = {
     else root.style.removeProperty( "--app-border" );
   },
 
+  // Picking is undoable, and quick picks merge into one step.
+  pick( key ) {
+    const previous = this.current;
+    if ( previous === key ) return;
+    const choose = ( chosen ) => {
+      this.set( chosen );
+      this.onChange.forEach( ( listener ) => listener() );
+    };
+    Undo.run( {
+      label: I18n.get( "undo.theme" ),
+      merge: "theme",
+      screen: null,
+      do: () => choose( key ),
+      undo: () => choose( previous ),
+    } );
+  },
+
+  // The button in the navbar: light or dark from anywhere, signed in or not.
+  // The Appearance card has the rest. Dark from any light theme, light from any
+  // dark one.
+  watchToggle( button ) {
+    const icon = button.querySelector( "i" );
+    const update = () => {
+      const dark = this.find( this.current ).mode === "dark";
+      icon.className = "bi " + ( dark ? "bi-sun" : "bi-moon-stars" );
+    };
+    button.addEventListener( "click" , () => this.pick( this.find( this.current ).mode === "dark" ? "light" : "dark" ) );
+    this.onChange.push( update );
+    update();
+  },
+
   // The picker on the Appearance card: one button per preset, drawn in its
   // own colours. summary, if given, is kept showing the current theme's name.
   render( root , summary ) {
@@ -99,23 +132,11 @@ const Theme = {
         class: "btn btn-outline-secondary theme-choice",
         attrs: { type: "button" , "data-theme-key": preset.key },
         children: [ swatch , Dom.el( "span" , { text: I18n.get( "theme.preset_" + preset.key ) } ) ],
-        on: { click: () => {
-          const previous = this.current;
-          if ( previous === preset.key ) return;
-          const pick = ( key ) => {
-            this.set( key );
-            update();
-          };
-          Undo.run( {
-            label: I18n.get( "undo.theme" ),
-            merge: "theme",
-            do: () => pick( preset.key ),
-            undo: () => pick( previous ),
-          } );
-        } },
+        on: { click: () => this.pick( preset.key ) },
       } );
       root.appendChild( button );
     } );
+    this.onChange.push( update );
     update();
   },
 

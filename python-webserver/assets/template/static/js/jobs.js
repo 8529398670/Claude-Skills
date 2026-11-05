@@ -24,12 +24,6 @@ const Jobs = {
     return I18n.get( "jobs.job_" + job.name.replace( /-/g , "_" ) ) || job.name;
   },
 
-  when( value ) {
-    if ( !value ) return I18n.get( "jobs.never" );
-    const parsed = new Date( value );
-    return isNaN( parsed.getTime() ) ? I18n.get( "jobs.never" ) : parsed.toLocaleString();
-  },
-
   status( job ) {
     if ( job.running ) return Dom.badge( I18n.get( "jobs.status_running" ) , "primary" );
     if ( job.interrupted ) return Dom.badge( I18n.get( "jobs.status_interrupted" ) , "warning" );
@@ -69,12 +63,13 @@ const Jobs = {
       body.appendChild( Dom.el( "tr" , { children: [
         Dom.el( "td" , { text: this.label( job ) } ),
         Dom.el( "td" , { children: [ this.status( job ) ] } ),
-        Dom.el( "td" , { text: this.when( job.last_finished || job.last_started ) } ),
-        Dom.el( "td" , { text: this.when( job.next_due ) } ),
+        Dom.el( "td" , { children: [ Dom.when( job.last_finished || job.last_started , I18n.get( "jobs.never" ) ) ] } ),
+        Dom.el( "td" , { children: [ Dom.when( job.next_due , I18n.get( "jobs.never" ) ) ] } ),
         Dom.el( "td" , { class: "small" , text: job.last_error || job.last_note || "" } ),
         Dom.el( "td" , { children: [ this.runButton( job ) ] } ),
       ] } ) );
     } );
+    if ( payload.jobs.length === 0 ) Pager.empty( Dom.get( "jobs-table" ) );
     const running = payload.jobs.some( function ( job ) { return job.running; } );
     if ( running && Nav.current() === "jobs" ) {
       this.timer = window.setTimeout( () => this.refresh() , this.refreshMs );

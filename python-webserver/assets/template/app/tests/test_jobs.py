@@ -336,8 +336,8 @@ class HousekeepingTest(unittest.TestCase):
             registry = jobs.Registry(self.store, quiet_logger())
             housekeeping.register(registry, self.store, self.holder, logs.Logger(settings, encryption.generate_key_hex(), False))
             names[enabled] = [row["name"] for row in registry.rows()]
-        self.assertEqual(names[True], ["backup", "prune-logs", "purge"])
-        self.assertEqual(names[False], ["backup", "purge"])
+        self.assertEqual(names[True], ["backup", "files", "prune-logs", "purge"])
+        self.assertEqual(names[False], ["backup", "files", "purge"])
 
 
 if __name__ == "__main__":

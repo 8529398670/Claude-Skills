@@ -14,7 +14,7 @@ from app.core.logs import KIND_ADMIN
 from app.core.security import actor_from, check_csrf
 from app.models import RestoreError, to_iso
 from app.models import webhooks as models
-from app.routes.helpers import bad_request, forbidden, get_config, get_store, not_found, read_json, restore_refused, run, send_page
+from app.routes.helpers import bad_request, conflict, forbidden, get_config, get_store, not_found, read_json, restore_refused, run, send_page
 from app.routes.logs import audit
 
 
@@ -143,6 +143,27 @@ async def send_test(request: Request) -> Response:
     if hook is None:
         return not_found("no such webhook")
     await run(request.app.state.webhooks.send_test, hook)
+    return JSONResponse({"ok": True}, status_code=202)
+
+
+async def resend_delivery(request: Request) -> Response:
+    """Queues a delivery that was given up on."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    hook = await _live_webhook(request)
+    if hook is None:
+        return not_found("no such webhook")
+    delivery_id = request.path_params["delivery_id"]
+    try:
+        sent = await run(request.app.state.webhooks.resend, hook.id, delivery_id)
+    except models.DeliveryNotFailed:
+        return conflict("delivery_not_failed")
+    if not sent:
+        return not_found("no such delivery")
+    audit(request, KIND_ADMIN, "webhook delivery resent", {"webhook_id": hook.id, "delivery_id": delivery_id})
     return JSONResponse({"ok": True}, status_code=202)
 
 

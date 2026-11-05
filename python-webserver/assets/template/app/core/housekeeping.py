@@ -1,5 +1,6 @@
 """The jobs the template itself runs (app/core/jobs.py): dropping what has
-expired, applying the activity log's retention, and the scheduled backup. An
+expired, applying the activity log's retention, the scheduled backup, and
+clearing out files. An
 app adds its own the same way, from main.build_app.
 """
 from __future__ import annotations
@@ -8,7 +9,7 @@ from typing import Callable
 
 from app.core import backup, config_live, db, logs
 from app.core.jobs import Registry
-from app.models import api_keys, invite_links, login_tokens, sessions, sign_in, webhooks
+from app.models import api_keys, files, invite_links, login_tokens, sessions, sign_in, webhooks
 
 HOUR_SECONDS = 60 * 60
 
@@ -70,8 +71,17 @@ def scheduled_backup(store: db.Store, settings: config_live.Holder, logger: logs
     return f"wrote {made.path.name}", ""
 
 
+def sweep_files(store: db.Store, settings: config_live.Holder) -> tuple[str, str]:
+    """Remove what uploads leave behind; see files.sweep_files. It runs with
+    files.enabled off as well: switching uploads off is no reason to keep a
+    deleted file past its undo window."""
+    removed, strays = files.sweep_files(store, settings.get())
+    return f"removed {removed} files, {strays} strays", ""
+
+
 def register(registry: Registry, store: db.Store, settings: config_live.Holder, logger: logs.Logger) -> None:
     registry.register("purge", HOUR_SECONDS, lambda: purge(store))
     if logger.enabled:
         registry.register("prune-logs", HOUR_SECONDS, lambda: prune_logs(logger))
     registry.register("backup", HOUR_SECONDS, lambda: scheduled_backup(store, settings, logger))
+    registry.register("files", HOUR_SECONDS, lambda: sweep_files(store, settings))

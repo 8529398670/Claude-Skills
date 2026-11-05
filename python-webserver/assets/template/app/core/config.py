@@ -56,6 +56,16 @@ CONFIG_DIR_NAME = "config"
 CONFIG_FILE_NAME = "config.yaml"
 DATABASE_FILE_NAME = "app.db"
 STORAGE_DIR_NAME = "storage"
+# Inside storage, so backups carry finished files.
+FILES_DIR_NAME = "files"
+# Beside storage, not in it: a half-sent file is not worth a backup, and is
+# still changing while one runs.
+UPLOADS_DIR_NAME = "uploads"
+# The size of every piece of an upload but the last. It sits under
+# server.body_limit_bytes on purpose: a file of any size arrives as ordinary
+# small requests, so nothing has to raise a limit that also protects the public
+# routes. See app/models/files.py.
+FILE_CHUNK_BYTES = 768 * 1024
 LOGS_DIR_NAME = "logs"
 BACKUPS_DIR_NAME = "backups"
 # Held by the running server. See app/core/server_lock.py.
@@ -128,7 +138,10 @@ class ServerSection:
     rate_limit_max: int
     rate_limit_window_seconds: int
     rate_limit_signin_max: int
+    rate_limit_upload_max: int
     mcp: bool
+    maintenance: str
+    announcement: str
     # Deprecated: the key lives in secret.key. This is read only so that a
     # config.yaml from before the move can be migrated
     # (config_secret.migrate_legacy_secret); defaults.yaml has no such key,
@@ -139,6 +152,7 @@ class ServerSection:
 @dataclass
 class AuthSection:
     session_ttl_seconds: int
+    session_max_age_seconds: int
     login_token_ttl_seconds: int
     api_keys: bool
     api_key_ttl_seconds: int
@@ -191,6 +205,14 @@ class DockerSection:
 
 
 @dataclass
+class FilesSection:
+    enabled: bool
+    max_file_bytes: int
+    quota_bytes_per_user: int
+    abandoned_upload_hours: int
+
+
+@dataclass
 class File:
     app: AppSection
     server: ServerSection
@@ -199,6 +221,7 @@ class File:
     backups: BackupsSection
     metrics: MetricsSection
     webhooks: WebhooksSection
+    files: FilesSection
     docker: DockerSection
 
 
@@ -214,6 +237,7 @@ SECTIONS: dict[str, type] = {
     "backups": BackupsSection,
     "metrics": MetricsSection,
     "webhooks": WebhooksSection,
+    "files": FilesSection,
     "docker": DockerSection,
 }
 
@@ -238,6 +262,19 @@ class LogsConfig:
     static_assets: bool = False
     ui_clicks: bool = True
     echo: bool = True
+
+
+@dataclass(frozen=True)
+class FilesConfig:
+    """config.yaml's files section, resolved. dir holds finished files, and
+    uploads_dir the ones still arriving."""
+
+    enabled: bool = True
+    max_file_bytes: int = 104857600
+    quota_bytes_per_user: int = 1073741824
+    abandoned_upload_hours: int = 24
+    dir: Path = Path("storage") / "files"
+    uploads_dir: Path = Path("uploads")
 
 
 @dataclass(frozen=True)
@@ -296,9 +333,9 @@ class Config:
     # from.
     app_dir: Path
     database_path: Path
-    # For application files -- uploads, exports, generated artifacts. Nothing
-    # in the base template writes here; it exists so that features added
-    # later have an obvious, backed-up place to put files instead of
+    # For application files -- exports, generated artifacts. Finished uploads
+    # are in storage/files (see files.dir); the rest exists so that features
+    # added later have an obvious, backed-up place to put files instead of
     # inventing one.
     storage_dir: Path
 
@@ -318,6 +355,7 @@ class Config:
     cookie_name: str
 
     session_ttl_seconds: int
+    session_max_age_seconds: int
     login_token_ttl_seconds: int
 
     # Whether the Authorization: Bearer header is believed at all, and whether
@@ -344,6 +382,7 @@ class Config:
     rate_limit_window_seconds: int = 60
     # The separate budget for signing in and joining.
     rate_limit_signin_max: int = 60
+    rate_limit_upload_max: int = 1200
     body_limit_bytes: int = 1048576
 
     # proxy_header is believed only when trust_proxy is on *and* the
@@ -354,6 +393,11 @@ class Config:
     trust_proxy: bool = False
     trusted_proxies: tuple[str, ...] = ()
     proxy_header: str = "X-Forwarded-For"
+
+    # server.maintenance: see app/core/maintenance.py.
+    maintenance: str = "none"
+    # server.announcement: one line on every signed-in page.
+    announcement: str = ""
 
     # Whether POST /mcp exists. It answers only API keys, so with
     # api_keys_enabled off it is not registered either.
@@ -369,6 +413,7 @@ class Config:
     # The scheduled backup's settings; see app/core/backup.py.
     backups: BackupsConfig = field(default_factory=BackupsConfig)
     webhooks: WebhooksConfig = field(default_factory=WebhooksConfig)
+    files: FilesConfig = field(default_factory=FilesConfig)
 
     # secret.key, beside config_file: the one file besides the app directory
     # that a backup must include. secret_created is true when this run
@@ -695,9 +740,16 @@ def validate(file: File) -> list[str]:
     check(server.rate_limit_max > 0, "server.rate_limit_max must be positive")
     check(server.rate_limit_window_seconds > 0, "server.rate_limit_window_seconds must be positive")
     check(server.rate_limit_signin_max > 0, "server.rate_limit_signin_max must be positive")
+    check(server.rate_limit_upload_max > 0, "server.rate_limit_upload_max must be positive")
+    check(server.maintenance in ("none", "read_only", "full"), "server.maintenance must be none, read_only or full")
+    check(len(server.announcement) <= 500, "server.announcement must be 500 characters or fewer")
 
     auth = file.auth
     check(auth.session_ttl_seconds > 0, "auth.session_ttl_seconds must be positive")
+    check(
+        auth.session_max_age_seconds >= auth.session_ttl_seconds,
+        "auth.session_max_age_seconds must be at least auth.session_ttl_seconds",
+    )
     check(auth.login_token_ttl_seconds > 0, "auth.login_token_ttl_seconds must be positive")
     check(auth.api_key_ttl_seconds > 0, "auth.api_key_ttl_seconds must be positive")
 
@@ -709,6 +761,13 @@ def validate(file: File) -> list[str]:
 
     timeout = file.webhooks.timeout_seconds
     check(1 <= timeout <= 60, f"webhooks.timeout_seconds must be 1-60, got {timeout}")
+    check(file.files.max_file_bytes > 0, "files.max_file_bytes must be positive")
+    check(file.files.quota_bytes_per_user > 0, "files.quota_bytes_per_user must be positive")
+    check(file.files.abandoned_upload_hours > 0, "files.abandoned_upload_hours must be positive")
+    check(
+        not file.files.enabled or server.body_limit_bytes >= FILE_CHUNK_BYTES,
+        f"server.body_limit_bytes must be at least {FILE_CHUNK_BYTES} while files.enabled is on: that is the size of one piece of an upload",
+    )
 
     backups = file.backups
     check(backups.interval_hours >= 1, f"backups.interval_hours must be at least 1, got {backups.interval_hours}")
@@ -932,6 +991,7 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
         secure_cookies=file.server.secure_cookies,
         cookie_name=file.server.cookie_name,
         session_ttl_seconds=file.auth.session_ttl_seconds,
+        session_max_age_seconds=file.auth.session_max_age_seconds,
         login_token_ttl_seconds=file.auth.login_token_ttl_seconds,
         api_keys_enabled=file.auth.api_keys,
         passwords_enabled=file.auth.passwords,
@@ -942,11 +1002,14 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
         rate_limit_max=file.server.rate_limit_max,
         rate_limit_window_seconds=file.server.rate_limit_window_seconds,
         rate_limit_signin_max=file.server.rate_limit_signin_max,
+        rate_limit_upload_max=file.server.rate_limit_upload_max,
         body_limit_bytes=file.server.body_limit_bytes,
         trust_proxy=file.server.trust_proxy,
         trusted_proxies=tuple(entry.strip() for entry in file.server.trusted_proxies),
         proxy_header=file.server.proxy_header,
         mcp_enabled=file.server.mcp,
+        maintenance=file.server.maintenance,
+        announcement=file.server.announcement,
         metrics_enabled=file.metrics.enabled,
         logs=LogsConfig(
             enabled=file.logs.enabled,
@@ -962,6 +1025,14 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
         webhooks=WebhooksConfig(
             timeout_seconds=file.webhooks.timeout_seconds,
             allow_private_targets=file.webhooks.allow_private_targets,
+        ),
+        files=FilesConfig(
+            enabled=file.files.enabled,
+            max_file_bytes=file.files.max_file_bytes,
+            quota_bytes_per_user=file.files.quota_bytes_per_user,
+            abandoned_upload_hours=file.files.abandoned_upload_hours,
+            dir=paths.app_dir / STORAGE_DIR_NAME / FILES_DIR_NAME,
+            uploads_dir=paths.app_dir / UPLOADS_DIR_NAME,
         ),
         backups=BackupsConfig(
             enabled=file.backups.enabled,

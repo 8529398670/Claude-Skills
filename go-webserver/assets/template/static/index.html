@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light" />
   <title data-i18n="app.title">&nbsp;</title>
   <link rel="icon" href="/favicon.ico" />
@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
+  <a id="skip-link" href="#main" class="visually-hidden-focusable" data-i18n="nav.skip"></a>
   <!--
     No text is hardcoded here. Every visible string carries a data-i18n key
     that server/language resolves from language.yaml at runtime, so the copy
@@ -35,6 +36,10 @@
       <!-- The app's name is the way home, from any screen. -->
       <a href="/" class="navbar-brand fw-semibold me-auto" data-i18n="app.title"></a>
       <span class="navbar-text small d-none d-md-inline" data-i18n="app.tagline"></span>
+      <button id="theme-toggle" class="btn btn-link app-icon-button" type="button"
+              data-i18n-attr="aria-label:nav.theme_toggle,title:nav.theme_toggle">
+        <i class="bi bi-moon-stars" aria-hidden="true"></i>
+      </button>
       <div id="app-nav" class="d-flex align-items-center gap-2" hidden>
         <!-- The app's own top-level links go here. Your account is in the
              sidebar, not up here. -->
@@ -64,6 +69,7 @@
           <a class="nav-link" href="#password" data-nav="password"><i class="bi bi-lock" aria-hidden="true"></i><span data-i18n="nav.password"></span></a>
           <a class="nav-link" href="#two-factor" data-nav="two-factor"><i class="bi bi-shield-lock" aria-hidden="true"></i><span data-i18n="nav.two_factor"></span></a>
           <a class="nav-link" href="#api-keys" data-nav="api-keys"><i class="bi bi-code-square" aria-hidden="true"></i><span data-i18n="nav.api_keys"></span></a>
+          <a class="nav-link" href="#files" data-nav="files"><i class="bi bi-folder" aria-hidden="true"></i><span data-i18n="nav.files"></span></a>
 
           <div id="sidebar-admin" class="sidebar-group" hidden>
             <h3 class="sidebar-heading" data-i18n="nav.admin_heading"></h3>
@@ -75,12 +81,25 @@
             <a class="nav-link" href="#webhooks" data-nav="webhooks"><i class="bi bi-broadcast" aria-hidden="true"></i><span data-i18n="nav.webhooks"></span></a>
             <a class="nav-link" href="#settings" data-nav="settings"><i class="bi bi-sliders" aria-hidden="true"></i><span data-i18n="nav.settings"></span></a>
           </div>
+          <p id="sidebar-version" class="sidebar-version" hidden></p>
         </nav>
       </div>
     </aside>
 
-    <main hidden id="main" class="app-main">
+    <main hidden id="main" class="app-main" tabindex="-1">
+      <p id="maintenance-banner" class="alert alert-warning" role="status" hidden></p>
+      <!-- server.announcement, until dismissed. See App.showAnnouncement. -->
+      <div id="announcement-banner" class="alert alert-info alert-dismissible" role="status" hidden>
+        <span id="announcement-text"></span>
+        <button id="announcement-dismiss" type="button" class="btn-close" data-i18n-attr="aria-label:nav.close"></button>
+      </div>
       <p id="error-banner" class="alert alert-danger" role="alert" hidden></p>
+
+      <!-- While the signed-in screens fetch what they show. See App.renderSignedIn. -->
+      <div id="app-loading" class="app-loading" role="status" hidden>
+        <span class="spinner-border" aria-hidden="true"></span>
+        <span class="visually-hidden" data-i18n="ui.loading"></span>
+      </div>
 
       <section id="signed-out" class="card" hidden>
         <div class="card-body">
@@ -88,6 +107,7 @@
           <p data-i18n="signed_out.body"></p>
           <p id="invalid-link" class="alert alert-warning mb-0" data-i18n="signed_out.invalid_link" hidden></p>
           <p id="sign-in-expired" class="alert alert-warning mb-0" data-i18n="signed_out.sign_in_expired" hidden></p>
+          <p id="session-ended" class="alert alert-warning mb-0" data-i18n="signed_out.session_ended" hidden></p>
 
           <!-- Only while the owner has auth.passwords on; see password.js. -->
           <div id="password-login" class="mt-3" hidden>
@@ -209,7 +229,9 @@
               <div class="link-box">
                 <code id="my-link-value"></code>
                 <button id="my-link-copy-button" class="btn btn-sm btn-outline-secondary" data-i18n="account.copy_button"></button>
+                <button id="my-link-qr-button" class="btn btn-sm btn-outline-secondary" data-i18n="ui.qr_button"></button>
               </div>
+              <canvas id="my-link-qr" class="link-qr" role="img" data-i18n-attr="aria-label:ui.qr_label" hidden></canvas>
             </div>
 
             <hr />
@@ -218,7 +240,7 @@
             <h3 class="h6" data-i18n="sessions.heading"></h3>
             <p class="text-body-secondary" data-i18n="sessions.description"></p>
             <div class="table-responsive">
-              <table id="sessions-table" class="table table-hover align-middle">
+              <table id="sessions-table" class="table table-hover align-middle" data-empty="sessions.empty">
                 <thead>
                   <tr>
                     <th data-i18n="sessions.table_device"></th>
@@ -313,9 +335,12 @@
 
             <div id="two-factor-setup" hidden>
               <p data-i18n="two_factor.setup_scan"></p>
-              <canvas id="two-factor-qr" class="d-block img-fluid mb-3 border rounded"></canvas>
+              <canvas id="two-factor-qr" class="d-block img-fluid mb-3 border rounded" role="img" data-i18n-attr="aria-label:ui.qr_label"></canvas>
               <p class="mb-1" data-i18n="two_factor.setup_manual"></p>
-              <p><code id="two-factor-secret"></code></p>
+              <div class="link-box mb-3">
+                <code id="two-factor-secret"></code>
+                <button id="two-factor-secret-copy" type="button" class="btn btn-sm btn-outline-secondary" data-i18n="two_factor.copy_secret_button"></button>
+              </div>
               <form id="two-factor-confirm-form" autocomplete="off">
                 <div class="mb-3">
                   <label for="two-factor-code" class="form-label" data-i18n="two_factor.setup_code_label"></label>
@@ -330,6 +355,7 @@
               <pre id="two-factor-recovery-codes" class="mb-3"></pre>
               <div class="row-actions">
                 <button id="two-factor-recovery-copy" class="btn btn-sm btn-outline-secondary" data-i18n="two_factor.copy_button"></button>
+                <button id="two-factor-recovery-download" class="btn btn-sm btn-outline-secondary" data-i18n="two_factor.download_button"></button>
                 <button id="two-factor-recovery-done" class="btn btn-sm btn-primary" data-i18n="two_factor.done_button"></button>
               </div>
             </div>
@@ -386,7 +412,7 @@
             </div>
 
             <div class="table-responsive mt-4">
-              <table id="keys-table" class="table table-hover align-middle">
+              <table id="keys-table" class="table table-hover align-middle" data-empty="api_keys.empty">
                 <thead>
                   <tr>
                     <th data-i18n="api_keys.table_name"></th>
@@ -400,6 +426,52 @@
                 <tbody></tbody>
               </table>
             </div>
+          </div>
+        </section>
+
+        <section class="card view" data-view="files" id="files-panel" hidden>
+          <div class="card-body">
+            <h2 class="h4 card-title" data-i18n="files.heading"></h2>
+            <p class="text-body-secondary" data-i18n="files.description"></p>
+
+            <label for="file-input" class="form-label" data-i18n="files.upload_label"></label>
+            <input id="file-input" class="form-control" type="file" multiple />
+            <p class="form-text" data-i18n="files.drop_hint"></p>
+
+            <div id="file-progress-box" class="mt-3" hidden>
+              <div id="file-progress-text" class="small text-body-secondary mb-1 text-break"></div>
+              <div class="d-flex align-items-center gap-2">
+                <progress id="file-progress" class="flex-grow-1" max="1" value="0" aria-labelledby="file-progress-text"></progress>
+                <button id="file-cancel" type="button" class="btn btn-sm btn-outline-secondary" data-i18n="ui.cancel"></button>
+              </div>
+            </div>
+
+            <div id="files-usage" class="mt-3" hidden>
+              <div id="files-usage-text" class="small text-body-secondary mb-1"></div>
+              <progress id="files-usage-bar" class="w-100" max="1" value="0" aria-labelledby="files-usage-text"></progress>
+            </div>
+
+            <div id="files-everyone-field" class="form-check form-switch mt-4" hidden>
+              <input id="files-everyone" class="form-check-input" type="checkbox" role="switch" />
+              <label for="files-everyone" class="form-check-label" data-i18n="files.everyone_label"></label>
+            </div>
+            <p id="files-usage-all" class="small text-body-secondary mt-2 mb-0" hidden></p>
+
+            <div class="table-responsive mt-3">
+              <table id="files-table" class="table table-hover align-middle">
+                <thead>
+                  <tr>
+                    <th data-i18n="files.table_name"></th>
+                    <th id="files-owner-column" data-i18n="files.table_owner" hidden></th>
+                    <th data-i18n="files.table_size"></th>
+                    <th data-i18n="files.table_uploaded"></th>
+                    <th data-i18n="files.table_actions"></th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <p id="files-empty" class="text-body-secondary" data-i18n="files.empty" hidden></p>
           </div>
         </section>
 
@@ -431,11 +503,19 @@
               <div class="link-box">
                 <code id="login-link-value"></code>
                 <button id="copy-link-button" class="btn btn-sm btn-outline-secondary" data-i18n="admin.copy_button"></button>
+                <button id="login-link-qr-button" class="btn btn-sm btn-outline-secondary" data-i18n="ui.qr_button"></button>
               </div>
+              <canvas id="login-link-qr" class="link-qr" role="img" data-i18n-attr="aria-label:ui.qr_label" hidden></canvas>
             </div>
 
-            <div class="table-responsive mt-4">
-              <table id="users-table" class="table table-hover align-middle">
+            <div class="mt-4" role="search">
+              <label for="users-search" class="visually-hidden" data-i18n="admin.search_label"></label>
+              <input id="users-search" class="form-control" type="search" autocomplete="off"
+                     data-i18n-attr="placeholder:admin.search_label" />
+            </div>
+
+            <div class="table-responsive mt-3">
+              <table id="users-table" class="table table-hover align-middle" data-empty="admin.empty">
                 <thead>
                   <tr>
                     <th data-i18n="admin.table_name"></th>
@@ -446,6 +526,28 @@
                 </thead>
                 <tbody></tbody>
               </table>
+            </div>
+
+            <!-- One account's devices, from its Sessions button. See Sessions.showFor. -->
+            <div id="user-sessions" class="mt-4" hidden>
+              <div class="d-flex align-items-center justify-content-between gap-2">
+                <h3 id="user-sessions-heading" class="h6 mb-0"></h3>
+                <button id="user-sessions-close" type="button" class="btn-close" data-i18n-attr="aria-label:nav.close"></button>
+              </div>
+              <div class="table-responsive mt-2">
+                <table id="user-sessions-table" class="table table-hover align-middle" data-empty="sessions.user_empty">
+                  <thead>
+                    <tr>
+                      <th data-i18n="sessions.table_device"></th>
+                      <th data-i18n="sessions.table_ip"></th>
+                      <th data-i18n="sessions.table_seen"></th>
+                      <th data-i18n="sessions.table_signed_in"></th>
+                      <th data-i18n="sessions.table_actions"></th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
             </div>
           </div>
         </section>
@@ -480,11 +582,13 @@
               <div class="link-box">
                 <code id="invite-link-value"></code>
                 <button id="copy-invite-button" class="btn btn-sm btn-outline-secondary" data-i18n="invite_links.copy_button"></button>
+                <button id="invite-link-qr-button" class="btn btn-sm btn-outline-secondary" data-i18n="ui.qr_button"></button>
               </div>
+              <canvas id="invite-link-qr" class="link-qr" role="img" data-i18n-attr="aria-label:ui.qr_label" hidden></canvas>
             </div>
 
             <div class="table-responsive mt-4">
-              <table id="invite-links-table" class="table table-hover align-middle">
+              <table id="invite-links-table" class="table table-hover align-middle" data-empty="invite_links.empty">
                 <thead>
                   <tr>
                     <th data-i18n="invite_links.table_label"></th>
@@ -507,8 +611,47 @@
             <h2 class="h4 card-title" data-i18n="admin_keys.heading"></h2>
             <p class="text-body-secondary" data-i18n="admin_keys.description"></p>
 
-            <div class="table-responsive">
-              <table id="admin-keys-table" class="table table-hover align-middle">
+            <!-- A key that acts as someone else. keys.js fills the picker with
+                 only the accounts the server would allow. -->
+            <h3 class="h5" data-i18n="admin_keys.create_heading"></h3>
+            <p class="text-body-secondary" data-i18n="admin_keys.create_description"></p>
+            <form id="create-user-key-form" class="row g-3 align-items-end" autocomplete="off">
+              <div class="col-md">
+                <label for="user-key-user" class="form-label" data-i18n="admin_keys.user_label"></label>
+                <select id="user-key-user" class="form-select" name="user_id" required></select>
+              </div>
+              <div class="col-md">
+                <label for="user-key-name" class="form-label" data-i18n="api_keys.name_label"></label>
+                <input id="user-key-name" class="form-control" name="name" maxlength="80" required
+                       data-i18n-attr="placeholder:api_keys.name_placeholder" />
+              </div>
+              <div class="col-md">
+                <label for="user-key-role" class="form-label" data-i18n="api_keys.role_label"></label>
+                <select id="user-key-role" class="form-select" name="role">
+                  <option value="user" data-i18n="api_keys.role_user"></option>
+                  <option value="admin" data-i18n="api_keys.role_admin"></option>
+                </select>
+              </div>
+              <div class="col-md">
+                <label for="user-key-days" class="form-label" data-i18n="api_keys.days_label"></label>
+                <input id="user-key-days" class="form-control" name="expires_in_days" type="number" min="0" max="3650" inputmode="numeric"
+                       data-i18n-attr="placeholder:api_keys.days_placeholder" />
+              </div>
+              <div class="col-md-auto">
+                <button type="submit" class="btn btn-primary" data-i18n="api_keys.create_button"></button>
+              </div>
+            </form>
+
+            <div id="user-key-secret-box" class="alert alert-info mt-3" hidden>
+              <p class="mb-2" data-i18n="api_keys.secret_notice"></p>
+              <div class="link-box">
+                <code id="user-key-secret-value"></code>
+                <button id="copy-user-key-button" type="button" class="btn btn-sm btn-outline-secondary" data-i18n="api_keys.copy_button"></button>
+              </div>
+            </div>
+
+            <div class="table-responsive mt-3">
+              <table id="admin-keys-table" class="table table-hover align-middle" data-empty="api_keys.all_empty">
                 <thead>
                   <tr>
                     <th data-i18n="admin_keys.table_owner"></th>
@@ -592,7 +735,7 @@
             </div>
 
             <div class="table-responsive mt-4">
-              <table id="webhooks-table" class="table table-hover align-middle">
+              <table id="webhooks-table" class="table table-hover align-middle" data-empty="webhooks.empty">
                 <thead>
                   <tr>
                     <th data-i18n="webhooks.table_name"></th>
@@ -608,7 +751,7 @@
             <div id="webhook-deliveries" class="mt-4" hidden>
               <h3 id="webhook-deliveries-heading" class="h6"></h3>
               <div class="table-responsive">
-                <table id="webhook-deliveries-table" class="table table-hover align-middle">
+                <table id="webhook-deliveries-table" class="table table-hover align-middle" data-empty="webhooks.deliveries_empty">
                   <thead>
                     <tr>
                       <th data-i18n="webhooks.table_event"></th>
@@ -616,6 +759,7 @@
                       <th data-i18n="webhooks.table_attempts"></th>
                       <th data-i18n="webhooks.table_result"></th>
                       <th data-i18n="webhooks.table_when"></th>
+                      <th data-i18n="webhooks.table_actions"></th>
                     </tr>
                   </thead>
                   <tbody></tbody>
@@ -631,7 +775,7 @@
             <h2 class="h4 card-title" data-i18n="jobs.heading"></h2>
             <p class="text-body-secondary" data-i18n="jobs.description"></p>
             <div class="table-responsive">
-              <table id="jobs-table" class="table table-hover align-middle">
+              <table id="jobs-table" class="table table-hover align-middle" data-empty="jobs.empty">
                 <thead>
                   <tr>
                     <th data-i18n="jobs.table_name"></th>
@@ -688,6 +832,19 @@
     </div>
   </div>
 
+  <!-- Asks before anything that cannot be taken back: see Dom.confirm. -->
+  <div id="confirm-modal" class="modal fade" tabindex="-1" aria-labelledby="confirm-text" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div id="confirm-text" class="modal-body"></div>
+        <div class="modal-footer">
+          <button id="confirm-cancel" type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-i18n="ui.cancel"></button>
+          <button id="confirm-ok" type="button" class="btn btn-danger" data-i18n="ui.confirm"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!--
     Plain scripts in dependency order. No bundler, no modules that need a
     build step: each file adds one global and the browser runs them as-is.
@@ -697,6 +854,7 @@
   <script src="/vendor/bootstrap.bundle.min.js"></script>
   <script src="/vendor/qrcode.js"></script>
   <script src="/js/dom.js"></script>
+  <script src="/js/qr.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/undo.js"></script>
   <script src="/js/api.js"></script>
@@ -705,6 +863,7 @@
   <script src="/js/pager.js"></script>
   <script src="/js/keys.js"></script>
   <script src="/js/sessions.js"></script>
+  <script src="/js/files.js"></script>
   <script src="/js/join.js"></script>
   <script src="/js/pin.js"></script>
   <script src="/js/password.js"></script>
@@ -714,6 +873,7 @@
   <script src="/js/jobs.js"></script>
   <script src="/js/webhooks.js"></script>
   <script src="/js/settings.js"></script>
+  <script src="/js/fresh.js"></script>
   <script src="/js/app.js"></script>
 </body>
 </html>

@@ -40,7 +40,7 @@ COPY app ./app
 COPY static ./static
 # The language file and the defaults the app reads; never config.yaml or
 # secret.key, which .dockerignore keeps out of the build context entirely.
-COPY config/language.yaml config/defaults.yaml config/example_header.yaml ./config/
+COPY config/language.yaml config/defaults.yaml config/example_header.yaml config/openapi.json ./config/
 
 # Version metadata, passed by docker/lib.sh so that
 # `docker exec <name> python -m app version` says which build is running.

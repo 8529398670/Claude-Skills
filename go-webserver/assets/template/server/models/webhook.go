@@ -26,6 +26,8 @@ const (
 	EventInviteLinkCreated = "invite_link.created"
 	EventInviteLinkRevoked = "invite_link.revoked"
 	EventJobFailed         = "job.failed"
+	EventFileUploaded      = "file.uploaded"
+	EventFileDeleted       = "file.deleted"
 	// EventWebhookTest only ever goes to the one endpoint being tested.
 	EventWebhookTest = "webhook.test"
 
@@ -38,6 +40,7 @@ var WebhookEvents = []string{
 	EventAPIKeyCreated , EventAPIKeyRevoked ,
 	EventInviteLinkCreated , EventInviteLinkRevoked ,
 	EventJobFailed ,
+	EventFileUploaded , EventFileDeleted ,
 }
 
 const (
@@ -240,6 +243,39 @@ func newWebhookDelivery( webhook_id string , event string , data map[string]any 
 		NextAttemptAt: now,
 		CreatedAt:     now,
 	}
+	return
+}
+
+// ErrDeliveryNotFailed answers a resend of a delivery still pending or already
+// delivered: only one that was given up on has anything to resend.
+var ErrDeliveryNotFailed = errors.New( "delivery has not failed" )
+
+// ResendWebhookDelivery queues a delivery that was given up on for another go,
+// once the receiver is fixed. A new row, so the failed attempts stay listed, but
+// the same body, so its id still names one event: a receiver that handled the
+// event and only failed to answer can tell this is the same one again.
+func ResendWebhookDelivery( store *db.Store , webhook_id string , delivery_id string ) ( err error ) {
+	original := &WebhookDelivery{}
+	if err = store.Get( db.BucketWebhookDeliveries , []byte( delivery_id ) , original ); err != nil { return }
+	if original.WebhookID != webhook_id {
+		err = db.ErrNotFound
+		return
+	}
+	if original.Status != WebhookFailed {
+		err = ErrDeliveryNotFailed
+		return
+	}
+	now := time.Now().UTC()
+	again := &WebhookDelivery{
+		ID:            encryption.GenerateURLToken( 12 ),
+		WebhookID:     webhook_id,
+		Event:         original.Event,
+		Body:          original.Body,
+		Status:        WebhookPending,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+	}
+	err = store.Put( db.BucketWebhookDeliveries , []byte( again.ID ) , again )
 	return
 }
 

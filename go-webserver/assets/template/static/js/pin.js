@@ -8,7 +8,7 @@ const Pin = {
     this.me = me;
     if ( me.account_role === "admin" || me.auth !== "session" ) return;
     Dom.show( Dom.get( "pin-panel" ) , true );
-    Dom.get( "pin-form" ).addEventListener( "submit" , this.onSave.bind( this ) );
+    Dom.onSubmit( Dom.get( "pin-form" ) , this.onSave.bind( this ) );
     Dom.get( "pin-clear-button" ).addEventListener( "click" , this.onClear.bind( this ) );
     this.render();
   },

@@ -12,6 +12,7 @@ package security
 
 import (
 	strings "strings"
+	time "time"
 
 	fiber "github.com/gofiber/fiber/v3"
 
@@ -93,16 +94,24 @@ func ( guard *Guard ) cfg() ( cfg *config.Config ) {
 func ( guard *Guard ) SetSessionCookie( c fiber.Ctx , credential string ) ( err error ) {
 	sealed , err := encryption.ChaChaEncryptString( guard.cfg().SecretKey , credential )
 	if err != nil { return }
+	guard.writeSessionCookie( c , sealed , guard.cfg().SessionTTL )
+	return
+}
+
+// writeSessionCookie is the one place the cookie's attributes are spelled, so
+// the copy sent when a session extends cannot drift from the one sent at
+// sign-in. A later cookie of the same name on this response replaces it, so
+// logging out or switching account on a request that extended still wins.
+func ( guard *Guard ) writeSessionCookie( c fiber.Ctx , sealed string , lifetime time.Duration ) {
 	c.Cookie( &fiber.Cookie{
 		Name:     guard.cfg().CookieName,
 		Value:    sealed,
 		Path:     "/",
-		MaxAge:   int( guard.cfg().SessionTTL.Seconds() ),
+		MaxAge:   int( lifetime.Seconds() ),
 		Secure:   guard.cfg().SecureCookies,
 		HTTPOnly: true,
 		SameSite: "Strict",
 	} )
-	return
 }
 
 func ( guard *Guard ) ClearSessionCookie( c fiber.Ctx ) {
@@ -160,7 +169,11 @@ func ( guard *Guard ) resolveSession( c fiber.Ctx ) ( actor *Actor ) {
 	session , user := models.LoadSession( guard.Store , credential )
 	if user == nil { return }
 
-	models.TouchSession( guard.Store , session )
+	// The browser drops the cookie at its own expiry, so extending only the
+	// record would still sign this person out when that arrived.
+	if models.TouchSession( guard.Store , session , guard.cfg().SessionTTL , guard.cfg().SessionMaxAge ) {
+		guard.writeSessionCookie( c , raw , time.Until( session.ExpiresAt ) )
+	}
 	actor = &Actor{ User: user , Session: session , Role: user.Role }
 	return
 }

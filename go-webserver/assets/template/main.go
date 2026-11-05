@@ -78,6 +78,11 @@ var (
 	//go:embed config/language.yaml
 	embeddedLanguage []byte
 
+	// Embedded only, unlike language.yaml: it describes the routes compiled
+	// into this binary, so a copy on disk could only disagree with them.
+	//go:embed config/openapi.json
+	embeddedOpenAPI []byte
+
 	//go:embed config/defaults.yaml
 	embeddedDefaults []byte
 
@@ -242,6 +247,8 @@ func run() ( err error ) {
 	handlers.Webhooks = dispatcher
 	recorder := metrics.New()
 	handlers.Metrics = recorder
+	handlers.ErrorPages = error_pages
+	handlers.OpenAPI = embeddedOpenAPI
 	handlers.LogStream = log_stream
 
 	app := fiber.New( fiber.Config{

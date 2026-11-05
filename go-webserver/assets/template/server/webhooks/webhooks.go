@@ -157,6 +157,13 @@ func ( dispatcher *Dispatcher ) SendTest( hook *models.Webhook ) ( err error ) {
 	return
 }
 
+// Resend queues a failed delivery again. See models.ResendWebhookDelivery.
+func ( dispatcher *Dispatcher ) Resend( webhook_id string , delivery_id string ) ( err error ) {
+	if err = models.ResendWebhookDelivery( dispatcher.store , webhook_id , delivery_id ); err != nil { return }
+	dispatcher.nudge()
+	return
+}
+
 func ( dispatcher *Dispatcher ) nudge() {
 	if dispatcher.Nudge != nil {
 		dispatcher.Nudge()

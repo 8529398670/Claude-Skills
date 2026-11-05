@@ -44,6 +44,11 @@ type APIKey struct {
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	// CreatedBy is the admin who minted this key as its owner, through
+	// IssueAPIKeyFor. Zero means the owner made it, or it came from a shell,
+	// and rows from before this field read as zero too. It is what lets the
+	// person a key acts as see that someone else made it.
+	CreatedBy uint64 `json:"created_by,omitempty"`
 	// Set by DeleteAPIKey. A deleted key is dead and out of every listing,
 	// but RestoreAPIKey can bring it back for RestoreWindow.
 	SoftDelete
@@ -161,6 +166,32 @@ func NarrowRole( account_role string , key_role string ) ( result string ) {
 // by a credential that dies silently at 3am. It has to be asked for
 // explicitly; the default comes from configuration.
 func IssueAPIKey( store *db.Store , user_id uint64 , name string , role string , ttl time.Duration ) ( credential string , key *APIKey , err error ) {
+	credential , key , err = issueAPIKey( store , user_id , name , role , ttl , 0 )
+	return
+}
+
+// IssueAPIKeyFor is an admin minting a key that acts as someone else, so it
+// follows the ladder deleting an account does, for the same reason -- acting
+// as an account is as much power over it as removing it:
+//
+//   - nobody mints for the owner (ErrOwnerProtected) -- a shell still can,
+//     through IssueAPIKey;
+//   - only the owner mints for another admin (ErrOwnerRequired).
+//
+// Your own account is simply your own key. The rules are checked inside the
+// issuing transaction, so ownership cannot move between the check and the key.
+func IssueAPIKeyFor( store *db.Store , actor_id uint64 , user_id uint64 , name string , role string , ttl time.Duration ) ( credential string , key *APIKey , err error ) {
+	if actor_id == user_id {
+		credential , key , err = IssueAPIKey( store , user_id , name , role , ttl )
+		return
+	}
+	credential , key , err = issueAPIKey( store , user_id , name , role , ttl , actor_id )
+	return
+}
+
+// issueAPIKey is both of the above. A created_by of zero means the key is its
+// owner's own, or came from a shell, and no ladder applies.
+func issueAPIKey( store *db.Store , user_id uint64 , name string , role string , ttl time.Duration , created_by uint64 ) ( credential string , key *APIKey , err error ) {
 	// The owner is loaded inside the transaction below rather than taking the
 	// caller's word for the role. Every route into this function -- the HTTP
 	// API, the control socket, the CLI -- then gets the same ceiling without
@@ -179,6 +210,7 @@ func IssueAPIKey( store *db.Store , user_id uint64 , name string , role string ,
 		Role:       role,
 		SecretHash: encryption.Sha256Hex( secret ),
 		CreatedAt:  now,
+		CreatedBy:  created_by,
 	}
 	if ttl > 0 {
 		expires := now.Add( ttl )
@@ -192,6 +224,21 @@ func IssueAPIKey( store *db.Store , user_id uint64 , name string , role string ,
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
 		owner := &User{}
 		if tx_err = tx.Get( db.BucketUsers , encryption.Uint64ToBytes( user_id ) , owner ); tx_err != nil { return }
+		if created_by != 0 {
+			owner_id , owner_err := ownerIDTx( tx )
+			if owner_err != nil {
+				tx_err = owner_err
+				return
+			}
+			if owner_id == user_id {
+				tx_err = ErrOwnerProtected
+				return
+			}
+			if owner.IsAdmin() && created_by != owner_id {
+				tx_err = ErrOwnerRequired
+				return
+			}
+		}
 		if owner.Disabled() {
 			tx_err = ErrAPIKeyDisabled
 			return

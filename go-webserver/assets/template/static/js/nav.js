@@ -69,6 +69,22 @@ const Nav = {
       else link.removeAttribute( "aria-current" );
     } );
     window.scrollTo( 0 , 0 );
+    this.announce( name );
+  },
+
+  // Changing screen reloads nothing, so nothing tells a screen reader or the
+  // browser's tab that anything happened. The title names the screen, and the
+  // focus moves to its heading, except on load, when it belongs to the page.
+  announce( name ) {
+    const heading = document.querySelector( '.view[data-view="' + name + '"] h2' );
+    if ( !heading ) return;
+    const title = I18n.get( "nav.page_title" );
+    if ( title !== "" ) document.title = title.replace( "{screen}" , heading.textContent ).replace( "{app}" , I18n.get( "app.title" ) );
+    const moved = this.shown !== undefined && this.shown !== name;
+    this.shown = name;
+    if ( !moved ) return;
+    heading.setAttribute( "tabindex" , "-1" );
+    heading.focus( { preventScroll: true } );
   },
 
   // The menu button: on a wide screen it folds the sidebar column away and

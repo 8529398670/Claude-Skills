@@ -21,6 +21,7 @@ from starlette.middleware import Middleware
 from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
 from app.core import assets, bootstrap, config, config_live, db, graceful, housekeeping, jobs, language, logs, metrics, server_lock, sse, webhooks
+from app.core.maintenance import Maintenance
 from app.core.middleware import EXCEPTION_HANDLERS, RateLimit, SecurityHeaders
 from app.core.request_id import RequestID
 from app.core.request_log import RequestLog
@@ -114,7 +115,7 @@ def build_app(
         # runs before anything touches the database, so a flood is cheap to
         # refuse; then the caller is resolved once for every route behind it;
         # then each request is written to the activity log, knowing who made
-        # it.
+        # it; and only then can maintenance mode refuse it, knowing who asked.
         middleware=[
             Middleware(RequestID),
             Middleware(metrics.MeasureRequests, metrics=measured),
@@ -123,6 +124,7 @@ def build_app(
             Middleware(RateLimit, settings=settings),
             Middleware(LoadActor, store=store, settings=settings),
             Middleware(RequestLog, settings=settings, logger=logger),
+            Middleware(Maintenance, store=store, settings=settings),
         ],
         exception_handlers=EXCEPTION_HANDLERS,
         lifespan=lifespan,

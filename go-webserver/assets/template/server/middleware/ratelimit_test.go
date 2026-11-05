@@ -14,7 +14,7 @@ import (
 // are separate, and no spelling of a path gets around either.
 
 func limitedApp( general int , sign_in int ) ( app *fiber.App ) {
-	settings := config.NewHolder( &config.Config{ RateLimitMax: general , RateLimitSignInMax: sign_in , RateLimitWindow: time.Minute } )
+	settings := config.NewHolder( &config.Config{ RateLimitMax: general , RateLimitSignInMax: sign_in , RateLimitUploadMax: 3 , RateLimitWindow: time.Minute } )
 	app = fiber.New()
 	app.Use( RateLimit( settings ) )
 	app.All( "/*" , func( c fiber.Ctx ) ( err error ) {
@@ -49,6 +49,19 @@ func TestStaticFilesNeverSpendTheBudget( t *testing.T ) {
 		if code := status( t , app , http.MethodGet , "/api/me" ); code != 200 { t.Fatalf( "api call %d: %d" , count , code ) }
 	}
 	if code := status( t , app , http.MethodGet , "/api/me" ); code != 429 { t.Fatalf( "past the budget: %d" , code ) }
+}
+
+func TestPiecesOfAnUploadHaveTheirOwnBudget( t *testing.T ) {
+	app := limitedApp( 2 , 2 )
+	for count := 0; count < 3; count++ {
+		if code := status( t , app , http.MethodPost , "/api/files/abc/chunks/1" ); code != 200 { t.Fatalf( "piece %d: %d" , count , code ) }
+	}
+	if code := status( t , app , http.MethodPost , "/API/Files/abc/chunks/2/" ); code != 429 { t.Fatalf( "past the budget: %d" , code ) }
+	// All of that left the page's budget alone, and only a piece is a piece.
+	for _ , target := range []string{ "/api/files/abc/finish" , "/api/files/abc/chunks" } {
+		if code := status( t , app , http.MethodPost , target ); code != 200 { t.Fatalf( "%s: %d" , target , code ) }
+	}
+	if code := status( t , app , http.MethodPost , "/api/files/abc/finish" ); code != 429 { t.Fatalf( "general budget: %d" , code ) }
 }
 
 func TestTheBudgetsAreSeparate( t *testing.T ) {

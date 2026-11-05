@@ -1,6 +1,6 @@
 ---
 name: python-webserver
-description: Scaffold a new security-hardened Python web server on Starlette + uvicorn with link-based login (no open signup -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), optional password login the owner switches on, optional two-factor sign-in, every database record encrypted at rest in a single SQLite file, API keys that reuse the admin/user roles, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + docker/run.sh with no docker-compose, scripts/run.sh and scripts/login.sh that report the real URL, paths and state, one config/config.yaml that configures the server and the Docker container (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Python -- trigger on "build me a webserver/website/web app", "new Starlette app", "Python backend with logins", "I need a simple internal tool with logins", "set up a Python backend with an admin panel", "scaffold a new app with Docker", or "I don't want a signup page, just let me create accounts myself". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, encrypted storage, or Docker packaging to a Python web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Python API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my app", "service account for CI", "add an MCP server/endpoint", "let Claude (Code) use my app", "add password login", or "add 2FA / two-factor / TOTP". Do NOT use it for a one-off script, a data pipeline, a CLI tool, or a project that already has its own auth/serving stack the user wants extended in its own style. This is the Python counterpart to the `go-webserver` skill -- pick that one whenever Go, golang, or Fiber is mentioned, or when the user needs one self-contained executable with no runtime at all.
+description: Scaffold a new security-hardened Python web server on Starlette + uvicorn with link-based login (no open signup -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), optional password login the owner switches on, optional two-factor sign-in, encrypted file uploads, every database record encrypted at rest in a single SQLite file, API keys that reuse the admin/user roles, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + docker/run.sh with no docker-compose, scripts/run.sh and scripts/login.sh that report the real URL, paths and state, one config/config.yaml that configures the server and the Docker container (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Python -- trigger on "build me a webserver/website/web app", "new Starlette app", "Python backend with logins", "I need a simple internal tool with logins", "set up a Python backend with an admin panel", "scaffold a new app with Docker", or "I don't want a signup page, just let me create accounts myself". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, encrypted storage, or Docker packaging to a Python web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Python API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my app", "service account for CI", "add an MCP server/endpoint", "let Claude (Code) use my app", "add password login", or "add 2FA / two-factor / TOTP". Do NOT use it for a one-off script, a data pipeline, a CLI tool, or a project that already has its own auth/serving stack the user wants extended in its own style. This is the Python counterpart to the `go-webserver` skill -- pick that one whenever Go, golang, or Fiber is mentioned, or when the user needs one self-contained executable with no runtime at all.
 ---
 
 # Python webserver scaffolder
@@ -30,6 +30,10 @@ project.
   recovery codes, asked for on every browser sign-in: password, login link and
   invite link alike. API keys are exempt. `auth.two_factor` is the owner's
   switch, on by default.
+- **File uploads, encrypted.** Everyone gets a Files screen with progress, resume
+  and undoable delete; only the uploader and admins can open a file. Files arrive in
+  pieces under the normal body limit, each sealed as it arrives with the file's own
+  key, so rotating the secret key touches no file data. `files.enabled` switches it.
 - **Invite links for groups.** An admin can also make one multi-use link
   (`/join/<id>.<secret>`) to post in a group chat: each person types their
   name and joins as a `user`, up to a set number of places, until it expires
@@ -142,6 +146,12 @@ project.
   the log line, and in a 5xx body, so a quoted reference finds the line that
   says why. `/api/ready` answers "can this instance serve" for a load balancer,
   and `/metrics` is Prometheus text for an admin API key, off by default.
+- **Maintenance mode.** `server.maintenance` is `none`, `read_only` or `full`,
+  applied live from Settings. Everyone but the owner's browser session gets a
+  503 with `Retry-After`: a page in a browser, JSON for a script.
+- **An OpenAPI spec.** `config/openapi.json` describes every route, and
+  `GET /api/openapi.json` hands it to anyone signed in. A test fails until a
+  new route is in it.
 - **Live updates are server-sent events, by hand.** A hub with a client cap, a
   small dropping queue per client, a heartbeat and an auth re-check every 15
   seconds. The Logs screen's live tail runs on it, and a stop ends open streams
@@ -226,6 +236,7 @@ ports they ran on. Do not reset either to a shared value.
                               #   editable live from the Settings screen)
     secret.key                # the key that encrypts the database (written by
                               #   scaffold.py; gitignored, 0600) -- back it up
+    openapi.json              # the API, by hand; a test keeps it in step
     config.example.yaml       # every default -- commit this; a fresh clone
                               #   copies it to config/config.yaml
                               #   (`python -m app config example` regenerates it)
@@ -276,10 +287,11 @@ ports they ran on. Do not reset either to a shared value.
       language.py             # loads language.yaml, serves it as JSON
       bootstrap.py            # first-run admin + printing links as full URLs
       healthcheck.py          # `health`, the container HEALTHCHECK
+      maintenance.py          # server.maintenance: what each mode leaves open
     models/                   # users.py, sessions.py, login_tokens.py, api_keys.py,
                               #   invite_links.py, pins.py, passwords.py,
                               #   two_factor.py, sign_in.py, attempts.py, jobs.py,
-                              #   webhooks.py
+                              #   webhooks.py, files.py
     mcp/                      # protocol.py: the /mcp JSON-RPC protocol
                               # registry.py: Tool, Call.bind, Refusal
     routes/                   # __init__.py (the URL map) + one module per group,
@@ -298,7 +310,9 @@ ports they ran on. Do not reset either to a shared value.
     js/logs.js                # the owner's Logs screen
     js/jobs.js                # the owner's Jobs screen
     js/sessions.js            # the Account screen's list of sessions
-    js/dom.js, i18n.js, api.js, app.js, keys.js,
+    js/fresh.js               # asks the server again on coming back to a tab
+    js/qr.js                  # QR codes for 2FA and for login and invite links
+    js/dom.js, i18n.js, api.js, app.js, keys.js, files.js,
       join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
       password.js, two_factor.js    # password form and panel; 2FA step and panel
     vendor/                   # self-hosted libs: Bootstrap 5, Bootstrap Icons (see its README)
@@ -390,6 +404,9 @@ but stay consistent with the patterns already there:
   new meaning) gets a step at the end of `MIGRATIONS` in `app/core/db.py`, once
   the app has data anyone cares about. A new optional field or a new bucket
   needs nothing. `architecture.md` has the rules and an example.
+- **User uploads** already have a home: build on `app/models/files.py` rather than writing
+  a route that takes a body. Add a field to the record for what the file belongs to,
+  and check it in `app/routes/files.py`.
 - **New files on disk** go under `cfg.storage_dir` (`<app dir>/storage/`),
   never a path relative to the working directory -- that changes depending on
   how the process was started, and would land outside what users back up.
@@ -426,6 +443,9 @@ but stay consistent with the patterns already there:
 - **A new event** goes in the list in `app/models/webhooks.py`, and is sent with
   `await emit( request , name , data )` where the thing happens. Ids and names only in
   `data`, since it leaves the server, and never rename one once it has shipped.
+- **A new route** goes in `config/openapi.json` too: `app/tests/test_openapi.py` fails
+  until it is. A route that changes something must not be a GET, or `read_only`
+  maintenance will not stop it.
 - **A new list route** answers with `send_page( request , "rows" , rows )`, and its
   screen uses `Pager.load`: a plain `forEach` would stop at the first page.
 - **A new page with a path of its own** needs a route before the catch-all, as
@@ -590,6 +610,27 @@ refusals; these need a real server:
   start, and restarting within a few seconds does not run them again,
 - with two sessions signed in, the Account screen lists both, ending the other
   gets it 401 on its next request, and no undo is offered,
+- with two sessions signed in, ending one from the other and then clicking
+  anything in the ended one lands on the signed-out page saying why, not on a
+  banner reading "not authenticated",
+- the navbar's button switches light and dark, signed in and signed out; a fresh
+  browser opens light whatever the system is set to, and a choice survives a
+  reload,
+- double-clicking **Create login link** makes one account,
+- **QR code** beside a login or invite link shows a code that scans to that link,
+  and a new link hides the old code,
+- dropping files on the Files screen uploads them, Cancel leaves nothing behind,
+  and the bar under the upload field shows what is used of the quota,
+- with `server.announcement` set, the banner shows within five minutes of coming
+  back to an open tab; dismissing it sticks, and a changed message comes back,
+- **Sessions** on a user's row lists their devices and can end one; another admin
+  sees no addresses, and only the owner reaches the owner's,
+- a failed webhook delivery has a **Resend** button that adds a new row and leaves
+  the failed one listed,
+- with `server.maintenance: full`, a browser that is not the owner gets the
+  maintenance page and the owner's session still works, and an admin can make a
+  key for a user on All keys that the user sees as made by them,
+- `/api/openapi.json` is 401 signed out and 200 signed in,
 - `/api/ready` is 200; with `metrics.enabled` on, `/metrics` is 401 anonymous,
   403 for a browser or a user key, and 200 for an admin key,
 - a forced 500 shows a reference, and that reference pasted into the Logs search
