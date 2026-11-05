@@ -50,6 +50,8 @@ func newAuthFixture( t *testing.T ) ( fixture *authFixture ) {
 		APIKeysEnabled:   true,
 		PasswordsEnabled: true,
 		TwoFactorEnabled: true,
+		InviteLinksEnabled: true,
+		Webhooks:         config.WebhooksConfig{ Enabled: true },
 		SessionTTL:       time.Hour,
 	}
 	store , err := db.Open( cfg )

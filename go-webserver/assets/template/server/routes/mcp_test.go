@@ -44,6 +44,8 @@ func newMCPFixture( t *testing.T ) ( fixture *mcpFixture ) {
 		CookieName:     "session",
 		APIKeysEnabled: true,
 		MCPEnabled:     true,
+		InviteLinksEnabled: true,
+		Webhooks:       config.WebhooksConfig{ Enabled: true },
 		SessionTTL:     time.Hour,
 	}
 	store , err := db.Open( cfg )

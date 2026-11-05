@@ -3,7 +3,7 @@
 // admin; the server checks again on every call.
 const Invites = {
   async init( me ) {
-    if ( me.role !== "admin" ) return;
+    if ( me.role !== "admin" || me.invite_links_enabled === false ) return;
     Dom.show( Dom.get( "invite-links-panel" ) , true );
     Dom.onSubmit( Dom.get( "create-invite-form" ) , this.onCreate.bind( this ) );
     Dom.get( "copy-invite-button" ).addEventListener( "click" , this.onCopy.bind( this ) );

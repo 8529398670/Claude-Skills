@@ -8,7 +8,26 @@ from pathlib import Path
 from typing import Any, Iterator
 from unittest import mock
 
-from app.core import config, config_live, config_secret, layout
+from app.core import config, config_live, config_secret, layout, yaml_edit
+
+# A project's defaults.yaml says which features it chose. These tests are about
+# the features themselves, so they run on the template's choice whatever that was.
+TEMPLATE_SWITCHES = [
+    ("auth.api_keys", True),
+    ("auth.invite_links", True),
+    ("auth.two_factor", True),
+    ("auth.passwords", False),
+    ("server.mcp", True),
+    ("files.enabled", True),
+    ("webhooks.enabled", True),
+    ("metrics.enabled", False),
+    ("backups.enabled", False),
+]
+
+
+def pin_switches(path: Path) -> None:
+    """Set a test's config.yaml to the template's feature switches."""
+    path.write_text(yaml_edit.edit_yaml(path.read_text(encoding="utf-8"), TEMPLATE_SWITCHES, [], None), encoding="utf-8")
 
 
 def new_holder(test: Any, app_dir: str | None = None) -> tuple[config_live.Holder, Path]:
@@ -18,6 +37,7 @@ def new_holder(test: Any, app_dir: str | None = None) -> tuple[config_live.Holde
     test.addCleanup(directory.cleanup)
     path = Path(directory.name) / "config.yaml"
     config.write_new(path)
+    pin_switches(path)
     if app_dir is not None:
         raw = path.read_text(encoding="utf-8").replace('app_dir: ""', f'app_dir: "{app_dir}"', 1)
         path.write_text(raw, encoding="utf-8")

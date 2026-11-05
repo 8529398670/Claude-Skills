@@ -1011,6 +1011,9 @@ func commandCreateInvite( back backend , cfg *config.Config , arguments []string
 	link , err := back.CreateInviteLink( *user_id , *label , *uses , *days )
 	if err != nil { return }
 
+	if cfg.InviteLinksEnabled == false {
+		fmt.Println( "note: auth.invite_links is off, so this link answers 404 until it is switched on" )
+	}
 	bootstrap.PrintInviteLink( cfg , fmt.Sprintf( "%q, %d places" , link.Label , link.MaxUses ) ,
 		link.Credential , link.ExpiresAt.Local().Format( "2006-01-02 15:04" ) )
 	return

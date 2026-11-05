@@ -15,6 +15,7 @@ from typing import Callable
 
 from app.core import backup, config, config_secret, db, encryption, logs, rotate, server_lock
 from app.models import files, two_factor, users
+from app.tests.support import pin_switches
 
 
 class Deployment:
@@ -28,6 +29,7 @@ class Deployment:
         self.root = Path(directory.name)
         self.path = self.root / "config.yaml"
         config.write_new(self.path)
+        pin_switches(self.path)
         raw = self.path.read_text(encoding="utf-8").replace('app_dir: ""', f'app_dir: "{self.root / "data"}"', 1)
         self.path.write_text(raw, encoding="utf-8")
         self.cfg = config.load_path(self.path, True)

@@ -92,8 +92,13 @@ class Tool:
     read_only: bool = False
     destructive: bool = False
     admin_only: bool = False
+    # Asked on every call: a tool for a feature that is switched off answers
+    # exactly like one that does not exist. None is always.
+    enabled: Callable[[Config], bool] | None = None
 
-    def visible_to(self, actor: Actor | None) -> bool:
+    def visible_to(self, actor: Actor | None, cfg: Config) -> bool:
+        if self.enabled is not None and not self.enabled(cfg):
+            return False
         return not self.admin_only or (actor is not None and actor.is_admin)
 
     def listing(self) -> dict[str, Any]:
@@ -124,12 +129,12 @@ class Registry:
             raise ValueError(f"mcp: tool {tool.name!r} registered twice")
         self._tools[tool.name] = tool
 
-    def visible(self, actor: Actor | None) -> list[Tool]:
+    def visible(self, actor: Actor | None, cfg: Config) -> list[Tool]:
         """tools/list for one actor: the tools its effective role may call, in
         registration order, so a user-scoped key is never even told the admin
         tools exist."""
-        return [tool for tool in self._tools.values() if tool.visible_to(actor)]
+        return [tool for tool in self._tools.values() if tool.visible_to(actor, cfg)]
 
-    def get(self, name: str, actor: Actor | None) -> Tool | None:
+    def get(self, name: str, actor: Actor | None, cfg: Config) -> Tool | None:
         tool = self._tools.get(name)
-        return tool if tool is not None and tool.visible_to(actor) else None
+        return tool if tool is not None and tool.visible_to(actor, cfg) else None

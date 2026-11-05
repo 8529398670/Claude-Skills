@@ -1,6 +1,6 @@
 ---
 name: go-webserver
-description: Scaffold a new security-hardened Go + Fiber v3 web server with bolt (bbolt) storage, link-based login (no open signup -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), optional password login the owner switches on, optional two-factor sign-in, encrypted file uploads, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + docker/run.sh with no docker-compose, a scripts/build.sh that cross-compiles single-file portable binaries with the whole frontend embedded, scripts/run.sh and scripts/login.sh that report the real URL, paths and state, one config/config.yaml that configures the server, Docker, and the build (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Go -- trigger on "build me a Go webserver", "new Fiber app", "golang backend with logins", "scaffold a Go web project with Docker", "I need a small internal tool in Go", or any Go web project that needs auth and static file serving rather than a bare HTTP handler. Also trigger when someone wants a Go web app shipped as one self-contained executable with no Docker and no runtime dependencies -- "single binary web app", "embed the frontend with go:embed", "cross-compile for linux and windows", "one file I can just hand someone", "where should the app keep its database and config". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, bolt storage, or Docker packaging to a Go web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Go API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my Fiber app", "service account for CI", "add an MCP server/endpoint", "let Claude (Code) use my app", "add password login", or "add 2FA / two-factor / TOTP". This is the Go counterpart to the `python-webserver` skill -- pick this one whenever Go, golang, or Fiber is mentioned, and that one for Python/Starlette.
+description: Scaffold a new security-hardened Go + Fiber v3 web server with bolt (bbolt) storage, link-based login (no open signup -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), optional password login the owner switches on, optional two-factor sign-in, encrypted file uploads, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + docker/run.sh with no docker-compose, a scripts/build.sh that cross-compiles single-file portable binaries with the whole frontend embedded, scripts/run.sh and scripts/login.sh that report the real URL, paths and state, one config/config.yaml that configures the server, Docker, and the build (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. It copies every feature but switches on only the ones the app needs, working that out from what the app does, so the rest stay one setting away. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Go -- trigger on "build me a Go webserver", "new Fiber app", "golang backend with logins", "scaffold a Go web project with Docker", "I need a small internal tool in Go", or any Go web project that needs auth and static file serving rather than a bare HTTP handler. Also trigger when someone wants a Go web app shipped as one self-contained executable with no Docker and no runtime dependencies -- "single binary web app", "embed the frontend with go:embed", "cross-compile for linux and windows", "one file I can just hand someone", "where should the app keep its database and config". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, bolt storage, or Docker packaging to a Go web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Go API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my Fiber app", "service account for CI", "add an MCP server/endpoint", "let Claude (Code) use my app", "add password login", or "add 2FA / two-factor / TOTP". This is the Go counterpart to the `python-webserver` skill -- pick this one whenever Go, golang, or Fiber is mentioned, and that one for Python/Starlette.
 ---
 
 # Go webserver scaffolder
@@ -41,7 +41,8 @@ project.
   the same link offers "is this you?", which is how that person signs in on
   their next device; a person can set a PIN so nobody else holding the link
   can pick their name. Links die with their maker's admin rights, and
-  creating one needs a browser session -- an API key never can.
+  creating one needs a browser session -- an API key never can. `auth.invite_links`
+  switches them and PINs.
 - **Every account can mint API keys, at its own permission level.** A key
   carries the same admin/user role a person does -- one permission model, not
   two -- sent as `Authorization: Bearer <key>`. A key can never outrank the
@@ -57,7 +58,7 @@ project.
 - **Webhooks tell other systems what happened.** The owner adds endpoints on a
   Webhooks screen. Events go through a durable outbox, signed with HMAC-SHA256 and
   retried with backoff, and an endpoint can only be a public `https` address, checked
-  again on the address actually dialled.
+  again on the address actually dialled. `webhooks.enabled` switches it.
 - **Failures look right.** A browser gets a styled error page, and scripts keep their
   JSON. Every list in the API is paged, and nothing here is meant for search engines:
   `robots.txt` and an `X-Robots-Tag` header on every response say so.
@@ -202,6 +203,43 @@ Optionally a **Go module path**. If the user does not offer one, derive it
 from the project name; only a project meant to be imported elsewhere needs
 a real `github.com/...` path.
 
+## Step 1b: Choose the features
+
+Every feature's code goes into every project. What you choose is which ones
+start **switched on**: an unused one has no screen, its routes answer 404, and
+it sits there until someone turns it on in Settings. So a wrong call is cheap,
+and the point is a project that shows only what it needs.
+
+Work it out from what the app does. Do not interview the user about this.
+Pass exactly the features with a reason to be on:
+
+| Feature | Switch it on when the app... |
+|---|---|
+| `files` | lets people upload, attach, or share documents, images, or data |
+| `api_keys` | is called by a script, cron job, CI, or another service |
+| `mcp` | should be usable by Claude or another agent (brings `api_keys`) |
+| `webhooks` | has to tell another system when something happens |
+| `invite_links` | is joined by a group: "a link for our chat", a class, a team, a club (includes PINs) |
+| `passwords` | has people who want to come back without asking for a new link |
+| `two_factor` | has real accounts: anyone besides the owner, or anything reachable from the internet |
+| `metrics` | is watched by Prometheus, Grafana, or similar (brings `api_keys`) |
+| `backups` | holds data worth keeping in a long-lived deployment |
+
+A feature the description gives no reason for stays off. `two_factor` is the
+one exception: it stays on unless the app is plainly a one-person tool on the
+owner's own machine (that is `--features none`), because it costs people nothing
+until they choose it. If it is unclear who will use the app, it stays on.
+
+Sign-in links, sessions, users, the activity log, background jobs, Settings, and
+maintenance mode are the core: always on, and not on this list.
+
+Say what you chose in one line, with the reason for anything unusual, and go
+straight on to scaffolding. For example: "Features: files and two_factor, since
+it is a shared document store with real accounts; everything else stays off, one
+switch away in Settings." The user can correct you at any point, and doing so
+needs no rescaffold. Only if they asked for "everything" do you leave `--features`
+out, which keeps the template's own defaults.
+
 ## Step 2: Scaffold
 
 Run the bundled script rather than retyping files -- it does the copy and
@@ -209,7 +247,7 @@ placeholder substitution consistently and will not overwrite a non-empty
 directory:
 
 ```bash
-python3 <skill_dir>/scripts/scaffold.py <target-dir> "<project-name>" [module-path]
+python3 <skill_dir>/scripts/scaffold.py <target-dir> "<project-name>" [module-path] --features files,two_factor
 ```
 
 This copies `assets/template/`, replacing `{{PROJECT_NAME}}` and
@@ -219,6 +257,11 @@ mode 0600), and `config/config.example.yaml` (the same defaults, for
 committing). It installs
 nothing, starts nothing, and creates no users -- so nothing happens on the
 network or on disk that the user did not ask for.
+
+`--features` is the exact list from Step 1b, comma-separated, or `none`. It sets
+those switches in `config/defaults.yaml`, so `config.yaml`, the example, and a fresh
+clone all agree. A feature that needs another brings it along and says so, an unknown
+name stops before anything is written, and the summary prints what is on and off.
 
 Each project also gets **its own port and its own session cookie name**:
 `scaffold.py` picks a random free port in 20000-39999 for `server.port` and
@@ -340,6 +383,10 @@ ports they ran on. Do not reset either to a shared value.
 This is the part specific to what the user asked for, so use judgment --
 but stay consistent with the patterns already there:
 
+- **A feature that was left off and turns out to be needed** is already in the
+  project. Switch it on (Settings, or `scripts/run.sh config set files.enabled
+  true`). Never rebuild something the template has, and never scaffold again to
+  get it. Switching one off again keeps its data.
 - **New screens** are a `<section class="card view" data-view="name">` in
   `index.html` plus a sidebar link to `#name` (see `references/frontend.md`).
   Give each its own file in `static/js/` with its own `init()`, included

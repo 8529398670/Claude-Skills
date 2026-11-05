@@ -74,6 +74,8 @@ func ( handlers *Handlers ) meRow( actor *security.Actor ) ( payload fiber.Map ,
 		"auth":             actor.Method(),
 		"api_keys_enabled": handlers.cfg().APIKeysEnabled,
 		"files_enabled": handlers.cfg().Files.Enabled,
+		"invite_links_enabled": handlers.inviteLinksOn(),
+		"webhooks_enabled": handlers.cfg().Webhooks.Enabled,
 		// Whether track.js sends anything, and whether it sends clicks.
 		"logs_enabled":   handlers.Logs.Enabled(),
 		"logs_ui_clicks": handlers.Logs.Enabled() && handlers.cfg().Logs.UIClicks,

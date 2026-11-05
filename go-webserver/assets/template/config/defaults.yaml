@@ -184,6 +184,14 @@ auth:
   # restores them. [live]
   two_factor: true
 
+  # Invite links: one link a whole group can join through, and the PINs that
+  # guard a name on it. false hides the Invite links and PIN screens and makes
+  # /join and every invite route answer 404, so a link already handed out stops
+  # working, and someone who only ever signed in through one needs a login link
+  # meanwhile. The links and PINs stay, so switching it back on restores them.
+  # [live]
+  invite_links: true
+
 # The activity log: every request, every sign-in and admin action, and what
 # people do on the page (see static/js/track.js). Only the owner can read it,
 # on the Logs screen. It is written as one file per UTC day under
@@ -218,6 +226,10 @@ metrics:
 
 # Events sent to the endpoints on the owner's Webhooks screen.
 webhooks:
+  # false hides the screen, makes its routes answer 404, queues no new events
+  # and sends nothing. Endpoints and deliveries already queued stay, so
+  # switching it back on picks up where it stopped.
+  enabled: true                    # [live]
   # How long one delivery attempt may take, 1 to 60.
   timeout_seconds: 10              # [live]
   # Lets an endpoint be on this machine or a private network, and use plain

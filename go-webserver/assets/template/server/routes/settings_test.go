@@ -41,6 +41,16 @@ func useDefaults( t *testing.T ) {
 	header , err := os.ReadFile( "../../config/example_header.yaml" )
 	if err != nil { t.Fatal( err ) }
 	config.UseEmbedded( defaults , header )
+	// A project's defaults.yaml says which features it chose. These tests are
+	// about the features themselves, so they run on the template's choice
+	// whatever that was.
+	pinned , _ , err := config.EditChanges( defaults , map[string]any{
+		"auth.api_keys": true , "auth.invite_links": true , "auth.two_factor": true , "auth.passwords": false ,
+		"server.mcp": true , "files.enabled": true , "webhooks.enabled": true ,
+		"metrics.enabled": false , "backups.enabled": false ,
+	} , "defaults.yaml" , false )
+	if err != nil { t.Fatal( err ) }
+	config.UseEmbedded( pinned , header )
 }
 
 func newSettingsFixture( t *testing.T ) ( fixture *settingsFixture ) {

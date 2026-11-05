@@ -213,6 +213,8 @@ class Dispatcher:
         names only: it leaves the server. A failure here is reported and goes
         no further, since whatever just happened did happen, and the caller's
         work is done."""
+        if not self.settings.get().webhooks.enabled:
+            return
         try:
             queued = models.enqueue_event(self.store, event, data)
         except Exception as error:  # noqa: BLE001 -- see above
@@ -254,6 +256,8 @@ class Dispatcher:
         trouble with the database fails the run. A receiver being down is what
         the retries are for, and shows on the delivery."""
         cfg = self.settings.get()
+        if not cfg.webhooks.enabled:
+            return "switched off", ""
         due = models.due_deliveries(self.store, utc_now(), SENDS_PER_RUN)
         if not due:
             return "nothing to send", ""

@@ -16,6 +16,25 @@ import (
 // returned once, on creation, as a path -- the browser adds its own origin,
 // like a login link.
 
+// inviteLinksOn is auth.invite_links, read per request since it can change
+// while the server runs.
+func ( handlers *Handlers ) inviteLinksOn() ( result bool ) {
+	result = handlers.cfg().InviteLinksEnabled
+	return
+}
+
+// RequireInviteLinks makes every invite route answer 404 while
+// auth.invite_links is off. The /join page does its own check, so a person
+// gets the styled page rather than this JSON. See ShowJoinPage.
+func ( handlers *Handlers ) RequireInviteLinks( c fiber.Ctx ) ( err error ) {
+	if handlers.inviteLinksOn() == false {
+		err = notFound( c , "not found" )
+		return
+	}
+	err = c.Next()
+	return
+}
+
 type inviteLinkRequest struct {
 	Label     string `json:"label"`
 	MaxUses   int    `json:"max_uses"`

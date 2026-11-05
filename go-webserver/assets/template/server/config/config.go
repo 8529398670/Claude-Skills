@@ -157,6 +157,7 @@ type AuthSection struct {
 	APIKeyTTLSeconds     int  `yaml:"api_key_ttl_seconds"`
 	Passwords            bool `yaml:"passwords"`
 	TwoFactor            bool `yaml:"two_factor"`
+	InviteLinks          bool `yaml:"invite_links"`
 }
 
 type LogsSection struct {
@@ -181,6 +182,7 @@ type MetricsSection struct {
 }
 
 type WebhooksSection struct {
+	Enabled             bool `yaml:"enabled"`
 	TimeoutSeconds      int  `yaml:"timeout_seconds"`
 	AllowPrivateTargets bool `yaml:"allow_private_targets"`
 }
@@ -327,6 +329,9 @@ type Config struct {
 	// TwoFactorEnabled decides whether 2FA is offered and asked for. Off keeps
 	// the secrets, the same way.
 	TwoFactorEnabled bool
+	// InviteLinksEnabled decides whether /join and every invite route answer,
+	// and whether a PIN can be set. Off keeps the links and PINs, the same way.
+	InviteLinksEnabled bool
 
 	// APIKeyTTL is how long a new key lasts when the request does not say.
 	// The default is bounded so that a forgotten key eventually stops being
@@ -422,6 +427,7 @@ type FilesConfig struct {
 
 // WebhooksConfig is config.yaml's webhooks section, resolved.
 type WebhooksConfig struct {
+	Enabled             bool
 	Timeout             time.Duration
 	AllowPrivateTargets bool
 }
@@ -994,6 +1000,7 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		APIKeysEnabled: file.Auth.APIKeys,
 		PasswordsEnabled: file.Auth.Passwords,
 		TwoFactorEnabled: file.Auth.TwoFactor,
+		InviteLinksEnabled: file.Auth.InviteLinks,
 		APIKeyTTL:      seconds( file.Auth.APIKeyTTLSeconds ),
 		MCPEnabled:     file.Server.MCP,
 		Maintenance:    file.Server.Maintenance,
@@ -1026,6 +1033,7 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		},
 
 		Webhooks: WebhooksConfig{
+			Enabled:             file.Webhooks.Enabled,
 			Timeout:             time.Duration( file.Webhooks.TimeoutSeconds ) * time.Second,
 			AllowPrivateTargets: file.Webhooks.AllowPrivateTargets,
 		},

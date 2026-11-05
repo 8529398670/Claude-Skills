@@ -57,6 +57,8 @@ def me_row(store: Store, cfg: Config, actor: Actor, version: str) -> dict[str, A
         "auth": actor.method,
         "api_keys_enabled": cfg.api_keys_enabled,
         "files_enabled": cfg.files.enabled,
+        "invite_links_enabled": cfg.invite_links_enabled,
+        "webhooks_enabled": cfg.webhooks.enabled,
         # Whether track.js sends anything, and whether it sends clicks.
         "logs_enabled": cfg.logs.enabled,
         "logs_ui_clicks": cfg.logs.enabled and cfg.logs.ui_clicks,

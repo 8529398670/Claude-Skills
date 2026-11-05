@@ -92,6 +92,22 @@ class RequireTwoFactor(Guard):
         return None if get_config(request).two_factor_enabled else not_found("not found")
 
 
+class RequireInviteLinks(Guard):
+    """Makes every invite route answer 404 while auth.invite_links is off. Per
+    request, for the same reason as RequireMCP. The /join page itself is
+    StaticServer.serve_join_page, so a person gets the styled 404 instead."""
+
+    def refuse(self, request: Request) -> Response | None:
+        return None if get_config(request).invite_links_enabled else not_found("not found")
+
+
+class RequireWebhooks(Guard):
+    """The same for the Webhooks screen's routes while webhooks.enabled is off."""
+
+    def refuse(self, request: Request) -> Response | None:
+        return None if get_config(request).webhooks.enabled else not_found("not found")
+
+
 def group(*guards: type) -> Callable[..., Route]:
     """A route builder whose routes all run behind the given guards, in
     order. Usage: signed_in = group(RequireLogin); signed_in("/api/me", me)."""
@@ -108,8 +124,11 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
     what is set up once (the activity log's routes). Everything a request
     reads, it reads from the running configuration."""
     public = group()
+    # Joining through an invite link: holding the link is the permission.
+    public_invites = group(RequireInviteLinks)
     signed_in = group(RequireLogin)
     sessions_only = group(RequireLogin, RequireSession)
+    pin_sessions = group(RequireInviteLinks, RequireLogin, RequireSession)
     # API keys: any signed-in user manages their own, from a browser session.
     my_keys = group(RequireAPIKeys, RequireLogin, RequireSession)
     # Uploaded files: everyone their own, API keys included. See files.py.
@@ -134,6 +153,8 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
     # admin can reverse; it must not be able to erase them. Who may delete
     # whom (the owner rules) is enforced in credentials.delete_user.
     admin_sessions = group(RequireAdmin, RequireSession)
+    admin_invites = group(RequireInviteLinks, RequireAdmin)
+    admin_invite_sessions = group(RequireInviteLinks, RequireAdmin, RequireSession)
     # Admin view of every key in the app -- "who has standing access" -- and
     # the ability to revoke or delete someone else's.
     admin_keys = group(RequireAPIKeys, RequireAdmin, RequireSession)
@@ -141,6 +162,7 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
     # browser session -- not other admins, not any API key, not the signed
     # out; all of them get 404 (see RequireOwner).
     owner = group(RequireOwner)
+    owner_webhooks = group(RequireWebhooks, RequireOwner)
     # Passwords and 2FA change how an account signs in, so setting them needs
     # a browser session, like the PIN: a key that could set a password could
     # turn itself into a session.
@@ -164,17 +186,17 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         public("/api/ready", meta.get_ready),
         # Public: invite links (see join.py). Holding the link is the
         # permission; like a login link, the GET only serves the page.
-        public("/join/{credential:path}", static_server.serve_login_page),
-        public("/api/join/info", join.join_info, ["POST"]),
-        public("/api/join/match", join.join_match, ["POST"]),
-        public("/api/join/claim", join.join_claim, ["POST"]),
-        public("/api/join/create", join.join_create, ["POST"]),
+        public("/join/{credential:path}", static_server.serve_join_page),
+        public_invites("/api/join/info", join.join_info, ["POST"]),
+        public_invites("/api/join/match", join.join_match, ["POST"]),
+        public_invites("/api/join/claim", join.join_claim, ["POST"]),
+        public_invites("/api/join/create", join.join_create, ["POST"]),
         # Any signed-in user.
         signed_in("/api/me", account.me),
         signed_in("/api/account/rename", account.rename, ["POST"]),
         # A session only: a PIN lets its holder sign in through an invite
         # link, so a key that could set one could turn itself into a session.
-        sessions_only("/api/account/pin", account.set_pin, ["POST"]),
+        pin_sessions("/api/account/pin", account.set_pin, ["POST"]),
         # A session only, for the same reason as every route that hands out
         # a login link: the link becomes a session. See admin_sessions above.
         sessions_only("/api/account/login-link", account.create_my_login_link, ["POST"]),
@@ -225,11 +247,11 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         # the same reason as creating a user -- the link mints accounts and
         # sessions. Deleting one needs a session like deleting a user. Listing
         # and switching one off are safe for an admin key.
-        admins("/api/admin/invite-links", invite_links.list_invite_links),
-        admin_sessions("/api/admin/invite-links", invite_links.create_invite_link, ["POST"]),
-        admins("/api/admin/invite-links/{link_id}/revoke", invite_links.revoke_invite_link, ["POST"]),
-        admin_sessions("/api/admin/invite-links/{link_id}/delete", invite_links.delete_invite_link, ["POST"]),
-        admin_sessions("/api/admin/invite-links/{link_id}/restore", invite_links.restore_invite_link, ["POST"]),
+        admin_invites("/api/admin/invite-links", invite_links.list_invite_links),
+        admin_invite_sessions("/api/admin/invite-links", invite_links.create_invite_link, ["POST"]),
+        admin_invites("/api/admin/invite-links/{link_id}/revoke", invite_links.revoke_invite_link, ["POST"]),
+        admin_invite_sessions("/api/admin/invite-links/{link_id}/delete", invite_links.delete_invite_link, ["POST"]),
+        admin_invite_sessions("/api/admin/invite-links/{link_id}/restore", invite_links.restore_invite_link, ["POST"]),
         admin_keys("/api/admin/keys", api_keys.list_all_keys),
         admin_keys("/api/admin/keys", api_keys.create_key_for_user, ["POST"]),
         admin_keys("/api/admin/keys/{key_id}/revoke", api_keys.revoke_any_key, ["POST"]),
@@ -242,15 +264,15 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         owner("/api/owner/jobs", jobs.list_jobs),
         owner("/api/owner/jobs/{name}/run", jobs.run_job, ["POST"]),
         # Webhooks. See app/core/webhooks.py.
-        owner("/api/owner/webhooks", webhooks.list_webhooks),
-        owner("/api/owner/webhooks", webhooks.create_webhook, ["POST"]),
-        owner("/api/owner/webhooks/events", webhooks.list_events),
-        owner("/api/owner/webhooks/{webhook_id}/enabled", webhooks.set_enabled, ["POST"]),
-        owner("/api/owner/webhooks/{webhook_id}/delete", webhooks.delete_webhook, ["POST"]),
-        owner("/api/owner/webhooks/{webhook_id}/restore", webhooks.restore_webhook, ["POST"]),
-        owner("/api/owner/webhooks/{webhook_id}/test", webhooks.send_test, ["POST"]),
-        owner("/api/owner/webhooks/{webhook_id}/deliveries", webhooks.list_deliveries),
-        owner("/api/owner/webhooks/{webhook_id}/deliveries/{delivery_id}/resend", webhooks.resend_delivery, ["POST"]),
+        owner_webhooks("/api/owner/webhooks", webhooks.list_webhooks),
+        owner_webhooks("/api/owner/webhooks", webhooks.create_webhook, ["POST"]),
+        owner_webhooks("/api/owner/webhooks/events", webhooks.list_events),
+        owner_webhooks("/api/owner/webhooks/{webhook_id}/enabled", webhooks.set_enabled, ["POST"]),
+        owner_webhooks("/api/owner/webhooks/{webhook_id}/delete", webhooks.delete_webhook, ["POST"]),
+        owner_webhooks("/api/owner/webhooks/{webhook_id}/restore", webhooks.restore_webhook, ["POST"]),
+        owner_webhooks("/api/owner/webhooks/{webhook_id}/test", webhooks.send_test, ["POST"]),
+        owner_webhooks("/api/owner/webhooks/{webhook_id}/deliveries", webhooks.list_deliveries),
+        owner_webhooks("/api/owner/webhooks/{webhook_id}/deliveries/{delivery_id}/resend", webhooks.resend_delivery, ["POST"]),
         # The per-account password switch. See passwords.py.
         owner_passwords("/api/owner/users/{user_id}/password-access", passwords.set_password_access, ["POST"]),
     ]

@@ -18,6 +18,17 @@ import (
 // else, so a leaked key must not be able to add one. There are no MCP tools
 // for this, for the same reason. See server/webhooks.
 
+// RequireWebhooks makes the Webhooks screen's routes answer 404 while
+// webhooks.enabled is off. Per request, like RequireFiles.
+func ( handlers *Handlers ) RequireWebhooks( c fiber.Ctx ) ( err error ) {
+	if handlers.cfg().Webhooks.Enabled == false {
+		err = notFound( c , "not found" )
+		return
+	}
+	err = c.Next()
+	return
+}
+
 type createWebhookRequest struct {
 	Name      string   `json:"name"`
 	URL       string   `json:"url"`

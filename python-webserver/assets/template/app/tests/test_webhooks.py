@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -225,6 +226,20 @@ class DeliveryTests(SendCase):
         self.assertLess(time.monotonic() - started, 2.5)
         self.assertEqual(status, 0)
         self.assertTrue(failure)
+
+
+class SwitchTests(SendCase):
+    def test_off_nothing_is_queued_or_sent(self) -> None:
+        self.dispatcher.emit(models.EVENT_USER_CREATED, {"user_id": 7})
+        on = self.cfg.webhooks
+        self.cfg.webhooks = replace(on, enabled=False)
+        self.dispatcher.emit(models.EVENT_USER_DELETED, {"user_id": 7})
+        self.assertEqual(len(self.rows()), 1)
+        self.assertEqual(self.dispatcher.run(), ("switched off", ""))
+        self.assertEqual(self.receiver.requests, [])
+
+        self.cfg.webhooks = on
+        self.assertEqual(self.dispatcher.run()[0], "sent 1, failed 0")
 
 
 class GuardTests(SendCase):

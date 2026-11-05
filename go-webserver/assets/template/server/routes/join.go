@@ -32,6 +32,12 @@ type joinRequest struct {
 // so a chat app's link preview cannot use up a place.
 func ( handlers *Handlers ) ShowJoinPage( c fiber.Ctx ) ( err error ) {
 	c.Set( fiber.HeaderReferrerPolicy , "no-referrer" )
+	// A person with an old link gets the styled page, not RequireInviteLinks's
+	// JSON. The referrer rule above still applies: the path holds the secret.
+	if handlers.inviteLinksOn() == false {
+		err = handlers.Static.NotFound( c )
+		return
+	}
 	err = handlers.Static.ServeIndex( c )
 	return
 }

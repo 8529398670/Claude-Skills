@@ -129,6 +129,7 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 		Description: "Group invite links, a page at a time: label, places used and left, expiry, and whether each still works. The links themselves are never shown again after creation. next is the offset of the following page, or null on the last one.",
 		ReadOnly:    true,
 		AdminOnly:   true,
+		Enabled:     handlers.inviteLinksOn,
 		InputSchema: pageSchema,
 		Call: func( call *mcp.Call ) ( result any , err error ) {
 			result , err = toolPage( call , "invite_links" , handlers.inviteLinkRows )
@@ -142,6 +143,7 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 		Description: "Stop an invite link from letting anyone else join or sign in through it. Accounts it already made keep working. Cannot be switched back on.",
 		Destructive: true,
 		AdminOnly:   true,
+		Enabled:     handlers.inviteLinksOn,
 		InputSchema: fiber.Map{
 			"type": "object",
 			"properties": fiber.Map{

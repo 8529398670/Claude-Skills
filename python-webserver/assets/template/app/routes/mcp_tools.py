@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from app.core.config import Config
 from app.core.db import Store
 from app.mcp.registry import Call, Refusal, Registry, Tool
 from app.models import invite_links, webhooks
@@ -87,6 +88,10 @@ def admin_revoke_access(call: Call) -> dict[str, Any]:
     return {"ok": True, "revoked": revoked.to_dict()}
 
 
+def _invite_links_on(cfg: Config) -> bool:
+    return cfg.invite_links_enabled
+
+
 def admin_list_invite_links(call: Call) -> dict[str, Any]:
     return _page(call, "invite_links", invite_link_rows)
 
@@ -150,6 +155,7 @@ def build_registry() -> Registry:
         input_schema=PAGE_SCHEMA,
         read_only=True,
         admin_only=True,
+        enabled=_invite_links_on,
     ))
     registry.register(Tool(
         name="admin_revoke_invite_link",
@@ -159,5 +165,6 @@ def build_registry() -> Registry:
         input_schema=_schema({"link_id": {"type": "string", "description": "The id from admin_list_invite_links."}}),
         destructive=True,
         admin_only=True,
+        enabled=_invite_links_on,
     ))
     return registry

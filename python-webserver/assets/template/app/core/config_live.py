@@ -121,6 +121,7 @@ def live_config(boot: Config, boot_file: config.File, file: config.File) -> Conf
         api_keys_enabled=file.auth.api_keys,
         passwords_enabled=file.auth.passwords,
         two_factor_enabled=file.auth.two_factor,
+        invite_links_enabled=file.auth.invite_links,
         api_key_ttl_seconds=file.auth.api_key_ttl_seconds,
         logs=replace(
             boot.logs,
@@ -133,6 +134,7 @@ def live_config(boot: Config, boot_file: config.File, file: config.File) -> Conf
             echo=file.logs.echo,
         ),
         webhooks=WebhooksConfig(
+            enabled=file.webhooks.enabled,
             timeout_seconds=file.webhooks.timeout_seconds,
             allow_private_targets=file.webhooks.allow_private_targets,
         ),

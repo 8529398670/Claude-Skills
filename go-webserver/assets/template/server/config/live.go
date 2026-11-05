@@ -217,6 +217,7 @@ func liveConfig( boot *Config , boot_file *File , file *File ) ( next *Config ) 
 	next.APIKeysEnabled = file.Auth.APIKeys
 	next.PasswordsEnabled = file.Auth.Passwords
 	next.TwoFactorEnabled = file.Auth.TwoFactor
+	next.InviteLinksEnabled = file.Auth.InviteLinks
 	next.APIKeyTTL = seconds( file.Auth.APIKeyTTLSeconds )
 
 	next.Logs.RetentionDays = file.Logs.RetentionDays
@@ -227,6 +228,7 @@ func liveConfig( boot *Config , boot_file *File , file *File ) ( next *Config ) 
 	next.Logs.UIClicks = file.Logs.UIClicks
 	next.Logs.Echo = file.Logs.Echo
 
+	next.Webhooks.Enabled = file.Webhooks.Enabled
 	next.Webhooks.Timeout = seconds( file.Webhooks.TimeoutSeconds )
 	next.Webhooks.AllowPrivateTargets = file.Webhooks.AllowPrivateTargets
 	next.Files.Enabled = file.Files.Enabled

@@ -38,6 +38,9 @@ type Tool struct {
 	ReadOnly    bool
 	Destructive bool
 	AdminOnly   bool
+	// Enabled, when set, is asked on every call: a tool for a feature that is
+	// switched off answers exactly like one that does not exist. Nil is always.
+	Enabled func() bool
 	Call        func( call *Call ) ( result any , err error )
 }
 
@@ -106,6 +109,7 @@ func ( server *Server ) Register( tool *Tool ) {
 }
 
 func ( tool *Tool ) visibleTo( actor *security.Actor ) ( result bool ) {
+	if tool.Enabled != nil && tool.Enabled() == false { return }
 	result = tool.AdminOnly == false || ( actor != nil && actor.IsAdmin() )
 	return
 }

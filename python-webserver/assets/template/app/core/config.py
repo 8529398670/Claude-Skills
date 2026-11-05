@@ -158,6 +158,7 @@ class AuthSection:
     api_key_ttl_seconds: int
     passwords: bool
     two_factor: bool
+    invite_links: bool
 
 
 @dataclass
@@ -186,6 +187,7 @@ class MetricsSection:
 
 @dataclass
 class WebhooksSection:
+    enabled: bool
     timeout_seconds: int
     allow_private_targets: bool
 
@@ -281,6 +283,7 @@ class FilesConfig:
 class WebhooksConfig:
     """config.yaml's webhooks section, resolved."""
 
+    enabled: bool = True
     timeout_seconds: int = 10
     allow_private_targets: bool = False
 
@@ -372,6 +375,9 @@ class Config:
     passwords_enabled: bool
     # Whether 2FA is offered and asked for. Off keeps the secrets, the same way.
     two_factor_enabled: bool
+    # Whether /join and every invite route answer, and whether a PIN can be
+    # set. Off keeps the links and PINs, the same way.
+    invite_links_enabled: bool
 
     # Encrypts session cookie payloads and, when encrypt_at_rest is on, every
     # record written to the database. Losing it means losing the data.
@@ -996,6 +1002,7 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
         api_keys_enabled=file.auth.api_keys,
         passwords_enabled=file.auth.passwords,
         two_factor_enabled=file.auth.two_factor,
+        invite_links_enabled=file.auth.invite_links,
         api_key_ttl_seconds=file.auth.api_key_ttl_seconds,
         secret_key=secret_key,
         encrypt_at_rest=file.server.encrypt_at_rest,
@@ -1023,6 +1030,7 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
             echo=file.logs.echo,
         ),
         webhooks=WebhooksConfig(
+            enabled=file.webhooks.enabled,
             timeout_seconds=file.webhooks.timeout_seconds,
             allow_private_targets=file.webhooks.allow_private_targets,
         ),

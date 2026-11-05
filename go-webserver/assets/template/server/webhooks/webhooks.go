@@ -140,6 +140,7 @@ func New( store *db.Store , settings *config.Holder ) ( dispatcher *Dispatcher )
 // since whatever just happened did happen, and the caller's work is done.
 func ( dispatcher *Dispatcher ) Emit( event string , data map[string]any ) {
 	if dispatcher == nil { return }
+	if dispatcher.settings.Get().Webhooks.Enabled == false { return }
 	queued , err := models.EnqueueWebhookEvent( dispatcher.store , event , data )
 	if err != nil {
 		log.Printf( "[webhooks] could not queue %s: %v" , event , err )
@@ -243,6 +244,10 @@ func send( http_client *http.Client , hook *models.Webhook , secret string , del
 // are for, and shows on the delivery.
 func ( dispatcher *Dispatcher ) Run() ( note string , err error ) {
 	cfg := dispatcher.settings.Get()
+	if cfg.Webhooks.Enabled == false {
+		note = "switched off"
+		return
+	}
 	due , err := models.DueWebhookDeliveries( dispatcher.store , time.Now().UTC() , sendsPerRun )
 	if err != nil { return }
 	if len( due ) == 0 {

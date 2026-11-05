@@ -122,7 +122,7 @@ class Server:
         if method == "ping":
             return {}
         if method == "tools/list":
-            return {"tools": [tool.listing() for tool in self.registry.visible(actor)]}
+            return {"tools": [tool.listing() for tool in self.registry.visible(actor, request.app.state.settings.get())]}
         if method == "tools/call":
             return await self._call(request, actor, params)
         raise RpcError(METHOD_NOT_FOUND, f"method not found: {method}")
@@ -150,7 +150,7 @@ class Server:
         # An admin tool asked for by a user-scoped key answers exactly like a
         # tool that does not exist: it was never listed to that key, and
         # saying "forbidden" would only confirm the name.
-        tool = self.registry.get(name, actor)
+        tool = self.registry.get(name, actor, request.app.state.settings.get())
         if tool is None:
             raise RpcError(INVALID_PARAMS, f"unknown tool: {name}")
 

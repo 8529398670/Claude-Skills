@@ -352,6 +352,8 @@ def command_create_invite(store: db.Store, cfg: config.Config, args: argparse.Na
     if issued is None:
         raise ManageError(f"no user with id {args.user_id}")
     credential, link = issued
+    if not cfg.invite_links_enabled:
+        print("note: auth.invite_links is off, so this link answers 404 until it is switched on")
     bootstrap.print_invite_link(cfg, f"{link.label!r}, {link.max_uses} places", credential, format_time(link.expires_at))
 
 

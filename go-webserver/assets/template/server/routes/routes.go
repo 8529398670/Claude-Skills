@@ -116,10 +116,10 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// so these sit before the signed-in "/api" group below -- registered
 	// after it, they would pick up RequireLogin from the shared prefix.
 	app.Get( "/join/*" , handlers.ShowJoinPage )
-	app.Post( "/api/join/info" , handlers.JoinInfo )
-	app.Post( "/api/join/match" , handlers.JoinMatch )
-	app.Post( "/api/join/claim" , handlers.JoinClaim )
-	app.Post( "/api/join/create" , handlers.JoinCreate )
+	app.Post( "/api/join/info" , handlers.RequireInviteLinks , handlers.JoinInfo )
+	app.Post( "/api/join/match" , handlers.RequireInviteLinks , handlers.JoinMatch )
+	app.Post( "/api/join/claim" , handlers.RequireInviteLinks , handlers.JoinClaim )
+	app.Post( "/api/join/create" , handlers.RequireInviteLinks , handlers.JoinCreate )
 
 	// Any signed-in user.
 	account := app.Group( "/api" , handlers.Guard.RequireLogin )
@@ -127,7 +127,7 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	account.Post( "/account/rename" , handlers.RenameAccount )
 	// A session only: a PIN lets its holder sign in through an invite link,
 	// so a key that could set one could turn itself into a session.
-	account.Post( "/account/pin" , handlers.Guard.RequireSession , handlers.SetPin )
+	account.Post( "/account/pin" , handlers.RequireInviteLinks , handlers.Guard.RequireSession , handlers.SetPin )
 	// A session only, for the same reason as every route that hands out a
 	// login link: the link becomes a session. See the admin group below.
 	account.Post( "/account/login-link" , handlers.Guard.RequireSession , handlers.CreateMyLoginLink )
@@ -218,11 +218,11 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// same reason as creating a user -- the link mints accounts and sessions.
 	// Deleting one needs a session like deleting a user. Listing and
 	// switching one off are safe for an admin key.
-	admin.Get( "/invite-links" , handlers.ListInviteLinks )
-	admin.Post( "/invite-links" , handlers.Guard.RequireSession , handlers.CreateInviteLink )
-	admin.Post( "/invite-links/:link_id/revoke" , handlers.RevokeInviteLink )
-	admin.Post( "/invite-links/:link_id/delete" , handlers.Guard.RequireSession , handlers.DeleteInviteLink )
-	admin.Post( "/invite-links/:link_id/restore" , handlers.Guard.RequireSession , handlers.RestoreInviteLink )
+	admin.Get( "/invite-links" , handlers.RequireInviteLinks , handlers.ListInviteLinks )
+	admin.Post( "/invite-links" , handlers.RequireInviteLinks , handlers.Guard.RequireSession , handlers.CreateInviteLink )
+	admin.Post( "/invite-links/:link_id/revoke" , handlers.RequireInviteLinks , handlers.RevokeInviteLink )
+	admin.Post( "/invite-links/:link_id/delete" , handlers.RequireInviteLinks , handlers.Guard.RequireSession , handlers.DeleteInviteLink )
+	admin.Post( "/invite-links/:link_id/restore" , handlers.RequireInviteLinks , handlers.Guard.RequireSession , handlers.RestoreInviteLink )
 
 	// Admin view of every key in the app -- "who has standing access" -- and
 	// the ability to revoke or delete someone else's. Its own prefix for the
@@ -273,7 +273,7 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	owner_jobs.Post( "/:name/run" , handlers.RunJob )
 
 	// Outbound webhooks: the owner only, from a browser session, like the log.
-	owner_webhooks := app.Group( "/api/owner/webhooks" , handlers.Guard.RequireOwner )
+	owner_webhooks := app.Group( "/api/owner/webhooks" , handlers.RequireWebhooks , handlers.Guard.RequireOwner )
 	owner_webhooks.Get( "" , handlers.ListWebhooks )
 	owner_webhooks.Post( "" , handlers.CreateWebhook )
 	owner_webhooks.Get( "/events" , handlers.ListWebhookEvents )

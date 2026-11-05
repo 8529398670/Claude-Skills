@@ -6,7 +6,7 @@ const Pin = {
 
   init( me ) {
     this.me = me;
-    if ( me.account_role === "admin" || me.auth !== "session" ) return;
+    if ( me.account_role === "admin" || me.auth !== "session" || me.invite_links_enabled === false ) return;
     Dom.show( Dom.get( "pin-panel" ) , true );
     Dom.onSubmit( Dom.get( "pin-form" ) , this.onSave.bind( this ) );
     Dom.get( "pin-clear-button" ).addEventListener( "click" , this.onClear.bind( this ) );

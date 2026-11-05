@@ -12,6 +12,7 @@ adding a setting or writing a file anywhere.
 - [How the scripts read it](#how-the-scripts-read-it)
 - [The secret key](#the-secret-key)
 - [Changing settings while the server runs](#changing-settings-while-the-server-runs)
+- [Feature switches](#feature-switches)
 - [The app directory](#the-app-directory)
 - [Why one directory, and why ~/.config](#why-one-directory-and-why-config)
 - [Reaching the database from another process](#reaching-the-database-from-another-process)
@@ -407,6 +408,32 @@ or the other. The container cannot rename over its bind-mounted file, so there
 it is rewritten in place, after the previous version is copied to
 `<app dir>/config.yaml.bak`.
 
+## Feature switches
+
+`scaffold.py --features` sets these in `config/defaults.yaml` when a project is
+made (see Step 1b in SKILL.md). All of them are `[live]`, so one change on the
+Settings screen, or `config set`, takes effect without a restart. The code is in
+every project either way, and switching a feature off keeps its data.
+
+| Feature | Switch | Template default | While off |
+|---|---|---|---|
+| `files` | `files.enabled` | on | Screen hidden, `/api/files` answers 404, files stay on disk |
+| `api_keys` | `auth.api_keys` | on | Keys stop working, minting answers 404, rows stay |
+| `mcp` | `server.mcp` | on | `/mcp` answers 404. Needs `api_keys` |
+| `webhooks` | `webhooks.enabled` | on | Screen hidden, routes answer 404, no events queued, nothing sent, queued deliveries wait |
+| `invite_links` | `auth.invite_links` | on | Invite and PIN screens hidden, `/join` and every invite route answer 404, MCP invite tools unlisted, links and PINs stay |
+| `passwords` | `auth.passwords` | off | Form hidden, no password works, hashes stay |
+| `two_factor` | `auth.two_factor` | on | Not offered or asked for, secrets stay |
+| `metrics` | `metrics.enabled` | off | `/metrics` answers 404. Needs `api_keys` |
+| `backups` | `backups.enabled` | off | No scheduled backups; `manage backup` still works |
+
+Someone who only ever signed in through an invite link needs a login link while
+`auth.invite_links` is off.
+
+Tests pin these to the template's values (`pin_switches` in
+`app/tests/support.py`), so a
+project's choice cannot fail them. A new switch goes in that list too.
+
 ## The app directory
 
 ```
@@ -601,6 +628,7 @@ limit costs an admin's time.
 
 ## Webhook settings
 
+`webhooks.enabled` switches the whole feature (see [Feature switches](#feature-switches)).
 `webhooks.timeout_seconds` is how long one delivery attempt may take, 1 to 60.
 `webhooks.allow_private_targets` lets an endpoint be on this machine or a private
 network, and use plain `http`. Leave it off unless whoever is the owner should have

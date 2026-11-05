@@ -9,14 +9,19 @@ create any users, so nothing touches the network or the outside world until
 the person running it decides to.
 
 Usage:
-    python3 scaffold.py <target-dir> "<project-name>" [module-path]
+    python3 scaffold.py <target-dir> "<project-name>" [module-path] [--features a,b,c]
 
 If module-path is omitted it is derived from the project name, which is fine
 for a private app. Pass a real path (github.com/you/thing) if the project will
 ever be imported by something else.
+
+--features is the exact list of optional features to switch on (see FEATURES;
+`none` is the core alone). All the code is copied either way: this only sets
+config switches. Leaving it out keeps the template's defaults.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import secrets
@@ -144,6 +149,84 @@ def stamp_port(target_dir: Path, port: int) -> None:
     defaults_path.write_text(text, encoding="utf-8")
 
 
+# What a project can have switched on: name -> (config.yaml section, key, what
+# it needs). Everything here is always in the project; --features only decides
+# which switches start on, so changing your mind later is one setting. Writing
+# defaults.yaml, like stamp_port, means config.yaml, config.example.yaml,
+# `config init`, and a fresh clone all agree.
+FEATURES = {
+    "files": ("files", "enabled", ()),
+    "api_keys": ("auth", "api_keys", ()),
+    "mcp": ("server", "mcp", ("api_keys",)),
+    "webhooks": ("webhooks", "enabled", ()),
+    "invite_links": ("auth", "invite_links", ()),
+    "passwords": ("auth", "passwords", ()),
+    "two_factor": ("auth", "two_factor", ()),
+    "metrics": ("metrics", "enabled", ("api_keys",)),
+    "backups": ("backups", "enabled", ()),
+}
+TOP_LEVEL_KEY = re.compile(r"^[a-z_]+:")
+SWITCH_VALUE = re.compile(r"\b(true|false)\b( *)")
+
+
+def parse_features(value: str) -> tuple[set[str], list[str]]:
+    """--features' value as the set to switch on, plus any feature added because
+    another needs it. "none" is the core alone."""
+    names = [name.strip() for name in value.split(",") if name.strip()]
+    if names == ["none"]:
+        return set(), []
+    unknown = sorted(set(names) - set(FEATURES))
+    if unknown or not names:
+        raise SystemExit(f"Unknown feature(s): {', '.join(unknown) or '(empty)'}. Choose from: {', '.join(FEATURES)}, or none.")
+    chosen = set(names)
+    added = sorted({need for name in chosen for need in FEATURES[name][2]} - chosen)
+    return chosen | set(added), added
+
+
+def find_switch(lines: list[str], section: str, key: str) -> int:
+    """The index of `  key: true|false` directly under `section:`. Section-aware
+    because `enabled:` appears under several, and two spaces exactly so a deeper
+    key of the same name cannot match."""
+    pattern = re.compile(rf"^  {re.escape(key)}:\s*(true|false)\b")
+    found: list[int] = []
+    inside = False
+    for index, line in enumerate(lines):
+        if TOP_LEVEL_KEY.match(line):
+            inside = line.startswith(f"{section}:")
+        elif inside and pattern.match(line):
+            found.append(index)
+    if len(found) != 1:
+        raise SystemExit(f"defaults.yaml must contain exactly one {section}.{key} switch, found {len(found)}")
+    return found[0]
+
+
+def aligned(value: str, match: re.Match[str]) -> str:
+    """value with the spaces after it adjusted, so a trailing comment stays in
+    its column whichever word is shorter. No comment, no spaces to adjust."""
+    padding = match.group(2)
+    if not padding:
+        return value
+    return value + " " * max(1, len(match.group(1)) + len(padding) - len(value))
+
+
+def stamp_features(target_dir: Path, chosen: set[str]) -> None:
+    """Set every switch in <target>/config/defaults.yaml to on or off, leaving
+    its comment and alignment alone."""
+    defaults_path = target_dir / "config" / "defaults.yaml"
+    lines = defaults_path.read_text(encoding="utf-8").split("\n")
+    for name, (section, key, _) in FEATURES.items():
+        index = find_switch(lines, section, key)
+        value = "true" if name in chosen else "false"
+        lines[index] = SWITCH_VALUE.sub(lambda match: aligned(value, match), lines[index], count=1)
+    defaults_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def features_on(target_dir: Path) -> list[str]:
+    """Which switches are on in <target>/config/defaults.yaml, for the summary."""
+    lines = (target_dir / "config" / "defaults.yaml").read_text(encoding="utf-8").split("\n")
+    return [name for name, (section, key, _) in FEATURES.items() if re.search(r":\s*true\b", lines[find_switch(lines, section, key)])]
+
+
 # What a scripts/run.sh or docker/run.sh run inside the template itself can
 # leave behind: runtime state, build output, config/config.yaml and the
 # secret.key beside it. None of it belongs in a new project. Paths are relative
@@ -180,13 +263,18 @@ def strip_demo_block(path: Path) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) not in (3, 4):
-        print(__doc__)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("target_dir")
+    parser.add_argument("project_name")
+    parser.add_argument("module_path", nargs="?")
+    parser.add_argument("--features", help=f"comma-separated, or none; leave it out for the template's defaults. Choose from: {', '.join(FEATURES)}")
+    args = parser.parse_args()
+    # Before anything is written: a typo should not leave half a project.
+    chosen, added = parse_features(args.features) if args.features is not None else (None, [])
 
-    target_dir = Path(sys.argv[1]).resolve()
-    project_name = sys.argv[2]
-    module_path = sys.argv[3] if len(sys.argv) == 4 else slugify(project_name)
+    target_dir = Path(args.target_dir).resolve()
+    project_name = args.project_name
+    module_path = args.module_path or slugify(project_name)
 
     # Refusing here rather than merging is the point: scaffolding on top of
     # someone's existing work would silently overwrite files, and the mistake
@@ -228,6 +316,8 @@ def main() -> None:
 
     port = pick_port()
     stamp_port(target_dir, port)
+    if chosen is not None:
+        stamp_features(target_dir, chosen)
     config_path, secret_path = write_config(target_dir)
     example_path = write_example(target_dir)
 
@@ -238,6 +328,12 @@ def main() -> None:
     print(f"  config: {config_path} (mode 0600, gitignored; editable while the server runs)")
     print(f"  secret: {secret_path} (mode 0600, fresh key, gitignored -- back it up with the database)")
     print(f"  example: {example_path} (commit it -- `cp` it to config/config.yaml on a fresh clone)")
+    on = features_on(target_dir)
+    off = [name for name in FEATURES if name not in on]
+    print(f"  features on: {', '.join(on) or '(core only)'}")
+    print(f"  features off: {', '.join(off) or '(none)'} -- all still in the project; switch one on in Settings")
+    for name in added:
+        print(f"  added {name}: another feature you chose needs it")
     print("")
     print("Next:")
     print(f"  cd {target_dir}")

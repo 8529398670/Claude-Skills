@@ -77,6 +77,7 @@ func TestCheckURLMatchesTheSharedCases( t *testing.T ) {
 // fixture is a store, a dispatcher, and a receiver that answers with status.
 type fixture struct {
 	store      *db.Store
+	cfg        *config.Config
 	dispatcher *Dispatcher
 	receiver   *httptest.Server
 	hook       *models.Webhook
@@ -93,13 +94,13 @@ func newFixture( t *testing.T , allow_private bool ) ( result *fixture ) {
 	cfg := &config.Config{
 		DatabasePath: filepath.Join( t.TempDir() , "test.db" ),
 		SecretKey:    testKey,
-		Webhooks:     config.WebhooksConfig{ Timeout: 2 * time.Second , AllowPrivateTargets: allow_private },
+		Webhooks:     config.WebhooksConfig{ Enabled: true , Timeout: 2 * time.Second , AllowPrivateTargets: allow_private },
 	}
 	store , err := db.Open( cfg )
 	if err != nil { t.Fatal( err ) }
 	t.Cleanup( func() { store.Close() } )
 
-	result = &fixture{ store: store , status: 200 }
+	result = &fixture{ store: store , cfg: cfg , status: 200 }
 	result.dispatcher = New( store , config.NewStaticHolder( cfg ) )
 	result.receiver = httptest.NewServer( http.HandlerFunc( func( writer http.ResponseWriter , request *http.Request ) {
 		body , _ := io.ReadAll( request.Body )
@@ -122,6 +123,20 @@ func ( item *fixture ) deliveries( t *testing.T ) ( rows []*models.WebhookDelive
 	rows , err := models.ListWebhookDeliveries( item.store , item.hook.ID )
 	if err != nil { t.Fatal( err ) }
 	return
+}
+
+func TestSwitchedOffNothingIsQueuedOrSent( t *testing.T ) {
+	item := newFixture( t , true )
+	item.dispatcher.Emit( models.EventUserCreated , map[string]any{ "user_id": 7 } )
+	item.cfg.Webhooks.Enabled = false
+	item.dispatcher.Emit( models.EventUserDeleted , map[string]any{ "user_id": 7 } )
+	if rows := item.deliveries( t ); len( rows ) != 1 { t.Fatalf( "%d deliveries, want only the one queued while on" , len( rows ) ) }
+	note , err := item.dispatcher.Run()
+	if err != nil || note != "switched off" { t.Fatalf( "%q %v" , note , err ) }
+	if len( item.requests ) != 0 { t.Fatalf( "%d requests while off" , len( item.requests ) ) }
+
+	item.cfg.Webhooks.Enabled = true
+	if note , err = item.dispatcher.Run(); err != nil || note != "sent 1, failed 0" { t.Fatalf( "%q %v" , note , err ) }
 }
 
 func TestASentEventIsSignedAndMarkedDelivered( t *testing.T ) {

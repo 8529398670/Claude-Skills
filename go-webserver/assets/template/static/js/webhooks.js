@@ -9,7 +9,7 @@ const Webhooks = {
   open: null,
 
   async init( me ) {
-    if ( !me.is_owner ) return;
+    if ( !me.is_owner || me.webhooks_enabled === false ) return;
     Dom.show( Dom.get( "webhooks-panel" ) , true );
     Dom.onSubmit( Dom.get( "create-webhook-form" ) , this.onCreate.bind( this ) );
     Dom.get( "copy-webhook-button" ).addEventListener( "click" , this.onCopy.bind( this ) );
