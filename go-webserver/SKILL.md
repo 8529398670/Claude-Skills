@@ -258,6 +258,12 @@ committing). It installs
 nothing, starts nothing, and creates no users -- so nothing happens on the
 network or on disk that the user did not ask for.
 
+`scaffold.py` also writes `.skill-origin.yaml`: the skill commit, name, port and
+features this project started from. Commit it. The `webserver-upgrade` skill uses
+it to bring later template changes into the project.
+
+When you change `assets/template/`, add an entry to `UPGRADING.md` in this skill.
+
 `--features` is the exact list from Step 1b, comma-separated, or `none`. It sets
 those switches in `config/defaults.yaml`, so `config.yaml`, the example, and a fresh
 clone all agree. A feature that needs another brings it along and says so, an unknown

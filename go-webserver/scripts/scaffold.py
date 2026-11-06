@@ -27,6 +27,7 @@ import re
 import secrets
 import shutil
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -227,6 +228,45 @@ def features_on(target_dir: Path) -> list[str]:
     return [name for name, (section, key, _) in FEATURES.items() if re.search(r":\s*true\b", lines[find_switch(lines, section, key)])]
 
 
+# Where this project came from, so `webserver-upgrade` can later render the
+# template it started from and bring over only what changed since.
+ORIGIN_FILE = ".skill-origin.yaml"
+
+
+def skill_commit() -> tuple[str, bool]:
+    """The commit of the skills repo this template is at, and whether it has
+    uncommitted changes. "unknown" outside that repo: a stamp must not name a
+    commit of some other repository that happens to contain this directory."""
+    def git(*arguments: str) -> str:
+        done = subprocess.run(["git", "-C", str(SKILL_DIR), *arguments], capture_output=True, text=True)
+        return done.stdout.strip() if done.returncode == 0 else ""
+
+    top = git("rev-parse", "--show-toplevel")
+    if not top or Path(top).resolve() != SKILL_DIR.parent:
+        return "unknown", False
+    return git("rev-parse", "HEAD") or "unknown", bool(git("status", "--porcelain", "--", "."))
+
+
+def write_origin(target_dir: Path, project_name: str, slug: str, module_path: str | None, port: int, features: list[str]) -> Path:
+    """Write <target>/.skill-origin.yaml. It is committed with the project."""
+    commit, dirty = skill_commit()
+    lines = [
+        "# Written by the skill that scaffolded this app; `webserver-upgrade` reads and",
+        "# updates it. Commit it: it is how an update knows where this app started.",
+        f"skill: {SKILL_DIR.name}",
+        f"commit: {commit}",
+        f"dirty: {'true' if dirty else 'false'}",
+        f'project_name: "{project_name}"',
+        f"slug: {slug}",
+    ]
+    if module_path:
+        lines.append(f"module_path: {module_path}")
+    lines += [f"port: {port}", f"features: [{', '.join(features)}]"]
+    origin_path = target_dir / ORIGIN_FILE
+    origin_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return origin_path
+
+
 # What a scripts/run.sh or docker/run.sh run inside the template itself can
 # leave behind: runtime state, build output, config/config.yaml and the
 # secret.key beside it. None of it belongs in a new project. Paths are relative
@@ -320,6 +360,7 @@ def main() -> None:
         stamp_features(target_dir, chosen)
     config_path, secret_path = write_config(target_dir)
     example_path = write_example(target_dir)
+    write_origin(target_dir, project_name, slugify(project_name), module_path, port, features_on(target_dir))
 
     print(f"Scaffolded '{project_name}' into {target_dir}")
     print(f"  module {module_path}")
