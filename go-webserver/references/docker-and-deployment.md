@@ -201,8 +201,10 @@ and the dependencies before a release -- and scan the built image too, which
   `build:`) from inside the container, and the script refuses a `data_dir`
   of `/` or a home directory, or one that is not empty and is not this app's
   (no `app.db`, no `.<slug>-data` marker, which it leaves in every data
-  directory it sets up). It also prints any `docker:` setting that changed
-  since the last run (`.run/docker.last`).
+  directory it sets up). The marker is written as root inside the container
+  as well as from the host, because after the first chown the host user can
+  no longer touch anything in the data directory on Linux. It also prints any
+  `docker:` setting that changed since the last run (`.run/docker.last`).
 - **`--read-only`** plus a `noexec,nosuid` tmpfs for `/tmp`: the container
   cannot write to its own filesystem. This is what turns the Dockerfile's
   ownership choices into an actual guarantee. The tmpfs also holds the control
@@ -221,6 +223,18 @@ one thing in the template that uses it. The image carries `ca-certificates` for
 that. Nothing else limits where it can go, so if yours should only reach a few
 addresses, enforce that on the host or a firewall too. The app refuses private
 addresses on its own: see [Webhooks](architecture.md#webhooks).
+
+### Shell scripts and `set -e`
+
+Every script here runs under `set -euo pipefail`, so a command that reports its
+answer through its exit code ends the script, silently, whenever that answer is
+"no": `diff` (1 = they differ), `grep` (1 = no match), `cmp`, `lsof` (1 = nothing
+listening), and `test`/`[ ]` on a line of their own. Wherever a non-zero result
+is expected, use the command as an `if` condition (`if grep -q …; then`) or end
+it with `|| true`, which covers the whole pipeline. Being inside an `if` body
+does not protect a command: only the condition itself is exempt from `set -e`.
+The settings-changed notice (`diff … | sed … || true`) and the port check
+(`lsof … | head -n 1 || true`) in `docker/run.sh` are the pattern to copy.
 
 ## Paths inside the container
 

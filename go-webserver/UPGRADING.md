@@ -3,6 +3,28 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 3f84d17
+
+**`docker/run.sh`, the settings-changed notice:** the `diff … | sed …` line now
+ends in `|| true`. `diff` exits 1 whenever the `docker:` settings changed, which
+is the only time the line runs, so under `pipefail` the script used to print the
+was/now lines and stop with status 1, after building the image and before
+replacing the container. An autodeploy reported a failed deploy; by hand it
+stopped with no error.
+
+**Test:** deploy once, change `docker.memory` in `config/config.yaml`, and run
+`docker/run.sh` again: it prints the was/now lines, replaces the container and
+reaches `Ready:`.
+
+**`docker/run.sh`, the data-directory marker:** `touch "${DATA_DIR}/${DATA_MARKER}"`
+is now `|| true`, and the root container that chowns the data directory touches
+the marker too. On Linux the second run used to stop there, because the first had
+handed `data/` and the marker to uid 10001 and the host user could no longer touch
+them.
+
+**Test:** on a Linux host, run `docker/run.sh` twice: the second run gets past the
+data-directory step and `data/.<slug>-data` exists. On macOS both runs still work.
+
 ## After b286bc2
 
 **Navbar light/dark button:** an app with the Appearance screen no longer has
