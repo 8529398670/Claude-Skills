@@ -1,3 +1,4 @@
+// whole-file feature:mcp
 package mcp
 
 import (

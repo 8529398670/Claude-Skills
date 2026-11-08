@@ -11,7 +11,7 @@
 package security
 
 import (
-	strings "strings"
+	strings "strings" // feature:api_keys
 	time "time"
 
 	fiber "github.com/gofiber/fiber/v3"
@@ -19,7 +19,7 @@ import (
 	config "{{MODULE_PATH}}/server/config"
 	db "{{MODULE_PATH}}/server/db"
 	encryption "{{MODULE_PATH}}/server/encryption"
-	logs "{{MODULE_PATH}}/server/logs"
+	logs "{{MODULE_PATH}}/server/logs" // feature:logs
 	models "{{MODULE_PATH}}/server/models"
 )
 
@@ -33,7 +33,7 @@ const keyActor contextKey = "current_actor"
 // tell a browser session from a key without guessing.
 const (
 	MethodSession = "session"
-	MethodAPIKey  = "api_key"
+	MethodAPIKey  = "api_key" // feature:api_keys
 )
 
 // Actor is who a request belongs to, plus how they proved it.
@@ -44,7 +44,7 @@ const (
 type Actor struct {
 	User    *models.User
 	Session *models.Session
-	APIKey  *models.APIKey
+	APIKey  *models.APIKey // feature:api_keys
 	Role    string
 }
 
@@ -56,15 +56,17 @@ func ( actor *Actor ) IsAdmin() ( result bool ) {
 // ViaAPIKey distinguishes the two doors. It decides the CSRF question below,
 // and it is what an endpoint reads if it genuinely must be browser-only.
 func ( actor *Actor ) ViaAPIKey() ( result bool ) {
-	result = actor.APIKey != nil
+	result = actor.APIKey != nil // feature:api_keys
 	return
 }
 
 func ( actor *Actor ) Method() ( result string ) {
 	result = MethodSession
+	// >>> feature:api_keys
 	if actor.ViaAPIKey() {
 		result = MethodAPIKey
 	}
+	// <<< feature:api_keys
 	return
 }
 
@@ -149,9 +151,11 @@ func ( guard *Guard ) DecryptCookie( raw string ) ( credential string , err erro
 // token check, and cannot opt out of it by also carrying a key.
 func ( guard *Guard ) LoadUser( c fiber.Ctx ) ( err error ) {
 	actor := guard.resolveSession( c )
+	// >>> feature:api_keys
 	if actor == nil {
 		actor = guard.resolveAPIKey( c )
 	}
+	// <<< feature:api_keys
 	if actor != nil {
 		c.Locals( keyActor , actor )
 	}
@@ -178,6 +182,7 @@ func ( guard *Guard ) resolveSession( c fiber.Ctx ) ( actor *Actor ) {
 	return
 }
 
+// >>> feature:api_keys
 // resolveAPIKey reads "Authorization: Bearer <id>.<secret>".
 //
 // One header and one scheme, deliberately: a second accepted spelling (an
@@ -209,6 +214,7 @@ func ( guard *Guard ) resolveAPIKey( c fiber.Ctx ) ( actor *Actor ) {
 	}
 	return
 }
+// <<< feature:api_keys
 
 // RequireLogin, RequireAdmin, RequireSession and RequireAPIKey are middleware rather than
 // helpers called at the top of each handler, so a new protected route is
@@ -271,6 +277,7 @@ func ( guard *Guard ) RequireSession( c fiber.Ctx ) ( err error ) {
 	return
 }
 
+// >>> feature:api_keys
 // RequireAPIKey is RequireSession's mirror: it refuses a browser session and
 // lets only a key through. It guards /mcp, which is for agents and scripts.
 // Taking only a header credential there means no ambient cookie can ride
@@ -290,6 +297,7 @@ func ( guard *Guard ) RequireAPIKey( c fiber.Ctx ) ( err error ) {
 	err = c.Next()
 	return
 }
+// <<< feature:api_keys
 
 // RequireOwner lets through only the owner, signed in from a browser. It
 // guards the activity log (routes/logs.go), which shows what every account
@@ -315,6 +323,7 @@ func ( guard *Guard ) RequireOwner( c fiber.Ctx ) ( err error ) {
 	return
 }
 
+// >>> feature:logs
 // StillOwner is RequireOwner for a stream, which is only checked by middleware
 // when it connects. credential is the session it connected with. It does not
 // count as activity: an open page re-checking is not the person being there.
@@ -325,7 +334,9 @@ func ( guard *Guard ) StillOwner( credential string ) ( ok bool ) {
 	ok = err == nil && owner_id != 0 && user.ID == owner_id
 	return
 }
+// <<< feature:logs
 
+// >>> feature:logs
 // LogActor is who an activity-log entry belongs to: the account, the role it
 // acted with, and which door it came through (a key by its public id only).
 func LogActor( actor *Actor ) ( result *logs.Actor ) {
@@ -339,11 +350,14 @@ func LogActor( actor *Actor ) ( result *logs.Actor ) {
 		Role:   actor.Role,
 		Method: actor.Method(),
 	}
+	// >>> feature:api_keys
 	if actor.APIKey != nil {
 		result.KeyID = actor.APIKey.ID
 	}
+	// <<< feature:api_keys
 	return
 }
+// <<< feature:logs
 
 func ActorFrom( c fiber.Ctx ) ( actor *Actor ) {
 	actor , _ = c.Locals( keyActor ).( *Actor )
@@ -368,12 +382,14 @@ func SessionFrom( c fiber.Ctx ) ( session *models.Session ) {
 	return
 }
 
+// >>> feature:api_keys
 func APIKeyFrom( c fiber.Ctx ) ( key *models.APIKey ) {
 	if actor := ActorFrom( c ); actor != nil {
 		key = actor.APIKey
 	}
 	return
 }
+// <<< feature:api_keys
 
 // CheckCSRF guards state-changing requests. SameSite=Strict already blocks
 // the common cross-site POST, but it is a browser-side promise: older

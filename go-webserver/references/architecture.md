@@ -45,18 +45,22 @@ set by someone who already signed in with a link (see
 [Passwords](#passwords-an-option-the-owner-switches-on)). With passwords off,
 identity is proven exactly two ways:
 
-1. **Redeeming a one-time login token** (`server/models/login_token.go`). An
+1. **Redeeming a login token** (`server/models/login_token.go`). An
    admin -- or the first-run bootstrap -- mints a high-entropy credential for
-   a specific user. Only a bcrypt hash of its secret half is stored. It
-   expires, and an account has at most one pending link: issuing a new one
-   deletes the old. Opening `/login/<credential>` only serves the page; the
+   a specific user. Only a bcrypt hash of its secret half is stored. By
+   default it works once and expires after `auth.login_token_ttl_seconds`;
+   whoever makes it can instead let it work up to N times (1-1000) or any
+   number of times, always for that one account, and pick its expiry
+   (30 minutes to 90 days in the UI, up to 365 days over the API, or never).
+   See [Reusable login links](#reusable-login-links). An account has at most
+   one live link: issuing a new one deletes the old. Opening `/login/<credential>` only serves the page; the
    page POSTs the credential to `/api/login` when the person confirms, so a
    chat app's link preview or a mail scanner cannot spend it, and someone
    already signed in is told they are about to switch accounts. The bcrypt
    comparison runs first, outside any transaction; then one bolt write
-   transaction re-checks the token, checks the account is enabled, marks the
-   token used, and stores the session. Two requests racing the same link
-   cannot both succeed, and a link redeemed while the account is being
+   transaction re-checks the token still has a use left, checks the account
+   is enabled, counts the use, and stores the session. Two requests racing
+   for a link's last use cannot both succeed, and a link redeemed while the account is being
    disabled either lands first (and is swept up by the disable) or is
    refused.
 2. **Presenting a valid session cookie** (`server/models/session.go`). The
@@ -89,14 +93,20 @@ browser session: an API key cannot call it.
 
 Four operations look alike and are not:
 
-| | pending link | sessions | API keys | account |
+| | live link | sessions | API keys | account |
 |---|---|---|---|---|
 | **Reissue login** (`New link`, `manage reissue-login`, or your own `Make a login link`) | replaced | kept | kept | kept |
+| **Cancel link** (`POST /api/admin/users/:id/cancel-login-link`, or your own) | deleted | kept | kept | kept |
 | **Disable** (`manage set-disabled`) | deleted | deleted | refused while disabled, restored on re-enable | kept, disabled |
 | **Revoke access** (`manage revoke-access`, `POST /api/admin/users/:id/revoke-access`) | deleted | deleted | revoked | kept, enabled |
 | **Delete** (`manage delete-user`, `POST /api/admin/users/:id/delete`) | deleted, used ones too | deleted | rows deleted | deleted, for good |
 
-None of the four touch invite links. A link an admin made stops working
+"Live link" means one that would still let someone in: unused, or reusable
+with uses left, and unexpired. A reusable link that has been used is still
+live, so all of these end it. Used-up and expired links are left for `purge`,
+so a late click says "already used" rather than "no such link".
+
+None of these touch invite links. A link an admin made stops working
 when that admin is disabled, deleted, or demoted, and the accounts a link
 made are ordinary accounts that all four apply to.
 
@@ -115,6 +125,44 @@ shipper, a shared dashboard, a support engineer). Use the link promptly, or
 keep the logs private until you have; it also expires after
 `auth.login_token_ttl_seconds`. It only fires when no enabled admin exists, so
 restarts do not keep minting admins.
+
+## Reusable login links
+
+A login link works once unless whoever makes it says otherwise. The create-user
+form, the per-row **New link** dialog, **Sign in on another device**, `manage
+create-login` / `reissue-login` (`-uses 5|unlimited -expires 30m|12h|7d|never`)
+and `scripts/login.sh` (`--uses`, `--expires`) all take the same two choices:
+
+- **Works:** once, up to N times (1-1000), or any number of times. Every use
+  signs in the same account; this is not an invite link, which makes new ones.
+- **Expires:** a preset, or never. Left at the default, a once link lasts
+  `auth.login_token_ttl_seconds` (30 minutes) and any other
+  `auth.multi_use_login_token_ttl_seconds` (7 days), both `[live]`.
+
+Over the API the same choices are `max_uses` (1-1000, 0 for unlimited, left out
+for once) and `expires_in_minutes` (0 for never, left out for the default) on
+`POST /api/admin/users`, `/api/admin/users/:id/reissue-login` and
+`/api/account/login-link`; the answer adds `max_uses`, `unlimited` and
+`expires_at` (null for never). `models.ResolveLoginLink` fills the defaults and
+checks the limits for every door, the control socket and CLI included.
+
+The account's live link shows on its row in Users (`login_link`: uses so far,
+limit, expiry, last use) and on its own Account screen (`/api/me`), each with a
+**Cancel link** button. Cancelling only takes the link away, so an admin API
+key may do it, like revoking access; making one still needs a browser session.
+
+A reusable link is a standing credential, the way a password is: anyone who
+holds it is that person until it runs out, expires or is cancelled. Prefer a
+use count or an expiry over "any number of times, never", and cancel or
+reissue as soon as it may have gone somewhere it should not. bcrypt is still
+paid once per sign-in, never per request, and `/api/login` is on the sign-in
+rate budget, so reuse does not open a cheap way to burn CPU.
+
+Stored rows gained `max_uses`, `unlimited` and `uses`; `used_at` became the
+last use and a zero `expires_at` means never. A row from before has none of
+these and still reads as "once" (`used_at` set counts as one use), so no
+migration is needed. `purge` drops expired rows, and a used-up row that never
+expires 30 days after its last use.
 
 ## Passwords: an option the owner switches on
 
@@ -190,7 +238,8 @@ credentials anyway. All three ways end in one function, `startSignInTx` (`server
 transaction that spent the first factor. For an account with 2FA it stores a
 five-minute one-time challenge instead of a session and the page asks for a
 code, so a way of signing in cannot forget to. The first factor is already
-spent: a login link used here is gone even if the code never comes.
+spent: a login link used here has lost that use even if the code never comes
+(a one-time link is gone; a reusable one counts it).
 
 The secret has to be readable, so unlike every other credential it cannot be
 hashed. It is encrypted on its own with the secret key, on top of whatever the
@@ -222,6 +271,16 @@ wins.
 | **Disable / revoke access** (any admin) | yes | yes | no | no |
 | **CLI / control socket** (the operator) | delete, disable, revoke | delete, disable, revoke | revoke only | -- |
 
+- **Renaming and roles follow the same table,** from the Users screen, with a
+  browser session. Only the owner renames an admin or takes an admin's rights
+  away; nobody changes their own role, and the owner is always an admin. The one
+  difference: any admin may make another, as any admin can create one.
+- **Becoming an admin ends the account's sessions and live login link.** Whoever
+  holds an invite link can sign in as an account that joined through it, so a
+  session already open may not be the person promoted. Losing admin rights ends
+  nothing: the role is read on every request. Admin keys narrow to the new role,
+  and invite links the account made stop working. Both come back if the account
+  is made an admin again.
 - **A marker, not a role.** The owner is one id in the `meta` bucket
   (`owner_user_id`), not a third role beside admin and user. Roles are also
   what API keys carry and what `NarrowRole` compares, so a third one would
@@ -309,6 +368,16 @@ and can sign in as any account it created that has no PIN. That is the trade
 for "one link in a group chat". Keep the places and the lifetime close to the
 group's real size, switch a link off once everyone is in, and tell people to
 set a PIN if the chat is large or public.
+
+**A link can be edited after it is made** (`rename`, `limits` and `switch-on` under
+`/api/admin/invite-links/:id`), and here it differs from an API key on purpose. An
+expired link can be extended and a switched-off one switched back on, because a
+link owns the accounts that joined through it and is how they sign back in on a
+new device, so a replacement would lock them out. Switching back on asks first,
+since the same link works again for anyone holding it. Places cannot drop below
+the people already in. All three need a browser session: more places is more
+accounts, so a leaked admin key must not be a way to reopen or grow a link.
+Neither edit helps a link whose maker has lost their admin rights.
 
 ## API keys: the same roles, for callers that are not browsers
 
@@ -404,6 +473,14 @@ its own successors -- and write it down in that app's docs.
   forgotten key stops being a live credential. A key with no expiry is
   available but has to be asked for: `expires_in_days: 0`, or
   `manage create-key -days 0`.
+- **A key can be renamed or given a new expiry afterwards**
+  (`/api/keys/:id/rename`, `/api/keys/:id/expiry`, and the same under
+  `/api/admin/keys`). A name is only a label, so any admin can change one, on a
+  dead key too. An expiry is stricter. It only moves on a live key: an edit must
+  not bring back an expired or revoked one, so a new key is the way back. And
+  changing someone else's follows the minting ladder: nobody touches the owner's
+  keys, and only the owner touches another admin's. Both need a browser session,
+  so a leaked key cannot extend itself.
 - **`last_used_at` is written at most once every 15 minutes.** "Is anything
   still using this" is the question you ask before revoking, so it is worth
   recording -- but bolt has a single writer, and a write per authenticated
@@ -623,9 +700,15 @@ shell; they are append-only, so that is safe with the server running.
 
 **Search** is `logs.ParseQuery`: free words match the entry's JSON in any
 case; `kind:` `level:` `user:` `status:` (`5xx` for a class) `method:`
-`path:` (prefix) `ip:` (prefix) `action:` `screen:` narrow; a comma is OR,
+`path:` (prefix) `ip:` (prefix, or part of what the owner calls it) `action:` `screen:` narrow; a comma is OR,
 a leading `-` is NOT, quotes make a phrase. It is a linear pass over the
 day's lines, decrypting each -- see Known limits.
+
+**Names for addresses.** The owner can name an address or a range, which the Logs and
+Sessions screens show, and `ip:` and free text search. They are stored in the database
+and added as the log is read, so the files never hold them and renaming one renames its
+past. The most specific wins. Downloads carry `ip_name` beside `ip`. Only the owner sees
+them: they are notes about people.
 
 ## Background jobs
 
@@ -978,6 +1061,13 @@ metadata lives) and everything else that is not the public internet, and the sam
 list is in both templates. `webhooks.allow_private_targets` lifts all of this and
 allows plain `http`, for a receiver on the same network.
 
+**Editing an endpoint.** The name, address and events can change, and a new
+address gets the same check as a new endpoint's. Deliveries still waiting go to
+the new address, because the sender reads the endpoint at each attempt: that is
+what fixing a mistyped one needs. **New secret** replaces the signing secret at
+once, with no overlap and no way back. Each attempt is signed as it is sent, so a
+receiver that refuses deliveries until it has the new secret gets them on a retry.
+
 A delivery's error text never holds the URL, which may carry a token. The audit
 log records an endpoint's name and id only, for the same reason.
 
@@ -1107,8 +1197,10 @@ O(1) fetch, and exactly one hash comparison follows.
 
 The two halves then use different hashes on purpose:
 
-- **Login tokens use bcrypt.** They are redeemed at most once, so bcrypt's
-  deliberate slowness costs a single request and buys real resistance.
+- **Login tokens use bcrypt.** They are checked once per sign-in through a
+  link (a reusable link is still one check per sign-in, never per request,
+  and sign-ins have their own rate budget), so bcrypt's deliberate slowness
+  costs a single request and buys real resistance.
 - **Sessions, API keys, and invite links use sha256.** Sessions and keys
   are checked on every authenticated request, and an invite link's secret is
   24 random bytes, not a person's choice. Against a long random secret there

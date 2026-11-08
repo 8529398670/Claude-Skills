@@ -6,9 +6,11 @@ The key does four jobs, and each needs something different:
     database records    re-encrypted here (with server.encrypt_at_rest on)
     two-factor secrets  encrypted a second time inside the user record, so
                         re-encrypted here too, always: see
-                        two_factor.rekey_record
+                        sealed.rekey_record
+    # >>> feature:logs
     activity log        every line is encrypted, gzipped days included, so
                         each file is rewritten
+    # <<< feature:logs
     session cookies     sealed with the key and held by browsers, so they stop
                         working: everyone signs in again
 
@@ -34,9 +36,10 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.core import config, config_secret, db, encryption, logs, server_lock
+from app.core import config, config_secret, db, encryption, server_lock
+from app.core import logs  # feature:logs
 from app.core.layout import in_container
-from app.models import two_factor
+from app.models import sealed
 
 
 class RotateError(Exception):
@@ -55,7 +58,7 @@ class Result:
     retired_key: Path | None = None
     old_fingerprint: str = ""
     new_fingerprint: str = ""
-    log_files: int = 0
+    log_files: int = 0  # feature:logs
 
 
 def run(cfg: config.Config, new_key_file: str = "") -> Result:
@@ -68,7 +71,8 @@ def run(cfg: config.Config, new_key_file: str = "") -> Result:
     # Only the container gets here with a marker: everywhere else, loading the
     # config already finished the job.
     if config_secret.rotation_pending(cfg.app_dir):
-        config_secret.finish_rotation_data(cfg.app_dir, cfg.database_path, cfg.logs.dir)
+        config_secret.finish_rotation_data(cfg.app_dir, cfg.database_path, cfg.logs.dir)  # feature:logs
+        config_secret.finish_rotation_data(cfg.app_dir, cfg.database_path)  # feature:!logs
         return Result(resumed=True)
 
     new_key = _choose_key(cfg, new_key_file)
@@ -77,7 +81,8 @@ def run(cfg: config.Config, new_key_file: str = "") -> Result:
         new_fingerprint=encryption.key_fingerprint(new_key),
     )
     try:
-        result.log_files = stage(cfg, new_key)
+        result.log_files = stage(cfg, new_key)  # feature:logs
+        stage(cfg, new_key)  # feature:!logs
         # Staging can take a while, and a server started in the meantime
         # would be writing to the file about to be replaced.
         _ensure_stopped(cfg)
@@ -92,7 +97,8 @@ def run(cfg: config.Config, new_key_file: str = "") -> Result:
         config_secret.write_secret(following, new_key)
 
     config_secret.mark_rotation(cfg.app_dir)
-    config_secret.finish_rotation_data(cfg.app_dir, cfg.database_path, cfg.logs.dir)
+    config_secret.finish_rotation_data(cfg.app_dir, cfg.database_path, cfg.logs.dir)  # feature:logs
+    config_secret.finish_rotation_data(cfg.app_dir, cfg.database_path)  # feature:!logs
     if new_key_file:
         return result
     result.retired_key = config_secret.finish_rotation_key(cfg.secret_file)
@@ -111,9 +117,9 @@ def _choose_key(cfg: config.Config, new_key_file: str) -> str:
     return key
 
 
-def stage(cfg: config.Config, new_key: str) -> int:
-    """Everything that can fail, on copies. Nothing live is touched. Returns
-    how many log files were moved."""
+def stage(cfg: config.Config, new_key: str) -> int:  # feature:logs
+def stage(cfg: config.Config, new_key: str) -> None:  # feature:!logs
+    """Everything that can fail, on copies. Nothing live is touched."""
     directory = config_secret.rotation_dir(cfg.app_dir)
     shutil.rmtree(directory, ignore_errors=True)
     directory.mkdir(mode=0o700, parents=True)
@@ -125,14 +131,16 @@ def stage(cfg: config.Config, new_key: str) -> int:
             # VACUUM INTO, not a file copy: it takes in whatever a crash left
             # in app.db-wal.
             db.Store(database, cfg.secret_key, cfg.encrypt_at_rest).snapshot(staged)
-            db.rekey(staged, cfg.secret_key, new_key, cfg.encrypt_at_rest, two_factor.rekey_record(cfg.secret_key, new_key))
+            db.rekey(staged, cfg.secret_key, new_key, cfg.encrypt_at_rest, sealed.rekey_record(cfg.secret_key, new_key))
             db.check_file(staged, new_key, cfg.encrypt_at_rest)
         except (db.DecodeError, encryption.CipherTextError, sqlite3.Error) as error:
             raise RotateError(f"nothing was changed: {error}") from None
 
+    # >>> feature:logs
     if not cfg.encrypt_at_rest:
         return 0
     return logs.rekey_files(Path(cfg.logs.dir), directory / config.LOGS_DIR_NAME, cfg.secret_key, new_key)
+    # <<< feature:logs
 
 
 def _ensure_stopped(cfg: config.Config) -> None:

@@ -1,3 +1,4 @@
+// whole-file feature:mcp
 // Package mcp answers the Model Context Protocol on POST /mcp, so an agent --
 // Claude Code, or any MCP client that can send a header -- can use this app
 // through the same API keys and the same admin/user roles as every other

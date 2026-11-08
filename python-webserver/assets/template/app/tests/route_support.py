@@ -1,7 +1,7 @@
 """Shared by the tests that call real routes: main.build_app over a real
 config.yaml and secret.key in a temporary folder, an owner, a second admin, an
 admin key and a user key. Importing this skips the importing module without
-httpx, the same way test_settings_routes.py does.
+httpx2, the same way test_settings_routes.py does.
 
 TestClient waits for a response to end, so a stream needs asgi_request below
 instead: the whole app, called directly."""
@@ -18,12 +18,13 @@ from typing import Any, Awaitable, Callable
 try:
     from starlette.testclient import TestClient
 except (ImportError, RuntimeError) as missing:  # Starlette raises RuntimeError
-    raise unittest.SkipTest(f"needs httpx (pip install httpx): {missing}")
+    raise unittest.SkipTest(f"needs httpx2 (pip install httpx2): {missing}")
 
 from app.core import assets, db, encryption, language
 from app.core.static_files import StaticServer
 from app.main import build_app
-from app.models import api_keys, login_tokens, users
+from app.models import login_tokens, users
+from app.models import api_keys  # feature:api_keys
 from app.models.sign_in import SignInRules
 from app.tests.support import new_holder
 
@@ -31,26 +32,30 @@ from app.tests.support import new_holder
 class RoutesTestCase(unittest.TestCase):
     # Changes to the running Config before the app is built.
     config_changes: dict[str, Any] = {}
-    logs_enabled = True
+    logs_enabled = True  # feature:logs
 
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.holder, self.path = new_holder(self, app_dir=str(Path(directory.name) / "data"))
         self.set_config(rate_limit_max=100000, rate_limit_signin_max=100000, **self.config_changes)
+        # >>> feature:logs
         self.set_config(logs=replace(self.holder.get().logs, enabled=self.logs_enabled))
+        # <<< feature:logs
         cfg = self.holder.get()
         self.holder._boot = cfg
         self.cfg = cfg
         cfg.app_dir.mkdir(parents=True, exist_ok=True)
-        (cfg.app_dir / "logs").mkdir(exist_ok=True)
+        (cfg.app_dir / "logs").mkdir(exist_ok=True)  # feature:logs
         self.store = db.open_store(cfg.database_path, cfg.secret_key, cfg.encrypt_at_rest)
         self.owner = users.create_user(self.store, "Owner", users.ROLE_ADMIN)
         users.ensure_owner(self.store)
         self.admin = users.create_user(self.store, "Other admin", users.ROLE_ADMIN)
         self.user = users.create_user(self.store, "User", users.ROLE_USER)
+        # >>> feature:api_keys
         self.admin_key, _ = api_keys.issue_api_key(self.store, self.owner.id, "admin", users.ROLE_ADMIN, 3600)
         self.user_key, _ = api_keys.issue_api_key(self.store, self.owner.id, "user", users.ROLE_USER, 3600)
+        # <<< feature:api_keys
 
         bundle = assets.resolve(cfg.static_dir, cfg.language_file)
         self.app = build_app(self.holder, self.store, language.parse(bundle.language_yaml), StaticServer(bundle.static_dir))
@@ -65,7 +70,7 @@ class RoutesTestCase(unittest.TestCase):
 
     def session(self, user_id: int) -> str:
         login = login_tokens.issue_login_token(self.store, user_id, 3600)
-        credential = login_tokens.redeem_login_token(self.store, login, SignInRules(3600, False)).session_credential
+        credential = login_tokens.redeem_login_token(self.store, login, SignInRules(3600)).session_credential
         return f"{self.cfg.cookie_name}={encryption.xchacha_encrypt_string(self.cfg.secret_key, credential)}"
 
     def csrf(self, cookie: str) -> str:

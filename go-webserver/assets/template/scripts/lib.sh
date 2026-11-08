@@ -28,7 +28,7 @@ build_binary() {
     echo "ERROR: go is not on PATH. Install Go (https://go.dev/dl/) and re-run." >&2
     exit 1
   fi
-  if ! go build -trimpath \
+  if ! go build -buildvcs=false -trimpath \
          -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" \
          -o "$BINARY" .; then
     echo "" >&2

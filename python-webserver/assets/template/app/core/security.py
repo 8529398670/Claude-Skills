@@ -23,14 +23,14 @@ from app.core.config import Config
 from app.core.config_live import Holder
 from app.core.db import Store
 from app.models import utc_now
-from app.models.api_keys import APIKey, load_api_key, narrow_role
+from app.models.api_keys import APIKey, load_api_key, narrow_role  # feature:api_keys
 from app.models.sessions import Session, load_session, touch_session
 from app.models.users import ROLE_ADMIN, User, get_owner_id
 
 # Auth method names, as reported by /api/me. Worth exposing so a client can
 # tell a browser session from a key without guessing.
 METHOD_SESSION = "session"
-METHOD_API_KEY = "api_key"
+METHOD_API_KEY = "api_key"  # feature:api_keys
 
 
 @dataclass
@@ -44,7 +44,7 @@ class Actor:
     user: User
     role: str
     session: Session | None = None
-    api_key: APIKey | None = None
+    api_key: APIKey | None = None  # feature:api_keys
     # This request moved the session's end, so the response carries the cookie
     # again. See LoadActor.
     session_extended: bool = False
@@ -57,11 +57,13 @@ class Actor:
     def via_api_key(self) -> bool:
         """Distinguishes the two doors. It decides the CSRF question below, and
         it is what an endpoint reads if it genuinely must be browser-only."""
-        return self.api_key is not None
+        return self.api_key is not None  # feature:api_keys
+        return False  # feature:!api_keys
 
     @property
     def method(self) -> str:
-        return METHOD_API_KEY if self.via_api_key else METHOD_SESSION
+        return METHOD_API_KEY if self.via_api_key else METHOD_SESSION  # feature:api_keys
+        return METHOD_SESSION  # feature:!api_keys
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +127,7 @@ def _resolve_session(store: Store, cfg: Config, cookies: dict[str, str]) -> Acto
     return Actor(user=user, role=user.role, session=session, session_extended=extended)
 
 
+# >>> feature:api_keys
 def _resolve_api_key(store: Store, cfg: Config, authorization: str) -> Actor | None:
     """Reads "Authorization: Bearer <id>.<secret>".
 
@@ -150,13 +153,15 @@ def _resolve_api_key(store: Store, cfg: Config, authorization: str) -> Actor | N
     return Actor(user=user, role=narrow_role(user.role, key.role), api_key=key)
 
 
+# <<< feature:api_keys
 def resolve_actor(store: Store, cfg: Config, cookies: dict[str, str], authorization: str) -> Actor | None:
     """The cookie is tried first and an API key only if there is no live
     session. Either order is safe, but this one keeps the CSRF rule below
     unambiguous: a request that arrives with ambient browser credentials is
     always held to the token check, and cannot opt out of it by also carrying
     a key."""
-    return _resolve_session(store, cfg, cookies) or _resolve_api_key(store, cfg, authorization)
+    return _resolve_session(store, cfg, cookies) or _resolve_api_key(store, cfg, authorization)  # feature:api_keys
+    return _resolve_session(store, cfg, cookies)  # feature:!api_keys
 
 
 class LoadActor:
@@ -296,6 +301,7 @@ class RequireSession(Guard):
         return None
 
 
+# >>> feature:mcp|metrics
 class RequireAPIKey(Guard):
     """RequireSession's mirror: refuses a browser session and lets only a key
     through. It guards /mcp, which is for agents and scripts. Taking only a
@@ -314,6 +320,7 @@ class RequireAPIKey(Guard):
         return None
 
 
+# <<< feature:mcp|metrics
 class RequireOwner(Guard):
     """Lets through only the owner, signed in from a browser. It guards the
     activity log (app/routes/logs.py), which shows what every account did --
@@ -342,6 +349,7 @@ class RequireOwner(Guard):
         await self.app(scope, receive, send)
 
 
+# >>> feature:logs
 def still_owner(store: Store, credential: str) -> bool:
     """Whether a session is still the owner's, for something that outlives the
     request that was let in: an open stream, which RequireOwner checked once.
@@ -355,17 +363,22 @@ def still_owner(store: Store, credential: str) -> bool:
     return user.role == ROLE_ADMIN and get_owner_id(store) == user.id
 
 
+# <<< feature:logs
+# >>> feature:logs
 def log_actor(actor: Actor | None) -> dict:
     """Who an activity-log entry belongs to: the account, the role it acted
     with, and which door it came through (a key by its public id only)."""
     if actor is None:
         return {"method": "anon"}
     result = {"user_id": actor.user.id, "name": actor.user.display_name, "role": actor.role, "method": actor.method}
+    # >>> feature:api_keys
     if actor.api_key is not None:
         result["key_id"] = actor.api_key.id
+    # <<< feature:api_keys
     return result
 
 
+# <<< feature:logs
 # ---------------------------------------------------------------------------
 # CSRF
 # ---------------------------------------------------------------------------

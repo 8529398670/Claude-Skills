@@ -10,38 +10,46 @@ to a single process, SQLite does not.
 
 Every command goes through the same model functions the web routes use, so the
 rules hold whichever door a change comes through: disabling an account kills
-its sessions and unused login links, and an API key can never outrank the
+its sessions and live login links, and an API key can never outrank the
 account that owns it.
 """
 from __future__ import annotations
 
 import argparse
-import json
+import json  # feature:logs
 import sys
-from datetime import datetime
+from datetime import datetime  # feature:api_keys|invite_links
 from pathlib import Path
 
-from app.core import backup, bootstrap, config, db, logs, rotate
-from app.models import api_keys, credentials, invite_links, login_tokens, users
+from app.core import bootstrap, config, db, rotate
+from app.core import backup
+from app.core import logs  # feature:logs
+from app.models import credentials, login_tokens, users
+from app.models import api_keys  # feature:api_keys
+from app.models import invite_links  # feature:invite_links
 
 USAGE = """manage -- account administration for {{PROJECT_NAME}}
 
 Usage:
   bootstrap-admin --name "Ada"          create the first admin + login link
-  create-login    --name "Grace" [--role user]
-  reissue-login   --user-id 3           fresh link for an existing user
+  create-login    --name "Grace" [--role user] [--uses 5|unlimited] [--expires 7d|never]
+  reissue-login   --user-id 3 [--uses 5|unlimited] [--expires 7d|never]
+                                        fresh link for an existing user; once and
+                                        30 minutes unless --uses/--expires say otherwise
   list-users                            id, name, role, status
   set-disabled    --user-id 3 [--enable]
   revoke-access   --user-id 3           end every session, login link and API key
-  reset-2fa       --user-id 3           take two-factor sign-in off an account
+  reset-2fa       --user-id 3           take two-factor sign-in off an account  # feature:two_factor
   delete-user     --user-id 3 --yes     remove the account and everything it held
   transfer-owner  --user-id 3           make another enabled admin the owner
-  list-keys       [--user-id 3]         API keys, whose they are, when last used
-  create-key      --user-id 3 --name "CI" [--role user] [--days 90]
-  revoke-key      --key-id abc123       kill one API key now, keep its record
-  delete-key      --key-id abc123       kill one API key now and remove its record
+  list-keys       [--user-id 3]         API keys, whose they are, when last used  # feature:api_keys
+  create-key      --user-id 3 --name "CI" [--role user] [--days 90]  # feature:api_keys
+  revoke-key      --key-id abc123       kill one API key now, keep its record  # feature:api_keys
+  delete-key      --key-id abc123       kill one API key now and remove its record  # feature:api_keys
+  # >>> feature:invite_links
   create-invite   --user-id 1 --label "Book club" [--uses 10] [--days 30]
                                         one link a group can join through
+  # <<< feature:invite_links
   backup          [--out path] [--include-key]
                                         one file with the database, config.yaml and
                                         storage, safe while the server runs
@@ -50,19 +58,23 @@ Usage:
   rotate-key      --yes                 move to a new secret key; the server must be
                                         stopped (in Docker: docker/rotate-key.sh)
   paths                                 where this app keeps its state
+  # >>> feature:logs
   logs            [--day 2026-11-02] [--q "status:5xx"] [--limit 50]
                                         the activity log: days, or one day's
                                         entries newest first, as JSON lines
+  # <<< feature:logs
 
 The owner is the first admin, and the one account that can delete other
 admins from the web UI. Nothing deletes or disables the owner -- move it with
 transfer-owner first. delete-user cannot be undone, hence --yes.
 
+# >>> feature:api_keys
 An API key carries a role from the same set users do, so an admin-scoped key
 can do what an admin can and a user-scoped one cannot. A key never outranks
 the account it belongs to. --days 0 means it never expires; omit --days to use
 the server's configured default.
 
+# <<< feature:api_keys
 A backup leaves secret.key out unless --include-key says otherwise, so keep a
 copy of the key apart from your backups. Without it a backup cannot be read.
 restore keeps what it replaces beside it, as app.db.before-restore-<time>. A
@@ -85,6 +97,20 @@ class ManageError(Exception):
     """A command that cannot do what was asked. Shown as `error: <message>`."""
 
 
+def add_link_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--uses", default="", help="how many sign-ins the link allows: a number (1-1000) or unlimited (default once)")
+    parser.add_argument("--expires", default="", help="how long the link lasts: 30m, 12h, 7d, or never (default from config)")
+
+
+def link_options(cfg: config.Config, args: argparse.Namespace) -> login_tokens.LinkOptions:
+    """--uses and --expires, with the configured defaults filling the gaps."""
+    try:
+        max_uses, minutes = login_tokens.parse_link_flags(args.uses, args.expires)
+    except ValueError as problem:
+        raise ManageError(str(problem)) from None
+    return login_tokens.resolve_link(max_uses, minutes, cfg.login_token_ttl_seconds, cfg.multi_use_login_token_ttl_seconds)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app manage", description=USAGE,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -97,9 +123,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = commands.add_parser("create-login", help="create a user and print a login link")
     p.add_argument("--name", required=True, help="display name")
     p.add_argument("--role", choices=[users.ROLE_USER, users.ROLE_ADMIN], default=users.ROLE_USER)
+    add_link_arguments(p)
 
     p = commands.add_parser("reissue-login", help="fresh login link for an existing user")
     p.add_argument("--user-id", type=int, required=True)
+    add_link_arguments(p)
 
     commands.add_parser("list-users", help="id, name, role, status")
 
@@ -110,8 +138,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = commands.add_parser("revoke-access", help="end every session, login link and API key")
     p.add_argument("--user-id", type=int, required=True)
 
+    # >>> feature:two_factor
     p = commands.add_parser("reset-2fa", help="take two-factor sign-in off an account")
     p.add_argument("--user-id", type=int, required=True)
+    # <<< feature:two_factor
 
     p = commands.add_parser("delete-user", help="remove an account and everything it held")
     p.add_argument("--user-id", type=int, required=True)
@@ -120,6 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = commands.add_parser("transfer-owner", help="make another enabled admin the owner")
     p.add_argument("--user-id", type=int, required=True)
 
+    # >>> feature:api_keys
     p = commands.add_parser("list-keys", help="API keys, whose they are, when last used")
     p.add_argument("--user-id", type=int, default=None, help="only this user's keys (default: everyone's)")
 
@@ -136,12 +167,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = commands.add_parser("delete-key", help="kill one API key now and remove its record")
     p.add_argument("--key-id", required=True, help="id of the key to delete (from list-keys)")
+    # <<< feature:api_keys
 
+    # >>> feature:invite_links
     p = commands.add_parser("create-invite", help="one link a whole group can join through")
     p.add_argument("--user-id", type=int, required=True, help="id of the admin the link is made as")
     p.add_argument("--label", required=True, help='what the link is for, e.g. "Book club"')
     p.add_argument("--uses", type=int, default=10, help="how many people can join through it (1-1000)")
     p.add_argument("--days", type=int, default=30, help="days until it stops working (1-365)")
+    # <<< feature:invite_links
 
     p = commands.add_parser("backup", help="one file with the database, config.yaml and storage")
     p.add_argument("--out", default="", help="a file to write, or a folder to write into (default: the backups folder)")
@@ -158,10 +192,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("paths", help="where this app keeps its state")
 
+    # >>> feature:logs
     p = commands.add_parser("logs", help="the activity log: days, or one day's entries")
     p.add_argument("--day", default="", help="a UTC date, YYYY-MM-DD; without it, list the days")
     p.add_argument("--q", default="", help="a search, as typed on the Logs screen")
     p.add_argument("--limit", type=int, default=50, help="entries to print, newest first (1-1000)")
+    # <<< feature:logs
     return parser
 
 
@@ -179,11 +215,13 @@ def run(arguments: list[str]) -> None:
     if args.command == "paths":
         command_paths(cfg)
         return
+    # >>> feature:logs
     # "logs" reads the log files, never the database, so it works the same
     # with the server up or down -- the files are only ever appended to.
     if args.command == "logs":
         command_logs(cfg, args)
         return
+    # <<< feature:logs
 
     if cfg.rotation_finished:
         print(f"[secret] finished a key rotation that had been cut short; the new key is in {cfg.secret_file}", file=sys.stderr)
@@ -214,14 +252,14 @@ def run(arguments: list[str]) -> None:
         "list-users": command_list_users,
         "set-disabled": command_set_disabled,
         "revoke-access": command_revoke_access,
-        "reset-2fa": command_reset_two_factor,
+        "reset-2fa": command_reset_two_factor,  # feature:two_factor
         "delete-user": command_delete_user,
         "transfer-owner": command_transfer_owner,
-        "list-keys": command_list_keys,
-        "create-key": command_create_key,
-        "revoke-key": command_revoke_key,
-        "delete-key": command_delete_key,
-        "create-invite": command_create_invite,
+        "list-keys": command_list_keys,  # feature:api_keys
+        "create-key": command_create_key,  # feature:api_keys
+        "revoke-key": command_revoke_key,  # feature:api_keys
+        "delete-key": command_delete_key,  # feature:api_keys
+        "create-invite": command_create_invite,  # feature:invite_links
         "backup": command_backup,
     }
     try:
@@ -231,8 +269,8 @@ def run(arguments: list[str]) -> None:
         db.DecodeError,
         credentials.OwnerProtectedError,
         users.NotAdminError,
-        invite_links.BadInviteLinkError,
-        invite_links.InviteNotAdminError,
+        invite_links.BadInviteLinkError,  # feature:invite_links
+        invite_links.InviteNotAdminError,  # feature:invite_links
     ) as error:
         raise ManageError(str(error)) from None
 
@@ -251,22 +289,24 @@ def command_bootstrap_admin(store: db.Store, cfg: config.Config, args: argparse.
         print("An admin already exists. Re-run with --force to create another.")
         return
     user = users.create_user(store, args.name, users.ROLE_ADMIN)
-    credential = login_tokens.issue_login_token(store, user.id, cfg.login_token_ttl_seconds)
-    bootstrap.print_login_link(cfg, f"admin #{user.id} {user.display_name!r}", credential)
+    credential, info = login_tokens.issue_login_link(store, user.id, login_tokens.once(cfg.login_token_ttl_seconds))
+    bootstrap.print_login_link(cfg, f"admin #{user.id} {user.display_name!r}", credential, info)
 
 
 def command_create_login(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
     if not users.valid_display_name(args.name):
         raise ManageError("--name must be 1-80 characters")
+    options = link_options(cfg, args)
     user = users.create_user(store, args.name, args.role)
-    credential = login_tokens.issue_login_token(store, user.id, cfg.login_token_ttl_seconds)
-    bootstrap.print_login_link(cfg, f"{user.role} #{user.id} {user.display_name!r}", credential)
+    credential, info = login_tokens.issue_login_link(store, user.id, options)
+    bootstrap.print_login_link(cfg, f"{user.role} #{user.id} {user.display_name!r}", credential, info)
 
 
 def command_reissue_login(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
     user = require_user(store, args.user_id)
-    credential = login_tokens.issue_login_token(store, user.id, cfg.login_token_ttl_seconds)
-    bootstrap.print_login_link(cfg, f"{user.role} #{user.id} {user.display_name!r}", credential)
+    options = link_options(cfg, args)
+    credential, info = login_tokens.issue_login_link(store, user.id, options)
+    bootstrap.print_login_link(cfg, f"{user.role} #{user.id} {user.display_name!r}", credential, info)
 
 
 def command_list_users(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
@@ -286,7 +326,7 @@ def command_list_users(store: db.Store, cfg: config.Config, args: argparse.Names
 def command_set_disabled(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
     user = require_user(store, args.user_id)
     disabled = not args.enable
-    # Disabling deletes the account's sessions and unused login links in the
+    # Disabling deletes the account's sessions and live login links in the
     # same transaction -- see credentials.set_user_disabled.
     credentials.set_user_disabled(store, user.id, disabled)
     print(f"user #{user.id} ({user.display_name}) disabled={str(disabled).lower()}")
@@ -304,12 +344,14 @@ def command_revoke_access(store: db.Store, cfg: config.Config, args: argparse.Na
         raise ManageError(f"no user with id {user.id}")
     print(
         f"user #{user.id} ({user.display_name}): ended {revoked.sessions} sessions, deleted "
-        f"{revoked.login_links} unused login links, removed {revoked.passwords} passwords, "
-        f"revoked {revoked.api_keys} API keys"
+        f"{revoked.login_links} live login links"
+        f", removed {revoked.passwords} passwords"  # feature:passwords
+        f", revoked {revoked.api_keys} API keys"  # feature:api_keys
     )
     print(f"To let them back in: python -m app manage reissue-login --user-id {user.id}")
 
 
+# >>> feature:two_factor
 def command_reset_two_factor(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
     """The way back for someone with neither their phone nor their recovery
     codes -- the owner included, who no one can reset from the web."""
@@ -318,6 +360,7 @@ def command_reset_two_factor(store: db.Store, cfg: config.Config, args: argparse
     print(f"user #{user.id} ({user.display_name}): two-factor sign-in is off")
 
 
+# <<< feature:two_factor
 def command_delete_user(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
     """Asks for --yes because nothing brings the account back: the id is never
     reused and its keys and links are gone with it. Disabling is the
@@ -334,7 +377,8 @@ def command_delete_user(store: db.Store, cfg: config.Config, args: argparse.Name
         raise ManageError(f"no user with id {user.id}")
     print(
         f"user #{user.id} ({user.display_name}) deleted, with {removed.sessions} sessions, "
-        f"{removed.login_links} login links and {removed.api_keys} API keys"
+        f"{removed.login_links} login links"
+        f" and {removed.api_keys} API keys"  # feature:api_keys
     )
 
 
@@ -345,6 +389,7 @@ def command_transfer_owner(store: db.Store, cfg: config.Config, args: argparse.N
     print(f"user #{user.id} ({user.display_name}) is now the owner")
 
 
+# >>> feature:invite_links
 def command_create_invite(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
     """A link a whole group can join through, made as the admin --user-id: it
     stops working if that admin is disabled or demoted."""
@@ -357,6 +402,8 @@ def command_create_invite(store: db.Store, cfg: config.Config, args: argparse.Na
     bootstrap.print_invite_link(cfg, f"{link.label!r}, {link.max_uses} places", credential, format_time(link.expires_at))
 
 
+# <<< feature:invite_links
+# >>> feature:api_keys|invite_links
 def format_time(value: datetime | None, absent: str = "never") -> str:
     """Minute precision keeps the listings narrow -- enough for "when was this
     last used", and a full timestamp per column would wrap any normal
@@ -364,6 +411,8 @@ def format_time(value: datetime | None, absent: str = "never") -> str:
     return absent if value is None else value.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
+# <<< feature:api_keys|invite_links
+# >>> feature:api_keys
 def key_status(key: api_keys.APIKey) -> str:
     if key.revoked:
         return "revoked"
@@ -434,6 +483,7 @@ def command_delete_key(store: db.Store, cfg: config.Config, args: argparse.Names
     print(f"api key {key.id} ({key.name!r}, owner #{key.user_id}) deleted -- it stops working immediately")
 
 
+# <<< feature:api_keys
 def command_backup(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
     result = backup.create(store, cfg, out=args.out, include_key=args.include_key)
     print(f"Backup written: {result.path} ({result.size} bytes)")
@@ -483,7 +533,8 @@ def command_rotate_key(cfg: config.Config, args: argparse.Namespace) -> None:
         return
     print(f"The data is on the new key (fingerprint {result.new_fingerprint}, was {result.old_fingerprint}).")
     if cfg.encrypt_at_rest:
-        print(f"Re-encrypted the database and {result.log_files} log files.")
+        print(f"Re-encrypted the database and {result.log_files} log files.")  # feature:logs
+        print("Re-encrypted the database.")  # feature:!logs
     if args.new_key_file:
         return
     print(f"The new key is in {cfg.secret_file}: back it up.")
@@ -494,6 +545,7 @@ def command_rotate_key(cfg: config.Config, args: argparse.Namespace) -> None:
         print("once those backups no longer matter, and do not keep it beside them.")
 
 
+# >>> feature:logs
 def command_logs(cfg: config.Config, args: argparse.Namespace) -> None:
     reader = logs.Logger(cfg.logs, cfg.secret_key, cfg.encrypt_at_rest)
     query = logs.Query(args.q)
@@ -518,6 +570,7 @@ def command_logs(cfg: config.Config, args: argparse.Namespace) -> None:
         print(json.dumps(record, ensure_ascii=False))
 
 
+# <<< feature:logs
 def command_paths(cfg: config.Config) -> None:
     """Answers "where did it put my data", which is otherwise a question you
     can only settle by reading the source or the startup log."""
@@ -532,7 +585,7 @@ def command_paths(cfg: config.Config) -> None:
     print(f"{'app dir':<14} {cfg.app_dir}")
     print(f"{'database':<14} {cfg.database_path}  (plus -wal and -shm files while in use)")
     print(f"{'storage':<14} {cfg.storage_dir}")
-    print(f"{'logs':<14} {cfg.logs.dir}")
+    print(f"{'logs':<14} {cfg.logs.dir}")  # feature:logs
     print(f"{'backups':<14} {cfg.backups.dir}")
     print(f"{'static':<14} {cfg.static_dir}{note(cfg.static_dir)}")
     print(f"{'language':<14} {cfg.language_file}{note(cfg.language_file)}")

@@ -1,3 +1,4 @@
+# whole-file feature:files
 """Uploaded files. How they are stored is in app/models/files.py; here is who
 may do what. Everyone has their own, and someone else's answers 404, like a key
 that is not yours. Admins have their own routes for everyone's, and one opening
@@ -23,8 +24,10 @@ from app.core.logs import KIND_ADMIN
 from app.core.security import Guard, actor_from, check_csrf
 from app.models import RestoreError, to_iso
 from app.models import files as models
-from app.models import users, webhooks
-from app.routes.helpers import bad_request, conflict, emit, forbidden, get_config, get_store, not_found, read_json, restore_refused, run, send_page
+from app.models import users
+from app.models import webhooks  # feature:webhooks
+from app.routes.helpers import bad_request, conflict, forbidden, get_config, get_store, match_rows, not_found, read_json, restore_refused, run, send_page
+from app.routes.helpers import emit  # feature:webhooks
 from app.routes.logs import audit
 
 CSRF_HEADER = "x-csrf-token"
@@ -105,7 +108,8 @@ async def all_storage(request: Request) -> Response:
 
 async def list_my_files(request: Request) -> Response:
     files = await run(models.list_files, get_store(request), actor_from(request).user.id)
-    return send_page(request, "files", [_row(file) for file in files])
+    rows = match_rows([_row(file) for file in files], request.query_params.get("q", ""), "name")
+    return send_page(request, "files", rows, ("name", "size", "created_at"))
 
 
 async def list_all_files(request: Request) -> Response:
@@ -114,7 +118,9 @@ async def list_all_files(request: Request) -> Response:
     store = get_store(request)
     files = await run(models.list_files, store)
     names = {user.id: user.display_name for user in await run(users.list_users, store)}
-    return send_page(request, "files", [{**_row(file), "user_id": file.user_id, "user_name": names.get(file.user_id, "")} for file in files])
+    rows = [{**_row(file), "user_id": file.user_id, "user_name": names.get(file.user_id, "")} for file in files]
+    rows = match_rows(rows, request.query_params.get("q", ""), "name", "user_name")
+    return send_page(request, "files", rows, ("name", "user_name", "size", "created_at"))
 
 
 async def create_file(request: Request) -> Response:
@@ -202,7 +208,7 @@ async def finish_file(request: Request) -> Response:
     finally:
         _locks.release(file_id)
     audit(request, KIND_ADMIN, "file uploaded", {"file_id": finished.id, "size": finished.size})
-    await emit(request, webhooks.EVENT_FILE_UPLOADED, {"file_id": finished.id, "user_id": finished.user_id, "name": finished.name, "size": finished.size})
+    await emit(request, webhooks.EVENT_FILE_UPLOADED, {"file_id": finished.id, "user_id": finished.user_id, "name": finished.name, "size": finished.size})  # feature:webhooks
     return JSONResponse(_row(finished))
 
 
@@ -253,8 +259,45 @@ async def _remove(request: Request, file: models.File) -> Response:
     if not await run(models.delete_file, get_store(request), file.id, actor_from(request).user.id):
         return not_found(NO_SUCH_FILE)
     audit(request, KIND_ADMIN, "file deleted", {"file_id": file.id, "user_id": file.user_id})
-    await emit(request, webhooks.EVENT_FILE_DELETED, {"file_id": file.id, "user_id": file.user_id, "name": file.name})
+    await emit(request, webhooks.EVENT_FILE_DELETED, {"file_id": file.id, "user_id": file.user_id, "name": file.name})  # feature:webhooks
     return JSONResponse({"ok": True})
+
+
+async def _rename(request: Request, file: models.File | None, body: dict[str, Any]) -> Response:
+    """The two rename routes, after each has decided the caller may."""
+    if file is None or file.deleted:
+        return not_found(NO_SUCH_FILE)
+    name, expect = body.get("name"), body.get("expect")
+    if not isinstance(name, str):
+        return bad_request(str(models.BadFileNameError()))
+    if expect is not None and not isinstance(expect, str):
+        return bad_request("expect must be a string")
+    try:
+        cleaned = await run(models.rename_file, get_store(request), file.id, name, expect)
+    except models.BadFileNameError as refusal:
+        return bad_request(str(refusal))
+    except users.RenameConflictError as refusal:
+        return conflict(str(refusal), name=refusal.current)
+    if cleaned is None:
+        return not_found(NO_SUCH_FILE)
+    audit(request, KIND_ADMIN, "file renamed", {"file_id": file.id, "user_id": file.user_id})
+    return JSONResponse({"ok": True, "name": cleaned})
+
+
+async def rename_my_file(request: Request) -> Response:
+    refusal = await _checked_body(request)
+    if refusal is not None:
+        return refusal
+    return await _rename(request, await _my_file(request), await read_json(request))
+
+
+async def rename_any_file(request: Request) -> Response:
+    """An admin may rename anyone's, as an admin may delete anyone's."""
+    refusal = await _checked_body(request)
+    if refusal is not None:
+        return refusal
+    file = await run(models.get_file, get_store(request), request.path_params["file_id"])
+    return await _rename(request, file, await read_json(request))
 
 
 async def delete_my_file(request: Request) -> Response:

@@ -36,7 +36,7 @@ import (
 	os "os"
 	path "path"
 	filepath "path/filepath"
-	sort "sort"
+	sort "sort" // feature:backups
 	strings "strings"
 	time "time"
 
@@ -259,6 +259,7 @@ func addStorage( archive *tar.Writer , root string ) ( err error ) {
 	return
 }
 
+// >>> feature:backups
 // ---------------------------------------------------------------------------
 // scheduled backups
 // ---------------------------------------------------------------------------
@@ -327,6 +328,7 @@ func Prune( settings config.BackupsConfig ) ( removed int , err error ) {
 	}
 	return
 }
+// <<< feature:backups
 
 // ---------------------------------------------------------------------------
 // restore

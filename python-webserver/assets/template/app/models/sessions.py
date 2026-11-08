@@ -17,11 +17,13 @@ from app.core import encryption
 from app.core.db import BUCKET_SESSIONS, Record, Store, Transaction
 from app.models import from_iso, to_iso, utc_now
 from app.models.users import User, get_user
+from app.models.users import RenameConflictError  # feature:sessions
 
 # How stale last_seen_at is allowed to get: the same trade as
 # API_KEY_TOUCH_INTERVAL, a write on one request in a great many.
 SESSION_TOUCH_INTERVAL = timedelta(minutes=15)
-USER_AGENT_MAX_CHARS = 256
+USER_AGENT_MAX_CHARS = 256  # feature:sessions
+LABEL_MAX_CHARS = 80  # feature:sessions
 
 
 @dataclass
@@ -31,11 +33,19 @@ class Session:
     csrf_token: str
     created_at: datetime
     expires_at: datetime
+    # >>> feature:sessions
     # What the Account screen lists, so a person can tell their devices apart.
     # A session from before these existed has none of them.
     ip: str = ""
     user_agent: str = ""
+    # <<< feature:sessions
     last_seen_at: datetime | None = None
+    # >>> feature:sessions
+    # What the account's owner calls this device. It sits beside the browser
+    # and system rather than replacing them, so a name cannot hide what a
+    # device says it is.
+    label: str = ""
+    # <<< feature:sessions
     # The record's key. Filled in on the way out of the store and never written
     # into the record.
     id: str = ""
@@ -48,12 +58,18 @@ class Session:
             "created_at": to_iso(self.created_at),
             "expires_at": to_iso(self.expires_at),
         }
+        # >>> feature:sessions
         if self.ip:
             record["ip"] = self.ip
         if self.user_agent:
             record["user_agent"] = self.user_agent
+        # <<< feature:sessions
         if self.last_seen_at is not None:
             record["last_seen_at"] = to_iso(self.last_seen_at)
+        # >>> feature:sessions
+        if self.label:
+            record["label"] = self.label
+        # <<< feature:sessions
         return record
 
     @classmethod
@@ -64,9 +80,12 @@ class Session:
             csrf_token=record["csrf_token"],
             created_at=from_iso(record["created_at"]),
             expires_at=from_iso(record["expires_at"]),
+            # >>> feature:sessions
             ip=record.get("ip", ""),
             user_agent=record.get("user_agent", ""),
+            # <<< feature:sessions
             last_seen_at=from_iso(record.get("last_seen_at")),
+            label=record.get("label", ""),  # feature:sessions
         )
 
 
@@ -129,6 +148,7 @@ def load_session(store: Store, credential: str) -> tuple[Session, User] | None:
     return session, user
 
 
+# >>> feature:sessions
 def remember_client(store: Store, session_id: str, ip: str, user_agent: str) -> None:
     """Note where a new session signed in from. Every way of signing in ends
     in auth.sign_in_response, which calls this, rather than each store of a
@@ -142,6 +162,7 @@ def remember_client(store: Store, session_id: str, ip: str, user_agent: str) -> 
     store.update_value(BUCKET_SESSIONS, session_id, mutate)
 
 
+# <<< feature:sessions
 def session_expiry(session: Session, now: datetime, ttl_seconds: int, max_age_seconds: int) -> datetime:
     """When a session used now should end: ttl from now, but never later than
     max_age after it was signed in, and never earlier than it already ends, so
@@ -180,6 +201,7 @@ def touch_session(store: Store, session: Session, ttl_seconds: int, max_age_seco
     return extended
 
 
+# >>> feature:sessions
 def list_sessions(store: Store, user_id: int) -> list[Session]:
     """One account's live sessions, newest first."""
     now = utc_now()
@@ -194,6 +216,36 @@ def list_sessions(store: Store, user_id: int) -> list[Session]:
         found.append(session)
     found.sort(key=lambda session: session.created_at, reverse=True)
     return found
+
+
+def valid_session_label(label: object) -> bool:
+    """True for a label, or for nothing, which clears it."""
+    return isinstance(label, str) and len(label.strip()) <= LABEL_MAX_CHARS
+
+
+def label_session(store: Store, user_id: int, session_id: str, label: str, expect: str | None = None) -> bool:
+    """Name one of an account's own devices; an empty label clears the name.
+    False when it has no such session, which covers another account's, as with
+    revoke_session.
+
+    expect, when given, is the label the caller believes is stored, as in
+    users.rename_user: RenameConflictError if it is not."""
+    found = False
+
+    def mutate(record: Record) -> None:
+        nonlocal found
+        if record["user_id"] != user_id:
+            return
+        found = True
+        current = record.get("label", "")
+        if expect is not None and current != expect.strip():
+            raise RenameConflictError(current)
+        if label.strip():
+            record["label"] = label.strip()
+        else:
+            record.pop("label", None)
+
+    return store.update_value(BUCKET_SESSIONS, session_id, mutate) is not None and found
 
 
 def revoke_session(store: Store, user_id: int, session_id: str) -> bool:
@@ -220,6 +272,7 @@ def revoke_other_sessions(store: Store, user_id: int, keep_id: str) -> int:
     return store.delete_where(BUCKET_SESSIONS, doomed)
 
 
+# <<< feature:sessions
 def destroy_session(store: Store, credential: str) -> None:
     parts = split_credential(credential)
     if parts is not None:

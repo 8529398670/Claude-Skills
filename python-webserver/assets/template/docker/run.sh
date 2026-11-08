@@ -361,7 +361,7 @@ fi
 
 # A fresh database makes the server create the owner and print their login
 # link to its log. Show it here rather than sending someone to dig for it.
-FIRST_LINK="$( docker logs "$docker_container" 2>&1 | grep -A 12 "ONE-TIME LOGIN LINK -- first-run" || true )"
+FIRST_LINK="$( docker logs "$docker_container" 2>&1 | grep -A 12 "LOGIN LINK -- first-run" || true )"
 if [ -n "$FIRST_LINK" ]; then
   echo "This is a fresh database. The owner's one-time login link:"
   echo ""

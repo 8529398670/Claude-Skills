@@ -1,3 +1,4 @@
+// whole-file feature:passwords
 // Password sign-in: the form on the signed-out page, and the panel where a
 // signed-in person sets a password. Both exist only while the owner has
 // auth.passwords on, and the server says so.
@@ -11,6 +12,14 @@
 // changing either makes everyone's password stop working.
 const Password = {
   MIN_LENGTH: 12,
+  // Which field each refusal of the panel's form is about.
+  fields: {
+    password_too_short: "password-new",
+    password_mismatch: "password-confirm",
+    bad_username: "password-username",
+    username_taken: "password-username",
+    two_factor_wrong: "password-code", // feature:two_factor
+  },
   ITERATIONS: 600000,
   options: null,
   me: null,
@@ -55,25 +64,24 @@ const Password = {
       return; // Links still work; the form just is not offered.
     }
     Dom.show( Dom.get( "password-login" ) , true );
-    Dom.get( "password-login-form" ).addEventListener( "submit" , this.onLogin.bind( this ) );
+    Dom.onSubmit( Dom.get( "password-login-form" ) , this.onLogin.bind( this ) );
   },
 
   async onLogin( event ) {
     event.preventDefault();
-    const button = Dom.get( "password-login-button" );
     const username = this.normalizeUsername( Dom.get( "login-username" ).value );
-    button.disabled = true;
     try {
       const digest = await this.digest( username , Dom.get( "login-password" ).value );
       const result = await Api.passwordLogin( username , digest );
       Dom.get( "login-password" ).value = "";
+      // >>> feature:two_factor
       if ( result.two_factor ) {
         TwoFactor.ask( result.challenge );
         return;
       }
+      // <<< feature:two_factor
       window.location.replace( "/" );
     } catch ( error ) {
-      button.disabled = false;
       App.showError( error.message );
     }
   },
@@ -85,7 +93,7 @@ const Password = {
     if ( !me.passwords_enabled || me.password_blocked || me.auth !== "session" ) return;
     Dom.show( Dom.get( "password-panel" ) , true );
     Dom.onSubmit( Dom.get( "password-form" ) , this.onSave.bind( this ) );
-    Dom.get( "password-remove-button" ).addEventListener( "click" , this.onRemove.bind( this ) );
+    Dom.onPress( Dom.get( "password-remove-button" ) , this.onRemove.bind( this ) );
     Dom.get( "password-username" ).value = me.username;
     this.render();
   },
@@ -96,34 +104,42 @@ const Password = {
     Dom.text( status , I18n.get( this.me.has_password ? "password.status_set" : "password.status_none" ) );
     status.className = "badge " + ( this.me.has_password ? "text-bg-success" : "text-bg-secondary" );
     Dom.show( Dom.get( "password-remove-button" ) , this.me.has_password && I18n.get( "password.remove_button" ) !== "" );
-    Dom.show( Dom.get( "password-code-row" ) , this.needsCode() );
+    Dom.show( Dom.get( "password-code-row" ) , this.needsCode() ); // feature:two_factor
   },
 
+  // >>> feature:two_factor
   needsCode() {
     return this.me.two_factor && this.me.two_factor_enabled;
   },
 
+  // <<< feature:two_factor
   async onSave( event ) {
     event.preventDefault();
     const username = this.normalizeUsername( Dom.get( "password-username" ).value );
     const password = Dom.get( "password-new" ).value;
+    // Mending one field can settle a problem shown on another.
+    [ "password-username" , "password-new" , "password-confirm" , "password-code" ].forEach( function ( id ) { // feature:two_factor
+    [ "password-username" , "password-new" , "password-confirm" ].forEach( function ( id ) { // feature:!two_factor
+      Dom.clearFieldError( Dom.get( id ) );
+    } );
     if ( password.length < this.MIN_LENGTH ) {
-      App.showError( "password_too_short" );
+      App.showFieldError( "password_too_short" , this.fields );
       return;
     }
     if ( password !== Dom.get( "password-confirm" ).value ) {
-      App.showError( "password_mismatch" );
+      App.showFieldError( "password_mismatch" , this.fields );
       return;
     }
     try {
       const digest = await this.digest( username , password );
-      await Api.setPassword( username , digest , Dom.get( "password-code" ).value );
+      await Api.setPassword( username , digest , Dom.get( "password-code" ).value ); // feature:two_factor
+      await Api.setPassword( username , digest , "" ); // feature:!two_factor
       this.me.has_password = true;
       this.me.username = username;
       Dom.get( "password-username" ).value = username;
       this.saved();
     } catch ( error ) {
-      App.showError( error.message );
+      App.showFieldError( error.message , this.fields );
     }
   },
 
@@ -131,16 +147,18 @@ const Password = {
     const question = I18n.get( "password.remove_confirm" );
     if ( !( await Dom.confirm( question ) ) ) return;
     try {
-      await Api.setPassword( "" , "" , Dom.get( "password-code" ).value );
+      await Api.setPassword( "" , "" , Dom.get( "password-code" ).value ); // feature:two_factor
+      await Api.setPassword( "" , "" , "" ); // feature:!two_factor
       this.me.has_password = false;
       this.saved();
     } catch ( error ) {
-      App.showError( error.message );
+      App.showFieldError( error.message , this.fields );
     }
   },
 
   saved() {
-    [ "password-new" , "password-confirm" , "password-code" ].forEach( function ( id ) {
+    [ "password-new" , "password-confirm" , "password-code" ].forEach( function ( id ) { // feature:two_factor
+    [ "password-new" , "password-confirm" ].forEach( function ( id ) { // feature:!two_factor
       Dom.get( id ).value = "";
     } );
     this.render();

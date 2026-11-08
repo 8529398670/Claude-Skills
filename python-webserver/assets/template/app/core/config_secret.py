@@ -121,7 +121,8 @@ def mark_rotation(app_dir: Path) -> None:
     sync_dir(directory)
 
 
-def finish_rotation_data(app_dir: Path, database_path: Path, logs_dir: Path) -> None:
+def finish_rotation_data(app_dir: Path, database_path: Path, logs_dir: Path) -> None:  # feature:logs
+def finish_rotation_data(app_dir: Path, database_path: Path) -> None:  # feature:!logs
     """Move the staged database and log files into place. A file already moved
     is simply not there to move, so this can be repeated.
 
@@ -136,11 +137,13 @@ def finish_rotation_data(app_dir: Path, database_path: Path, logs_dir: Path) -> 
             database_path.with_name(database_path.name + extension).unlink(missing_ok=True)
         os.replace(staged, database_path)
         sync_dir(database_path.parent)
+    # >>> feature:logs
     staged_logs = directory / config.LOGS_DIR_NAME
     if staged_logs.is_dir():
         for entry in sorted(staged_logs.iterdir()):
             os.replace(entry, Path(logs_dir) / entry.name)
         sync_dir(Path(logs_dir))
+    # <<< feature:logs
 
 
 def finish_rotation_key(secret_path: Path) -> Path | None:
@@ -177,7 +180,8 @@ def clear_rotation(app_dir: Path) -> None:
 
 def finish_rotation(app_dir: Path, database_path: Path, config_path: Path) -> None:
     """What load does on finding the marker."""
-    finish_rotation_data(app_dir, database_path, Path(app_dir) / config.LOGS_DIR_NAME)
+    finish_rotation_data(app_dir, database_path, Path(app_dir) / config.LOGS_DIR_NAME)  # feature:logs
+    finish_rotation_data(app_dir, database_path)  # feature:!logs
     finish_rotation_key(secret_path_for(config_path))
     clear_rotation(app_dir)
 

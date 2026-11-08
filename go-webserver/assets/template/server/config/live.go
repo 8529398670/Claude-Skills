@@ -33,6 +33,7 @@ import (
 )
 
 var (
+	// >>> feature:settings
 	// ErrStale: the container's mounted config.yaml was replaced on the host
 	// (an editor that saves by writing a new file and renaming it over the
 	// old one). The mount still shows the old file, so neither reading nor
@@ -40,11 +41,13 @@ var (
 	ErrStale = errors.New( "config.yaml was replaced on the host; restart the container to see the new one" )
 	// ErrReadOnly: this process cannot write config.yaml.
 	ErrReadOnly = errors.New( "config.yaml is not writable by the server" )
+	// <<< feature:settings
 	// ErrLocked: a key that cannot be changed from here -- docker.* and
 	// build.* inside the container, and what the image pins.
 	ErrLocked = errors.New( "this setting cannot be changed from inside the container" )
 )
 
+// >>> feature:settings
 // ConflictError: config.yaml changed since the client read it.
 type ConflictError struct {
 	Version string
@@ -54,6 +57,7 @@ func ( conflict *ConflictError ) Error() ( result string ) {
 	result = "config.yaml changed since it was loaded"
 	return
 }
+// <<< feature:settings
 
 // UnknownSettingError: a key the schema does not have.
 type UnknownSettingError struct {
@@ -205,21 +209,23 @@ func liveConfig( boot *Config , boot_file *File , file *File ) ( next *Config ) 
 	next.RateLimitMax = file.Server.RateLimitMax
 	next.RateLimitWindow = seconds( file.Server.RateLimitWindowSeconds )
 	next.RateLimitSignInMax = file.Server.RateLimitSignInMax
-	next.RateLimitUploadMax = file.Server.RateLimitUploadMax
-	next.MCPEnabled = file.Server.MCP
-	next.Maintenance = file.Server.Maintenance
+	next.RateLimitUploadMax = file.Server.RateLimitUploadMax // feature:files
+	next.MCPEnabled = file.Server.MCP // feature:mcp
+	next.Maintenance = file.Server.Maintenance // feature:maintenance
 	next.Announcement = file.Server.Announcement
-	next.MetricsEnabled = file.Metrics.Enabled
+	next.MetricsEnabled = file.Metrics.Enabled // feature:metrics
 
 	next.SessionTTL = seconds( file.Auth.SessionTTLSeconds )
 	next.SessionMaxAge = seconds( file.Auth.SessionMaxAgeSeconds )
 	next.LoginTokenTTL = seconds( file.Auth.LoginTokenTTLSeconds )
-	next.APIKeysEnabled = file.Auth.APIKeys
-	next.PasswordsEnabled = file.Auth.Passwords
-	next.TwoFactorEnabled = file.Auth.TwoFactor
-	next.InviteLinksEnabled = file.Auth.InviteLinks
-	next.APIKeyTTL = seconds( file.Auth.APIKeyTTLSeconds )
+	next.MultiUseLoginTokenTTL = seconds( file.Auth.MultiUseLoginTokenTTLSeconds )
+	next.APIKeysEnabled = file.Auth.APIKeys // feature:api_keys
+	next.PasswordsEnabled = file.Auth.Passwords // feature:passwords
+	next.TwoFactorEnabled = file.Auth.TwoFactor // feature:two_factor
+	next.InviteLinksEnabled = file.Auth.InviteLinks // feature:invite_links
+	next.APIKeyTTL = seconds( file.Auth.APIKeyTTLSeconds ) // feature:api_keys
 
+	// >>> feature:logs
 	next.Logs.RetentionDays = file.Logs.RetentionDays
 	next.Logs.MaxTotalBytes = int64( file.Logs.MaxTotalMB ) * 1024 * 1024
 	next.Logs.MaxFileBytes = int64( file.Logs.MaxFileMB ) * 1024 * 1024
@@ -227,17 +233,22 @@ func liveConfig( boot *Config , boot_file *File , file *File ) ( next *Config ) 
 	next.Logs.StaticAssets = file.Logs.StaticAssets
 	next.Logs.UIClicks = file.Logs.UIClicks
 	next.Logs.Echo = file.Logs.Echo
+	// <<< feature:logs
 
-	next.Webhooks.Enabled = file.Webhooks.Enabled
-	next.Webhooks.Timeout = seconds( file.Webhooks.TimeoutSeconds )
-	next.Webhooks.AllowPrivateTargets = file.Webhooks.AllowPrivateTargets
+	next.Webhooks.Enabled = file.Webhooks.Enabled // feature:webhooks
+	next.Webhooks.Timeout = seconds( file.Webhooks.TimeoutSeconds ) // feature:webhooks
+	next.Webhooks.AllowPrivateTargets = file.Webhooks.AllowPrivateTargets // feature:webhooks
+	// >>> feature:files
 	next.Files.Enabled = file.Files.Enabled
 	next.Files.MaxFileBytes = int64( file.Files.MaxFileBytes )
 	next.Files.QuotaBytesPerUser = int64( file.Files.QuotaBytesPerUser )
 	next.Files.AbandonedAfter = time.Duration( file.Files.AbandonedUploadHours ) * time.Hour
+	// <<< feature:files
+	// >>> feature:backups
 	next.Backups.Enabled = file.Backups.Enabled
 	next.Backups.Interval = time.Duration( file.Backups.IntervalHours ) * time.Hour
 	next.Backups.Keep = file.Backups.Keep
+	// <<< feature:backups
 	return
 }
 
@@ -276,6 +287,7 @@ func ( holder *Holder ) apply( raw []byte , persist func() error ) ( result Appl
 	return
 }
 
+// >>> feature:settings
 // Save applies changes from the Settings screen: checks them, rewrites only
 // those values in config.yaml, validates the whole result, writes it, and
 // applies it. version is the Version the client loaded; if config.yaml is
@@ -314,6 +326,7 @@ func ( holder *Holder ) Save( version string , changes map[string]any ) ( result
 	}
 	return
 }
+// <<< feature:settings
 
 // EditChanges is the part of Save that turns submitted changes into a new
 // config.yaml, without writing it. `config set` uses it too.
@@ -497,6 +510,7 @@ func ( holder *Holder ) Watch( interval time.Duration ) ( stop chan struct{} ) {
 	return
 }
 
+// >>> feature:settings
 // writable reports whether Save could write config.yaml: the file itself
 // when it is rewritten in place, otherwise the folder the replacement is
 // created in. Probing writes nothing.
@@ -515,7 +529,9 @@ func ( holder *Holder ) writable() ( result bool ) {
 	result = true
 	return
 }
+// <<< feature:settings
 
+// >>> feature:settings
 // ---------------------------------------------------------------------------
 // what the Settings screen shows
 // ---------------------------------------------------------------------------
@@ -611,6 +627,7 @@ func ( holder *Holder ) Snapshot() ( snapshot Snapshot , err error ) {
 	}
 	return
 }
+// <<< feature:settings
 
 // ---------------------------------------------------------------------------
 // writing config.yaml

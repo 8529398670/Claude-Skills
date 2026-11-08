@@ -120,6 +120,7 @@ class StaticServer:
 
         return await self._send(request, path)
 
+    # >>> feature:invite_links
     async def serve_join_page(self, request: Request) -> Response:
         """An invite link's page. While auth.invite_links is off a person with
         an old link gets the styled 404, not RequireInviteLinks's JSON."""
@@ -130,6 +131,7 @@ class StaticServer:
             return response
         return await self.serve_login_page(request)
 
+    # <<< feature:invite_links
     async def serve_login_page(self, request: Request) -> Response:
         """A login link (or an invite link) opens the ordinary app page,
         which sees the /login/ (or /join/) path and asks the person to confirm

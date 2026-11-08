@@ -3,17 +3,26 @@ notes the device, the list shows only your own and nothing secret, and signing
 another device out is checked against who is asking."""
 from __future__ import annotations
 
-import time
+# >>> feature:sessions
+import time  # feature:two_factor
+# <<< feature:sessions
 import unittest
 from datetime import timedelta
 from unittest import mock
 
-from app.core import db, encryption, logs, security
-from app.models import credentials, invite_links, login_tokens, sessions, to_iso, users, utc_now
+from app.core import db, encryption, security
+# >>> feature:sessions
+from app.core import logs  # feature:logs
+# <<< feature:sessions
+from app.models import login_tokens, sessions, to_iso, users, utc_now
+from app.models import credentials  # feature:sessions
+# >>> feature:sessions
+from app.models import invite_links  # feature:invite_links
+# <<< feature:sessions
 from app.models.sign_in import SignInRules
 from app.tests.route_support import RoutesTestCase, TestClient
 
-BROWSER = "Mozilla/5.0 (Test) " + "x" * 400
+BROWSER = "Mozilla/5.0 (Test) " + "x" * 400  # feature:sessions
 
 
 class SessionRecordTest(RoutesTestCase):
@@ -30,7 +39,8 @@ class SessionRecordTest(RoutesTestCase):
         session, user = sessions.load_session(self.store, f"old.{secret}")
         self.assertEqual(user.id, self.owner.id)
         self.assertEqual(session.id, "old")
-        self.assertEqual((session.ip, session.user_agent, session.last_seen_at), ("", "", None))
+        self.assertIsNone(session.last_seen_at)
+        self.assertEqual((session.ip, session.user_agent), ("", ""))  # feature:sessions
 
     def test_the_id_is_never_stored(self) -> None:
         _, _, session = sessions.new_session(self.owner.id, 3600)
@@ -38,6 +48,7 @@ class SessionRecordTest(RoutesTestCase):
         self.assertNotIn("id", session.to_record())
         self.assertNotIn("ip", session.to_record())
 
+    # >>> feature:sessions
     def test_the_optional_fields_round_trip(self) -> None:
         _, _, session = sessions.new_session(self.owner.id, 3600)
         session.ip, session.user_agent, session.last_seen_at = "10.0.0.1", "curl", utc_now()
@@ -45,13 +56,14 @@ class SessionRecordTest(RoutesTestCase):
         self.assertEqual((back.ip, back.user_agent, back.last_seen_at), (session.ip, session.user_agent, session.last_seen_at))
 
 
+    # <<< feature:sessions
 class TouchTest(RoutesTestCase):
     def record(self, session_id: str) -> dict:
         return self.store.get(db.BUCKET_SESSIONS, session_id)
 
     def credential(self) -> tuple[str, str]:
         login = login_tokens.issue_login_token(self.store, self.owner.id, 3600)
-        credential = login_tokens.redeem_login_token(self.store, login, SignInRules(3600, False)).session_credential
+        credential = login_tokens.redeem_login_token(self.store, login, SignInRules(3600)).session_credential
         return credential, credential.partition(".")[0]
 
     def test_loading_a_session_is_not_activity(self) -> None:
@@ -121,6 +133,7 @@ class TouchTest(RoutesTestCase):
         response = client.get("/api/me", headers={"Cookie": self.sealed(credential)})
         self.assertEqual(self.session_cookies(response), [], "a session past its limit was extended")
 
+    # >>> feature:logs
     def test_a_live_stream_check_is_not_use(self) -> None:
         self.set_config(session_ttl_seconds=3600, session_max_age_seconds=86400)
         credential, session_id = self.credential()
@@ -129,6 +142,7 @@ class TouchTest(RoutesTestCase):
         self.assertTrue(security.still_owner(self.store, credential))
         self.assertEqual(self.record(session_id)["expires_at"], before)
 
+    # <<< feature:logs
     def test_logging_out_on_a_request_that_extends_still_clears_the_cookie(self) -> None:
         self.set_config(session_ttl_seconds=3600, session_max_age_seconds=86400)
         credential, session_id = self.credential()
@@ -149,8 +163,11 @@ class TouchTest(RoutesTestCase):
             self.assertIsNotNone(security.resolve_actor(self.store, self.cfg, cookie, ""))
 
 
+# >>> feature:sessions
 class CaptureTest(RoutesTestCase):
-    config_changes = {"passwords_enabled": True, "two_factor_enabled": True}
+    config_changes: dict = {}
+    config_changes["passwords_enabled"] = True  # feature:passwords
+    config_changes["two_factor_enabled"] = True  # feature:two_factor
 
     def new_client(self) -> TestClient:
         return TestClient(self.app, base_url="https://testserver", headers={"user-agent": BROWSER})
@@ -172,6 +189,7 @@ class CaptureTest(RoutesTestCase):
     def test_a_login_link(self) -> None:
         self.assert_captured(self.sign_in(self.user.id))
 
+    # >>> feature:passwords
     def test_a_password(self) -> None:
         client = self.sign_in(self.user.id)
         token = client.get("/api/me").json()["csrf_token"]
@@ -184,6 +202,8 @@ class CaptureTest(RoutesTestCase):
         self.assertEqual(fresh.post("/api/login/password", json={"username": "user", "password_digest": digest}).status_code, 200)
         self.assert_captured(fresh)
 
+    # <<< feature:passwords
+    # >>> feature:two_factor
     def test_two_factor(self) -> None:
         client = self.sign_in(self.user.id)
         token = client.get("/api/me").json()["csrf_token"]
@@ -202,6 +222,8 @@ class CaptureTest(RoutesTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assert_captured(fresh)
 
+    # <<< feature:two_factor
+    # >>> feature:invite_links
     def test_an_invite_link(self) -> None:
         link, _ = invite_links.issue_invite_link(self.store, "Group", 5, timedelta(days=1), self.owner.id)
         joined = self.new_client()
@@ -215,6 +237,7 @@ class CaptureTest(RoutesTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assert_captured(returning)
 
+    # <<< feature:invite_links
     def test_a_failure_to_note_it_does_not_fail_the_sign_in(self) -> None:
         with mock.patch.object(sessions, "remember_client", side_effect=RuntimeError("locked")):
             client = self.sign_in(self.user.id)
@@ -229,9 +252,11 @@ class ListTest(RoutesTestCase):
 
     def test_needs_a_session(self) -> None:
         self.assertEqual(self.call("GET", "/api/account/sessions")[0], 401)
+        # >>> feature:api_keys
         self.assertEqual(self.call("GET", "/api/account/sessions", key=self.admin_key)[0], 403)
         self.assertEqual(self.call("POST", "/api/account/sessions/revoke-others", key=self.admin_key, body={})[0], 403)
         self.assertEqual(self.call("POST", "/api/account/sessions/x/revoke", key=self.admin_key, body={})[0], 403)
+        # <<< feature:api_keys
 
     def test_shows_only_your_own_newest_first_and_marks_this_one(self) -> None:
         second = self.session(self.owner.id)
@@ -303,6 +328,7 @@ class RevokeTest(RoutesTestCase):
         self.assertEqual(self.call("GET", "/api/me", cookie=self.owner_cookie)[0], 200)
         self.assertEqual(self.call("GET", "/api/me", cookie=self.user_cookie)[0], 200)
 
+    # >>> feature:logs
     def test_both_are_audited(self) -> None:
         other = self.session(self.owner.id)
         target = self.current_id(other)
@@ -317,16 +343,73 @@ class RevokeTest(RoutesTestCase):
         self.assertEqual(next(entry for entry in entries if entry.get("msg") == "sessions_revoked")["detail"], {"removed": 0})
 
 
+    # <<< feature:logs
+class LabelTest(RoutesTestCase):
+    def post(self, cookie: str, session_id: str, **body: object) -> tuple[int, dict]:
+        path = f"/api/account/sessions/{session_id}/label"
+        return self.call("POST", path, cookie=cookie, body={**body, "csrf_token": self.csrf(cookie)})
+
+    def rows(self, cookie: str) -> list[dict]:
+        return self.call("GET", "/api/account/sessions", cookie=cookie)[1]["sessions"]
+
+    def current(self, cookie: str) -> str:
+        return next(row["id"] for row in self.rows(cookie) if row["current"])
+
+    def test_naming_a_device(self) -> None:
+        other = self.session(self.user.id)
+        session_id = self.current(self.user_cookie)
+        status, reply = self.post(self.user_cookie, session_id, label="  Work laptop  ")
+        self.assertEqual((status, reply["label"]), (200, "Work laptop"))
+        self.assertEqual(self.post(self.user_cookie, session_id, label="a" * 81)[0], 400)
+        self.assertEqual(self.post(self.user_cookie, session_id, label=7)[0], 400)
+
+        # An undo that finds a different name leaves it alone, and says what is there.
+        status, reply = self.post(self.user_cookie, session_id, label="", expect="stale")
+        self.assertEqual((status, reply["label"]), (409, "Work laptop"))
+
+        # Another device of yours sees it, and it lasts through a touch, which
+        # rewrites the record.
+        for session in sessions.list_sessions(self.store, self.user.id):
+            session.last_seen_at = None
+            sessions.touch_session(self.store, session, 3600, 86400)
+        self.assertIn("Work laptop", [row.get("label") for row in self.rows(other)])
+
+        # Nothing clears it, and the row goes back to having none.
+        self.assertEqual(self.post(self.user_cookie, session_id, label="  ", expect="Work laptop")[0], 200)
+        self.assertTrue(all("label" not in row for row in self.rows(self.user_cookie)))
+
+    def test_only_you_name_your_devices(self) -> None:
+        session_id = self.current(self.user_cookie)
+
+        # Someone else's looks the same as one that does not exist.
+        self.assertEqual(self.post(self.owner_cookie, session_id, label="x")[0], 404)
+        self.assertEqual(self.post(self.user_cookie, "nope", label="x")[0], 404)
+
+        # An admin looking at the account sees the name.
+        self.assertEqual(self.post(self.user_cookie, session_id, label="Phone")[0], 200)
+        status, page = self.call("GET", f"/api/admin/users/{self.user.id}/sessions", cookie=self.owner_cookie)
+        self.assertEqual((status, page["sessions"][0]["label"]), (200, "Phone"))
+
+    # >>> feature:api_keys
+    def test_a_key_cannot_name_a_device(self) -> None:
+        session_id = self.current(self.user_cookie)
+        status, _ = self.call("POST", f"/api/account/sessions/{session_id}/label", key=self.user_key, body={"label": "x"})
+        self.assertEqual(status, 403)
+
+
+    # <<< feature:api_keys
 class CredentialsStillEndSessionsTest(RoutesTestCase):
     def test_disabling_an_account_empties_its_list(self) -> None:
         credentials.set_user_disabled(self.store, self.user.id, True)
         self.assertEqual(sessions.list_sessions(self.store, self.user.id), [])
 
 
+# <<< feature:sessions
 if __name__ == "__main__":
     unittest.main()
 
 
+# >>> feature:sessions
 class AdminSessionTest(RoutesTestCase):
     def route(self, user_id: int) -> str:
         return f"/api/admin/users/{user_id}/sessions"
@@ -363,7 +446,7 @@ class AdminSessionTest(RoutesTestCase):
     def test_the_routes_refuse(self) -> None:
         path = self.route(self.user.id)
         self.assertEqual(self.call("GET", path, cookie=self.user_cookie)[0], 403)
-        self.assertEqual(self.call("GET", path, key=self.admin_key)[0], 403)
+        self.assertEqual(self.call("GET", path, key=self.admin_key)[0], 403)  # feature:api_keys
         self.assertEqual(self.call("GET", self.route(9999), cookie=self.owner_cookie)[0], 404)
         self.assertEqual(self.post(f"{path}/nothing/revoke", self.owner_cookie), 404)
         theirs = self.only_session(self.user.id)
@@ -372,6 +455,7 @@ class AdminSessionTest(RoutesTestCase):
         self.assertEqual(self.post(f"{self.route(self.owner.id)}/{mine}/revoke", self.owner_cookie), 400)
 
 
+# <<< feature:sessions
 class UserSearchTest(RoutesTestCase):
     def test_searching_keeps_paging_honest(self) -> None:
         for name in ("Zed One", "zed two", "Zed Three"):

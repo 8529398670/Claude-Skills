@@ -1,6 +1,7 @@
 // Undo and redo for anything the person does on the page: Ctrl+Z (Cmd+Z on a
 // Mac) steps back, Ctrl+Y or Ctrl+Shift+Z steps forward again. A toast with
 // an Undo button does the same for anyone without a keyboard.
+// Each person can pick other keys on the Shortcuts screen (shortcuts.js). // feature:shortcuts
 //
 // A screen makes an action undoable by doing it through Undo.run:
 //
@@ -128,7 +129,7 @@ const Undo = {
     try {
       if ( action.screen && this.hasNav() && Nav.current() !== action.screen ) Nav.show( action.screen );
       await action[ direction ]();
-      if ( typeof Track !== "undefined" ) Track.undo( direction , action.label );
+      if ( typeof Track !== "undefined" ) Track.undo( direction , action.label ); // feature:logs
       action.merge = null;
       to.push( action );
       this.offer( this.message( messageKey , action.label ) , opposite );
@@ -164,7 +165,12 @@ const Undo = {
     return Boolean( target.closest( "input, textarea, select, [contenteditable]:not([contenteditable='false'])" ) );
   },
 
+  // >>> feature:shortcuts
+  // shortcuts.js runs undo and redo, with whatever keys each person chose, so
+  // this fixed Ctrl+Z / Ctrl+Y is only for an app without it.
+  // <<< feature:shortcuts
   onKey( event ) {
+    if ( typeof Shortcuts !== "undefined" ) return; // feature:shortcuts
     if ( !( event.ctrlKey || event.metaKey ) || event.altKey ) return;
     if ( this.typing( event.target ) ) return;
     const key = event.key.toLowerCase();

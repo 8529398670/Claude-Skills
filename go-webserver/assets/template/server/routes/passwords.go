@@ -1,3 +1,4 @@
+// whole-file feature:passwords
 package routes
 
 import (
@@ -31,7 +32,7 @@ type passwordLoginRequest struct {
 type setPasswordRequest struct {
 	Username       string `json:"username"`
 	PasswordDigest string `json:"password_digest"`
-	Code           string `json:"code"`
+	Code           string `json:"code"` // feature:two_factor
 	CSRFToken      string `json:"csrf_token"`
 }
 
@@ -55,9 +56,11 @@ func ( handlers *Handlers ) RequirePasswords( c fiber.Ctx ) ( err error ) {
 // same for everyone: the salt is not a secret, and there is deliberately
 // nothing here that depends on a username.
 func ( handlers *Handlers ) GetLoginOptions( c fiber.Ctx ) ( err error ) {
-	cfg := handlers.cfg()
-	payload := fiber.Map{ "passwords": cfg.PasswordsEnabled , "two_factor": cfg.TwoFactorEnabled }
-	if cfg.PasswordsEnabled {
+	payload := fiber.Map{
+		"passwords":  handlers.cfg().PasswordsEnabled,
+		"two_factor": handlers.cfg().TwoFactorEnabled, // feature:two_factor
+	}
+	if handlers.cfg().PasswordsEnabled {
 		salt , salt_err := models.InstallSalt( handlers.Store )
 		if salt_err != nil {
 			err = serverError( c , salt_err )
@@ -109,7 +112,7 @@ func ( handlers *Handlers ) PasswordLogin( c fiber.Ctx ) ( err error ) {
 	}
 	handlers.PasswordNames.Record( name , true )
 	message := "signed in with a password"
-	if signed.Challenge != "" { message = "password accepted, waiting for a code" }
+	if signed.Challenge != "" { message = "password accepted, waiting for a code" } // feature:two_factor
 	handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , nil )
 	err = handlers.signInResponse( c , signed , fiber.Map{ "ok": true } , fiber.StatusOK )
 	return
@@ -138,14 +141,16 @@ func ( handlers *Handlers ) SetPassword( c fiber.Ctx ) ( err error ) {
 		return
 	}
 
-	cfg := handlers.cfg()
 	user_id := security.UserFrom( c ).ID
+	// >>> feature:two_factor
+	cfg := handlers.cfg()
 	if handlers.Codes.Locked( user_id ) {
 		err = tooMany( c , "two_factor_locked" )
 		return
 	}
-	set_err := models.SetPassword( handlers.Store , user_id , body.Username , body.PasswordDigest , handlers.sessionID( c ) ,
-		body.Code , cfg.TwoFactorEnabled , cfg.SecretKey )
+	// <<< feature:two_factor
+	set_err := models.SetPassword( handlers.Store , user_id , body.Username , body.PasswordDigest , handlers.sessionID( c ) , body.Code , cfg.TwoFactorEnabled , cfg.SecretKey ) // feature:two_factor
+	set_err := models.SetPassword( handlers.Store , user_id , body.Username , body.PasswordDigest , handlers.sessionID( c ) ) // feature:!two_factor
 	switch {
 	case errors.Is( set_err , models.ErrBadUsername ):
 		err = badRequest( c , "bad_username" )
@@ -159,10 +164,12 @@ func ( handlers *Handlers ) SetPassword( c fiber.Ctx ) ( err error ) {
 	case errors.Is( set_err , models.ErrPasswordBlocked ):
 		err = forbidden( c , "password_blocked" )
 		return
+	// >>> feature:two_factor
 	case errors.Is( set_err , models.ErrWrongCode ):
 		handlers.Codes.Record( user_id , false )
 		err = forbidden( c , "two_factor_wrong" )
 		return
+	// <<< feature:two_factor
 	case set_err != nil:
 		err = serverError( c , set_err )
 		return

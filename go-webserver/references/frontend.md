@@ -97,10 +97,12 @@ Plain scripts, loaded in dependency order, each adding one global:
 | File | Responsibility |
 |---|---|
 | `theme.js` | Light, dark, or a preset theme. Loaded in `<head>`; see below. |
-| `dom.js` | Element helpers, `Dom.copy`, `Dom.toast`, `Dom.onSubmit`, `Dom.confirm`, `Dom.when`. No app logic. |
+| `dom.js` | Element helpers, `Dom.copy`, `Dom.toast`, `Dom.onSubmit`, `Dom.confirm`, `Dom.editable`, `Dom.form`, `Dom.fieldError`, `Dom.when`. No app logic. |
 | `qr.js` | QR codes, for the authenticator app and for login and invite links. |
+| `login_links.js` | How often and how long a login link works: the choices on the create-user form and the New link and Sign in on another device dialogs, and how a link is described. |
 | `i18n.js` | Loads and applies `language.yaml`. |
 | `undo.js` | Ctrl+Z / Ctrl+Y: the undo/redo history every screen records into. |
+| `shortcuts.js` | Every keyboard shortcut, and the Shortcuts screen where each person changes theirs (saved to their account, shown for their OS). `Shortcuts.register` adds an app's own. |
 | `api.js` | Every call to the server. Attaches cookies and the CSRF token. |
 | `track.js` | Sends the screens and clicks the activity log records. |
 | `nav.js` | The sidebar: which screen the URL hash shows. |
@@ -113,10 +115,10 @@ Plain scripts, loaded in dependency order, each adding one global:
 | `password.js` | Password sign-in, and the Password screen. |
 | `two_factor.js` | The two-factor step at sign-in, and its screen. |
 | `invites.js` | The Invite links screen. |
-| `logs.js` | The owner's Logs screen. |
+| `logs.js` | The owner's Logs screen, and its names for addresses. |
 | `jobs.js` | The owner's Jobs screen. |
 | `webhooks.js` | The owner's Webhooks screen. |
-| `settings.js` | The owner's Settings screen: config.yaml as a form. |
+| `settings.js` | The owner's Settings screen: config.yaml as a form, with a filter, jump links and Use default. |
 | `fresh.js` | Asks the server again when someone comes back to the tab. |
 | `app.js` | The account + admin screen. Last, because it starts everything. |
 
@@ -204,7 +206,9 @@ Ctrl+Z (Cmd+Z on a Mac) undoes the last thing done on the page; Ctrl+Y or
 Ctrl+Shift+Z redoes it. Actions that matter -- a delete, a rename -- also
 show a toast with an **Undo** button, which is how a phone or anyone who does
 not know the shortcut gets the same thing. `static/js/undo.js` owns the
-history, the keys and the button; screens only hand it their actions. Out of
+history and the button; screens only hand it their actions. The keys are
+`static/js/shortcuts.js`'s, so each person can change them on the Shortcuts
+screen (an app without `shortcuts` gets the fixed ones in `Undo.onKey`). Out of
 the box it covers theme picks, folding the sidebar, renaming the account,
 deleting an API key, invite link, webhook or file, and saving Settings.
 
@@ -254,8 +258,12 @@ Undo.run( {
   it, or an admin), so delete asks no confirmation and offers Undo; the
   undo calls the `.../restore` endpoint. A revoke says "stop trusting this",
   so it keeps its confirm dialog and is never undoable -- an undo would
-  quietly trust a possibly leaked credential again. Logout and issuing a
-  login link, invite or key stay out too. A new deletable thing follows the
+  quietly trust a possibly leaked credential again. Disabling a user is the
+  same: it asks first and has no undo, because enabling does not bring back
+  the sessions and links it ended. An invite link is the exception: it can be
+  switched back on, behind a confirm rather than an undo, because it is how the
+  people who joined sign in on a new device. Logout and issuing a login link,
+  invite or key stay out too. A new deletable thing follows the
   same soft-delete + restore pattern (`references/architecture.md`).
 - History is in memory: a reload (including logout) starts it fresh.
   `Undo.canUndo()` / `canRedo()` are there for toolbar buttons.
@@ -318,8 +326,8 @@ is running there.
 
 ### The Files screen
 
-`files.js`, for everyone unless `files.enabled` is off: upload, download, and delete
-with Undo. An admin gets a switch to see everyone's files, with an Owner column.
+`files.js`, for everyone unless `files.enabled` is off: upload, download, rename by
+clicking the name, and delete, the last two with Undo. An admin gets a switch to see everyone's files, with an Owner column.
 An upload retries a failed piece and goes on from the `received` the server reports,
 and deletes itself if it gives up, so it does not hold the quota. `Api.request` takes
 `raw` and `headers` for this: the one body that is not JSON. See
@@ -328,8 +336,9 @@ and deletes itself if it gives up, so it does not hold the quota. `Api.request` 
 ### The Webhooks screen
 
 `webhooks.js`, owner only: add an endpoint, turn it on or off, send a test, and
-see how its deliveries went. The signing secret appears once, in a box like a new
-key's. Event names are shown as they are, because they are what the receiver
+see how its deliveries went. Its name edits in place, and Edit changes the address
+and events; both can be undone. New secret asks first and has no undo. A signing
+secret appears once, in a box like a new key's. Event names are shown as they are, because they are what the receiver
 sees. See [Webhooks](architecture.md#webhooks).
 
 ### Long lists
@@ -341,10 +350,24 @@ so a change on the screen never leaves a stale page behind. Use it for any new
 list: a plain `forEach` would quietly stop at the first page. See
 [Paging lists](architecture.md#paging-lists).
 
+A column sorts on the server, because the browser only holds a page. Give its `th`
+`data-sort="<row field>"` with a `.th-sort` button inside, call
+`Pager.sortable( tableId , refresh )` once, pass `Pager.params( tableId )` to the Api
+call, and list the field where the route sends its page. Status columns worked out
+in the browser have no field to sort on, so they stay plain.
+
+Search works the same way. `Pager.search( tableId , inputId , refresh )` wires a box,
+and `Pager.filter` a checkbox such as Hide revoked and expired keys; the route calls
+`matchRows` or `match_rows` with the fields to look in. An empty table then says
+`ui.no_matches` rather than the table's own empty text. `Dom.typed( input , run )` is
+the wait for typing to pause, for any box that loads as you type.
+
 ### Where you're signed in
 
 `sessions.js` draws the devices table on the Account screen. It reads a short
-name out of the User-Agent, only to help someone tell their devices apart.
+name out of the User-Agent, only to help someone tell their devices apart. A device
+can be named by clicking it, with Undo. The name worked out from the User-Agent
+stays underneath, so a label cannot hide what a device says it is.
 Signing a device out asks first and has no undo.
 
 ### Error references
@@ -382,10 +405,13 @@ appears without a refresh. Its text is the `settings:` block in
 
 `static/js/theme.js` is loaded in `<head>`, before the stylesheet paints, and
 applies the saved theme at once, so a dark choice never flashes light.
-`Theme.presets` lists light, dark and ten ready-made themes -- ocean, forest, sepia, grape, pink, WSU, midnight, slate, dark pink, WSU dark (Wright State University green and gold) -- (each a mode plus
-optional `accent`, `background`, `surface` colours -> `--app-accent`,
-`--app-bg`, `--app-surface`, set inline on `<html>`; `--app-accent-fg` is
-picked for contrast). A dark mode sets Bootstrap's `data-bs-theme="dark"` on
+`Theme.presets` lists light, dark and ten ready-made themes -- ocean, forest, sepia, grape, pink, WSU, midnight, slate, dark pink, WSU dark (Wright State University green and gold) -- (each a mode, an `accent` for what you can press, a `second` for where you are, and
+optional `background` and `surface`). `Theme.colours( preset )` works out everything
+else: the page, card, nested card (`.app-nested`) and navbar shades, labels that
+read on each fill, and text colours pushed until they reach 4.5. They are set inline
+on `<html>` as the `--app-*` tokens. `ThemePalettes` keeps brand colours by name,
+used or not. `scripts/check_themes.js` holds every preset to the contrast, and the
+tests run it. A dark mode sets Bootstrap's `data-bs-theme="dark"` on
 `<html>`. The Appearance screen is `Theme.render( root )`; names come from
 `theme.preset_<key>` in language.yaml.
 
@@ -400,13 +426,45 @@ These live in `dom.js`, `api.js` and `nav.js`, so a new screen has them by using
 them rather than by writing them again.
 
 - **`Dom.onSubmit( form , handler )`** is a form's submit handler, with its
-  button disabled and showing a spinner until `handler` finishes, so a second
-  click sends nothing twice. `handler` has to be async and to await what it
-  sends, or the button comes back early. `Dom.busy( button , work )` is the same
-  thing for a button outside a form.
+  button busy and showing a spinner until `handler` finishes, so a second click
+  sends nothing twice. `handler` has to be async and to await what it sends, or
+  the button comes back early.
+- **Buttons go busy by themselves.** One from `Dom.el` with an async click handler
+  does, and `Dom.onPress( button , handler )` does that for one in the HTML. Neither
+  should call `Dom.busy( button , work )` as well: the press is already busy, so
+  the inner call would skip its work. A question the handler asks counts as part
+  of the wait, with the spinner hidden until it is answered.
 - **`Dom.confirm( question )`** answers true or false from a themed modal. An
   empty question answers true, so a `language.yaml` key set to `""` stops the
   asking. Cancel has the focus: Enter on a question nobody read deletes nothing.
+- **`Dom.fieldError( input , message )`** shows a problem under one field and ties
+  it to the field for screen readers; `Dom.clearFieldError( input )` takes it away.
+  Typing clears it too. `App.showFieldError( code , { code: inputId } )` is the usual
+  way in: a refusal about a field goes beside it, and any other goes to the banner.
+- **A box that stays until dismissed** is an `.alert-dismissible` with a `.btn-close`
+  carrying `data-box-close="<id to focus next>"`. Closing clears any `code` inside,
+  so a shown-once value does not stay in the page.
+- **`Dom.rowActions( name , buttons , keep )`** is a table row's buttons, grouped under
+  the row's name so a screen reader can say whose Delete it is. It drops nulls, keeps
+  the first two (or `keep`) in the row, and folds the rest into a ⋯ menu, so put the
+  most used first.
+- **`Pager.label( table )`** names each cell after its column, for the stacked tables
+  on a phone. `Pager.load` does it; a table filled by hand calls it after.
+- **`Pager.reset( table )`** empties a table at once, for when what it is about to
+  hold is someone else's. `Pager.load` keeps the keyboard's place through a redraw.
+- **`Dom.editable( value , options )`** is how a name gets edited in a table
+  row: it answers a button showing the value, which turns into a field. Enter
+  or clicking away saves, Escape cancels, and a refused save keeps the field
+  open with what was typed. Give it `label` and `save`; `save` throws to refuse,
+  and is where `Undo.record` goes.
+- **`Dom.form( { title , fields , save } )`** is for editing more than one value:
+  a dialog built from a list of fields, answering `null` if cancelled. A refused
+  save says why inside the dialog and keeps the input. See the comment above it
+  in `dom.js` for the field types.
+- **Editing something after it is made** is a POST verb route, like every other
+  change (`/api/keys/:id/rename`), never PUT or PATCH, which the spec test would
+  not see. Add it to `config/openapi.json`, and give it an `expect` so its undo
+  can answer 409, as `RenameUser` does.
 - **`Dom.when( value , fallback )`** is a table cell's time: "3 hours ago", or a
   date past a month, with the exact time on hover. `fallback` is what a missing
   time says ("Never").
@@ -414,7 +472,8 @@ them rather than by writing them again.
   list says so in one row. A table filled some other way calls `Pager.empty`.
 - **`Qr.toggle( button , canvas , value )`** shows the link in `value` as a QR
   code. Whoever shows a new link calls `Qr.hide`, or the code on screen is still
-  the old link's. Links are spent once used.
+  the old link's. A login link may work once or several times
+  (`login_links.js`), and is shown only when it is made.
 - **`Dom.download( name , text )`** saves text as a file.
 - **A session that ends.** A 401 from any call but `/api/me`, while someone is
   signed in, goes to `/?login=ended`, which says why. 401 only ever means "no
@@ -436,8 +495,9 @@ them rather than by writing them again.
   title and moves the focus to it, for a screen reader's sake. So a screen needs
   an `h2`.
 
-Light stays the default through all of this. The navbar's light/dark button goes
-through `Theme.pick`, which is undoable, and `prefers-color-scheme` is still never
+Light stays the default through all of this. The Appearance picker, and the
+navbar's light/dark button in an app without `appearance` (the two never ship
+together), go through `Theme.pick`, which is undoable, and `prefers-color-scheme` is still never
 read.
 
 ## CSS structure

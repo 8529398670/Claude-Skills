@@ -1,3 +1,4 @@
+# whole-file feature:metrics
 """GET /metrics (app/core/metrics.py). Who may read it is decided where it is
 registered: see RequireMetrics in routes/__init__.py."""
 from __future__ import annotations

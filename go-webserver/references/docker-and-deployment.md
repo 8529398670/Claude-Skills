@@ -323,6 +323,10 @@ docker exec -it <container-name> /app/server manage list-users
 docker exec -it <container-name> /app/server manage reissue-login -user-id 1
 ```
 
+`reissue-login` and `create-login` take `-uses 5|unlimited` and
+`-expires 30m|12h|7d|never` for a link that works more than once or lasts
+longer (see `architecture.md`, Reusable login links).
+
 ## Operating the container
 
 **bolt allows one process to open the database**, and the running server holds
@@ -467,11 +471,15 @@ runs the binary with them and leaves the server alone; `manage` reaches the
 live server over its control socket. The shared helpers are in
 `scripts/lib.sh`.
 
-`scripts/login.sh [user-id] [--docker|--local]` prints a one-time login link
-(user 1, the owner, by default) as a full URL. It decides where from: the
+`scripts/login.sh [user-id] [--uses N|unlimited] [--expires 30m|12h|7d|never] [--docker|--local|--no-start|--background]`
+prints a login link (user 1, the owner, by default) as a full URL. It works
+once, for `auth.login_token_ttl_seconds`, unless `--uses` or `--expires` say
+otherwise; `scripts/login.bat` takes the same. It decides where from: the
 local server when this checkout's is running (through its control socket),
 otherwise the docker container when it is running (`docker exec`), otherwise
-the local database offline, saying the link waits until the server starts.
+it writes the link into the local database, prints it, and starts the server
+in that terminal, where Ctrl-C stops it. `--no-start` stops after writing the
+link; `--background` starts the server detached and exits.
 The local and container deployments keep separate databases, so it always
 says which one the link is for; when both run, it uses the local one and
 says so. Errors are specific: no config yet, no database yet, no such user

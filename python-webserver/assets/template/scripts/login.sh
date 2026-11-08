@@ -1,25 +1,36 @@
 #!/usr/bin/env bash
-# Print a one-time login link -- by default for user 1, the owner -- for
-# whichever deployment of this checkout is actually live.
+# Print a login link -- by default for user 1, the owner -- for whichever
+# deployment of this checkout is actually live. It works once, for
+# auth.login_token_ttl_seconds, unless --uses or --expires say otherwise.
 #
 #   scripts/login.sh               the owner (user 1)
 #   scripts/login.sh 3             user 3
+#   scripts/login.sh 3 --uses 5    a link that works up to 5 times
+#   scripts/login.sh --uses unlimited --expires 7d
+#                                  any number of times, for 7 days
+#                                  (--expires takes 30m, 12h, 7d or never)
 #   scripts/login.sh --docker      the docker container, even if a local
 #                                  server is running too
 #   scripts/login.sh --local       this checkout's local server
 #   scripts/login.sh --no-start    never start a server: with none running,
 #                                  write the link into the database offline
+#   scripts/login.sh --background  with none running, start one detached
+#                                  instead of in this terminal
 #
 # Where the link comes from:
 #   - the local server (scripts/run.sh) when it is running: the link goes
 #     into its database, which SQLite's WAL mode makes safe alongside it;
 #   - otherwise the docker container (docker/run.sh) when it is running:
 #     the link goes through `docker exec`;
-#   - otherwise this starts the local server in the background (log in
-#     .run/server.log, stop it with scripts/run.sh stop) and gets the link
-#     from it, so the link works as soon as it is printed.
-# The two keep separate databases, so a link from one does nothing in the
-# other. This says which one it used.
+#   - otherwise this writes the link into the database, prints it, and
+#     becomes scripts/run.sh: the server runs in this terminal and Ctrl-C
+#     stops it. With no database yet, the server's first start prints the
+#     owner's link instead.
+# With --background the server starts detached instead (log in
+# .run/server.log, stop it with scripts/run.sh stop), and the link comes
+# from it once it answers. Use that where nothing can hold a terminal open.
+# The local server and the container keep separate databases, so a link from
+# one does nothing in the other. This says which one it used.
 #
 # The URL in the link is server.public_url when set, otherwise the local
 # address (see `scripts/run.sh config shell server`).
@@ -37,14 +48,28 @@ fi
 USER_ID=1
 MODE=auto
 START=true
-for argument in "$@"; do
+BACKGROUND=false
+LINK_FLAGS=()
+while [ $# -gt 0 ]; do
+  argument="$1"
+  shift
   case "$argument" in
     --docker) MODE=docker ;;
     --local)  MODE=local ;;
     --no-start) START=false ;;
-    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --background) BACKGROUND=true ;;
+    --uses|--expires)
+      if [ $# -eq 0 ]; then
+        echo "ERROR: ${argument} needs a value." >&2
+        exit 1
+      fi
+      LINK_FLAGS+=( "$argument" "$1" )
+      shift ;;
+    --uses=*|--expires=*)
+      LINK_FLAGS+=( "${argument%%=*}" "${argument#*=}" ) ;;
+    -h|--help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *[!0-9]*|"")
-      echo "ERROR: expected a numeric user id, --docker, --local or --no-start; got '${argument}'." >&2
+      echo "ERROR: expected a numeric user id, --uses, --expires, --docker, --local, --no-start or --background; got '${argument}'." >&2
       exit 1 ;;
     *) USER_ID="$argument" ;;
   esac
@@ -99,7 +124,7 @@ if [ "$MODE" = "docker" ]; then
   esac
   echo "  database ${DATA_DIR}/app.db on the host (docker.data_dir)"
   echo ""
-  if ! docker exec "$docker_container" python -m app manage reissue-login --user-id "$USER_ID"; then
+  if ! docker exec "$docker_container" python -m app manage reissue-login --user-id "$USER_ID" ${LINK_FLAGS[@]+"${LINK_FLAGS[@]}"}; then
     echo "" >&2
     echo "Accounts in the container: docker exec ${docker_container} python -m app manage list-users" >&2
     exit 1
@@ -108,7 +133,7 @@ if [ "$MODE" = "docker" ]; then
 fi
 
 issue_link() {
-  if ! "$PYTHON" -m app manage reissue-login --user-id "$USER_ID"; then
+  if ! "$PYTHON" -m app manage reissue-login --user-id "$USER_ID" ${LINK_FLAGS[@]+"${LINK_FLAGS[@]}"}; then
     echo "" >&2
     echo "Accounts in this database: scripts/run.sh manage list-users" >&2
     exit 1
@@ -136,6 +161,24 @@ if [ "$START" != "true" ]; then
   echo ""
   issue_link
   exit 0
+fi
+
+if [ "$BACKGROUND" != "true" ]; then
+  if [ -f "$database" ]; then
+    echo "No server is running for this checkout, so the link goes straight into"
+    echo "the database, and the server starts right here."
+    echo "  database ${database}"
+    echo ""
+    issue_link
+    echo ""
+  else
+    echo "No database yet: the first start below creates the owner and prints their"
+    echo "login link."
+    echo ""
+  fi
+  echo "Starting the server here; Ctrl-C stops it."
+  echo ""
+  exec scripts/run.sh
 fi
 
 if [ "${url#http://}" != "$url" ] && [ "$secure_cookies" = "true" ]; then

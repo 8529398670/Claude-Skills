@@ -1,3 +1,4 @@
+// whole-file feature:webhooks
 // Package webhooks tells other systems that something happened.
 //
 // Emit writes one delivery per interested endpoint to the outbox bucket and

@@ -1,3 +1,4 @@
+// whole-file feature:invite_links
 package routes
 
 import (
@@ -124,9 +125,11 @@ func ( handlers *Handlers ) JoinClaim( c fiber.Ctx ) ( err error ) {
 			err = forbidden( c , code )
 			return
 		}
+	// >>> feature:passwords
 	} else if user.PasswordUsable( handlers.cfg().PasswordsEnabled ) {
 		err = forbidden( c , "use_password" )
 		return
+	// <<< feature:passwords
 	}
 
 	signed , _ , claim_err := models.ClaimInviteAccount( handlers.Store , body.Credential , user.ID , handlers.signInRules() )
@@ -142,7 +145,7 @@ func ( handlers *Handlers ) JoinClaim( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	message := "signed back in through an invite link"
-	if signed.Challenge != "" { message = "invite link accepted, waiting for a code" }
+	if signed.Challenge != "" { message = "invite link accepted, waiting for a code" } // feature:two_factor
 	handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , fiber.Map{ "link_id": link.ID } )
 	err = handlers.signInResponse( c , signed , fiber.Map{ "ok": true , "display_name": user.DisplayName } , fiber.StatusOK )
 	return
@@ -172,7 +175,7 @@ func ( handlers *Handlers ) JoinCreate( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , "joined through an invite link" , fiber.Map{ "link_id": link.ID } )
-	handlers.Webhooks.Emit( models.EventUserCreated , map[string]any{ "user_id": user.ID , "display_name": user.DisplayName , "role": user.Role , "invite_link_id": link.ID } )
+	handlers.Webhooks.Emit( models.EventUserCreated , map[string]any{ "user_id": user.ID , "display_name": user.DisplayName , "role": user.Role , "invite_link_id": link.ID } ) // feature:webhooks
 	signed := &models.SignIn{ UserID: user.ID , SessionCredential: session_credential }
 	err = handlers.signInResponse( c , signed , fiber.Map{ "ok": true , "display_name": user.DisplayName } , fiber.StatusCreated )
 	return

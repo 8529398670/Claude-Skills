@@ -75,8 +75,10 @@ func section( status int ) ( result string ) {
 		result = "method_not_allowed"
 	case status == fiber.StatusTooManyRequests:
 		result = "rate_limited"
+	// >>> feature:maintenance
 	case status == fiber.StatusServiceUnavailable:
 		result = "maintenance"
+	// <<< feature:maintenance
 	case status >= 500:
 		result = "server_error"
 	default:

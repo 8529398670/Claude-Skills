@@ -1,3 +1,4 @@
+# whole-file feature:webhooks
 """The owner's Webhooks screen. Owner only, from a browser session, like the
 Logs and Settings screens: an endpoint sends what happens here to somewhere
 else, so a leaked key must not be able to add one. There are no MCP tools for
@@ -13,8 +14,9 @@ from app.core import webhooks
 from app.core.logs import KIND_ADMIN
 from app.core.security import actor_from, check_csrf
 from app.models import RestoreError, to_iso
+from app.models import users
 from app.models import webhooks as models
-from app.routes.helpers import bad_request, conflict, forbidden, get_config, get_store, not_found, read_json, restore_refused, run, send_page
+from app.routes.helpers import bad_request, conflict, forbidden, get_config, get_store, match_rows, not_found, read_json, restore_refused, run, send_page
 from app.routes.logs import audit
 
 
@@ -57,7 +59,8 @@ async def list_events(request: Request) -> Response:
 
 async def list_webhooks(request: Request) -> Response:
     hooks = await run(models.list_webhooks, get_store(request))
-    return send_page(request, "webhooks", [_row(hook) for hook in hooks])
+    rows = match_rows([_row(hook) for hook in hooks], request.query_params.get("q", ""), "name", "url")
+    return send_page(request, "webhooks", rows, ("name", "url", "enabled"))
 
 
 async def create_webhook(request: Request) -> Response:
@@ -94,6 +97,79 @@ async def set_enabled(request: Request) -> Response:
         return not_found("no such webhook")
     audit(request, KIND_ADMIN, "webhook enabled set", {"webhook_id": webhook_id, "enabled": enabled})
     return JSONResponse({"ok": True})
+
+
+async def rename_webhook(request: Request) -> Response:
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    name = body.get("name")
+    if not models.valid_webhook_name(name):
+        return bad_request(models.BAD_NAME_MESSAGE)
+    # Optional: the name the caller expects to replace, so an undo cannot
+    # overwrite a rename made elsewhere.
+    expect = body.get("expect")
+    if expect is not None and not isinstance(expect, str):
+        return bad_request("expect must be a string")
+    webhook_id = request.path_params["webhook_id"]
+    try:
+        renamed = await run(models.rename_webhook, get_store(request), webhook_id, name, expect)
+    except users.RenameConflictError as refusal:
+        return conflict(str(refusal), name=refusal.current)
+    if not renamed:
+        return not_found("no such webhook")
+    audit(request, KIND_ADMIN, "webhook renamed", {"webhook_id": webhook_id, "name": name.strip()})
+    return JSONResponse({"ok": True, "name": name.strip()})
+
+
+async def set_webhook_target(request: Request) -> Response:
+    """Change the address and the events. The address gets the same check as a
+    new endpoint's, every time: an events-only edit of one that has since been
+    ruled out is refused too, and the sender would refuse it anyway."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    url, events = body.get("url"), body.get("events")
+    if not models.valid_webhook_target(url, events):
+        return bad_request(models.BAD_TARGET_MESSAGE)
+    refused = webhooks.check_url(url, get_config(request).webhooks.allow_private_targets)
+    if refused:
+        return bad_request(refused)
+    # Optional: what the caller expects to replace, as with a rename's.
+    expect = body.get("expect")
+    if expect is not None:
+        if not isinstance(expect, dict):
+            return bad_request("expect must be an object")
+        expect = (expect.get("url"), expect.get("events"))
+    webhook_id = request.path_params["webhook_id"]
+    try:
+        changed = await run(models.set_webhook_target, get_store(request), webhook_id, url, events, expect)
+    except models.WebhookChangedError as refusal:
+        return conflict(str(refusal))
+    if not changed:
+        return not_found("no such webhook")
+    # The events but not the url, which can hold a token of its own.
+    audit(request, KIND_ADMIN, "webhook target changed", {"webhook_id": webhook_id, "events": events})
+    return JSONResponse({"ok": True})
+
+
+async def rotate_webhook_secret(request: Request) -> Response:
+    """Answers with the new signing secret, the only time it is shown."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    webhook_id = request.path_params["webhook_id"]
+    secret = await run(models.rotate_webhook_secret, get_store(request), get_config(request).secret_key, webhook_id)
+    if secret is None:
+        return not_found("no such webhook")
+    audit(request, KIND_ADMIN, "webhook secret rotated", {"webhook_id": webhook_id})
+    return JSONResponse({"secret": secret})
 
 
 async def delete_webhook(request: Request) -> Response:

@@ -35,7 +35,7 @@ const Fresh = {
       Api.sessionEnded();
       return;
     }
-    App.showMaintenance( me );
+    App.showMaintenance( me ); // feature:maintenance
     App.showAnnouncement( me );
     this.noticeVersion( me.version );
   },

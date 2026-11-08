@@ -56,9 +56,8 @@ if [ ! -f "$NEXT_FILE" ] && [ "$PENDING" = "no" ]; then
 fi
 
 if [ -f "$NEXT_FILE" ]; then
-  # The key goes in over stdin and stays in this container's tmpfs: the same
-  # file mode problems as a backup in docker/restore.sh, and no copy of it
-  # ever sits in the data directory.
+  # The key goes in over stdin and stays in this container's tmpfs, so no copy
+  # of it ever sits in the data directory.
   if ! cat "$NEXT_FILE" | docker run --rm -i --network none --read-only --cap-drop ALL \
          --security-opt no-new-privileges:true \
          --tmpfs "/tmp:rw,noexec,nosuid,size=1m" \

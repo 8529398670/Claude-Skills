@@ -1,7 +1,9 @@
+// whole-file feature:api_keys
 package routes
 
 import (
 	errors "errors"
+	strings "strings"
 
 
 	fiber "github.com/gofiber/fiber/v3"
@@ -38,6 +40,21 @@ type createAPIKeyRequest struct {
 	// absent means "use the configured default", 0 means "never expires", and
 	// a number means that many days. With a plain int, "never" and "unset"
 	// would be the same request.
+	ExpiresInDays *int   `json:"expires_in_days"`
+	CSRFToken     string `json:"csrf_token"`
+}
+
+// renameAPIKeyRequest's Expect is the name the caller thinks it is replacing. The
+// frontend sends it, so an undo cannot overwrite a rename made elsewhere.
+type renameAPIKeyRequest struct {
+	Name      string  `json:"name"`
+	Expect    *string `json:"expect"`
+	CSRFToken string  `json:"csrf_token"`
+}
+
+// apiKeyExpiryRequest's ExpiresInDays counts from now, and 0 means never, as when
+// minting. Here it is required: there is no default to fall back on.
+type apiKeyExpiryRequest struct {
 	ExpiresInDays *int   `json:"expires_in_days"`
 	CSRFToken     string `json:"csrf_token"`
 }
@@ -94,6 +111,20 @@ func apiKeyRow( key *models.APIKey , display_name string ) ( row fiber.Map ) {
 	return
 }
 
+// onlyLiveKeys is ?live=true, for hiding keys that no longer work. The lists
+// keep them otherwise: a key that used to exist is part of the answer.
+func onlyLiveKeys( c fiber.Ctx , rows []fiber.Map ) ( kept []fiber.Map ) {
+	kept = rows
+	if c.Query( "live" ) != "true" { return }
+	kept = []fiber.Map{}
+	for _ , row := range rows {
+		if row[ "live" ] == true {
+			kept = append( kept , row )
+		}
+	}
+	return
+}
+
 // ListMyAPIKeys answers "what has standing access as me". Revoked and expired
 // keys are included, marked as such, because a key that used to exist is part
 // of that answer.
@@ -121,7 +152,8 @@ func ( handlers *Handlers ) ListMyAPIKeys( c fiber.Ctx ) ( err error ) {
 		nameCreator( row , key , names )
 		rows = append( rows , row )
 	}
-	err = sendPage( c , "keys" , rows )
+	rows = onlyLiveKeys( c , matchRows( rows , c.Query( "q" ) , "name" ) )
+	err = sendSorted( c , "keys" , rows , "name" , "role" , "last_used_at" , "expires_at" , "created_at" )
 	return
 }
 
@@ -205,7 +237,7 @@ func ( handlers *Handlers ) CreateMyAPIKey( c fiber.Ctx ) ( err error ) {
 	row := apiKeyRow( key , "" )
 	row[ "credential" ] = credential
 	handlers.audit( c , logs.KindAdmin , "api key created" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role } )
-	handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role } )
+	handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role } ) // feature:webhooks
 	err = c.Status( fiber.StatusCreated ).JSON( row )
 	return
 }
@@ -275,8 +307,118 @@ func ( handlers *Handlers ) CreateAPIKeyForUser( c fiber.Ctx ) ( err error ) {
 	row := apiKeyRow( key , "" )
 	row[ "credential" ] = credential
 	handlers.audit( c , logs.KindAdmin , "api key created" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role , "user_id": key.UserID , "created_by": actor.ID } )
-	handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role , "created_by": actor.ID } )
+	handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role , "created_by": actor.ID } ) // feature:webhooks
 	err = c.Status( fiber.StatusCreated ).JSON( row )
+	return
+}
+
+// RenameMyAPIKey renames one of your own keys. Someone else's is "no such api
+// key", for the same reason as in RevokeMyAPIKey.
+func ( handlers *Handlers ) RenameMyAPIKey( c fiber.Ctx ) ( err error ) {
+	err = handlers.renameKey( c , true )
+	return
+}
+
+// RenameAnyAPIKey is an admin renaming anyone's key. A name changes nothing about
+// what a key can do, so unlike its expiry this needs no ladder.
+func ( handlers *Handlers ) RenameAnyAPIKey( c fiber.Ctx ) ( err error ) {
+	err = handlers.renameKey( c , false )
+	return
+}
+
+func ( handlers *Handlers ) renameKey( c fiber.Ctx , own_only bool ) ( err error ) {
+	var body renameAPIKeyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	if models.ValidAPIKeyName( body.Name ) == false {
+		err = badRequest( c , "name must be 1-80 characters" )
+		return
+	}
+
+	key , get_err := models.GetAPIKey( handlers.Store , c.Params( "key_id" ) )
+	if get_err != nil || ( own_only && key.UserID != security.UserFrom( c ).ID ) {
+		err = notFound( c , "no such api key" )
+		return
+	}
+	rename_err := models.RenameAPIKey( handlers.Store , key.ID , body.Name , body.Expect )
+	var refusal *models.RenameConflictError
+	switch {
+	case errors.As( rename_err , &refusal ):
+		err = conflict( c , refusal.Error() , fiber.Map{ "name": refusal.Current } )
+		return
+	case errors.Is( rename_err , db.ErrNotFound ):
+		err = notFound( c , "no such api key" )
+		return
+	case rename_err != nil:
+		err = serverError( c , rename_err )
+		return
+	}
+	name := strings.TrimSpace( body.Name )
+	handlers.audit( c , logs.KindAdmin , "api key renamed" , fiber.Map{ "key_id": key.ID , "name": name } )
+	err = c.JSON( fiber.Map{ "ok": true , "name": name } )
+	return
+}
+
+// SetMyAPIKeyExpiry changes when one of your own keys expires. The session this
+// group requires is what stops a leaked key from extending itself.
+func ( handlers *Handlers ) SetMyAPIKeyExpiry( c fiber.Ctx ) ( err error ) {
+	err = handlers.setKeyExpiry( c , true )
+	return
+}
+
+// SetAnyAPIKeyExpiry is the same for an admin. Whose keys they may change is
+// models.SetAPIKeyExpiry's to say.
+func ( handlers *Handlers ) SetAnyAPIKeyExpiry( c fiber.Ctx ) ( err error ) {
+	err = handlers.setKeyExpiry( c , false )
+	return
+}
+
+func ( handlers *Handlers ) setKeyExpiry( c fiber.Ctx , own_only bool ) ( err error ) {
+	var body apiKeyExpiryRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	ttl , ok := models.APIKeyTTLFromDays( body.ExpiresInDays , 0 )
+	if body.ExpiresInDays == nil || ok == false {
+		err = badRequest( c , "expires_in_days must be 0 (never) or up to 3650" )
+		return
+	}
+
+	actor := security.UserFrom( c )
+	found , get_err := models.GetAPIKey( handlers.Store , c.Params( "key_id" ) )
+	if get_err != nil || ( own_only && found.UserID != actor.ID ) {
+		err = notFound( c , "no such api key" )
+		return
+	}
+	key , set_err := models.SetAPIKeyExpiry( handlers.Store , found.ID , actor.ID , ttl )
+	if set_err != nil {
+		switch {
+		case errors.Is( set_err , db.ErrNotFound ):
+			err = notFound( c , "no such api key" )
+		case errors.Is( set_err , models.ErrAPIKeyDead ):
+			err = badRequest( c , "only a live key can have its expiry changed -- create a new one instead" )
+		case errors.Is( set_err , models.ErrOwnerProtected ):
+			err = forbidden( c , "only the owner can change when the owner's keys expire" )
+		case errors.Is( set_err , models.ErrOwnerRequired ):
+			err = forbidden( c , "only the owner can change when an admin's keys expire" )
+		default:
+			err = serverError( c , set_err )
+		}
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "api key expiry changed" , fiber.Map{ "key_id": key.ID , "expires_in_days": *body.ExpiresInDays } )
+	err = c.JSON( apiKeyRow( key , "" ) )
 	return
 }
 
@@ -305,7 +447,7 @@ func ( handlers *Handlers ) RevokeMyAPIKey( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": c.Params( "key_id" ) } )
-	handlers.Webhooks.Emit( models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } )
+	handlers.Webhooks.Emit( models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } ) // feature:webhooks
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }
@@ -422,7 +564,8 @@ func ( handlers *Handlers ) ListAllAPIKeys( c fiber.Ctx ) ( err error ) {
 		nameCreator( row , key , names )
 		rows = append( rows , row )
 	}
-	err = sendPage( c , "keys" , rows )
+	rows = onlyLiveKeys( c , matchRows( rows , c.Query( "q" ) , "name" , "display_name" ) )
+	err = sendSorted( c , "keys" , rows , "display_name" , "name" , "role" , "last_used_at" , "expires_at" , "created_at" )
 	return
 }
 
@@ -450,7 +593,7 @@ func ( handlers *Handlers ) RevokeAnyAPIKey( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": c.Params( "key_id" ) } )
-	handlers.Webhooks.Emit( models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } )
+	handlers.Webhooks.Emit( models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } ) // feature:webhooks
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }

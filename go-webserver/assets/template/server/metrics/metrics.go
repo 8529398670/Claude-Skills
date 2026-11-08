@@ -1,3 +1,4 @@
+// whole-file feature:metrics
 // Package metrics keeps the numbers GET /metrics reports, and writes them in
 // Prometheus's text format. That format is a few lines of printing, so there
 // is no client library behind this.

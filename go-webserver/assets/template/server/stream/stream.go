@@ -1,3 +1,4 @@
+// whole-file feature:logs
 // Package stream is the helper for pushing live updates to a browser with
 // server-sent events: an EventSource on the page, a Hub here, and Publish
 // wherever something happens. See references/architecture.md for adding one.

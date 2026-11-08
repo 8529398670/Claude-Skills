@@ -16,8 +16,9 @@ for a private app. Pass a real path (github.com/you/thing) if the project will
 ever be imported by something else.
 
 --features is the exact list of optional features to switch on (see FEATURES;
-`none` is the core alone). All the code is copied either way: this only sets
-config switches. Leaving it out keeps the template's defaults.
+`none` is the core alone), and leaving it out keeps the template's defaults. A
+feature left off is cut out of the project (see prune.py), not just switched off.
+--without cuts other parts too (see PIECES). --prune says exactly what to cut.
 """
 from __future__ import annotations
 
@@ -30,6 +31,9 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import prune  # noqa: E402
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 TEMPLATE_DIR = SKILL_DIR / "assets" / "template"
@@ -151,10 +155,10 @@ def stamp_port(target_dir: Path, port: int) -> None:
 
 
 # What a project can have switched on: name -> (config.yaml section, key, what
-# it needs). Everything here is always in the project; --features only decides
-# which switches start on, so changing your mind later is one setting. Writing
-# defaults.yaml, like stamp_port, means config.yaml, config.example.yaml,
-# `config init`, and a fresh clone all agree.
+# it needs). A feature a project does not use is cut out of it (see prune.py), so
+# --features decides what code it gets; the rest come later through
+# webserver-upgrade's add-feature. Writing defaults.yaml, like stamp_port, means
+# config.yaml, config.example.yaml, `config init`, and a fresh clone all agree.
 FEATURES = {
     "files": ("files", "enabled", ()),
     "api_keys": ("auth", "api_keys", ()),
@@ -165,6 +169,23 @@ FEATURES = {
     "two_factor": ("auth", "two_factor", ()),
     "metrics": ("metrics", "enabled", ("api_keys",)),
     "backups": ("backups", "enabled", ()),
+}
+# The rest of what can be cut: name -> what it needs. These have no switch, and a
+# project has them unless --without says otherwise.
+PIECES: dict[str, tuple[str, ...]] = {
+    "logs": (),
+    "sessions": (),
+    "jobs": (),
+    "maintenance": (),
+    "settings": (),
+    "appearance": (),
+    "shortcuts": (),
+    "openapi": (),
+}
+# Files that cannot carry a marker, by what they belong to.
+DATA_FILES: dict[str, tuple[str, ...]] = {
+    "webhooks": ("server/webhooks/webhook_cases.json",),
+    "openapi": ("config/openapi.json",),
 }
 TOP_LEVEL_KEY = re.compile(r"^[a-z_]+:")
 SWITCH_VALUE = re.compile(r"\b(true|false)\b( *)")
@@ -182,6 +203,32 @@ def parse_features(value: str) -> tuple[set[str], list[str]]:
     chosen = set(names)
     added = sorted({need for name in chosen for need in FEATURES[name][2]} - chosen)
     return chosen | set(added), added
+
+
+def needs_of(name: str) -> tuple[str, ...]:
+    return FEATURES[name][2] if name in FEATURES else PIECES[name]
+
+
+def parse_names(value: str, flag: str) -> set[str]:
+    """A list of features and pieces. "none" is the empty list."""
+    names = {name.strip() for name in value.split(",") if name.strip()} - {"none"}
+    unknown = sorted(names - set(FEATURES) - set(PIECES))
+    if unknown:
+        raise SystemExit(f"Unknown name(s) for {flag}: {', '.join(unknown)}. Choose from: {', '.join([*FEATURES, *PIECES])}.")
+    return names
+
+
+def with_dependents(removed: set[str]) -> set[str]:
+    """Removing something removes what cannot work without it."""
+    removed = set(removed)
+    changed = True
+    while changed:
+        changed = False
+        for name in [*FEATURES, *PIECES]:
+            if name not in removed and removed & set(needs_of(name)):
+                removed.add(name)
+                changed = True
+    return removed
 
 
 def find_switch(lines: list[str], section: str, key: str) -> int:
@@ -233,35 +280,34 @@ def features_on(target_dir: Path) -> list[str]:
 ORIGIN_FILE = ".skill-origin.yaml"
 
 
-def skill_commit() -> tuple[str, bool]:
-    """The commit of the skills repo this template is at, and whether it has
-    uncommitted changes. "unknown" outside that repo: a stamp must not name a
-    commit of some other repository that happens to contain this directory."""
+def skill_commit() -> str:
+    """The commit of the skills repo this template is at. "unknown" outside that
+    repo: a stamp must not name a commit of some other repository that happens
+    to contain this directory."""
     def git(*arguments: str) -> str:
         done = subprocess.run(["git", "-C", str(SKILL_DIR), *arguments], capture_output=True, text=True)
         return done.stdout.strip() if done.returncode == 0 else ""
 
     top = git("rev-parse", "--show-toplevel")
     if not top or Path(top).resolve() != SKILL_DIR.parent:
-        return "unknown", False
-    return git("rev-parse", "HEAD") or "unknown", bool(git("status", "--porcelain", "--", "."))
+        return "unknown"
+    return git("rev-parse", "HEAD") or "unknown"
 
 
-def write_origin(target_dir: Path, project_name: str, slug: str, module_path: str | None, port: int, features: list[str]) -> Path:
+def write_origin(target_dir: Path, project_name: str, slug: str, module_path: str | None, port: int, features: list[str], pruned: set[str]) -> Path:
     """Write <target>/.skill-origin.yaml. It is committed with the project."""
-    commit, dirty = skill_commit()
+    commit = skill_commit()
     lines = [
         "# Written by the skill that scaffolded this app; `webserver-upgrade` reads and",
         "# updates it. Commit it: it is how an update knows where this app started.",
         f"skill: {SKILL_DIR.name}",
         f"commit: {commit}",
-        f"dirty: {'true' if dirty else 'false'}",
         f'project_name: "{project_name}"',
         f"slug: {slug}",
     ]
     if module_path:
         lines.append(f"module_path: {module_path}")
-    lines += [f"port: {port}", f"features: [{', '.join(features)}]"]
+    lines += [f"port: {port}", f"features: [{', '.join(features)}]", f"pruned: [{', '.join(sorted(pruned))}]"]
     origin_path = target_dir / ORIGIN_FILE
     origin_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return origin_path
@@ -308,9 +354,13 @@ def main() -> None:
     parser.add_argument("project_name")
     parser.add_argument("module_path", nargs="?")
     parser.add_argument("--features", help=f"comma-separated, or none; leave it out for the template's defaults. Choose from: {', '.join(FEATURES)}")
+    parser.add_argument("--without", default="", help=f"parts a project normally has to leave out, comma-separated. Choose from: {', '.join(PIECES)}")
+    parser.add_argument("--prune", help="exactly what to cut, comma-separated, or none, in place of working it out from --features and --without; for webserver-upgrade and demo.py")
     args = parser.parse_args()
     # Before anything is written: a typo should not leave half a project.
     chosen, added = parse_features(args.features) if args.features is not None else (None, [])
+    without = parse_names(args.without, "--without")
+    exact = parse_names(args.prune, "--prune") if args.prune is not None else None
 
     target_dir = Path(args.target_dir).resolve()
     project_name = args.project_name
@@ -358,9 +408,13 @@ def main() -> None:
     stamp_port(target_dir, port)
     if chosen is not None:
         stamp_features(target_dir, chosen)
+    on = features_on(target_dir)
+    pruned = exact if exact is not None else with_dependents(set(FEATURES) - set(on) | without)
+    on = [name for name in on if name not in pruned]
+    prune.prune_tree(target_dir, pruned, DATA_FILES)
     config_path, secret_path = write_config(target_dir)
     example_path = write_example(target_dir)
-    write_origin(target_dir, project_name, slugify(project_name), module_path, port, features_on(target_dir))
+    write_origin(target_dir, project_name, slugify(project_name), module_path, port, on, pruned)
 
     print(f"Scaffolded '{project_name}' into {target_dir}")
     print(f"  module {module_path}")
@@ -369,10 +423,12 @@ def main() -> None:
     print(f"  config: {config_path} (mode 0600, gitignored; editable while the server runs)")
     print(f"  secret: {secret_path} (mode 0600, fresh key, gitignored -- back it up with the database)")
     print(f"  example: {example_path} (commit it -- `cp` it to config/config.yaml on a fresh clone)")
-    on = features_on(target_dir)
-    off = [name for name in FEATURES if name not in on]
+    off = [name for name in FEATURES if name not in on and name not in pruned]
     print(f"  features on: {', '.join(on) or '(core only)'}")
-    print(f"  features off: {', '.join(off) or '(none)'} -- all still in the project; switch one on in Settings")
+    if off:
+        print(f"  features off: {', '.join(off)} -- in the project; switch one on in Settings")
+    if pruned:
+        print(f"  left out: {', '.join(sorted(pruned))} -- webserver-upgrade's add-feature brings one in")
     for name in added:
         print(f"  added {name}: another feature you chose needs it")
     print("")

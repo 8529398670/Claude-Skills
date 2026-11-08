@@ -1,3 +1,4 @@
+# whole-file feature:openapi
 """config/openapi.json against the route table. A new route that is not in the
 spec fails here, and so does an entry for a route that has gone."""
 from __future__ import annotations

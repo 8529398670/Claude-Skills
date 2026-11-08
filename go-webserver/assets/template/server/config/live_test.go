@@ -1,9 +1,9 @@
 package config
 
 import (
-	errors "errors"
+	errors "errors" // feature:settings
 	fmt "fmt"
-	json "encoding/json"
+	json "encoding/json" // feature:settings
 	os "os"
 	filepath "path/filepath"
 	strings "strings"
@@ -35,12 +35,13 @@ func currentVersion( t *testing.T , path string ) ( version string ) {
 	return
 }
 
+// >>> feature:settings
 func TestSaveAppliesLiveKeys( t *testing.T ) {
 	holder , path := newTestHolder( t )
 	result , err := holder.Save( currentVersion( t , path ) , map[string]any{
 		"server.rate_limit_max": json.Number( "7" ),
 		"server.port":           json.Number( "9999" ),
-		"logs.echo":             true,
+		"server.control_socket": true,
 	} )
 	if err != nil { t.Fatal( err ) }
 	if holder.Get().RateLimitMax != 7 {
@@ -49,7 +50,7 @@ func TestSaveAppliesLiveKeys( t *testing.T ) {
 	if holder.Get().Port == 9999 {
 		t.Fatal( "server.port applied without a restart" )
 	}
-	if strings.Join( result.Live , "," ) != "server.rate_limit_max" || strings.Join( result.Restart , "," ) != "server.port" || strings.Join( result.Unchanged , "," ) != "logs.echo" {
+	if strings.Join( result.Live , "," ) != "server.rate_limit_max" || strings.Join( result.Restart , "," ) != "server.port" || strings.Join( result.Unchanged , "," ) != "server.control_socket" {
 		t.Fatalf( "unexpected result %+v" , result )
 	}
 	raw , _ := os.ReadFile( path )
@@ -66,7 +67,9 @@ func TestSaveAppliesLiveKeys( t *testing.T ) {
 		}
 	}
 }
+// <<< feature:settings
 
+// >>> feature:settings
 func TestSaveRefusesAStaleVersion( t *testing.T ) {
 	holder , path := newTestHolder( t )
 	before , _ := os.ReadFile( path )
@@ -80,15 +83,17 @@ func TestSaveRefusesAStaleVersion( t *testing.T ) {
 		t.Fatal( "file changed" )
 	}
 }
+// <<< feature:settings
 
+// >>> feature:settings
 func TestSaveRefusesInvalidValues( t *testing.T ) {
 	holder , path := newTestHolder( t )
 	for _ , changes := range []map[string]any{
 		{ "server.port": json.Number( "0" ) },
 		{ "server.port": "eighty" },
 		{ "server.trust_proxy": true },
-		{ "files.max_file_bytes": json.Number( "0" ) },
-		{ "server.rate_limit_upload_max": json.Number( "0" ) },
+		{ "files.max_file_bytes": json.Number( "0" ) }, // feature:files
+		{ "server.rate_limit_upload_max": json.Number( "0" ) }, // feature:files
 	} {
 		_ , err := holder.Save( currentVersion( t , path ) , changes )
 		var validation *ValidationError
@@ -107,6 +112,7 @@ func TestSaveRefusesInvalidValues( t *testing.T ) {
 		}
 	}
 }
+// <<< feature:settings
 
 func TestPollAppliesAHandEdit( t *testing.T ) {
 	holder , path := newTestHolder( t )
@@ -129,10 +135,12 @@ func TestPollAppliesAHandEdit( t *testing.T ) {
 	os.WriteFile( path , []byte( strings.Replace( edited , fmt.Sprintf( "port: %d" , holder.Boot().Port ) , "port: 0" , 1 ) ) , 0o600 )
 	holder.Poll()
 	holder.Poll()
+	// >>> feature:settings
 	snapshot , _ := holder.Snapshot()
 	if snapshot.Error == nil || strings.Contains( snapshot.Error.Message , "server.port" ) == false {
 		t.Fatalf( "expected an error about server.port, got %+v" , snapshot.Error )
 	}
+	// <<< feature:settings
 	if holder.Get().RateLimitMax != 7 {
 		t.Fatal( "last good config lost" )
 	}
@@ -141,21 +149,28 @@ func TestPollAppliesAHandEdit( t *testing.T ) {
 	os.WriteFile( path , []byte( strings.Replace( edited , "rate_limit_max: 7  " , "rate_limit_max: 8  " , 1 ) ) , 0o600 )
 	holder.Poll()
 	holder.Poll()
+	if holder.Get().RateLimitMax != 8 {
+		t.Fatalf( "not recovered: %d" , holder.Get().RateLimitMax )
+	}
+
+	// >>> feature:settings
 	snapshot , _ = holder.Snapshot()
-	if snapshot.Error != nil || holder.Get().RateLimitMax != 8 {
-		t.Fatalf( "not recovered: %+v %d" , snapshot.Error , holder.Get().RateLimitMax )
+	if snapshot.Error != nil {
+		t.Fatalf( "not recovered: %+v" , snapshot.Error )
 	}
 
 	// The server's own save is not news to the watcher.
 	before := notified
-	if _ , err := holder.Save( snapshot.Version , map[string]any{ "logs.echo": false } ); err != nil { t.Fatal( err ) }
+	if _ , err := holder.Save( snapshot.Version , map[string]any{ "server.rate_limit_max": json.Number( "9" ) } ); err != nil { t.Fatal( err ) }
 	holder.Poll()
 	holder.Poll()
 	if notified != before + 1 {
 		t.Fatalf( "save then poll notified %d times" , notified - before )
 	}
+	// <<< feature:settings
 }
 
+// >>> feature:settings
 func TestSnapshotNeverHoldsTheKey( t *testing.T ) {
 	holder , _ := newTestHolder( t )
 	snapshot , err := holder.Snapshot()
@@ -165,7 +180,9 @@ func TestSnapshotNeverHoldsTheKey( t *testing.T ) {
 		t.Fatal( "the snapshot leaks the secret key" )
 	}
 }
+// <<< feature:settings
 
+// >>> feature:settings
 func TestContainerLocksScriptKeys( t *testing.T ) {
 	holder , path := newTestHolder( t )
 	inContainer( t , path , t.TempDir() )
@@ -174,6 +191,7 @@ func TestContainerLocksScriptKeys( t *testing.T ) {
 		t.Fatalf( "expected ErrLocked, got %v" , err )
 	}
 }
+// <<< feature:settings
 
 func TestWriteInPlaceKeepsTheFileAndABackup( t *testing.T ) {
 	dir := t.TempDir()

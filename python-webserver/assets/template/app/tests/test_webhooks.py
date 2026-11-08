@@ -1,3 +1,4 @@
+# whole-file feature:webhooks
 """Webhooks: the outbox, the sender and its address guard, and the routes."""
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from unittest import mock
 
 from app.core import db, encryption, webhooks
 from app.core.config import WebhooksConfig
-from app.models import to_iso, two_factor, utc_now
+from app.models import sealed, to_iso, utc_now
 from app.models import webhooks as models
 from app.tests.route_support import RoutesTestCase
 
@@ -270,7 +271,7 @@ class ModelTests(unittest.TestCase):
         new_key = "cd" * 32
         hook = models.Webhook(id="a", name="x", url="https://a.example", secret=encryption.xchacha_encrypt_string(KEY, "whsec_x"), created_by=1, created_at=utc_now())
         record = hook.to_record()
-        two_factor.rekey_record(KEY, new_key)(db.BUCKET_WEBHOOKS, record)
+        sealed.rekey_record(KEY, new_key)(db.BUCKET_WEBHOOKS, record)
         rekeyed = models.Webhook.from_record(record)
         self.assertEqual(models.open_secret(rekeyed, new_key), "whsec_x")
         with self.assertRaises(Exception):
@@ -295,6 +296,67 @@ class RouteTests(RoutesTestCase):
         self.assertEqual(status, 201, reply)
         return reply
 
+    def test_renaming(self) -> None:
+        hook_id = self.created()["id"]
+        path = f"/api/owner/webhooks/{hook_id}/rename"
+        status, reply = self.post(path, name="  Alerts  ")
+        self.assertEqual((status, reply["name"]), (200, "Alerts"))
+        self.assertEqual(self.post(path, name="  ")[0], 400)
+
+        # An undo that finds a different name leaves it alone, and says what is there.
+        status, reply = self.post(path, name="old", expect="stale")
+        self.assertEqual((status, reply["name"]), (409, "Alerts"))
+
+        models.delete_webhook(self.store, hook_id, self.owner.id)
+        self.assertEqual(self.post(path, name="gone")[0], 404)
+
+    def test_changing_where_it_goes(self) -> None:
+        hook_id = self.created()["id"]
+        path = f"/api/owner/webhooks/{hook_id}/target"
+        events = [models.EVENT_USER_CREATED]
+
+        self.assertEqual(self.post(path, url="https://new.example.com/in", events=events)[0], 200)
+        hook = models.get_webhook(self.store, hook_id)
+        self.assertEqual((hook.url, hook.events), ("https://new.example.com/in", events))
+
+        # The same check as a new endpoint's, so an edit cannot aim one at this machine.
+        for target in ("http://hooks.example.com/in", "https://127.0.0.1/in", "https://169.254.169.254/"):
+            self.assertEqual(self.post(path, url=target, events=events)[0], 400, target)
+        for picked in ([], ["made.up"]):
+            self.assertEqual(self.post(path, url="https://a.example", events=picked)[0], 400, picked)
+
+        # An undo that finds something else leaves it alone: the address or the events.
+        for stale in ({"url": "https://old.example.com/in", "events": events}, {"url": "https://new.example.com/in", "events": ["*"]}):
+            self.assertEqual(self.post(path, url="https://a.example", events=["*"], expect=stale)[0], 409, stale)
+        self.assertEqual(models.get_webhook(self.store, hook_id).url, "https://new.example.com/in")
+        expect = {"url": "https://new.example.com/in", "events": events}
+        self.assertEqual(self.post(path, url="https://a.example", events=["*"], expect=expect)[0], 200)
+
+        models.delete_webhook(self.store, hook_id, self.owner.id)
+        self.assertEqual(self.post(path, url="https://a.example", events=events)[0], 404)
+
+    def test_rotating_the_secret(self) -> None:
+        created = self.created()
+        path = f"/api/owner/webhooks/{created['id']}/rotate-secret"
+        status, reply = self.post(path)
+        self.assertEqual(status, 200)
+        self.assertTrue(reply["secret"].startswith("whsec_"))
+        self.assertNotEqual(reply["secret"], created["secret"])
+
+        # The sender opens the new one, so a delivery is signed with what was shown.
+        hook = models.get_webhook(self.store, created["id"])
+        self.assertEqual(models.open_secret(hook, self.cfg.secret_key), reply["secret"])
+
+        models.delete_webhook(self.store, created["id"], self.owner.id)
+        self.assertEqual(self.post(path)[0], 404)
+
+    def test_editing_is_the_owners_alone(self) -> None:
+        hook_id = self.created()["id"]
+        body = {"name": "x", "url": "https://a.example", "events": ["*"], "csrf_token": self.csrf(self.user_cookie)}
+        for verb in ("rename", "target", "rotate-secret"):
+            status, _ = self.call("POST", f"/api/owner/webhooks/{hook_id}/{verb}", cookie=self.user_cookie, body=body)
+            self.assertEqual(status, 404, verb)
+
     def test_the_owner_manages_webhooks_and_the_secret_shows_once(self) -> None:
         created = self.created()
         self.assertTrue(created["secret"].startswith("whsec_"))
@@ -311,7 +373,7 @@ class RouteTests(RoutesTestCase):
 
     def test_the_routes_are_the_owners_alone(self) -> None:
         self.assertEqual(self.call("GET", "/api/owner/webhooks", cookie=self.admin_cookie)[0], 404)
-        self.assertEqual(self.call("GET", "/api/owner/webhooks", key=self.admin_key)[0], 404)
+        self.assertEqual(self.call("GET", "/api/owner/webhooks", key=self.admin_key)[0], 404)  # feature:api_keys
 
     def test_creating_one_checks_the_address(self) -> None:
         for target in ["http://hooks.example.com/in", "https://127.0.0.1/in", "https://localhost/in", "https://169.254.169.254/"]:
@@ -358,6 +420,7 @@ class RouteTests(RoutesTestCase):
         self.assertNotIn("body", row)
         self.assertEqual(self.call("GET", "/api/owner/webhooks/nope/deliveries", cookie=self.owner_cookie)[0], 404)
 
+    # >>> feature:mcp
     def test_both_doors_emit(self) -> None:
         created = self.created()
         target = self.user.id
@@ -372,6 +435,9 @@ class RouteTests(RoutesTestCase):
         rows = models.list_deliveries(self.store, created["id"])
         self.assertEqual([row.event for row in rows], [models.EVENT_USER_DISABLED, models.EVENT_USER_DISABLED])
 
+    # <<< feature:mcp
+    # >>> feature:jobs
     def test_the_job_is_registered(self) -> None:
         names = [row["name"] for row in self.call("GET", "/api/owner/jobs", cookie=self.owner_cookie)[1]["jobs"]]
         self.assertIn(webhooks.JOB_NAME, names)
+    # <<< feature:jobs

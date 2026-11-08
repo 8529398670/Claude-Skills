@@ -22,7 +22,7 @@
 package manage
 
 import (
-	json "encoding/json"
+	json "encoding/json" // feature:logs
 	errors "errors"
 	flag "flag"
 	fmt "fmt"
@@ -35,7 +35,7 @@ import (
 	config "{{MODULE_PATH}}/server/config"
 	control "{{MODULE_PATH}}/server/control"
 	db "{{MODULE_PATH}}/server/db"
-	logs "{{MODULE_PATH}}/server/logs"
+	logs "{{MODULE_PATH}}/server/logs" // feature:logs
 	models "{{MODULE_PATH}}/server/models"
 	rotate "{{MODULE_PATH}}/server/rotate"
 )
@@ -44,20 +44,24 @@ const usage = `manage -- account administration for {{PROJECT_NAME}}
 
 Usage:
   bootstrap-admin -name "Ada"        create the first admin + login link
-  create-login    -name "Grace" -role user
-  reissue-login   -user-id 3         fresh link for an existing user
+  create-login    -name "Grace" -role user [-uses 5|unlimited] [-expires 7d|never]
+  reissue-login   -user-id 3 [-uses 5|unlimited] [-expires 7d|never]
+                                     fresh link for an existing user; once and
+                                     30 minutes unless -uses/-expires say otherwise
   list-users                         id, name, role, status
   set-disabled    -user-id 3 -disabled=true
   revoke-access   -user-id 3         end every session, login link and API key
-  reset-2fa       -user-id 3         take two-factor sign-in off an account
+  reset-2fa       -user-id 3         take two-factor sign-in off an account // feature:two_factor
   delete-user     -user-id 3 -yes    remove the account and everything it held
   transfer-owner  -user-id 3         make another enabled admin the owner
-  list-keys       [-user-id 3]       API keys, whose they are, when last used
-  create-key      -user-id 3 -name "CI" [-role user] [-days 90]
-  revoke-key      -key-id abc123     kill one API key now, keep its record
-  delete-key      -key-id abc123     kill one API key now and remove its record
+  list-keys       [-user-id 3]       API keys, whose they are, when last used // feature:api_keys
+  create-key      -user-id 3 -name "CI" [-role user] [-days 90] // feature:api_keys
+  revoke-key      -key-id abc123     kill one API key now, keep its record // feature:api_keys
+  delete-key      -key-id abc123     kill one API key now and remove its record // feature:api_keys
+  // >>> feature:invite_links
   create-invite   -user-id 1 -label "Book club" [-uses 10] [-days 30]
                                      one link a group can join through
+  // <<< feature:invite_links
   backup          [-out path] [-include-key]
                                      one file with the database, config.yaml and
                                      storage, safe while the server runs
@@ -66,18 +70,22 @@ Usage:
   rotate-key      -yes               move to a new secret key; the server must be
                                      stopped (in Docker: docker/rotate-key.sh)
   paths                              where this app keeps its state
+  // >>> feature:logs
   logs            [-day 2026-11-02] [-q "status:5xx"] [-limit 50]
                                      the activity log: days, or one day's
                                      entries newest first, as JSON lines
+  // <<< feature:logs
 
 The owner is the first admin, and the one account that can delete other
 admins from the web UI. Nothing deletes or disables the owner -- move it with
 transfer-owner first. delete-user cannot be undone, hence -yes.
 
+// >>> feature:api_keys
 An API key carries a role from the same set users do, so an admin-scoped key
 can do what an admin can and a user-scoped one cannot. A key never outranks
 the account it belongs to. -days 0 means it never expires; omit -days to use
 the server's configured default.
+// <<< feature:api_keys
 
 A backup leaves secret.key out unless -include-key says otherwise, so keep a
 copy of the key apart from your backups. Without it a backup cannot be read.
@@ -115,18 +123,18 @@ func Usage() {
 // the shape that survives the socket; the direct implementation converts.
 type backend interface {
 	ListUsers() ( users []control.UserResponse , err error )
-	CreateUser( display_name string , role string ) ( user control.UserResponse , err error )
-	ReissueLogin( user_id uint64 ) ( user control.UserResponse , err error )
+	CreateUser( display_name string , role string , link models.LoginLinkRequest ) ( user control.UserResponse , err error )
+	ReissueLogin( user_id uint64 , link models.LoginLinkRequest ) ( user control.UserResponse , err error )
 	SetDisabled( user_id uint64 , disabled bool ) ( user control.UserResponse , err error )
 	RevokeAccess( user_id uint64 ) ( revoked models.Revoked , err error )
-	ResetTwoFactor( user_id uint64 ) ( err error )
+	ResetTwoFactor( user_id uint64 ) ( err error ) // feature:two_factor
 	DeleteUser( user_id uint64 ) ( removed models.Revoked , err error )
 	TransferOwner( user_id uint64 ) ( user control.UserResponse , err error )
-	ListAPIKeys( user_id uint64 ) ( keys []control.APIKeyResponse , err error )
-	CreateAPIKey( user_id uint64 , name string , role string , expires_in_days *int ) ( key control.APIKeyResponse , err error )
-	RevokeAPIKey( key_id string ) ( key control.APIKeyResponse , err error )
-	DeleteAPIKey( key_id string ) ( key control.APIKeyResponse , err error )
-	CreateInviteLink( user_id uint64 , label string , max_uses int , days int ) ( link control.InviteLinkResponse , err error )
+	ListAPIKeys( user_id uint64 ) ( keys []control.APIKeyResponse , err error ) // feature:api_keys
+	CreateAPIKey( user_id uint64 , name string , role string , expires_in_days *int ) ( key control.APIKeyResponse , err error ) // feature:api_keys
+	RevokeAPIKey( key_id string ) ( key control.APIKeyResponse , err error ) // feature:api_keys
+	DeleteAPIKey( key_id string ) ( key control.APIKeyResponse , err error ) // feature:api_keys
+	CreateInviteLink( user_id uint64 , label string , max_uses int , days int ) ( link control.InviteLinkResponse , err error ) // feature:invite_links
 	Backup( options backup.Options ) ( result backup.Result , err error )
 	AnyAdminExists() ( result bool , err error )
 	Close() ( err error )
@@ -158,12 +166,14 @@ func Run( arguments []string ) ( err error ) {
 		err = commandPaths( cfg )
 		return
 	}
+	// >>> feature:logs
 	// "logs" reads the log files, never the database, so it works the same
 	// with the server up or down -- the files are only ever appended to.
 	if command == "logs" {
 		err = commandLogs( cfg , rest )
 		return
 	}
+	// <<< feature:logs
 
 	if cfg.RotationFinished {
 		fmt.Fprintf( os.Stderr , "[secret] finished a key rotation that had been cut short; the new key is in %s\n" , cfg.SecretFile )
@@ -206,22 +216,34 @@ func Run( arguments []string ) ( err error ) {
 		err = commandSetDisabled( back , rest )
 	case "revoke-access":
 		err = commandRevokeAccess( back , rest )
+	// >>> feature:two_factor
 	case "reset-2fa":
 		err = commandResetTwoFactor( back , rest )
+	// <<< feature:two_factor
 	case "delete-user":
 		err = commandDeleteUser( back , rest )
 	case "transfer-owner":
 		err = commandTransferOwner( back , rest )
+	// >>> feature:api_keys
 	case "list-keys":
 		err = commandListKeys( back , rest )
+	// <<< feature:api_keys
+	// >>> feature:api_keys
 	case "create-key":
 		err = commandCreateKey( back , cfg , rest )
+	// <<< feature:api_keys
+	// >>> feature:api_keys
 	case "revoke-key":
 		err = commandRevokeKey( back , rest )
+	// <<< feature:api_keys
+	// >>> feature:api_keys
 	case "delete-key":
 		err = commandDeleteKey( back , rest )
+	// <<< feature:api_keys
+	// >>> feature:invite_links
 	case "create-invite":
 		err = commandCreateInvite( back , cfg , rest )
+	// <<< feature:invite_links
 	case "backup":
 		err = commandBackup( back , rest )
 	default:
@@ -303,13 +325,13 @@ func ( b *controlBackend ) ListUsers() ( users []control.UserResponse , err erro
 	return
 }
 
-func ( b *controlBackend ) CreateUser( display_name string , role string ) ( user control.UserResponse , err error ) {
-	user , err = b.client.CreateUser( display_name , role )
+func ( b *controlBackend ) CreateUser( display_name string , role string , link models.LoginLinkRequest ) ( user control.UserResponse , err error ) {
+	user , err = b.client.CreateUser( display_name , role , link )
 	return
 }
 
-func ( b *controlBackend ) ReissueLogin( user_id uint64 ) ( user control.UserResponse , err error ) {
-	user , err = b.client.ReissueLogin( user_id )
+func ( b *controlBackend ) ReissueLogin( user_id uint64 , link models.LoginLinkRequest ) ( user control.UserResponse , err error ) {
+	user , err = b.client.ReissueLogin( user_id , link )
 	return
 }
 
@@ -323,10 +345,12 @@ func ( b *controlBackend ) RevokeAccess( user_id uint64 ) ( revoked models.Revok
 	return
 }
 
+// >>> feature:two_factor
 func ( b *controlBackend ) ResetTwoFactor( user_id uint64 ) ( err error ) {
 	err = b.client.ResetTwoFactor( user_id )
 	return
 }
+// <<< feature:two_factor
 
 func ( b *controlBackend ) DeleteUser( user_id uint64 ) ( removed models.Revoked , err error ) {
 	removed , err = b.client.DeleteUser( user_id )
@@ -338,30 +362,40 @@ func ( b *controlBackend ) TransferOwner( user_id uint64 ) ( user control.UserRe
 	return
 }
 
+// >>> feature:api_keys
 func ( b *controlBackend ) DeleteAPIKey( key_id string ) ( key control.APIKeyResponse , err error ) {
 	key , err = b.client.DeleteAPIKey( key_id )
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func ( b *controlBackend ) ListAPIKeys( user_id uint64 ) ( keys []control.APIKeyResponse , err error ) {
 	keys , err = b.client.ListAPIKeys( user_id )
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func ( b *controlBackend ) CreateAPIKey( user_id uint64 , name string , role string , expires_in_days *int ) ( key control.APIKeyResponse , err error ) {
 	key , err = b.client.CreateAPIKey( user_id , name , role , expires_in_days )
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func ( b *controlBackend ) RevokeAPIKey( key_id string ) ( key control.APIKeyResponse , err error ) {
 	key , err = b.client.RevokeAPIKey( key_id )
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:invite_links
 func ( b *controlBackend ) CreateInviteLink( user_id uint64 , label string , max_uses int , days int ) ( link control.InviteLinkResponse , err error ) {
 	link , err = b.client.CreateInviteLink( user_id , label , max_uses , days )
 	return
 }
+// <<< feature:invite_links
 
 func ( b *controlBackend ) Backup( options backup.Options ) ( result backup.Result , err error ) {
 	result , err = b.client.Backup( options )
@@ -433,24 +467,30 @@ func ( b *directBackend ) ListUsers() ( users []control.UserResponse , err error
 	return
 }
 
-func ( b *directBackend ) CreateUser( display_name string , role string ) ( user control.UserResponse , err error ) {
+func ( b *directBackend ) CreateUser( display_name string , role string , link models.LoginLinkRequest ) ( user control.UserResponse , err error ) {
+	options , err := models.ResolveLoginLink( link , b.cfg.LoginTokenTTL , b.cfg.MultiUseLoginTokenTTL )
+	if err != nil { return }
 	created , err := models.CreateUser( b.store , display_name , role )
 	if err != nil { return }
-	credential , err := models.IssueLoginToken( b.store , created.ID , b.cfg.LoginTokenTTL )
+	credential , info , err := models.IssueLoginLink( b.store , created.ID , options )
 	if err != nil { return }
 	user , err = b.response( created.ID , credential )
+	user.LoginLink = &info
 	return
 }
 
-func ( b *directBackend ) ReissueLogin( user_id uint64 ) ( user control.UserResponse , err error ) {
+func ( b *directBackend ) ReissueLogin( user_id uint64 , link models.LoginLinkRequest ) ( user control.UserResponse , err error ) {
+	options , err := models.ResolveLoginLink( link , b.cfg.LoginTokenTTL , b.cfg.MultiUseLoginTokenTTL )
+	if err != nil { return }
 	found , err := models.GetUser( b.store , user_id )
 	if err != nil {
 		err = fmt.Errorf( "no user with id %d" , user_id )
 		return
 	}
-	credential , err := models.IssueLoginToken( b.store , found.ID , b.cfg.LoginTokenTTL )
+	credential , info , err := models.IssueLoginLink( b.store , found.ID , options )
 	if err != nil { return }
 	user , err = b.response( found.ID , credential )
+	user.LoginLink = &info
 	return
 }
 
@@ -460,7 +500,7 @@ func ( b *directBackend ) SetDisabled( user_id uint64 , disabled bool ) ( user c
 		err = fmt.Errorf( "no user with id %d" , user_id )
 		return
 	}
-	// Disabling deletes the account's sessions and unused login links in the
+	// Disabling deletes the account's sessions and live login links in the
 	// same transaction -- see models.SetUserDisabled.
 	if err = models.SetUserDisabled( b.store , found.ID , disabled ); err != nil { return }
 	user , err = b.response( found.ID , "" )
@@ -478,6 +518,7 @@ func ( b *directBackend ) RevokeAccess( user_id uint64 ) ( revoked models.Revoke
 	return
 }
 
+// >>> feature:two_factor
 // ResetTwoFactor acts as the operator (actor 0), who may reset anyone.
 func ( b *directBackend ) ResetTwoFactor( user_id uint64 ) ( err error ) {
 	err = models.ResetTwoFactor( b.store , user_id , 0 )
@@ -486,6 +527,7 @@ func ( b *directBackend ) ResetTwoFactor( user_id uint64 ) ( err error ) {
 	}
 	return
 }
+// <<< feature:two_factor
 
 // DeleteUser acts as the operator (actor 0): any account but the owner.
 func ( b *directBackend ) DeleteUser( user_id uint64 ) ( removed models.Revoked , err error ) {
@@ -506,6 +548,7 @@ func ( b *directBackend ) TransferOwner( user_id uint64 ) ( user control.UserRes
 	return
 }
 
+// >>> feature:api_keys
 // fromKeyModel mirrors control's own conversion so that a listing looks the
 // same whether it came over the socket or out of the database.
 func fromKeyModel( key *models.APIKey , display_name string , credential string ) ( result control.APIKeyResponse ) {
@@ -526,7 +569,9 @@ func fromKeyModel( key *models.APIKey , display_name string , credential string 
 	}
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 // displayNames is one pass over the users bucket, rather than a read per key.
 func ( b *directBackend ) displayNames() ( names map[ uint64 ]string , err error ) {
 	names = map[ uint64 ]string{}
@@ -537,7 +582,9 @@ func ( b *directBackend ) displayNames() ( names map[ uint64 ]string , err error
 	}
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func ( b *directBackend ) ListAPIKeys( user_id uint64 ) ( keys []control.APIKeyResponse , err error ) {
 	var stored []*models.APIKey
 	if user_id == 0 {
@@ -556,7 +603,9 @@ func ( b *directBackend ) ListAPIKeys( user_id uint64 ) ( keys []control.APIKeyR
 	}
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func ( b *directBackend ) CreateAPIKey( user_id uint64 , name string , role string , expires_in_days *int ) ( key control.APIKeyResponse , err error ) {
 	// Refuse rather than mint something that cannot be used: with the feature
 	// off the server ignores the Authorization header entirely.
@@ -581,7 +630,9 @@ func ( b *directBackend ) CreateAPIKey( user_id uint64 , name string , role stri
 	key = fromKeyModel( created , owner.DisplayName , credential )
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func ( b *directBackend ) RevokeAPIKey( key_id string ) ( key control.APIKeyResponse , err error ) {
 	found , err := models.GetAPIKey( b.store , key_id )
 	if err != nil {
@@ -597,7 +648,9 @@ func ( b *directBackend ) RevokeAPIKey( key_id string ) ( key control.APIKeyResp
 	key = fromKeyModel( refreshed , names[ refreshed.UserID ] , "" )
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func ( b *directBackend ) DeleteAPIKey( key_id string ) ( key control.APIKeyResponse , err error ) {
 	found , err := models.GetAPIKey( b.store , key_id )
 	if err != nil {
@@ -611,7 +664,9 @@ func ( b *directBackend ) DeleteAPIKey( key_id string ) ( key control.APIKeyResp
 	key = fromKeyModel( found , names[ found.UserID ] , "" )
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:invite_links
 func ( b *directBackend ) CreateInviteLink( user_id uint64 , label string , max_uses int , days int ) ( link control.InviteLinkResponse , err error ) {
 	credential , created , err := models.IssueInviteLinkAs( b.store , user_id , label , max_uses , days )
 	if errors.Is( err , db.ErrNotFound ) {
@@ -621,6 +676,7 @@ func ( b *directBackend ) CreateInviteLink( user_id uint64 , label string , max_
 	link = control.InviteLinkFromModel( created , credential )
 	return
 }
+// <<< feature:invite_links
 
 func ( b *directBackend ) AnyAdminExists() ( result bool , err error ) {
 	result , err = models.AnyAdminExists( b.store )
@@ -650,10 +706,10 @@ func commandBootstrapAdmin( back backend , cfg *config.Config , arguments []stri
 		return
 	}
 
-	user , err := back.CreateUser( *name , models.RoleAdmin )
+	user , err := back.CreateUser( *name , models.RoleAdmin , models.LoginLinkRequest{} )
 	if err != nil { return }
 
-	bootstrap.PrintLoginLink( cfg , fmt.Sprintf( "admin #%d %q" , user.ID , user.DisplayName ) , user.Credential )
+	bootstrap.PrintLoginLink( cfg , fmt.Sprintf( "admin #%d %q" , user.ID , user.DisplayName ) , user.Credential , user.LoginLink )
 	return
 }
 
@@ -661,6 +717,8 @@ func commandCreateLogin( back backend , cfg *config.Config , arguments []string 
 	set := flag.NewFlagSet( "create-login" , flag.ExitOnError )
 	name := set.String( "name" , "" , "display name" )
 	role := set.String( "role" , models.RoleUser , "admin or user" )
+	uses := set.String( "uses" , "" , "how many sign-ins the link allows: a number (1-1000) or unlimited (default once)" )
+	expires := set.String( "expires" , "" , "how long the link lasts: 30m, 12h, 7d, or never (default from config)" )
 	set.Parse( arguments )
 
 	if models.ValidDisplayName( *name ) == false {
@@ -671,23 +729,29 @@ func commandCreateLogin( back backend , cfg *config.Config , arguments []string 
 		err = fmt.Errorf( "-role must be admin or user" )
 		return
 	}
-
-	user , err := back.CreateUser( *name , *role )
+	link , err := models.ParseLoginLinkFlags( *uses , *expires )
 	if err != nil { return }
 
-	bootstrap.PrintLoginLink( cfg , fmt.Sprintf( "%s #%d %q" , user.Role , user.ID , user.DisplayName ) , user.Credential )
+	user , err := back.CreateUser( *name , *role , link )
+	if err != nil { return }
+
+	bootstrap.PrintLoginLink( cfg , fmt.Sprintf( "%s #%d %q" , user.Role , user.ID , user.DisplayName ) , user.Credential , user.LoginLink )
 	return
 }
 
 func commandReissueLogin( back backend , cfg *config.Config , arguments []string ) ( err error ) {
 	set := flag.NewFlagSet( "reissue-login" , flag.ExitOnError )
 	user_id := set.Uint64( "user-id" , 0 , "id of an existing user" )
+	uses := set.String( "uses" , "" , "how many sign-ins the link allows: a number (1-1000) or unlimited (default once)" )
+	expires := set.String( "expires" , "" , "how long the link lasts: 30m, 12h, 7d, or never (default from config)" )
 	set.Parse( arguments )
 
-	user , err := back.ReissueLogin( *user_id )
+	link , err := models.ParseLoginLinkFlags( *uses , *expires )
+	if err != nil { return }
+	user , err := back.ReissueLogin( *user_id , link )
 	if err != nil { return }
 
-	bootstrap.PrintLoginLink( cfg , fmt.Sprintf( "%s #%d %q" , user.Role , user.ID , user.DisplayName ) , user.Credential )
+	bootstrap.PrintLoginLink( cfg , fmt.Sprintf( "%s #%d %q" , user.Role , user.ID , user.DisplayName ) , user.Credential , user.LoginLink )
 	return
 }
 
@@ -780,7 +844,8 @@ func commandRotateKey( cfg *config.Config , arguments []string ) ( err error ) {
 	}
 	fmt.Printf( "The data is on the new key (fingerprint %s, was %s).\n" , result.NewFingerprint , result.OldFingerprint )
 	if cfg.EncryptAtRest {
-		fmt.Printf( "Re-encrypted the database and %d log files.\n" , result.LogFiles )
+		fmt.Printf( "Re-encrypted the database and %d log files.\n" , result.LogFiles ) // feature:logs
+		fmt.Println( "Re-encrypted the database." ) // feature:!logs
 	}
 	if *new_key_file != "" { return }
 	fmt.Printf( "The new key is in %s: back it up.\n" , cfg.SecretFile )
@@ -800,8 +865,7 @@ func existsNote( path string ) ( note string ) {
 	return
 }
 
-// commandPaths answers "where did it put my data", which is otherwise a
-// question you can only settle by reading the source or the startup log.
+// >>> feature:logs
 func commandLogs( cfg *config.Config , arguments []string ) ( err error ) {
 	set := flag.NewFlagSet( "logs" , flag.ExitOnError )
 	day := set.String( "day" , "" , "a UTC date, YYYY-MM-DD; without it, list the days" )
@@ -843,7 +907,10 @@ func commandLogs( cfg *config.Config , arguments []string ) ( err error ) {
 	}
 	return
 }
+// <<< feature:logs
 
+// commandPaths answers "where did it put my data", which is otherwise a
+// question you can only settle by reading the source or the startup log.
 func commandPaths( cfg *config.Config ) ( err error ) {
 	fmt.Printf( "%-14s %s\n" , "config" , cfg.ConfigFile )
 	fmt.Printf( "%-14s %s  (the secret key: back it up with the database)\n" , "secret" , cfg.SecretFile )
@@ -852,7 +919,7 @@ func commandPaths( cfg *config.Config ) ( err error ) {
 	fmt.Printf( "%-14s %s\n" , "app dir" , cfg.AppDir )
 	fmt.Printf( "%-14s %s\n" , "database" , cfg.DatabasePath )
 	fmt.Printf( "%-14s %s\n" , "storage" , cfg.StorageDir )
-	fmt.Printf( "%-14s %s\n" , "logs" , cfg.Logs.Dir )
+	fmt.Printf( "%-14s %s\n" , "logs" , cfg.Logs.Dir ) // feature:logs
 	fmt.Printf( "%-14s %s\n" , "backups" , cfg.Backups.Dir )
 	fmt.Printf( "%-14s %s%s\n" , "static" , cfg.StaticDir , existsNote( cfg.StaticDir ) )
 	fmt.Printf( "%-14s %s%s\n" , "language" , cfg.LanguageFile , existsNote( cfg.LanguageFile ) )
@@ -907,6 +974,7 @@ func commandListUsers( back backend ) ( err error ) {
 	return
 }
 
+// >>> feature:api_keys
 // formatKeyTime keeps the listings narrow. Minute precision is enough for
 // "when was this last used" and a full RFC3339 stamp per column would make the
 // table wrap on any normal terminal.
@@ -917,7 +985,9 @@ func formatKeyTime( value *time.Time , absent string ) ( result string ) {
 	}
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func keyStatus( key control.APIKeyResponse ) ( result string ) {
 	switch {
 	case key.Revoked:
@@ -929,7 +999,9 @@ func keyStatus( key control.APIKeyResponse ) ( result string ) {
 	}
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func commandListKeys( back backend , arguments []string ) ( err error ) {
 	set := flag.NewFlagSet( "list-keys" , flag.ExitOnError )
 	user_id := set.Uint64( "user-id" , 0 , "only this user's keys (default: everyone's)" )
@@ -956,7 +1028,9 @@ func commandListKeys( back backend , arguments []string ) ( err error ) {
 	}
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 // commandCreateKey is how a CI system or a cron job gets a credential without
 // anyone signing in. The -role flag is what "mirroring admin and non-admin
 // permissions" means in practice: -role admin produces a key that can do what
@@ -997,7 +1071,9 @@ func commandCreateKey( back backend , cfg *config.Config , arguments []string ) 
 		key.Credential , expires )
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:invite_links
 // commandCreateInvite makes a link a whole group can join through, as the
 // admin -user-id: it stops working if that admin is disabled or demoted.
 func commandCreateInvite( back backend , cfg *config.Config , arguments []string ) ( err error ) {
@@ -1018,7 +1094,9 @@ func commandCreateInvite( back backend , cfg *config.Config , arguments []string
 		link.Credential , link.ExpiresAt.Local().Format( "2006-01-02 15:04" ) )
 	return
 }
+// <<< feature:invite_links
 
+// >>> feature:api_keys
 func commandRevokeKey( back backend , arguments []string ) ( err error ) {
 	set := flag.NewFlagSet( "revoke-key" , flag.ExitOnError )
 	key_id := set.String( "key-id" , "" , "id of the key to revoke (from list-keys)" )
@@ -1034,7 +1112,9 @@ func commandRevokeKey( back backend , arguments []string ) ( err error ) {
 	fmt.Printf( "api key %s (%q, owner #%d) revoked -- it stops working immediately\n" , key.ID , key.Name , key.UserID )
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 // commandDeleteKey is revoke-key without the record left behind.
 func commandDeleteKey( back backend , arguments []string ) ( err error ) {
 	set := flag.NewFlagSet( "delete-key" , flag.ExitOnError )
@@ -1051,6 +1131,7 @@ func commandDeleteKey( back backend , arguments []string ) ( err error ) {
 	fmt.Printf( "api key %s (%q, owner #%d) deleted -- it stops working immediately\n" , key.ID , key.Name , key.UserID )
 	return
 }
+// <<< feature:api_keys
 
 // commandDeleteUser asks for -yes because nothing brings the account back:
 // the id is never reused and its keys and links are gone with it. Disabling
@@ -1068,8 +1149,8 @@ func commandDeleteUser( back backend , arguments []string ) ( err error ) {
 
 	removed , err := back.DeleteUser( *user_id )
 	if err != nil { return }
-	fmt.Printf( "user #%d deleted, with %d sessions, %d login links and %d API keys\n" ,
-		*user_id , removed.Sessions , removed.LoginLinks , removed.APIKeys )
+	fmt.Printf( "user #%d deleted, with %d sessions, %d login links and %d API keys\n" , *user_id , removed.Sessions , removed.LoginLinks , removed.APIKeys ) // feature:api_keys
+	fmt.Printf( "user #%d deleted, with %d sessions and %d login links\n" , *user_id , removed.Sessions , removed.LoginLinks ) // feature:!api_keys
 	return
 }
 
@@ -1096,6 +1177,7 @@ func commandSetDisabled( back backend , arguments []string ) ( err error ) {
 	return
 }
 
+// >>> feature:two_factor
 // commandResetTwoFactor is the way back for someone with neither their phone
 // nor their recovery codes -- the owner included, who no one can reset from
 // the web.
@@ -1108,6 +1190,7 @@ func commandResetTwoFactor( back backend , arguments []string ) ( err error ) {
 	fmt.Printf( "user #%d: two-factor sign-in is off\n" , *user_id )
 	return
 }
+// <<< feature:two_factor
 
 // commandRevokeAccess is the incident-response command: run it when an
 // account's credentials may be in someone else's hands. The account stays
@@ -1119,8 +1202,10 @@ func commandRevokeAccess( back backend , arguments []string ) ( err error ) {
 
 	revoked , err := back.RevokeAccess( *user_id )
 	if err != nil { return }
-	fmt.Printf( "user #%d: ended %d sessions, deleted %d unused login links, removed %d passwords, revoked %d API keys\n" ,
-		*user_id , revoked.Sessions , revoked.LoginLinks , revoked.Passwords , revoked.APIKeys )
+	report := fmt.Sprintf( "user #%d: ended %d sessions, deleted %d live login links" , *user_id , revoked.Sessions , revoked.LoginLinks )
+	report += fmt.Sprintf( ", removed %d passwords" , revoked.Passwords ) // feature:passwords
+	report += fmt.Sprintf( ", revoked %d API keys" , revoked.APIKeys ) // feature:api_keys
+	fmt.Println( report )
 	fmt.Printf( "To let them back in: reissue-login -user-id %d\n" , *user_id )
 	return
 }

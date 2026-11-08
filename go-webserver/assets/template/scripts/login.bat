@@ -1,23 +1,32 @@
 @echo off
-rem Print a one-time login link -- by default for user 1, the owner -- for
-rem whichever deployment of this checkout is actually live. The Windows twin
-rem of scripts/login.sh.
+rem Print a login link -- by default for user 1, the owner -- for whichever
+rem deployment of this checkout is actually live. It works once, for
+rem auth.login_token_ttl_seconds, unless --uses or --expires say otherwise.
+rem The Windows twin of scripts/login.sh.
 rem
 rem   scripts\login.bat               the owner (user 1)
 rem   scripts\login.bat 3             user 3
+rem   scripts\login.bat 3 --uses 5    a link that works up to 5 times
+rem   scripts\login.bat --uses unlimited --expires 7d
+rem                                   any number of times, for 7 days
+rem                                   (--expires takes 30m, 12h, 7d or never)
 rem   scripts\login.bat --docker      the docker container, even if a local
 rem                                   server is running too
 rem   scripts\login.bat --local       this checkout's local server
 rem   scripts\login.bat --no-start    never start a server: with none running,
 rem                                   write the link into the database offline
+rem   scripts\login.bat --background  with none running, start one detached
+rem                                   instead of in this window
 rem
 rem Where the link comes from: the local server (scripts\run.bat) when it is
 rem running, otherwise the docker container (docker/run.sh) when it is running,
-rem otherwise this starts the local server in the background (hidden, log in
-rem .run\server.log, stop it with scripts\run.bat stop) and gets the link from
-rem it, so the link works as soon as it is printed. The two keep separate
-rem databases, so a link from one does nothing in the other. This says which
-rem one it used.
+rem otherwise this writes the link into the database, prints it, and runs
+rem scripts\run.bat: the server runs in this window and Ctrl-C stops it. With no
+rem database yet, the server's first start prints the owner's link instead. With
+rem --background the server starts hidden instead (log in .run\server.log, stop
+rem it with scripts\run.bat stop), and the link comes from it once it answers.
+rem The local server and the container keep separate databases, so a link from
+rem one does nothing in the other. This says which one it used.
 setlocal
 cd /d "%~dp0.."
 
@@ -37,17 +46,32 @@ rem <<< template demo
 set "USER_ID=1"
 set "MODE=auto"
 set "START=true"
+set "BACKGROUND=false"
+set "LINK_FLAGS="
 :args
 if "%~1"=="" goto args_done
 if /i "%~1"=="--docker" (set "MODE=docker" & shift & goto args)
 if /i "%~1"=="--local" (set "MODE=local" & shift & goto args)
 if /i "%~1"=="--no-start" (set "START=false" & shift & goto args)
+if /i "%~1"=="--background" (set "BACKGROUND=true" & shift & goto args)
+if /i "%~1"=="--uses" goto link_flag
+if /i "%~1"=="--expires" goto link_flag
 echo %~1| findstr /r "^[0-9][0-9]*$" >nul
 if errorlevel 1 (
-  echo ERROR: expected a numeric user id, --docker, --local or --no-start; got "%~1".
+  echo ERROR: expected a numeric user id, --uses, --expires, --docker, --local, --no-start or --background; got "%~1".
   exit /b 1
 )
 set "USER_ID=%~1"
+shift
+goto args
+:link_flag
+if "%~2"=="" (
+  echo ERROR: %~1 needs a value.
+  exit /b 1
+)
+set "LINK_NAME=%~1"
+set "LINK_FLAGS=%LINK_FLAGS% -%LINK_NAME:~2% %~2"
+shift
 shift
 goto args
 :args_done
@@ -64,7 +88,7 @@ if errorlevel 1 (
   echo ERROR: go is not on PATH. Install Go from https://go.dev/dl/ and re-run.
   exit /b 1
 )
-go build -trimpath -o "%BUILT%" .
+go build -buildvcs=false -trimpath -o "%BUILT%" .
 if errorlevel 1 exit /b 1
 
 set "config_file="
@@ -111,7 +135,7 @@ exit /b 1
 :docker_up
 echo Docker container %docker_container%, served at %docker_url%
 echo.
-docker exec %docker_container% /app/server manage reissue-login -user-id %USER_ID%
+docker exec %docker_container% /app/server manage reissue-login -user-id %USER_ID%%LINK_FLAGS%
 if not errorlevel 1 exit /b 0
 echo.
 echo Accounts in the container: docker exec %docker_container% /app/server manage list-users
@@ -141,6 +165,27 @@ call :issue_link
 exit /b %errorlevel%
 
 :start_server
+if "%BACKGROUND%"=="true" goto start_background
+if not exist "%database%" goto first_start
+echo No server is running for this checkout, so the link goes straight into
+echo the database, and the server starts right here.
+echo   database %database%
+echo.
+call :issue_link
+if errorlevel 1 exit /b 1
+echo.
+goto start_here
+:first_start
+echo No database yet: the first start below creates the owner and prints their
+echo login link.
+echo.
+:start_here
+echo Starting the server here; Ctrl-C stops it.
+echo.
+call "%CD%\scripts\run.bat"
+exit /b %errorlevel%
+
+:start_background
 if not "%secure_cookies%"=="true" goto cookies_ok
 if not "%url:~0,7%"=="http://" goto cookies_ok
 echo WARNING: server.secure_cookies is true but the URL is %url%.
@@ -197,7 +242,7 @@ exit /b %errorlevel%
 
 rem ---------------------------------------------------------------------------
 :issue_link
-"%BUILT%" manage reissue-login -user-id %USER_ID%
+"%BUILT%" manage reissue-login -user-id %USER_ID%%LINK_FLAGS%
 if not errorlevel 1 exit /b 0
 echo.
 echo Accounts in this database: scripts\run.bat manage list-users

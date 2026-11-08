@@ -1,3 +1,4 @@
+// whole-file feature:api_keys
 package models
 
 import (
@@ -58,6 +59,7 @@ var (
 	ErrAPIKeyLimit    = errors.New( "this account already holds the maximum number of live API keys" )
 	ErrAPIKeyRole     = errors.New( "an API key cannot be given a role its owner does not have" )
 	ErrAPIKeyDisabled = errors.New( "cannot issue an API key for a disabled account" )
+	ErrAPIKeyDead     = errors.New( "only a live API key can have its expiry changed" )
 )
 
 const (
@@ -346,13 +348,14 @@ func GetAPIKey( store *db.Store , key_id string ) ( key *APIKey , err error ) {
 	return
 }
 
-// sortAPIKeys puts keys oldest first. A key's bucket key is a random token, so
+// sortAPIKeys puts keys newest first, like every other list of things someone
+// made. A key's bucket key is a random token, so
 // the bucket order means nothing and would change a page's rows between calls.
 func sortAPIKeys( keys []*APIKey ) {
-	sort.SliceStable( keys , func( i int , j int ) bool { return keys[ i ].CreatedAt.Before( keys[ j ].CreatedAt ) } )
+	sort.SliceStable( keys , func( i int , j int ) bool { return keys[ i ].CreatedAt.After( keys[ j ].CreatedAt ) } )
 }
 
-// ListAPIKeys returns every key in the database, newest last, leaving out
+// ListAPIKeys returns every key in the database, newest first, leaving out
 // deleted ones. Only the admin endpoint and the CLI use it; a user asking for
 // "my keys" goes through ListAPIKeysForUser.
 func ListAPIKeys( store *db.Store ) ( keys []*APIKey , err error ) {
@@ -414,6 +417,85 @@ func RevokeAPIKey( store *db.Store , key_id string ) ( err error ) {
 			}
 			return
 		} )
+	return
+}
+
+// RenameAPIKey changes a key's label, which is all a name is: nothing about what
+// the key may do hangs off it, so a dead key can be renamed too. db.ErrNotFound
+// when there is no such key or it is deleted.
+//
+// expect, when not nil, is the name the caller believes is stored, as in
+// RenameUser: a *RenameConflictError if it is not, which keeps an undo from
+// overwriting a rename made somewhere else.
+func RenameAPIKey( store *db.Store , key_id string , name string , expect *string ) ( err error ) {
+	err = store.UpdateValue( db.BucketAPIKeys , []byte( key_id ) ,
+		func() any { return &APIKey{} } ,
+		func( item any ) ( mutate_err error ) {
+			key := item.( *APIKey )
+			if key.Deleted() {
+				mutate_err = db.ErrNotFound
+				return
+			}
+			if expect != nil && key.Name != strings.TrimSpace( *expect ) {
+				mutate_err = &RenameConflictError{ Current: key.Name }
+				return
+			}
+			key.Name = strings.TrimSpace( name )
+			return
+		} )
+	return
+}
+
+// SetAPIKeyExpiry gives a live key a new expiry, counted from now; a ttl of zero
+// means it never expires, as when issuing one.
+//
+// A dead key stays dead (ErrAPIKeyDead). Reviving an expired key here would turn
+// an edit into a way round the expiry, and a revoked one would break the promise
+// that revoking is final: a new key is the way back. db.ErrNotFound when there
+// is no such key or it is deleted.
+//
+// actor_id is who is asking. Keeping someone else's key alive is as much power
+// over that account as minting one for it, so it follows the same ladder as
+// IssueAPIKeyFor: nobody touches the owner's keys, and only the owner touches
+// another admin's. Otherwise an admin holding a stolen key could keep it going.
+func SetAPIKeyExpiry( store *db.Store , key_id string , actor_id uint64 , ttl time.Duration ) ( key *APIKey , err error ) {
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		stored := &APIKey{}
+		if tx_err = tx.Get( db.BucketAPIKeys , []byte( key_id ) , stored ); tx_err != nil { return }
+		if stored.Deleted() {
+			tx_err = db.ErrNotFound
+			return
+		}
+		if stored.Live() == false {
+			tx_err = ErrAPIKeyDead
+			return
+		}
+		if actor_id != stored.UserID {
+			holder := &User{}
+			if tx_err = tx.Get( db.BucketUsers , encryption.Uint64ToBytes( stored.UserID ) , holder ); tx_err != nil { return }
+			owner_id , owner_err := ownerIDTx( tx )
+			if owner_err != nil {
+				tx_err = owner_err
+				return
+			}
+			if owner_id == stored.UserID {
+				tx_err = ErrOwnerProtected
+				return
+			}
+			if holder.IsAdmin() && actor_id != owner_id {
+				tx_err = ErrOwnerRequired
+				return
+			}
+		}
+		stored.ExpiresAt = nil
+		if ttl > 0 {
+			expires := time.Now().UTC().Add( ttl )
+			stored.ExpiresAt = &expires
+		}
+		if tx_err = tx.Put( db.BucketAPIKeys , []byte( key_id ) , stored ); tx_err != nil { return }
+		key = stored
+		return
+	} )
 	return
 }
 

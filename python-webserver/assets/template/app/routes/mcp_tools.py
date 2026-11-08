@@ -1,3 +1,4 @@
+# whole-file feature:mcp
 """The tools /mcp offers (see app/mcp for the protocol and the rules a tool
 follows). Each one is a thin wrapper over the helper its HTTP route uses --
 me_row, team_rows, set_disabled_checked, ... -- so the two doors answer the
@@ -15,14 +16,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from app.core.config import Config
+from app.core.config import Config  # feature:invite_links
 from app.core.db import Store
 from app.mcp.registry import Call, Refusal, Registry, Tool
-from app.models import invite_links, webhooks
+from app.models import invite_links  # feature:invite_links
+from app.models import webhooks  # feature:webhooks
 from app.routes.account import me_row
 from app.routes.admin import RuleRefusal, revoke_access_checked, set_disabled_checked, user_rows
 from app.routes.helpers import PAGE_DEFAULT, PAGE_LIMIT_MESSAGE, PAGE_MAX, PAGE_OFFSET_MESSAGE, page_body
-from app.routes.invite_links import invite_link_rows
+from app.routes.invite_links import invite_link_rows  # feature:invite_links
 from app.routes.team import team_rows
 
 USER_ID_SCHEMA = {"type": "integer", "minimum": 1, "description": "The account's id, from list_team or admin_list_users."}
@@ -76,7 +78,7 @@ def admin_set_user_disabled(call: Call) -> dict[str, Any]:
     refused = set_disabled_checked(call.store, call.actor.user.id, args["user_id"], args["disabled"])
     if refused is not None:
         raise Refusal(refused.message)
-    call.request.app.state.webhooks.emit(webhooks.EVENT_USER_DISABLED, {"user_id": args["user_id"], "disabled": args["disabled"]})
+    call.request.app.state.webhooks.emit(webhooks.EVENT_USER_DISABLED, {"user_id": args["user_id"], "disabled": args["disabled"]})  # feature:webhooks
     return {"ok": True}
 
 
@@ -88,6 +90,7 @@ def admin_revoke_access(call: Call) -> dict[str, Any]:
     return {"ok": True, "revoked": revoked.to_dict()}
 
 
+# >>> feature:invite_links
 def _invite_links_on(cfg: Config) -> bool:
     return cfg.invite_links_enabled
 
@@ -100,10 +103,11 @@ def admin_revoke_invite_link(call: Call) -> dict[str, Any]:
     args = call.bind({"link_id": str})
     if not invite_links.revoke_invite_link(call.store, args["link_id"]):
         raise Refusal("no such invite link")
-    call.request.app.state.webhooks.emit(webhooks.EVENT_INVITE_LINK_REVOKED, {"link_id": args["link_id"]})
+    call.request.app.state.webhooks.emit(webhooks.EVENT_INVITE_LINK_REVOKED, {"link_id": args["link_id"]})  # feature:webhooks
     return {"ok": True}
 
 
+# <<< feature:invite_links
 def build_registry() -> Registry:
     registry = Registry()
     registry.register(Tool(
@@ -133,7 +137,7 @@ def build_registry() -> Registry:
     registry.register(Tool(
         name="admin_set_user_disabled",
         title="Disable or enable a user (admin)",
-        description="Switch an account off (disabled: true) or back on (false). Disabling signs it out everywhere and voids its unused login links; its API keys stop working while it is off. Reversible. The owner and your own account cannot be disabled.",
+        description="Switch an account off (disabled: true) or back on (false). Disabling signs it out everywhere and voids its live login link; its API keys stop working while it is off. Reversible. The owner and your own account cannot be disabled.",
         call=admin_set_user_disabled,
         input_schema=_schema({"user_id": USER_ID_SCHEMA, "disabled": {"type": "boolean"}}),
         admin_only=True,
@@ -141,12 +145,13 @@ def build_registry() -> Registry:
     registry.register(Tool(
         name="admin_revoke_access",
         title="Revoke a user's access (admin)",
-        description="For an account that may be compromised: ends every session and voids every unused login link and API key it holds, at once. The account stays enabled; someone with a browser session must issue a new login link to let its owner back in. The owner and your own account cannot be revoked.",
+        description="For an account that may be compromised: ends every session and voids its live login link and every API key it holds, at once. The account stays enabled; someone with a browser session must issue a new login link to let its owner back in. The owner and your own account cannot be revoked.",
         call=admin_revoke_access,
         input_schema=_schema({"user_id": USER_ID_SCHEMA}),
         destructive=True,
         admin_only=True,
     ))
+    # >>> feature:invite_links
     registry.register(Tool(
         name="admin_list_invite_links",
         title="List invite links (admin)",
@@ -167,4 +172,5 @@ def build_registry() -> Registry:
         admin_only=True,
         enabled=_invite_links_on,
     ))
+    # <<< feature:invite_links
     return registry

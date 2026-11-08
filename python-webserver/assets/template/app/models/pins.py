@@ -1,3 +1,4 @@
+# whole-file feature:invite_links
 """PINs, and the name matching behind invite links.
 
 A PIN is what stops anyone holding an invite link from signing in as anyone

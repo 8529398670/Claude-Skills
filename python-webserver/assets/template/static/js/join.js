@@ -1,3 +1,4 @@
+// whole-file feature:invite_links
 // The page an invite link opens: /join/<credential>.
 //
 // Three steps, and nothing is created until the last button press:
@@ -6,8 +7,11 @@
 //   2. "is one of these you?" -- accounts that joined through this same link
 //      with a similar name, plus "no, I'm new". This step is shown even with
 //      no matches, because a typo would otherwise use up a place;
+// >>> feature:two_factor
 //   3. the PIN, if the account you picked set one, then the two-factor code
 //      if it has that on (see two_factor.js).
+// <<< feature:two_factor
+//   3. the PIN, if the account you picked set one. // feature:!two_factor
 //
 // Picking yourself is how the same person signs in on their next device, so
 // a chat app's link preview fetching the URL does nothing: every step is a
@@ -135,10 +139,12 @@ const Join = {
   async claim( pin ) {
     try {
       const result = await Api.joinClaim( this.credential() , this.picked.id , pin );
+      // >>> feature:two_factor
       if ( result.two_factor ) {
         TwoFactor.ask( result.challenge );
         return;
       }
+      // <<< feature:two_factor
       this.done();
     } catch ( error ) {
       this.failed( error );
@@ -162,7 +168,7 @@ const Join = {
       this.invalid( error );
       return;
     }
-    App.showError( error.message );
+    App.showFieldError( error.message , { pin_needed: "join-pin" , pin_wrong: "join-pin" , bad_pin: "join-pin" } );
   },
 
   // replace, not assign: the link should not stay in the back button.

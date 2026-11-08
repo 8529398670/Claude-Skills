@@ -11,34 +11,88 @@
 //
 // This file is loaded in <head>, before the stylesheet's first paint, so a
 // saved dark theme never flashes light on the way in.
+// >>> feature:appearance
+//
+// Brand colours live in ThemePalettes, named, whether a preset uses them or not,
+// so the rest are there for whoever needs them next.
+const ThemePalettes = {
+  // Wright State University. Primary: green and gold. The rest are its accents.
+  wsu: {
+    green: "#046a38",
+    gold: "#cba052",
+    dark_green: "#00482b",
+    deep_gold: "#ae8643",
+    yellow: "#f8e08e",
+    leaf: "#719949",
+    beige: "#dcd59a",
+    black: "#101820",
+    faded_gold: "#e7e3c6",
+    off_white: "#f2f1f0",
+  },
+};
+
+// <<< feature:appearance
 const Theme = {
   storageKey: "theme",
-  // What redraws when the theme changes: the picker and the navbar button.
+  // What redraws when the theme changes: the Appearance picker. // feature:appearance
+  // What redraws when the theme changes: the navbar button. // feature:!appearance
   onChange: [],
 
-  // Each preset sets the mode plus, optionally, its own colours. Field ->
-  // custom property in style.css, which hands them on to Bootstrap: accent ->
-  // --app-accent, background -> --app-bg, surface -> --app-surface. Names
-  // come from language.yaml (theme.preset_<key>).
+  // Each preset is a mode and two colours, plus its own page and card colours if
+  // the mode's will not do. accent is the main colour: what you can press. second
+  // says where you are: the active nav item, headings, progress, info. The rest
+  // is worked out in colours() below. Names come from language.yaml
+  // (theme.preset_<key>).
   presets: [
-    { key: "light" , mode: "light" },
-    { key: "dark" , mode: "dark" },
-    { key: "ocean" , mode: "light" , accent: "#0b7285" , background: "#eef6f8" , surface: "#ffffff" },
-    { key: "forest" , mode: "light" , accent: "#2b8a3e" , background: "#f1f6ef" , surface: "#ffffff" },
-    { key: "sepia" , mode: "light" , accent: "#9c5a1c" , background: "#f6f0e4" , surface: "#fbf7ef" },
-    { key: "grape" , mode: "light" , accent: "#7048c8" , background: "#f5f2fc" , surface: "#ffffff" },
-    { key: "pink" , mode: "light" , accent: "#c2255c" , background: "#fdf0f5" , surface: "#ffffff" },
+    { key: "light" , mode: "light" , accent: "#1f5fd6" , second: "#0b7a75" },
+    { key: "dark" , mode: "dark" , accent: "#6ea0ff" , second: "#5fd3c4" },
+    // >>> feature:appearance
+    { key: "ocean" , mode: "light" , accent: "#0b7285" , second: "#bd5418" , background: "#eef6f8" , surface: "#ffffff" },
+    { key: "forest" , mode: "light" , accent: "#28843b" , second: "#8a6a12" , background: "#f1f6ef" , surface: "#ffffff" },
+    { key: "sepia" , mode: "light" , accent: "#9c5a1c" , second: "#2f6f6a" , background: "#f6f0e4" , surface: "#fbf7ef" },
+    { key: "grape" , mode: "light" , accent: "#7048c8" , second: "#c0267e" , background: "#f5f2fc" , surface: "#ffffff" },
+    { key: "pink" , mode: "light" , accent: "#c2255c" , second: "#6b3fc0" , background: "#fdf0f5" , surface: "#ffffff" },
     // Wright State University: Green on Off White, and Gold on Black with Dark Green panels.
-    { key: "wsu" , mode: "light" , accent: "#046a38" , background: "#f2f1f0" , surface: "#ffffff" },
-    { key: "midnight" , mode: "dark" , accent: "#8c7cff" , background: "#0e1020" , surface: "#171a30" },
-    { key: "slate" , mode: "dark" , accent: "#4fb3a9" , background: "#15191e" , surface: "#1d232a" },
-    { key: "dark_pink" , mode: "dark" , accent: "#f06595" , background: "#1f0d16" , surface: "#2a1220" },
-    { key: "wsu_dark" , mode: "dark" , accent: "#cba052" , background: "#101820" , surface: "#00482b" },
+    { key: "wsu" , mode: "light" , accent: ThemePalettes.wsu.green , second: ThemePalettes.wsu.gold , background: ThemePalettes.wsu.off_white , surface: "#ffffff" },
+    { key: "midnight" , mode: "dark" , accent: "#8c7cff" , second: "#ffb86b" , background: "#0e1020" , surface: "#171a30" },
+    { key: "slate" , mode: "dark" , accent: "#4fb3a9" , second: "#e6b450" , background: "#15191e" , surface: "#1d232a" },
+    { key: "dark_pink" , mode: "dark" , accent: "#f06595" , second: "#ffa8d0" , background: "#1f0d16" , surface: "#2a1220" },
+    { key: "wsu_dark" , mode: "dark" , accent: ThemePalettes.wsu.gold , second: ThemePalettes.wsu.yellow , background: ThemePalettes.wsu.black , surface: ThemePalettes.wsu.dark_green },
+    // <<< feature:appearance
   ],
 
-  vars: { accent: "--app-accent" , background: "--app-bg" , surface: "--app-surface" },
+  // What a preset leaves out.
+  modes: {
+    light: { background: "#f7f8fa" , surface: "#ffffff" , text: "#212529" },
+    dark: { background: "#101215" , surface: "#191c21" , text: "#dee2e6" },
+  },
+
+  // How much of the second colour goes into each layer, in percent, so a nested
+  // card stands off its card and the card off the page.
+  tints: { page: 3.5 , surface: 1.75 , nested: 8.75 , chrome: 10 , info: 14 , infoBorder: 45 },
+
+  // Field of colours() -> custom property in style.css, which hands them on to
+  // Bootstrap.
+  vars: {
+    accent: "--app-accent",
+    accentFg: "--app-accent-fg",
+    second: "--app-second",
+    secondFg: "--app-second-fg",
+    secondText: "--app-second-text",
+    link: "--app-link",
+    navLink: "--app-nav-link",
+    background: "--app-bg",
+    surface: "--app-surface",
+    nested: "--app-nested",
+    chrome: "--app-chrome",
+    info: "--app-info",
+    infoBorder: "--app-info-border",
+    border: "--app-border",
+  },
 
   current: "light",
+  // WCAG AA for text. scripts/check_themes.js holds every preset to it.
+  minContrast: 4.5,
 
   find( key ) {
     return this.presets.find( function ( preset ) { return preset.key === key; } ) || this.presets[ 0 ];
@@ -70,16 +124,41 @@ const Theme = {
     const root = document.documentElement;
     if ( preset.mode === "dark" ) root.setAttribute( "data-bs-theme" , "dark" );
     else root.removeAttribute( "data-bs-theme" );
-    Object.keys( this.vars ).forEach( ( field ) => {
-      if ( preset[ field ] ) root.style.setProperty( this.vars[ field ] , preset[ field ] );
-      else root.style.removeProperty( this.vars[ field ] );
-    } );
-    // Text on the accent has to stay readable whatever the accent is.
-    if ( preset.accent ) root.style.setProperty( "--app-accent-fg" , this.contrast( preset.accent , "#ffffff" ) >= this.contrast( preset.accent , "#0b0d10" ) ? "#ffffff" : "#0b0d10" );
-    else root.style.removeProperty( "--app-accent-fg" );
-    // A custom page colour gets borders drawn from it rather than the mode's.
-    if ( preset.background ) root.style.setProperty( "--app-border" , "color-mix(in srgb, var(--bs-body-color) 14%, " + preset.background + ")" );
-    else root.style.removeProperty( "--app-border" );
+    const colours = this.colours( preset );
+    Object.keys( this.vars ).forEach( ( field ) => root.style.setProperty( this.vars[ field ] , colours[ field ] ) );
+  },
+
+  // Every colour the page needs, from a preset's few. Fills keep the colour as
+  // chosen. Anything read as text is pushed until it is readable, on the nested
+  // card, the most tinted place it can land: WSU's gold is gold on a progress bar
+  // and darker in a heading.
+  colours( preset ) {
+    const mode = this.modes[ preset.mode ];
+    const background = preset.background || mode.background;
+    const surface = preset.surface || mode.surface;
+    const second = preset.second;
+    const card = this.mix( second , surface , this.tints.surface );
+    const nested = this.mix( second , surface , this.tints.nested );
+    const chrome = this.mix( second , surface , this.tints.chrome );
+    return {
+      text: mode.text,
+      accent: preset.accent,
+      accentFg: this.readableOn( preset.accent ),
+      second: second,
+      secondFg: this.readableOn( second ),
+      secondText: this.asText( second , nested ),
+      link: this.asText( preset.accent , nested ),
+      navLink: this.asText( preset.accent , chrome ),
+      background: this.mix( second , background , this.tints.page ),
+      surface: card,
+      nested: nested,
+      chrome: chrome,
+      info: this.mix( second , card , this.tints.info ),
+      infoBorder: this.mix( second , card , this.tints.infoBorder ),
+      // From the card, not the page: most borders sit on a card, and a card can be
+      // a long way from its page (WSU dark's green on black).
+      border: this.mix( mode.text , card , 20 ),
+    };
   },
 
   // Picking is undoable, and quick picks merge into one step.
@@ -99,9 +178,10 @@ const Theme = {
     } );
   },
 
-  // The button in the navbar: light or dark from anywhere, signed in or not.
-  // The Appearance card has the rest. Dark from any light theme, light from any
-  // dark one.
+  // >>> feature:!appearance
+  // The button in the navbar, for an app without the Appearance screen: light
+  // or dark from anywhere, signed in or not. Dark from any light theme, light
+  // from any dark one.
   watchToggle( button ) {
     const icon = button.querySelector( "i" );
     const update = () => {
@@ -113,6 +193,8 @@ const Theme = {
     update();
   },
 
+  // <<< feature:!appearance
+  // >>> feature:appearance
   // The picker on the Appearance card: one button per preset, drawn in its
   // own colours. summary, if given, is kept showing the current theme's name.
   render( root , summary ) {
@@ -125,9 +207,10 @@ const Theme = {
       if ( summary ) Dom.text( summary , I18n.get( "theme.preset_" + this.current ) );
     };
     this.presets.forEach( ( preset ) => {
-      const swatch = Dom.el( "span" , { class: "theme-swatch" + ( preset.mode === "dark" ? " theme-swatch-dark" : "" ) } );
-      if ( preset.background ) swatch.style.setProperty( "--swatch-bg" , preset.background );
-      if ( preset.accent ) swatch.style.setProperty( "--swatch-accent" , preset.accent );
+      const swatch = Dom.el( "span" , { class: "theme-swatch" } );
+      swatch.style.setProperty( "--swatch-bg" , this.colours( preset ).background );
+      swatch.style.setProperty( "--swatch-accent" , preset.accent );
+      swatch.style.setProperty( "--swatch-second" , preset.second );
       const button = Dom.el( "button" , {
         class: "btn btn-outline-secondary theme-choice",
         attrs: { type: "button" , "data-theme-key": preset.key },
@@ -138,6 +221,31 @@ const Theme = {
     } );
     this.onChange.push( update );
     update();
+  },
+
+  // <<< feature:appearance
+  // percent of over, the rest under.
+  mix( over , under , percent ) {
+    const channel = function ( color , offset ) { return parseInt( color.slice( offset , offset + 2 ) , 16 ); };
+    return "#" + [ 1 , 3 , 5 ].map( function ( offset ) {
+      const mixed = channel( over , offset ) * percent / 100 + channel( under , offset ) * ( 100 - percent ) / 100;
+      return Math.round( mixed ).toString( 16 ).padStart( 2 , "0" );
+    } ).join( "" );
+  },
+
+  // Black or white, for a label on this colour.
+  readableOn( color ) {
+    return this.contrast( color , "#ffffff" ) >= this.contrast( color , "#0b0d10" ) ? "#ffffff" : "#0b0d10";
+  },
+
+  // This colour, moved toward black or white until text in it reads on ground.
+  asText( color , ground ) {
+    const away = this.luminance( ground ) > 0.4 ? "#000000" : "#ffffff";
+    for ( let step = 0 ; step <= 100 ; step += 2 ) {
+      const tried = this.mix( away , color , step );
+      if ( this.contrast( tried , ground ) >= this.minContrast ) return tried;
+    }
+    return away;
   },
 
   // Relative luminance (WCAG) of #rrggbb.

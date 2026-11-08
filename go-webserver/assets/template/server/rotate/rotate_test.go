@@ -1,11 +1,11 @@
 package rotate
 
 import (
-	compress "compress/gzip"
-	base64 "encoding/base64"
-	json "encoding/json"
+	compress "compress/gzip" // feature:logs
+	base64 "encoding/base64" // feature:logs
+	json "encoding/json" // feature:logs
 	errors "errors"
-	io "io"
+	io "io" // feature:files
 	os "os"
 	filepath "path/filepath"
 	strings "strings"
@@ -16,7 +16,7 @@ import (
 	config "{{MODULE_PATH}}/server/config"
 	db "{{MODULE_PATH}}/server/db"
 	encryption "{{MODULE_PATH}}/server/encryption"
-	logs "{{MODULE_PATH}}/server/logs"
+	logs "{{MODULE_PATH}}/server/logs" // feature:logs
 	models "{{MODULE_PATH}}/server/models"
 )
 
@@ -28,7 +28,7 @@ type deployment struct {
 	cfg    *config.Config
 	path   string
 	userID uint64
-	secret string
+	secret string // feature:two_factor
 }
 
 // newDeployment is a real config.yaml and secret.key, so that LoadPath can do
@@ -52,9 +52,12 @@ func newDeployment( t *testing.T ) ( result *deployment ) {
 	defer store.Close()
 	user , err := models.CreateUser( store , "Second factor" , models.RoleUser )
 	if err != nil { t.Fatal( err ) }
+	// >>> feature:two_factor
 	secret , err := models.StartTwoFactorSetup( store , user.ID , cfg.SecretKey )
 	if err != nil { t.Fatal( err ) }
+	// <<< feature:two_factor
 
+	// >>> feature:logs
 	line := func( text string ) ( encoded string ) {
 		sealed , seal_err := encryption.ChaChaEncryptBytes( cfg.SecretKey , []byte( `{"msg":"` + text + `"}` ) )
 		if seal_err != nil { t.Fatal( seal_err ) }
@@ -70,7 +73,9 @@ func newDeployment( t *testing.T ) ( result *deployment ) {
 	zipped.Close()
 	zipped_file.Close()
 
-	result = &deployment{ cfg: cfg , path: path , userID: user.ID , secret: secret }
+	// <<< feature:logs
+	result = &deployment{ cfg: cfg , path: path , userID: user.ID }
+	result.secret = secret // feature:two_factor
 	return
 }
 
@@ -90,11 +95,15 @@ func ( d *deployment ) assertWhole( t *testing.T ) ( cfg *config.Config ) {
 	store , err := db.Open( cfg )
 	if err != nil { t.Fatal( err ) }
 	defer store.Close()
+	if _ , err = models.GetUser( store , d.userID ); err != nil { t.Fatalf( "the key does not open the database: %v" , err ) }
+	// >>> feature:two_factor
 	user , err := models.GetUser( store , d.userID )
-	if err != nil { t.Fatalf( "the key does not open the database: %v" , err ) }
+	if err != nil { t.Fatal( err ) }
 	opened , err := encryption.ChaChaDecryptBase64String( cfg.SecretKey , user.TOTPPending )
 	if err != nil || opened != d.secret { t.Fatalf( "two-factor secret: %q %v" , opened , err ) }
+	// <<< feature:two_factor
 
+	// >>> feature:logs
 	reader := logs.New( cfg.Logs , cfg.SecretKey , cfg.EncryptAtRest )
 	for day , wanted := range map[string]string{ "2026-11-01": "plain day" , "2026-10-31": "gzipped day" } {
 		records , _ , err := reader.ReadDay( day , logs.ParseQuery( "" ) , -1 , 10 )
@@ -104,6 +113,7 @@ func ( d *deployment ) assertWhole( t *testing.T ) ( cfg *config.Config ) {
 			t.Fatalf( "%s after rotation: %s" , day , encoded )
 		}
 	}
+	// <<< feature:logs
 	if config.RotationPending( cfg.AppDir ) { t.Fatal( "the marker is still there" ) }
 	if _ , err := os.Stat( config.RotationDir( cfg.AppDir ) ); err == nil { t.Fatal( "the staging folder is still there" ) }
 	return
@@ -114,7 +124,7 @@ func TestRotationKeepsEverythingReadable( t *testing.T ) {
 	old_key := d.cfg.SecretKey
 	result , err := Run( d.cfg , Options{} )
 	if err != nil { t.Fatal( err ) }
-	if result.LogFiles != 2 { t.Fatalf( "log files: %d" , result.LogFiles ) }
+	if result.LogFiles != 2 { t.Fatalf( "log files: %d" , result.LogFiles ) } // feature:logs
 
 	cfg := d.assertWhole( t )
 	if cfg.SecretKey == old_key { t.Fatal( "the key did not change" ) }
@@ -125,11 +135,14 @@ func TestRotationKeepsEverythingReadable( t *testing.T ) {
 	info , err := os.Stat( result.RetiredKey )
 	if err != nil || info.Mode().Perm() != 0o600 { t.Fatalf( "retired key mode: %v %v" , info.Mode() , err ) }
 
+	// >>> feature:logs
 	// A line nothing could read stays, rather than being dropped.
 	raw , err := os.ReadFile( filepath.Join( cfg.Logs.Dir , "2026-11-01.jsonl" ) )
 	if err != nil || strings.HasSuffix( string( raw ) , "this line was cut sho" ) == false { t.Fatalf( "broken line: %q %v" , raw , err ) }
+	// <<< feature:logs
 }
 
+// >>> feature:files
 // storeFile uploads into the deployment, and assertFile reads it back as a fresh
 // process would: the file's bytes never move, so only its sealed key changes.
 func ( d *deployment ) storeFile( t *testing.T ) ( file_id string ) {
@@ -145,7 +158,9 @@ func ( d *deployment ) storeFile( t *testing.T ) ( file_id string ) {
 	file_id = file.ID
 	return
 }
+// <<< feature:files
 
+// >>> feature:files
 func ( d *deployment ) assertFile( t *testing.T , file_id string ) {
 	t.Helper()
 	cfg , err := config.LoadPath( d.path , true )
@@ -161,7 +176,9 @@ func ( d *deployment ) assertFile( t *testing.T , file_id string ) {
 	content , err := io.ReadAll( reader )
 	if err != nil || string( content ) != "hello" { t.Fatalf( "%q %v" , content , err ) }
 }
+// <<< feature:files
 
+// >>> feature:files
 func TestAFileSurvivesRotationWithRecordEncryptionOnOrOff( t *testing.T ) {
 	for _ , encrypted := range []bool{ true , false } {
 		d := newDeployment( t )
@@ -185,7 +202,9 @@ func TestAFileSurvivesRotationWithRecordEncryptionOnOrOff( t *testing.T ) {
 		d.assertFile( t , file_id )
 	}
 }
+// <<< feature:files
 
+// >>> feature:files
 func TestAFileSurvivesARestoreOntoANewKey( t *testing.T ) {
 	d := newDeployment( t )
 	file_id := d.storeFile( t )
@@ -202,6 +221,7 @@ func TestAFileSurvivesARestoreOntoANewKey( t *testing.T ) {
 	if _ , err = backup.Restore( cfg , backup.RestoreOptions{ From: made.Path , KeyFile: result.RetiredKey } ); err != nil { t.Fatal( err ) }
 	d.assertFile( t , file_id )
 }
+// <<< feature:files
 
 func TestRotationRefusesARunningServer( t *testing.T ) {
 	d := newDeployment( t )
@@ -232,16 +252,18 @@ func TestAStopAfterTheMarkerFinishesForward( t *testing.T ) {
 			directory := config.RotationDir( cfg.AppDir )
 			os.Rename( filepath.Join( directory , "app.db" ) , cfg.DatabasePath )
 		},
+		// >>> feature:logs
 		"after one log file": func( cfg *config.Config ) {
 			directory := config.RotationDir( cfg.AppDir )
 			os.Rename( filepath.Join( directory , "app.db" ) , cfg.DatabasePath )
 			os.Rename( filepath.Join( directory , "logs" , "2026-11-01.jsonl" ) , filepath.Join( cfg.Logs.Dir , "2026-11-01.jsonl" ) )
 		},
+		// <<< feature:logs
 		"after all the data": func( cfg *config.Config ) {
-			config.FinishRotationData( cfg.AppDir , cfg.DatabasePath , cfg.Logs.Dir )
+			config.FinishRotationData( cfg.AppDir , cfg.DatabasePath , filepath.Join( cfg.AppDir , config.LogsDirName ) )
 		},
 		"after the key": func( cfg *config.Config ) {
-			config.FinishRotationData( cfg.AppDir , cfg.DatabasePath , cfg.Logs.Dir )
+			config.FinishRotationData( cfg.AppDir , cfg.DatabasePath , filepath.Join( cfg.AppDir , config.LogsDirName ) )
 			config.FinishRotationKey( cfg.SecretFile )
 		},
 	}

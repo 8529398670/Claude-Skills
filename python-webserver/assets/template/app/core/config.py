@@ -56,6 +56,7 @@ CONFIG_DIR_NAME = "config"
 CONFIG_FILE_NAME = "config.yaml"
 DATABASE_FILE_NAME = "app.db"
 STORAGE_DIR_NAME = "storage"
+# >>> feature:files
 # Inside storage, so backups carry finished files.
 FILES_DIR_NAME = "files"
 # Beside storage, not in it: a half-sent file is not worth a backup, and is
@@ -66,7 +67,8 @@ UPLOADS_DIR_NAME = "uploads"
 # small requests, so nothing has to raise a limit that also protects the public
 # routes. See app/models/files.py.
 FILE_CHUNK_BYTES = 768 * 1024
-LOGS_DIR_NAME = "logs"
+# <<< feature:files
+LOGS_DIR_NAME = "logs"  # feature:logs
 BACKUPS_DIR_NAME = "backups"
 # Held by the running server. See app/core/server_lock.py.
 SERVER_LOCK_NAME = "server.lock"
@@ -138,9 +140,9 @@ class ServerSection:
     rate_limit_max: int
     rate_limit_window_seconds: int
     rate_limit_signin_max: int
-    rate_limit_upload_max: int
-    mcp: bool
-    maintenance: str
+    rate_limit_upload_max: int  # feature:files
+    mcp: bool  # feature:mcp
+    maintenance: str  # feature:maintenance
     announcement: str
     # Deprecated: the key lives in secret.key. This is read only so that a
     # config.yaml from before the move can be migrated
@@ -154,13 +156,15 @@ class AuthSection:
     session_ttl_seconds: int
     session_max_age_seconds: int
     login_token_ttl_seconds: int
-    api_keys: bool
-    api_key_ttl_seconds: int
-    passwords: bool
-    two_factor: bool
-    invite_links: bool
+    multi_use_login_token_ttl_seconds: int
+    api_keys: bool  # feature:api_keys
+    api_key_ttl_seconds: int  # feature:api_keys
+    passwords: bool  # feature:passwords
+    two_factor: bool  # feature:two_factor
+    invite_links: bool  # feature:invite_links
 
 
+# >>> feature:logs
 @dataclass
 class LogsSection:
     enabled: bool
@@ -173,18 +177,24 @@ class LogsSection:
     echo: bool
 
 
+# <<< feature:logs
+# >>> feature:backups
 @dataclass
 class BackupsSection:
     enabled: bool
     interval_hours: int
     keep: int
+# <<< feature:backups
 
 
+# >>> feature:metrics
 @dataclass
 class MetricsSection:
     enabled: bool
 
 
+# <<< feature:metrics
+# >>> feature:webhooks
 @dataclass
 class WebhooksSection:
     enabled: bool
@@ -192,6 +202,7 @@ class WebhooksSection:
     allow_private_targets: bool
 
 
+# <<< feature:webhooks
 @dataclass
 class DockerSection:
     image: str
@@ -206,6 +217,7 @@ class DockerSection:
     tmpfs_size: str
 
 
+# >>> feature:files
 @dataclass
 class FilesSection:
     enabled: bool
@@ -214,16 +226,17 @@ class FilesSection:
     abandoned_upload_hours: int
 
 
+# <<< feature:files
 @dataclass
 class File:
     app: AppSection
     server: ServerSection
     auth: AuthSection
-    logs: LogsSection
-    backups: BackupsSection
-    metrics: MetricsSection
-    webhooks: WebhooksSection
-    files: FilesSection
+    logs: LogsSection  # feature:logs
+    backups: BackupsSection  # feature:backups
+    metrics: MetricsSection  # feature:metrics
+    webhooks: WebhooksSection  # feature:webhooks
+    files: FilesSection  # feature:files
     docker: DockerSection
 
 
@@ -235,11 +248,11 @@ SECTIONS: dict[str, type] = {
     "app": AppSection,
     "server": ServerSection,
     "auth": AuthSection,
-    "logs": LogsSection,
-    "backups": BackupsSection,
-    "metrics": MetricsSection,
-    "webhooks": WebhooksSection,
-    "files": FilesSection,
+    "logs": LogsSection,  # feature:logs
+    "backups": BackupsSection,  # feature:backups
+    "metrics": MetricsSection,  # feature:metrics
+    "webhooks": WebhooksSection,  # feature:webhooks
+    "files": FilesSection,  # feature:files
     "docker": DockerSection,
 }
 
@@ -249,6 +262,7 @@ SECTIONS: dict[str, type] = {
 # ---------------------------------------------------------------------------
 
 
+# >>> feature:logs
 @dataclass(frozen=True)
 class LogsConfig:
     """config.yaml's logs section, resolved: sizes in bytes, and the directory
@@ -266,6 +280,8 @@ class LogsConfig:
     echo: bool = True
 
 
+# <<< feature:logs
+# >>> feature:files
 @dataclass(frozen=True)
 class FilesConfig:
     """config.yaml's files section, resolved. dir holds finished files, and
@@ -279,6 +295,8 @@ class FilesConfig:
     uploads_dir: Path = Path("uploads")
 
 
+# <<< feature:files
+# >>> feature:webhooks
 @dataclass(frozen=True)
 class WebhooksConfig:
     """config.yaml's webhooks section, resolved."""
@@ -288,6 +306,7 @@ class WebhooksConfig:
     allow_private_targets: bool = False
 
 
+# <<< feature:webhooks
 @dataclass(frozen=True)
 class BackupsConfig:
     """config.yaml's backups section, resolved. dir is where every backup
@@ -295,10 +314,10 @@ class BackupsConfig:
     created 0700 the first time something is written there). See
     app/core/backup.py."""
 
-    enabled: bool = False
+    enabled: bool = False  # feature:backups
     dir: Path = Path(BACKUPS_DIR_NAME)
-    interval_hours: int = 24
-    keep: int = 7
+    interval_hours: int = 24  # feature:backups
+    keep: int = 7  # feature:backups
 
 
 @dataclass(frozen=True)
@@ -360,7 +379,11 @@ class Config:
     session_ttl_seconds: int
     session_max_age_seconds: int
     login_token_ttl_seconds: int
+    # The default expiry of a link that works more than once (see
+    # login_tokens.resolve_link).
+    multi_use_login_token_ttl_seconds: int
 
+    # >>> feature:api_keys
     # Whether the Authorization: Bearer header is believed at all, and whether
     # the endpoints that mint keys exist. Off stops existing keys from
     # authenticating too -- the rows stay, so switching it back on restores
@@ -369,15 +392,22 @@ class Config:
     # How long a new key lasts when the request does not say. Bounded so a
     # forgotten key eventually stops being a live credential.
     api_key_ttl_seconds: int
+    # <<< feature:api_keys
 
+    # >>> feature:passwords
     # Whether a password is believed at all, and whether an account can set
     # one. Off keeps the hashes, so switching it back on restores them.
     passwords_enabled: bool
+    # <<< feature:passwords
+    # >>> feature:two_factor
     # Whether 2FA is offered and asked for. Off keeps the secrets, the same way.
     two_factor_enabled: bool
+    # <<< feature:two_factor
+    # >>> feature:invite_links
     # Whether /join and every invite route answer, and whether a PIN can be
     # set. Off keeps the links and PINs, the same way.
     invite_links_enabled: bool
+    # <<< feature:invite_links
 
     # Encrypts session cookie payloads and, when encrypt_at_rest is on, every
     # record written to the database. Losing it means losing the data.
@@ -388,7 +418,7 @@ class Config:
     rate_limit_window_seconds: int = 60
     # The separate budget for signing in and joining.
     rate_limit_signin_max: int = 60
-    rate_limit_upload_max: int = 1200
+    rate_limit_upload_max: int = 1200  # feature:files
     body_limit_bytes: int = 1048576
 
     # proxy_header is believed only when trust_proxy is on *and* the
@@ -400,26 +430,34 @@ class Config:
     trusted_proxies: tuple[str, ...] = ()
     proxy_header: str = "X-Forwarded-For"
 
+    # >>> feature:maintenance
     # server.maintenance: see app/core/maintenance.py.
     maintenance: str = "none"
+    # <<< feature:maintenance
     # server.announcement: one line on every signed-in page.
     announcement: str = ""
 
+    # >>> feature:mcp
     # Whether POST /mcp exists. It answers only API keys, so with
     # api_keys_enabled off it is not registered either.
     mcp_enabled: bool = True
+    # <<< feature:mcp
 
+    # >>> feature:metrics
     # Whether GET /metrics exists. It answers only an admin API key, so with
     # api_keys_enabled off it answers 404 too.
     metrics_enabled: bool = False
+    # <<< feature:metrics
 
+    # >>> feature:logs
     # The activity log's settings; see app/core/logs.py.
     logs: LogsConfig = field(default_factory=LogsConfig)
+    # <<< feature:logs
 
     # The scheduled backup's settings; see app/core/backup.py.
     backups: BackupsConfig = field(default_factory=BackupsConfig)
-    webhooks: WebhooksConfig = field(default_factory=WebhooksConfig)
-    files: FilesConfig = field(default_factory=FilesConfig)
+    webhooks: WebhooksConfig = field(default_factory=WebhooksConfig)  # feature:webhooks
+    files: FilesConfig = field(default_factory=FilesConfig)  # feature:files
 
     # secret.key, beside config_file: the one file besides the app directory
     # that a backup must include. secret_created is true when this run
@@ -746,8 +784,8 @@ def validate(file: File) -> list[str]:
     check(server.rate_limit_max > 0, "server.rate_limit_max must be positive")
     check(server.rate_limit_window_seconds > 0, "server.rate_limit_window_seconds must be positive")
     check(server.rate_limit_signin_max > 0, "server.rate_limit_signin_max must be positive")
-    check(server.rate_limit_upload_max > 0, "server.rate_limit_upload_max must be positive")
-    check(server.maintenance in ("none", "read_only", "full"), "server.maintenance must be none, read_only or full")
+    check(server.rate_limit_upload_max > 0, "server.rate_limit_upload_max must be positive")  # feature:files
+    check(server.maintenance in ("none", "read_only", "full"), "server.maintenance must be none, read_only or full")  # feature:maintenance
     check(len(server.announcement) <= 500, "server.announcement must be 500 characters or fewer")
 
     auth = file.auth
@@ -757,16 +795,22 @@ def validate(file: File) -> list[str]:
         "auth.session_max_age_seconds must be at least auth.session_ttl_seconds",
     )
     check(auth.login_token_ttl_seconds > 0, "auth.login_token_ttl_seconds must be positive")
-    check(auth.api_key_ttl_seconds > 0, "auth.api_key_ttl_seconds must be positive")
+    check(auth.multi_use_login_token_ttl_seconds > 0, "auth.multi_use_login_token_ttl_seconds must be positive")
+    check(auth.api_key_ttl_seconds > 0, "auth.api_key_ttl_seconds must be positive")  # feature:api_keys
 
+    # >>> feature:logs
     logs = file.logs
     check(1 <= logs.retention_days <= 3650, f"logs.retention_days must be 1-3650, got {logs.retention_days}")
     check(logs.max_total_mb >= 1, "logs.max_total_mb must be positive")
     check(1 <= logs.max_file_mb <= logs.max_total_mb, "logs.max_file_mb must be positive and no more than logs.max_total_mb")
     check(logs.compress_after_days >= 0, "logs.compress_after_days must be 0 (never) or more")
+    # <<< feature:logs
 
+    # >>> feature:webhooks
     timeout = file.webhooks.timeout_seconds
     check(1 <= timeout <= 60, f"webhooks.timeout_seconds must be 1-60, got {timeout}")
+    # <<< feature:webhooks
+    # >>> feature:files
     check(file.files.max_file_bytes > 0, "files.max_file_bytes must be positive")
     check(file.files.quota_bytes_per_user > 0, "files.quota_bytes_per_user must be positive")
     check(file.files.abandoned_upload_hours > 0, "files.abandoned_upload_hours must be positive")
@@ -774,10 +818,13 @@ def validate(file: File) -> list[str]:
         not file.files.enabled or server.body_limit_bytes >= FILE_CHUNK_BYTES,
         f"server.body_limit_bytes must be at least {FILE_CHUNK_BYTES} while files.enabled is on: that is the size of one piece of an upload",
     )
+    # <<< feature:files
 
+    # >>> feature:backups
     backups = file.backups
     check(backups.interval_hours >= 1, f"backups.interval_hours must be at least 1, got {backups.interval_hours}")
     check(backups.keep >= 1, f"backups.keep must be at least 1, got {backups.keep}")
+    # <<< feature:backups
 
     docker = file.docker
     check(bool(_IMAGE.match(docker.image)), f"docker.image {docker.image!r} is not a valid lowercase image name")
@@ -950,7 +997,7 @@ def load_path(path: Path, exists: bool) -> Config:
     for directory, purpose in (
         (paths.app_dir, "app directory"),
         (paths.app_dir / STORAGE_DIR_NAME, "storage directory"),
-        (paths.app_dir / LOGS_DIR_NAME, "logs directory"),
+        (paths.app_dir / LOGS_DIR_NAME, "logs directory"),  # feature:logs
     ):
         try:
             # 0700 because the database lives in here.
@@ -999,25 +1046,27 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
         session_ttl_seconds=file.auth.session_ttl_seconds,
         session_max_age_seconds=file.auth.session_max_age_seconds,
         login_token_ttl_seconds=file.auth.login_token_ttl_seconds,
-        api_keys_enabled=file.auth.api_keys,
-        passwords_enabled=file.auth.passwords,
-        two_factor_enabled=file.auth.two_factor,
-        invite_links_enabled=file.auth.invite_links,
-        api_key_ttl_seconds=file.auth.api_key_ttl_seconds,
+        multi_use_login_token_ttl_seconds=file.auth.multi_use_login_token_ttl_seconds,
+        api_keys_enabled=file.auth.api_keys,  # feature:api_keys
+        passwords_enabled=file.auth.passwords,  # feature:passwords
+        two_factor_enabled=file.auth.two_factor,  # feature:two_factor
+        invite_links_enabled=file.auth.invite_links,  # feature:invite_links
+        api_key_ttl_seconds=file.auth.api_key_ttl_seconds,  # feature:api_keys
         secret_key=secret_key,
         encrypt_at_rest=file.server.encrypt_at_rest,
         rate_limit_max=file.server.rate_limit_max,
         rate_limit_window_seconds=file.server.rate_limit_window_seconds,
         rate_limit_signin_max=file.server.rate_limit_signin_max,
-        rate_limit_upload_max=file.server.rate_limit_upload_max,
+        rate_limit_upload_max=file.server.rate_limit_upload_max,  # feature:files
         body_limit_bytes=file.server.body_limit_bytes,
         trust_proxy=file.server.trust_proxy,
         trusted_proxies=tuple(entry.strip() for entry in file.server.trusted_proxies),
         proxy_header=file.server.proxy_header,
-        mcp_enabled=file.server.mcp,
-        maintenance=file.server.maintenance,
+        mcp_enabled=file.server.mcp,  # feature:mcp
+        maintenance=file.server.maintenance,  # feature:maintenance
         announcement=file.server.announcement,
-        metrics_enabled=file.metrics.enabled,
+        metrics_enabled=file.metrics.enabled,  # feature:metrics
+        # >>> feature:logs
         logs=LogsConfig(
             enabled=file.logs.enabled,
             dir=paths.app_dir / LOGS_DIR_NAME,
@@ -1029,11 +1078,15 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
             ui_clicks=file.logs.ui_clicks,
             echo=file.logs.echo,
         ),
+        # <<< feature:logs
+        # >>> feature:webhooks
         webhooks=WebhooksConfig(
             enabled=file.webhooks.enabled,
             timeout_seconds=file.webhooks.timeout_seconds,
             allow_private_targets=file.webhooks.allow_private_targets,
         ),
+        # <<< feature:webhooks
+        # >>> feature:files
         files=FilesConfig(
             enabled=file.files.enabled,
             max_file_bytes=file.files.max_file_bytes,
@@ -1042,11 +1095,12 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
             dir=paths.app_dir / STORAGE_DIR_NAME / FILES_DIR_NAME,
             uploads_dir=paths.app_dir / UPLOADS_DIR_NAME,
         ),
+        # <<< feature:files
         backups=BackupsConfig(
-            enabled=file.backups.enabled,
+            enabled=file.backups.enabled,  # feature:backups
             dir=paths.app_dir / BACKUPS_DIR_NAME,
-            interval_hours=file.backups.interval_hours,
-            keep=file.backups.keep,
+            interval_hours=file.backups.interval_hours,  # feature:backups
+            keep=file.backups.keep,  # feature:backups
         ),
         secret_file=config_secret.secret_path_for(path),
         file=file,

@@ -1,3 +1,4 @@
+// whole-file feature:logs
 // The browser half of the activity log: what people do on the page. The
 // server logs every request it answers on its own; this adds what it cannot
 // see -- which screen someone moved to, what they clicked, which form they

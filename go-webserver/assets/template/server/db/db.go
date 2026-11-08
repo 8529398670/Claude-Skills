@@ -38,12 +38,14 @@ const (
 	BucketWebhookDeliveries = "webhook_deliveries"
 	// BucketFiles describes uploads; the bytes are on disk. See models/file.go.
 	BucketFiles       = "files"
+	// BucketIPNames is what the owner calls an address. See models/ip_name.go.
+	BucketIPNames     = "ip_names"
 	BucketMeta        = "meta"
 	// BucketSchema holds the schema version, unencrypted. See migrate.go.
 	BucketSchema      = "schema"
 )
 
-var bucketNames = []string{ BucketUsers , BucketSessions , BucketLoginTokens , BucketAPIKeys , BucketInviteLinks , BucketSignInChallenges , BucketJobs , BucketWebhooks , BucketWebhookDeliveries , BucketFiles , BucketMeta , BucketSchema }
+var bucketNames = []string{ BucketUsers , BucketSessions , BucketLoginTokens , BucketAPIKeys , BucketInviteLinks , BucketSignInChallenges , BucketJobs , BucketWebhooks , BucketWebhookDeliveries , BucketFiles , BucketIPNames , BucketMeta , BucketSchema }
 
 type Store struct {
 	bolt          *bolt.DB

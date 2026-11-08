@@ -1,3 +1,4 @@
+// whole-file feature:sessions
 package routes
 
 import (
@@ -11,6 +12,12 @@ import (
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 )
+
+type labelSessionRequest struct {
+	Label     string  `json:"label"`
+	Expect    *string `json:"expect"`
+	CSRFToken string  `json:"csrf_token"`
+}
 
 // sessionRow picks out what the devices list shows. It names each field,
 // rather than returning the record, so the secret's hash and the CSRF token
@@ -31,6 +38,9 @@ func sessionRow( session *models.Session , current_id string ) ( row fiber.Map )
 	if session.UserAgent != "" {
 		row[ "user_agent" ] = session.UserAgent
 	}
+	if session.Label != "" {
+		row[ "label" ] = session.Label
+	}
 	return
 }
 
@@ -47,9 +57,36 @@ func ( handlers *Handlers ) ListMySessions( c fiber.Ctx ) ( err error ) {
 	for _ , session := range sessions {
 		rows = append( rows , sessionRow( session , actor.Session.ID ) )
 	}
+	// >>> feature:logs
+	owner_id , owner_err := models.OwnerID( handlers.Store )
+	if owner_err != nil {
+		err = serverError( c , owner_err )
+		return
+	}
+	if actor.User.ID == owner_id {
+		if name_err := handlers.nameSessionRows( rows ); name_err != nil {
+			err = serverError( c , name_err )
+			return
+		}
+	}
+	// <<< feature:logs
 	err = sendPage( c , "sessions" , rows )
 	return
 }
+
+// >>> feature:logs
+// nameSessionRows adds what the owner calls each address. Names are the owner's
+// own notes about people, so they go to the owner and nobody else.
+func ( handlers *Handlers ) nameSessionRows( rows []fiber.Map ) ( err error ) {
+	namer , err := models.LoadIPNamer( handlers.Store )
+	if err != nil { return }
+	for _ , row := range rows {
+		ip , _ := row[ "ip" ].( string )
+		if name := namer.Name( ip ); name != "" { row[ "ip_name" ] = name }
+	}
+	return
+}
+// <<< feature:logs
 
 // sessionsTarget reads whose sessions an admin route is asking about. Nobody but
 // the owner reaches the owner's, the same rule as revoking the owner's access.
@@ -95,6 +132,14 @@ func ( handlers *Handlers ) ListUserSessions( c fiber.Ctx ) ( err error ) {
 		if by_owner == false { delete( row , "ip" ) }
 		rows = append( rows , row )
 	}
+	// >>> feature:logs
+	if by_owner {
+		if name_err := handlers.nameSessionRows( rows ); name_err != nil {
+			err = serverError( c , name_err )
+			return
+		}
+	}
+	// <<< feature:logs
 	err = sendPage( c , "sessions" , rows )
 	return
 }
@@ -130,6 +175,40 @@ func ( handlers *Handlers ) RevokeUserSession( c fiber.Ctx ) ( err error ) {
 	default:
 		handlers.audit( c , logs.KindAdmin , "session revoked" , fiber.Map{ "user_id": user_id } )
 		err = c.JSON( fiber.Map{ "ok": true } )
+	}
+	return
+}
+
+// LabelMySession names one of your own devices, this one included. An empty
+// label clears the name. Admins see a label but cannot set one: it is what the
+// person calls their own device.
+func ( handlers *Handlers ) LabelMySession( c fiber.Ctx ) ( err error ) {
+	var body labelSessionRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	if models.ValidSessionLabel( body.Label ) == false {
+		err = badRequest( c , "a device name can be at most 80 characters" )
+		return
+	}
+	label_err := models.LabelSession( handlers.Store , security.UserFrom( c ).ID , c.Params( "session_id" ) , body.Label , body.Expect )
+	var stale *models.RenameConflictError
+	switch {
+	case errors.As( label_err , &stale ):
+		err = conflict( c , stale.Error() , fiber.Map{ "label": stale.Current } )
+	case errors.Is( label_err , models.ErrSessionNotFound ):
+		err = notFound( c , "not found" )
+	case label_err != nil:
+		err = serverError( c , label_err )
+	default:
+		// Not the label: it is the person's own words about where they are.
+		handlers.audit( c , logs.KindAuth , "session_labelled" , nil )
+		err = c.JSON( fiber.Map{ "ok": true , "label": strings.TrimSpace( body.Label ) } )
 	}
 	return
 }

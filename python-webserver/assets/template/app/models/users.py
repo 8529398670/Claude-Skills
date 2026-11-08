@@ -26,7 +26,8 @@ never fires again once an owner exists.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field  # feature:two_factor|shortcuts
 from datetime import datetime
 
 from app.core.db import BUCKET_META, BUCKET_USERS, Record, Store, Transaction
@@ -52,10 +53,13 @@ class User:
     role: str
     created_at: datetime
     disabled_at: datetime | None = None
+    # >>> feature:invite_links
     # The optional PIN asked for when someone signs back in through an
     # invite link. It is not a password: nothing else checks it. See
     # app/models/pins.py.
     pin_hash: str = ""
+    # <<< feature:invite_links
+    # >>> feature:passwords
     # What password sign-in needs: a unique name to look the account up by,
     # since display names are not unique, and a bcrypt hash of what the
     # browser derived from the password. See app/models/passwords.py.
@@ -64,6 +68,8 @@ class User:
     # The owner's per-account block. It stops the password working and keeps
     # the hash, so unblocking restores it.
     password_blocked: bool = False
+    # <<< feature:passwords
+    # >>> feature:two_factor
     # TOTP secrets are encrypted here as well as with the record, because
     # server.encrypt_at_rest can be off and a secret cannot be hashed. See
     # app/models/two_factor.py.
@@ -71,6 +77,12 @@ class User:
     totp_pending: str = ""
     totp_last_step: int = 0
     recovery_hashes: list[str] = field(default_factory=list)
+    # <<< feature:two_factor
+    # >>> feature:shortcuts
+    # The keyboard shortcuts this person changed, by action name. See
+    # app/models/shortcuts.py.
+    shortcuts: dict[str, str] = field(default_factory=dict)
+    # <<< feature:shortcuts
 
     @property
     def disabled(self) -> bool:
@@ -87,14 +99,19 @@ class User:
             "role": self.role,
             "created_at": to_iso(self.created_at),
             "disabled_at": to_iso(self.disabled_at),
-            "pin_hash": self.pin_hash,
+            "pin_hash": self.pin_hash,  # feature:invite_links
+            # >>> feature:passwords
             "username": self.username,
             "password_hash": self.password_hash,
             "password_blocked": self.password_blocked,
+            # <<< feature:passwords
+            # >>> feature:two_factor
             "totp_secret": self.totp_secret,
             "totp_pending": self.totp_pending,
             "totp_last_step": self.totp_last_step,
             "recovery_hashes": self.recovery_hashes,
+            # <<< feature:two_factor
+            "shortcuts": self.shortcuts,  # feature:shortcuts
         }
 
     @classmethod
@@ -105,14 +122,19 @@ class User:
             role=record["role"],
             created_at=from_iso(record["created_at"]),
             disabled_at=from_iso(record.get("disabled_at")),
-            pin_hash=record.get("pin_hash", ""),
+            pin_hash=record.get("pin_hash", ""),  # feature:invite_links
+            # >>> feature:passwords
             username=record.get("username", ""),
             password_hash=record.get("password_hash", ""),
             password_blocked=record.get("password_blocked", False),
+            # <<< feature:passwords
+            # >>> feature:two_factor
             totp_secret=record.get("totp_secret", ""),
             totp_pending=record.get("totp_pending", ""),
             totp_last_step=record.get("totp_last_step", 0),
             recovery_hashes=record.get("recovery_hashes", []),
+            # <<< feature:two_factor
+            shortcuts=record.get("shortcuts") or {},  # feature:shortcuts
         )
 
 

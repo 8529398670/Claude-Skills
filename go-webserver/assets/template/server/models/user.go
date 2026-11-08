@@ -27,10 +27,13 @@ type User struct {
 	Role        string     `json:"role"`
 	CreatedAt   time.Time  `json:"created_at"`
 	DisabledAt  *time.Time `json:"disabled_at,omitempty"`
+	// >>> feature:invite_links
 	// PinHash is the optional PIN asked for when someone signs back in
 	// through an invite link. It is not a password: nothing else checks it.
 	// See pin.go.
 	PinHash string `json:"pin_hash,omitempty"`
+	// <<< feature:invite_links
+	// >>> feature:passwords
 	// What password sign-in needs: a unique name to look the account up by,
 	// since display names are not unique, and a bcrypt hash of what the
 	// browser derived from the password. See password.go.
@@ -39,6 +42,8 @@ type User struct {
 	// PasswordBlocked is the owner's per-account block. It stops the password
 	// working and keeps the hash, so unblocking restores it.
 	PasswordBlocked bool `json:"password_blocked,omitempty"`
+	// <<< feature:passwords
+	// >>> feature:two_factor
 	// TOTP secrets are encrypted here as well as with the record, because
 	// server.encrypt_at_rest can be off and a secret cannot be hashed. See
 	// two_factor.go.
@@ -46,6 +51,12 @@ type User struct {
 	TOTPPending    string   `json:"totp_pending,omitempty"`
 	TOTPLastStep   uint64   `json:"totp_last_step,omitempty"`
 	RecoveryHashes []string `json:"recovery_hashes,omitempty"`
+	// <<< feature:two_factor
+	// >>> feature:shortcuts
+	// Shortcuts are the keyboard shortcuts this person changed, by action
+	// name. See shortcuts.go.
+	Shortcuts map[string]string `json:"shortcuts,omitempty"`
+	// <<< feature:shortcuts
 }
 
 func ( user *User ) Disabled() ( result bool ) {
@@ -158,6 +169,80 @@ func RenameUser( store *db.Store , user_id uint64 , display_name string , expect
 	return
 }
 
+// RenameUserAs is RenameUser for one account acting on another: any admin may
+// rename an ordinary user, and only the owner may rename an admin
+// (ErrOwnerRequired), because a name is how people tell who they are dealing
+// with. Your own name goes through RenameUser, from the Account screen.
+func RenameUserAs( store *db.Store , user_id uint64 , actor_id uint64 , display_name string , expect *string ) ( err error ) {
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		key := encryption.Uint64ToBytes( user_id )
+		user := &User{}
+		if tx_err = tx.Get( db.BucketUsers , key , user ); tx_err != nil { return }
+		owner_id , tx_err := ownerIDTx( tx )
+		if tx_err != nil { return }
+		if user.IsAdmin() && actor_id != owner_id {
+			tx_err = ErrOwnerRequired
+			return
+		}
+		if expect != nil && user.DisplayName != strings.TrimSpace( *expect ) {
+			tx_err = &RenameConflictError{ Current: user.DisplayName }
+			return
+		}
+		user.DisplayName = strings.TrimSpace( display_name )
+		tx_err = tx.Put( db.BucketUsers , key , user )
+		return
+	} )
+	return
+}
+
+// SetUserRole makes an account an admin or an ordinary user, and says whether
+// that changed anything. The rules follow deleting: nobody changes their own
+// role (ErrRoleSelf), the owner is always an admin (ErrOwnerProtected, transfer
+// ownership first), and only the owner takes an admin's rights away
+// (ErrOwnerRequired). Any admin may make one, as any admin can create one.
+//
+// Becoming an admin ends the account's sessions and live login links in the
+// same transaction. Whoever holds an invite link can sign in as an account that
+// joined through it, so a session already open may not be the person being
+// promoted. An admin cannot sign in through an invite link, so a new login link
+// is the way back in.
+//
+// Losing admin rights ends nothing: the role is read on every request, so it
+// applies at once, and API keys narrow to it (see NarrowRole). Invite links the
+// account made stop working while it is not an admin (see inviteLinkUsable).
+func SetUserRole( store *db.Store , user_id uint64 , actor_id uint64 , role string ) ( changed bool , err error ) {
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		key := encryption.Uint64ToBytes( user_id )
+		user := &User{}
+		if tx_err = tx.Get( db.BucketUsers , key , user ); tx_err != nil { return }
+		if user_id == actor_id {
+			tx_err = ErrRoleSelf
+			return
+		}
+		owner_id , tx_err := ownerIDTx( tx )
+		if tx_err != nil { return }
+		if user_id == owner_id {
+			tx_err = ErrOwnerProtected
+			return
+		}
+		if user.Role == role { return }
+		if user.IsAdmin() && actor_id != owner_id {
+			tx_err = ErrOwnerRequired
+			return
+		}
+		user.Role = role
+		if tx_err = tx.Put( db.BucketUsers , key , user ); tx_err != nil { return }
+		changed = true
+		if user.IsAdmin() == false { return }
+		if _ , tx_err = destroySessionsForUser( tx , user_id ); tx_err != nil { return }
+		if _ , tx_err = deletePendingLoginTokens( tx , user_id ); tx_err != nil { return }
+		tx_err = deleteChallengesForUser( tx , user_id ) // feature:two_factor
+		return
+	} )
+	if err != nil { changed = false }
+	return
+}
+
 // RenameConflictError is RenameUser's answer when the name was not what the
 // caller expected: someone changed it since. Current is the name it has now.
 type RenameConflictError struct {
@@ -194,7 +279,7 @@ func SetUserDisabled( store *db.Store , user_id uint64 , disabled bool ) ( err e
 		if disabled == false { return }
 		if _ , tx_err = destroySessionsForUser( tx , user_id ); tx_err != nil { return }
 		if _ , tx_err = deletePendingLoginTokens( tx , user_id ); tx_err != nil { return }
-		tx_err = deleteChallengesForUser( tx , user_id )
+		tx_err = deleteChallengesForUser( tx , user_id ) // feature:two_factor
 		return
 	} )
 	return

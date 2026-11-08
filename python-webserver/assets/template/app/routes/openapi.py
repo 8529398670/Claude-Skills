@@ -1,3 +1,4 @@
+# whole-file feature:openapi
 """Hands out config/openapi.json. It is written by hand, so it can say what a
 route takes and returns; app/tests/test_openapi.py fails when it and the route
 table disagree. Signed-in callers only: it maps the admin surface, and nobody

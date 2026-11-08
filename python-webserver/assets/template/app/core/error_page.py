@@ -63,8 +63,10 @@ def _section(status: int) -> str:
         return "method_not_allowed"
     if status == 429:
         return "rate_limited"
+    # >>> feature:maintenance
     if status == 503:
         return "maintenance"
+    # <<< feature:maintenance
     if status >= 500:
         return "server_error"
     return "other"

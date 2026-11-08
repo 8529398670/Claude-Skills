@@ -1,3 +1,4 @@
+// whole-file feature:logs
 package logs
 
 import (
@@ -149,7 +150,7 @@ func ( logger *Logger ) Log( entry Entry ) {
 		entry.Level = LevelInfo
 	}
 	select {
-	case logger.queue <- entry:
+	case logger.queue <- entry.owned():
 	default:
 		logger.dropped.Add( 1 )
 	}

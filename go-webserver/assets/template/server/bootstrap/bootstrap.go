@@ -3,7 +3,7 @@
 // is no admin to do it.
 //
 // So on first boot -- and only when no enabled admin exists -- the server
-// creates one and prints a one-time login link to its own logs. Whoever can
+// creates one and prints a login link (one-time) to its own logs. Whoever can
 // read the container logs is already trusted with the deployment, so this
 // grants nothing they did not already have, and it means a fresh deploy is
 // usable without a separate setup command.
@@ -36,13 +36,14 @@ func EnsureFirstAdmin( store *db.Store , cfg *config.Config , display_name strin
 	user , err := models.CreateUser( store , display_name , models.RoleAdmin )
 	if err != nil { return }
 
-	credential , err := models.IssueLoginToken( store , user.ID , cfg.LoginTokenTTL )
+	credential , info , err := models.IssueLoginLink( store , user.ID , models.OnceLink( cfg.LoginTokenTTL ) )
 	if err != nil { return }
 
-	PrintLoginLink( cfg , fmt.Sprintf( "first-run admin %q" , display_name ) , credential )
+	PrintLoginLink( cfg , fmt.Sprintf( "first-run admin %q" , display_name ) , credential , &info )
 	return
 }
 
+// >>> feature:api_keys
 // PrintAPIKey writes the one moment an API key is ever visible. It lives
 // beside PrintLoginLink so that every path which reveals a credential is in
 // one file, with one shape and one warning.
@@ -64,19 +65,25 @@ func PrintAPIKey( cfg *config.Config , label string , credential string , expire
 	fmt.Println( "  revoke it: {{PROJECT_SLUG}} manage revoke-key -key-id <id>" )
 	fmt.Println( line )
 }
+// <<< feature:api_keys
 
 // PrintLoginLink writes the one moment a credential is ever visible, as one
 // full URL you can click. The address is server.public_url when set; without
 // it the server only knows its own listen address, which linkNote says
 // rather than leaving a confidently wrong host unexplained.
-func PrintLoginLink( cfg *config.Config , label string , credential string ) {
+//
+// The header says LOGIN LINK whatever the link allows; scripts/login.sh and
+// docker/run.sh find the link by it.
+func PrintLoginLink( cfg *config.Config , label string , credential string , link *models.LoginLinkInfo ) {
 	line := strings.Repeat( "-" , 72 )
 	fmt.Println( line )
-	fmt.Printf( "  ONE-TIME LOGIN LINK -- %s\n" , label )
+	fmt.Printf( "  LOGIN LINK -- %s\n" , label )
 	fmt.Println( line )
 	fmt.Printf( "  %s/login/%s\n" , cfg.URL , credential )
 	fmt.Println( line )
-	fmt.Printf( "  Valid once, for %s.\n" , cfg.LoginTokenTTL )
+	if link != nil {
+		fmt.Printf( "  %s\n" , models.DescribeLoginLink( *link ) )
+	}
 	linkNote( cfg )
 	fmt.Println( "  It is not stored anywhere and cannot be shown again -- if you lose" )
 	fmt.Println( "  it, mint another with scripts/login.sh (or: {{PROJECT_SLUG}} manage" )
@@ -84,6 +91,7 @@ func PrintLoginLink( cfg *config.Config , label string , credential string ) {
 	fmt.Println( line )
 }
 
+// >>> feature:invite_links
 // PrintInviteLink shows a new invite link once. Like a login link it is
 // stored only as a hash, so this is the only time it can be copied.
 func PrintInviteLink( cfg *config.Config , label string , credential string , expires string ) {
@@ -99,6 +107,7 @@ func PrintInviteLink( cfg *config.Config , label string , credential string , ex
 	fmt.Println( "  It cannot be shown again; switch it off in the admin panel." )
 	fmt.Println( line )
 }
+// <<< feature:invite_links
 
 // linkNote says where the address in a printed link came from, so a link
 // built from 127.0.0.1 is not mistaken for one other people can open.

@@ -1,3 +1,4 @@
+# whole-file feature:passwords
 """Password sign-in, which the owner turns on with auth.passwords.
 
 The server never sees a password. static/js/password.js derives a digest from
@@ -23,7 +24,7 @@ import re
 
 from app.core import encryption
 from app.core.db import BUCKET_META, BUCKET_SESSIONS, BUCKET_USERS, Store, Transaction
-from app.models import two_factor
+from app.models import two_factor  # feature:two_factor
 from app.models.sign_in import SignIn, SignInRules, start_sign_in_tx
 from app.models.users import User, list_users
 
@@ -101,9 +102,9 @@ def set_password(
     username: object,
     digest: object,
     keep_session_id: str,
-    code: object,
-    two_factor_enabled: bool,
-    secret_key: str,
+    code: object,  # feature:two_factor
+    two_factor_enabled: bool,  # feature:two_factor
+    secret_key: str,  # feature:two_factor
 ) -> bool:
     """Set the account's username and password, or with an empty digest
     remove the password. False if there is no such user.
@@ -132,8 +133,10 @@ def set_password(
             return False
         if record.get("password_blocked", False):
             raise PasswordBlockedError()
+        # >>> feature:two_factor
         if two_factor_enabled and record.get("totp_secret", "") != "":
             two_factor.check_code(record, code, secret_key)
+        # <<< feature:two_factor
         if not clearing:
             if _username_taken(tx, name, user_id):
                 raise UsernameTakenError()

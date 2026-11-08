@@ -8,7 +8,8 @@ rem                                      copy this checkout started last, start
 rem                                      a fresh one here
 rem   scripts\run.bat stop               stop the copy this checkout started
 rem                                      (in this window, another, or the
-rem                                      hidden one scripts\login.bat starts)
+rem                                      hidden one login.bat --background
+rem                                      starts)
 rem   scripts\run.bat manage <command>   run an admin command against it
 rem   scripts\run.bat <anything else>    same: passed straight to the binary
 rem
@@ -100,7 +101,7 @@ set "VERSION=dev"
 set "COMMIT=unknown"
 for /f "delims=" %%v in ('powershell -NoProfile -Command "(Get-Date).ToUniversalTime().ToString('yyyy.MM.dd-HHmm')" 2^>nul') do set "VERSION=%%v"
 for /f "delims=" %%c in ('git rev-parse --short HEAD 2^>nul') do set "COMMIT=%%c"
-go build -trimpath -ldflags "-X main.version=%VERSION% -X main.commit=%COMMIT%" -o "%BUILT%" .
+go build -buildvcs=false -trimpath -ldflags "-X main.version=%VERSION% -X main.commit=%COMMIT%" -o "%BUILT%" .
 if not errorlevel 1 goto built
 echo.
 echo ERROR: the build failed (above). Nothing was stopped or started.

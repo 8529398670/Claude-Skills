@@ -1,3 +1,4 @@
+// whole-file feature:files
 package routes
 
 import (
@@ -52,6 +53,11 @@ func ( handlers *Handlers ) RequireFiles( c fiber.Ctx ) ( err error ) {
 	}
 	err = c.Next()
 	return
+}
+type renameFileRequest struct {
+	Name      string  `json:"name"`
+	Expect    *string `json:"expect"`
+	CSRFToken string  `json:"csrf_token"`
 }
 
 // fileRow picks the fields by hand, so the sealed key cannot reach a response
@@ -148,7 +154,8 @@ func ( handlers *Handlers ) ListMyFiles( c fiber.Ctx ) ( err error ) {
 	for _ , file := range files {
 		rows = append( rows , fileRow( file ) )
 	}
-	err = sendPage( c , "files" , rows )
+	rows = matchRows( rows , c.Query( "q" ) , "name" )
+	err = sendSorted( c , "files" , rows , "name" , "size" , "created_at" )
 	return
 }
 
@@ -176,7 +183,8 @@ func ( handlers *Handlers ) ListAllFiles( c fiber.Ctx ) ( err error ) {
 		row[ "user_name" ] = names[ file.UserID ]
 		rows = append( rows , row )
 	}
-	err = sendPage( c , "files" , rows )
+	rows = matchRows( rows , c.Query( "q" ) , "name" , "user_name" )
+	err = sendSorted( c , "files" , rows , "name" , "user_name" , "size" , "created_at" )
 	return
 }
 
@@ -309,7 +317,7 @@ func ( handlers *Handlers ) FinishFile( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "file uploaded" , fiber.Map{ "file_id": finished.ID , "size": finished.Size } )
-	handlers.Webhooks.Emit( models.EventFileUploaded , map[string]any{ "file_id": finished.ID , "user_id": finished.UserID , "name": finished.Name , "size": finished.Size } )
+	handlers.Webhooks.Emit( models.EventFileUploaded , map[string]any{ "file_id": finished.ID , "user_id": finished.UserID , "name": finished.Name , "size": finished.Size } ) // feature:webhooks
 	err = c.JSON( fileRow( finished ) )
 	return
 }
@@ -379,8 +387,63 @@ func ( handlers *Handlers ) removeFile( c fiber.Ctx , file *models.File ) ( err 
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "file deleted" , fiber.Map{ "file_id": file.ID , "user_id": file.UserID } )
-	handlers.Webhooks.Emit( models.EventFileDeleted , map[string]any{ "file_id": file.ID , "user_id": file.UserID , "name": file.Name } )
+	handlers.Webhooks.Emit( models.EventFileDeleted , map[string]any{ "file_id": file.ID , "user_id": file.UserID , "name": file.Name } ) // feature:webhooks
 	err = c.JSON( fiber.Map{ "ok": true } )
+	return
+}
+
+// renameFile is the two rename routes. own_only is the difference: an admin may
+// rename anyone's, as an admin may delete anyone's.
+func ( handlers *Handlers ) renameFile( c fiber.Ctx , own_only bool ) ( err error ) {
+	var body renameFileRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	file_id := strings.Clone( c.Params( "file_id" ) )
+	var file *models.File
+	var get_err error
+	if own_only {
+		file , get_err = handlers.myFile( c , file_id )
+	} else {
+		file , get_err = models.GetFile( handlers.Store , file_id )
+	}
+	if get_err != nil {
+		err = notFound( c , "no such file" )
+		return
+	}
+	name , rename_err := models.RenameFile( handlers.Store , file.ID , body.Name , body.Expect )
+	var refusal *models.RenameConflictError
+	switch {
+	case errors.As( rename_err , &refusal ):
+		err = conflict( c , refusal.Error() , fiber.Map{ "name": refusal.Current } )
+		return
+	case errors.Is( rename_err , models.ErrBadFileName ):
+		err = badRequest( c , rename_err.Error() )
+		return
+	case errors.Is( rename_err , db.ErrNotFound ):
+		err = notFound( c , "no such file" )
+		return
+	case rename_err != nil:
+		err = serverError( c , rename_err )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "file renamed" , fiber.Map{ "file_id": file.ID , "user_id": file.UserID } )
+	err = c.JSON( fiber.Map{ "ok": true , "name": name } )
+	return
+}
+
+func ( handlers *Handlers ) RenameMyFile( c fiber.Ctx ) ( err error ) {
+	err = handlers.renameFile( c , true )
+	return
+}
+
+func ( handlers *Handlers ) RenameAnyFile( c fiber.Ctx ) ( err error ) {
+	err = handlers.renameFile( c , false )
 	return
 }
 

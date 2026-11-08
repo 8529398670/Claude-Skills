@@ -1,3 +1,4 @@
+# whole-file feature:maintenance
 """server.maintenance: what each mode leaves open, that only the owner's
 browser session gets past it, and that switching it needs no restart."""
 from __future__ import annotations
@@ -19,8 +20,8 @@ class AllowsTest(unittest.TestCase):
             (READ_ONLY, "POST", "/api/account/rename", False),
             (READ_ONLY, "POST", "/mcp", False),
             (READ_ONLY, "POST", "/api/logs/events", False),
-            (READ_ONLY, "GET", "/join/abc", False),
-            (READ_ONLY, "POST", "/api/join/create", False),
+            (READ_ONLY, "GET", "/join/abc", False),  # feature:invite_links
+            (READ_ONLY, "POST", "/api/join/create", False),  # feature:invite_links
             (READ_ONLY, "POST", "/api/logout", True),
             (READ_ONLY, "POST", "/api/login", True),
             (FULL, "GET", "/", False),
@@ -31,16 +32,16 @@ class AllowsTest(unittest.TestCase):
             (FULL, "GET", "/js/app.js", True),
             (FULL, "GET", "/api/health", True),
             (FULL, "GET", "/api/ready", True),
-            (FULL, "GET", "/metrics", True),
+            (FULL, "GET", "/metrics", True),  # feature:metrics
             (FULL, "GET", "/api/language", True),
             (FULL, "GET", "/api/me", True),
             (FULL, "GET", "/login/abc.def", True),
-            (FULL, "POST", "/api/login/two-factor", True),
+            (FULL, "POST", "/api/login/two-factor", True),  # feature:two_factor
             # A spelling must not open anything, or pass for a file.
             (FULL, "GET", "/API/TEAM/", False),
             (FULL, "GET", "/API/ADMIN/USERS.JS", False),
-            (READ_ONLY, "POST", "/API/JOIN/CREATE/", False),
-            (READ_ONLY, "GET", "/JOIN/abc", False),
+            (READ_ONLY, "POST", "/API/JOIN/CREATE/", False),  # feature:invite_links
+            (READ_ONLY, "GET", "/JOIN/abc", False),  # feature:invite_links
             (FULL, "GET", "/INDEX.HTML", False),
         ]
         for mode, method, path, allowed in cases:
@@ -54,10 +55,12 @@ class MaintenanceRoutesTest(RoutesTestCase):
         self.assertEqual(self.call("GET", "/api/team", cookie=self.owner_cookie)[0], 200)
         status, reply = self.call("GET", "/api/team", cookie=self.user_cookie)
         self.assertEqual((status, reply["maintenance"]), (503, FULL))
+        # >>> feature:api_keys
         # The owner's key is not the owner's session.
         response = self.request("GET", "/api/team", key=self.admin_key)
         self.assertEqual(response.status_code, 503)
         self.assertTrue(response.headers["retry-after"])
+        # <<< feature:api_keys
         # Still able to find out why.
         self.assertEqual(self.call("GET", "/api/me", cookie=self.user_cookie)[1]["maintenance"], FULL)
 

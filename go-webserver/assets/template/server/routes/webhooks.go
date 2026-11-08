@@ -1,3 +1,4 @@
+// whole-file feature:webhooks
 package routes
 
 import (
@@ -39,6 +40,19 @@ type createWebhookRequest struct {
 type webhookEnabledRequest struct {
 	Enabled   bool   `json:"enabled"`
 	CSRFToken string `json:"csrf_token"`
+}
+
+type renameWebhookRequest struct {
+	Name      string  `json:"name"`
+	Expect    *string `json:"expect"`
+	CSRFToken string  `json:"csrf_token"`
+}
+
+type webhookTargetRequest struct {
+	URL       string                `json:"url"`
+	Events    []string              `json:"events"`
+	Expect    *models.WebhookTarget `json:"expect"`
+	CSRFToken string                `json:"csrf_token"`
 }
 
 // webhookRow picks the fields by hand, like sessionRow, so the sealed secret
@@ -93,7 +107,8 @@ func ( handlers *Handlers ) ListWebhooks( c fiber.Ctx ) ( err error ) {
 	for _ , hook := range hooks {
 		rows = append( rows , webhookRow( hook ) )
 	}
-	err = sendPage( c , "webhooks" , rows )
+	rows = matchRows( rows , c.Query( "q" ) , "name" , "url" )
+	err = sendSorted( c , "webhooks" , rows , "name" , "url" , "enabled" )
 	return
 }
 
@@ -148,6 +163,108 @@ func ( handlers *Handlers ) SetWebhookEnabled( c fiber.Ctx ) ( err error ) {
 	}
 	handlers.audit( c , logs.KindAdmin , "webhook enabled set" , fiber.Map{ "webhook_id": webhook_id , "enabled": body.Enabled } )
 	err = c.JSON( fiber.Map{ "ok": true } )
+	return
+}
+
+func ( handlers *Handlers ) RenameWebhook( c fiber.Ctx ) ( err error ) {
+	var body renameWebhookRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	if models.ValidWebhookName( body.Name ) == false {
+		err = badRequest( c , models.ErrBadWebhookName.Error() )
+		return
+	}
+	webhook_id := strings.Clone( c.Params( "webhook_id" ) )
+	rename_err := models.RenameWebhook( handlers.Store , webhook_id , body.Name , body.Expect )
+	var refusal *models.RenameConflictError
+	switch {
+	case errors.As( rename_err , &refusal ):
+		err = conflict( c , refusal.Error() , fiber.Map{ "name": refusal.Current } )
+		return
+	case errors.Is( rename_err , db.ErrNotFound ):
+		err = notFound( c , "no such webhook" )
+		return
+	case rename_err != nil:
+		err = serverError( c , rename_err )
+		return
+	}
+	name := strings.TrimSpace( body.Name )
+	handlers.audit( c , logs.KindAdmin , "webhook renamed" , fiber.Map{ "webhook_id": webhook_id , "name": name } )
+	err = c.JSON( fiber.Map{ "ok": true , "name": name } )
+	return
+}
+
+// SetWebhookTarget changes the address and the events. The address gets the
+// same check as a new endpoint's, every time: an events-only edit of one that
+// has since been ruled out is refused too, and the sender would refuse it anyway.
+func ( handlers *Handlers ) SetWebhookTarget( c fiber.Ctx ) ( err error ) {
+	var body webhookTargetRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	target := models.WebhookTarget{ URL: body.URL , Events: body.Events }
+	if models.ValidWebhookTarget( target ) == false {
+		err = badRequest( c , models.ErrBadWebhookTarget.Error() )
+		return
+	}
+	if check_err := webhooks.CheckURL( body.URL , handlers.cfg().Webhooks.AllowPrivateTargets ); check_err != nil {
+		err = badRequest( c , check_err.Error() )
+		return
+	}
+	webhook_id := strings.Clone( c.Params( "webhook_id" ) )
+	set_err := models.SetWebhookTarget( handlers.Store , webhook_id , target , body.Expect )
+	switch {
+	case errors.Is( set_err , models.ErrWebhookChanged ):
+		err = conflict( c , set_err.Error() , nil )
+		return
+	case errors.Is( set_err , db.ErrNotFound ):
+		err = notFound( c , "no such webhook" )
+		return
+	case set_err != nil:
+		err = serverError( c , set_err )
+		return
+	}
+	// The events but not the url, which can hold a token of its own.
+	handlers.audit( c , logs.KindAdmin , "webhook target changed" , fiber.Map{ "webhook_id": webhook_id , "events": body.Events } )
+	err = c.JSON( fiber.Map{ "ok": true } )
+	return
+}
+
+// RotateWebhookSecret answers with the new signing secret, the only time it
+// is shown.
+func ( handlers *Handlers ) RotateWebhookSecret( c fiber.Ctx ) ( err error ) {
+	var body csrfOnlyRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	webhook_id := strings.Clone( c.Params( "webhook_id" ) )
+	secret , rotate_err := models.RotateWebhookSecret( handlers.Store , handlers.cfg().SecretKey , webhook_id )
+	switch {
+	case errors.Is( rotate_err , db.ErrNotFound ):
+		err = notFound( c , "no such webhook" )
+		return
+	case rotate_err != nil:
+		err = serverError( c , rotate_err )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "webhook secret rotated" , fiber.Map{ "webhook_id": webhook_id } )
+	err = c.JSON( fiber.Map{ "secret": secret } )
 	return
 }
 

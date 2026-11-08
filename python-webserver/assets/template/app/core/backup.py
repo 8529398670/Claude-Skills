@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import IO, Callable
 
 from app.core import config, config_secret, db, encryption, server_lock
-from app.models import two_factor
+from app.models import sealed
 
 # Goes up when an older restore could no longer read a backup correctly.
 FORMAT_VERSION = 1
@@ -215,6 +215,7 @@ def _add_storage(archive: tarfile.TarFile, root: Path) -> None:
                 pass  # Deleted during the walk: simply not in this backup.
 
 
+# >>> feature:backups
 # ---------------------------------------------------------------------------
 # scheduled backups
 # ---------------------------------------------------------------------------
@@ -266,6 +267,7 @@ def prune(settings: config.BackupsConfig) -> int:
         if entry.name.startswith((".backup-", ".snapshot-")) and now().timestamp() - entry.stat().st_mtime > STALE_AFTER_SECONDS:
             os.unlink(entry.path)
     return len(doomed)
+# <<< feature:backups
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +304,7 @@ def restore(cfg: config.Config, source: str, key_file: str = "") -> RestoreResul
         staged_database = staging / DATABASE_NAME
         try:
             if source_key != cfg.secret_key:
-                rewrite = two_factor.rekey_record(source_key, cfg.secret_key)
+                rewrite = sealed.rekey_record(source_key, cfg.secret_key)
                 db.rekey(staged_database, source_key, cfg.secret_key, cfg.encrypt_at_rest, rewrite)
                 result.rekeyed = True
             db.check_file(staged_database, cfg.secret_key, cfg.encrypt_at_rest)

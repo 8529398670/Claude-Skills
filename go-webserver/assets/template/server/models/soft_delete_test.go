@@ -3,9 +3,9 @@ package models
 import (
 	errors "errors"
 	testing "testing"
-	time "time"
+	time "time" // feature:api_keys|invite_links
 
-	db "{{MODULE_PATH}}/server/db"
+	db "{{MODULE_PATH}}/server/db" // feature:api_keys|invite_links
 )
 
 // Deleting an API key or invite link is undoable for RestoreWindow (see
@@ -13,6 +13,7 @@ import (
 // dead at once, only the right people can bring it back, only for a while,
 // and the purge removes it once the window has passed.
 
+// >>> feature:api_keys|invite_links
 // backdate moves a deletion to just past the restore window.
 func backdate( t *testing.T , store *db.Store , bucket string , id string , item any ) {
 	t.Helper()
@@ -21,16 +22,22 @@ func backdate( t *testing.T , store *db.Store , bucket string , id string , item
 		func( value any ) ( mutate_err error ) {
 			past := time.Now().UTC().Add( -RestoreWindow - time.Second )
 			switch record := value.( type ) {
+			// >>> feature:api_keys
 			case *APIKey:
 				record.DeletedAt = &past
+			// <<< feature:api_keys
+			// >>> feature:invite_links
 			case *InviteLink:
 				record.DeletedAt = &past
+			// <<< feature:invite_links
 			}
 			return
 		} )
 	if err != nil { t.Fatal( err ) }
 }
+// <<< feature:api_keys|invite_links
 
+// >>> feature:api_keys
 func TestAPIKeySoftDelete( t *testing.T ) {
 	store := testStore( t )
 	admin , _ := CreateUser( store , "Admin" , RoleAdmin )
@@ -85,7 +92,9 @@ func TestAPIKeySoftDelete( t *testing.T ) {
 		t.Fatal( "the purge removed a deletion still inside its window" )
 	}
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func TestAPIKeyRestoreKeepsTheCap( t *testing.T ) {
 	store := testStore( t )
 	alice , _ := CreateUser( store , "Alice" , RoleUser )
@@ -98,7 +107,9 @@ func TestAPIKeyRestoreKeepsTheCap( t *testing.T ) {
 		t.Fatalf( "restore over the cap: got %v" , err )
 	}
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func TestPurgeAPIKeyIsAHardDelete( t *testing.T ) {
 	store := testStore( t )
 	alice , _ := CreateUser( store , "Alice" , RoleUser )
@@ -108,7 +119,9 @@ func TestPurgeAPIKeyIsAHardDelete( t *testing.T ) {
 		t.Fatal( "a purged key is still stored" )
 	}
 }
+// <<< feature:api_keys
 
+// >>> feature:invite_links
 func TestInviteLinkSoftDelete( t *testing.T ) {
 	store := testStore( t )
 	admin , _ := CreateUser( store , "Admin" , RoleAdmin )
@@ -143,6 +156,7 @@ func TestInviteLinkSoftDelete( t *testing.T ) {
 		t.Fatalf( "restoring a missing link: got %v" , err )
 	}
 }
+// <<< feature:invite_links
 
 func TestRenameExpect( t *testing.T ) {
 	store := testStore( t )

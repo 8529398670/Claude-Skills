@@ -7,9 +7,15 @@ from __future__ import annotations
 
 from typing import Callable
 
-from app.core import backup, config_live, db, logs
+from app.core import config_live, db, logs
+from app.core import backup  # feature:backups
 from app.core.jobs import Registry
-from app.models import api_keys, files, invite_links, login_tokens, sessions, sign_in, webhooks
+from app.models import login_tokens, sessions
+from app.models import api_keys  # feature:api_keys
+from app.models import files  # feature:files
+from app.models import invite_links  # feature:invite_links
+from app.models import sign_in  # feature:two_factor
+from app.models import webhooks  # feature:webhooks
 
 HOUR_SECONDS = 60 * 60
 
@@ -26,10 +32,10 @@ def purge(store: db.Store) -> tuple[str, str]:
     steps: tuple[tuple[str, Callable[[db.Store], int]], ...] = (
         ("sessions", sessions.purge_expired_sessions),
         ("login tokens", login_tokens.purge_expired_login_tokens),
-        ("api keys", api_keys.purge_dead_api_keys),
-        ("invite links", invite_links.purge_dead_invite_links),
-        ("sign-in challenges", sign_in.purge_expired_challenges),
-        ("webhook rows", webhooks.purge_webhooks),
+        ("api keys", api_keys.purge_dead_api_keys),  # feature:api_keys
+        ("invite links", invite_links.purge_dead_invite_links),  # feature:invite_links
+        ("sign-in challenges", sign_in.purge_expired_challenges),  # feature:two_factor
+        ("webhook rows", webhooks.purge_webhooks),  # feature:webhooks
     )
     removed: list[str] = []
     errors: list[str] = []
@@ -47,6 +53,7 @@ def purge(store: db.Store) -> tuple[str, str]:
     return note, "; ".join(errors)
 
 
+# >>> feature:logs
 def prune_logs(logger: logs.Logger) -> tuple[str, str]:
     """The activity log's retention: compress, expire, recycle."""
     pruned = logger.prune()
@@ -56,6 +63,8 @@ def prune_logs(logger: logs.Logger) -> tuple[str, str]:
     return f"{pruned['deleted']} days deleted, {pruned['compressed']} compressed", ""
 
 
+# <<< feature:logs
+# >>> feature:backups
 def scheduled_backup(store: db.Store, settings: config_live.Holder, logger: logs.Logger) -> tuple[str, str]:
     """The scheduled backup, when one is on and due. The job is hourly and
     backups.interval_hours decides which of those passes write a file. The
@@ -69,8 +78,10 @@ def scheduled_backup(store: db.Store, settings: config_live.Holder, logger: logs
     print(f"[backup] {made.path} ({made.size} bytes), {removed} old backups removed", flush=True)
     logger.system(logs.LEVEL_INFO, "scheduled backup written", {"path": str(made.path), "bytes": made.size, "removed": removed})
     return f"wrote {made.path.name}", ""
+# <<< feature:backups
 
 
+# >>> feature:files
 def sweep_files(store: db.Store, settings: config_live.Holder) -> tuple[str, str]:
     """Remove what uploads leave behind; see files.sweep_files. It runs with
     files.enabled off as well: switching uploads off is no reason to keep a
@@ -79,9 +90,12 @@ def sweep_files(store: db.Store, settings: config_live.Holder) -> tuple[str, str
     return f"removed {removed} files, {strays} strays", ""
 
 
+# <<< feature:files
 def register(registry: Registry, store: db.Store, settings: config_live.Holder, logger: logs.Logger) -> None:
     registry.register("purge", HOUR_SECONDS, lambda: purge(store))
+    # >>> feature:logs
     if logger.enabled:
         registry.register("prune-logs", HOUR_SECONDS, lambda: prune_logs(logger))
-    registry.register("backup", HOUR_SECONDS, lambda: scheduled_backup(store, settings, logger))
-    registry.register("files", HOUR_SECONDS, lambda: sweep_files(store, settings))
+    # <<< feature:logs
+    registry.register("backup", HOUR_SECONDS, lambda: scheduled_backup(store, settings, logger))  # feature:backups
+    registry.register("files", HOUR_SECONDS, lambda: sweep_files(store, settings))  # feature:files

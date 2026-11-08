@@ -6,14 +6,15 @@ import asyncio
 import unittest
 from dataclasses import dataclass, field
 
-from app.core.middleware import BUDGET_GENERAL, BUDGET_NONE, BUDGET_SIGN_IN, BUDGET_UPLOAD, RateLimit, budget_for
+from app.core.middleware import BUDGET_GENERAL, BUDGET_NONE, BUDGET_SIGN_IN, RateLimit, budget_for
+from app.core.middleware import BUDGET_UPLOAD  # feature:files
 
 
 @dataclass
 class Settings:
     rate_limit_max: int = 2
     rate_limit_signin_max: int = 2
-    rate_limit_upload_max: int = 3
+    rate_limit_upload_max: int = 3  # feature:files
     rate_limit_window_seconds: int = 60
     trust_proxy: bool = False
     trusted_proxies: tuple = field(default_factory=tuple)
@@ -57,8 +58,8 @@ class BudgetTest(unittest.TestCase):
             ("GET", "/"): BUDGET_GENERAL,
             ("GET", "/settings"): BUDGET_GENERAL,
             ("GET", "/api/me"): BUDGET_GENERAL,
-            ("POST", "/api/files/abc/chunks/1"): BUDGET_UPLOAD,
-            ("POST", "/API/Files/abc/chunks/1/"): BUDGET_UPLOAD,
+            ("POST", "/api/files/abc/chunks/1"): BUDGET_UPLOAD,  # feature:files
+            ("POST", "/API/Files/abc/chunks/1/"): BUDGET_UPLOAD,  # feature:files
             ("GET", "/api/files/abc/chunks/1"): BUDGET_GENERAL,
             ("POST", "/api/files/abc/finish"): BUDGET_GENERAL,
             ("POST", "/api/files/abc/chunks"): BUDGET_GENERAL,
@@ -67,9 +68,9 @@ class BudgetTest(unittest.TestCase):
             ("GET", "/login/abc.def"): BUDGET_GENERAL,
             ("GET", "/join/abc.def"): BUDGET_GENERAL,
             ("POST", "/api/login"): BUDGET_SIGN_IN,
-            ("POST", "/api/login/two-factor"): BUDGET_SIGN_IN,
-            ("POST", "/api/login/password"): BUDGET_SIGN_IN,
-            ("POST", "/api/join/create"): BUDGET_SIGN_IN,
+            ("POST", "/api/login/two-factor"): BUDGET_SIGN_IN,  # feature:two_factor
+            ("POST", "/api/login/password"): BUDGET_SIGN_IN,  # feature:passwords
+            ("POST", "/api/join/create"): BUDGET_SIGN_IN,  # feature:invite_links
             ("POST", "/API/Login/"): BUDGET_SIGN_IN,
             ("GET", "/API/owner/logs/days/2026.11"): BUDGET_GENERAL,
             ("GET", "/MCP.json"): BUDGET_GENERAL,
@@ -93,8 +94,8 @@ class RateLimitTest(unittest.TestCase):
         limited = Limited(rate_limit_max=3)
         self.assertEqual(limited.status("POST", "/api/login"), 200)
         self.assertEqual(limited.status("POST", "/api/login"), 200)
-        self.assertEqual(limited.status("POST", "/api/login/password"), 429)
-        self.assertEqual(limited.status("POST", "/api/join/claim"), 429, "joining shares the sign-in budget")
+        self.assertEqual(limited.status("POST", "/api/login/password"), 429)  # feature:passwords
+        self.assertEqual(limited.status("POST", "/api/join/claim"), 429, "joining shares the sign-in budget")  # feature:invite_links
         self.assertEqual(limited.status("GET", "/api/me"), 200, "sign-in spent the general budget")
 
     def test_the_page_itself_still_counts(self) -> None:

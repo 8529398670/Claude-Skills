@@ -13,18 +13,21 @@ force. It lives for CHALLENGE_TTL_SECONDS and is used once.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import timedelta  # feature:two_factor
 
-from app.core import encryption
-from app.core.db import BUCKET_SESSIONS, BUCKET_SIGN_IN_CHALLENGES, BUCKET_USERS, Store, Transaction
-from app.models import from_iso, to_iso, utc_now
-from app.models import two_factor
-from app.models.sessions import new_session, split_credential
+from app.core import encryption  # feature:two_factor
+from app.core.db import BUCKET_SESSIONS, Transaction
+from app.core.db import BUCKET_SIGN_IN_CHALLENGES, BUCKET_USERS, Store  # feature:two_factor
+from app.models import from_iso, to_iso, utc_now  # feature:two_factor
+from app.models import two_factor  # feature:two_factor
+from app.models.sessions import new_session
+from app.models.sessions import split_credential  # feature:two_factor
 from app.models.users import User
 
-CHALLENGE_TTL_SECONDS = 5 * 60
+CHALLENGE_TTL_SECONDS = 5 * 60  # feature:two_factor
 
 
+# >>> feature:two_factor
 class ChallengeInvalidError(Exception):
     """Expired, used, never existed, or the account can no longer sign in."""
 
@@ -32,26 +35,31 @@ class ChallengeInvalidError(Exception):
         super().__init__("that sign-in has expired, start again")
 
 
+# <<< feature:two_factor
 @dataclass(frozen=True)
 class SignInRules:
     """What decides how a sign-in ends, from the running configuration."""
 
     session_ttl_seconds: int
-    two_factor: bool
+    two_factor: bool = False  # feature:two_factor
 
 
 @dataclass
 class SignIn:
+    # >>> feature:two_factor
     """A first factor that was accepted. Exactly one of session_credential
     and challenge is set."""
+    # <<< feature:two_factor
+    """A first factor that was accepted."""  # feature:!two_factor
 
     user_id: int
     session_credential: str = ""
-    challenge: str = ""
+    challenge: str = ""  # feature:two_factor
 
 
 def start_sign_in_tx(tx: Transaction, user: User, rules: SignInRules) -> SignIn:
     """Store a session, or a challenge if this account has to give a code."""
+    # >>> feature:two_factor
     if rules.two_factor and two_factor.is_on(user):
         challenge_id = encryption.url_token(12)
         secret = encryption.url_token(24)
@@ -61,11 +69,13 @@ def start_sign_in_tx(tx: Transaction, user: User, rules: SignInRules) -> SignIn:
             "expires_at": to_iso(utc_now() + timedelta(seconds=CHALLENGE_TTL_SECONDS)),
         })
         return SignIn(user_id=user.id, challenge=f"{challenge_id}.{secret}")
+    # <<< feature:two_factor
     session_id, session_credential, session = new_session(user.id, rules.session_ttl_seconds)
     tx.put(BUCKET_SESSIONS, session_id, session.to_record())
     return SignIn(user_id=user.id, session_credential=session_credential)
 
 
+# >>> feature:two_factor
 def _live_challenge(record: dict | None, secret: str) -> bool:
     return (
         record is not None
@@ -120,3 +130,4 @@ def delete_challenges_for_user(tx: Transaction, user_id: int) -> int:
 def purge_expired_challenges(store: Store) -> int:
     now = utc_now()
     return store.delete_where(BUCKET_SIGN_IN_CHALLENGES, lambda _key, record: now > from_iso(record["expires_at"]))
+# <<< feature:two_factor

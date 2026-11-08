@@ -5,8 +5,11 @@
 // reload and a pasted link all land on the same screen, with no router.
 //
 // Whether a screen exists for this user is not decided here. The screen's own
+// >>> feature:api_keys
 // file un-hides its section (Keys.init shows the API keys panel, and only if
 // the server has them switched on); Nav only offers what was un-hidden. So
+// <<< feature:api_keys
+// file un-hides its section; Nav only offers what was un-hidden. So // feature:!api_keys
 // app.js calls Nav.init() last, once every screen has had its say.
 const Nav = {
   fallback: "account",
@@ -58,7 +61,7 @@ const Nav = {
 
   render() {
     const name = this.current();
-    Track.nav( name );
+    Track.nav( name ); // feature:logs
     Dom.all( ".view" ).forEach( function ( view ) {
       view.classList.toggle( "view-active" , view.getAttribute( "data-view" ) === name );
     } );

@@ -10,10 +10,12 @@ import (
 	security "{{MODULE_PATH}}/server/security"
 )
 
+// >>> feature:invite_links
 type pinRequest struct {
 	Pin       string `json:"pin"`
 	CSRFToken string `json:"csrf_token"`
 }
+// <<< feature:invite_links
 
 type renameRequest struct {
 	DisplayName string `json:"display_name"`
@@ -53,6 +55,8 @@ func ( handlers *Handlers ) meRow( actor *security.Actor ) ( payload fiber.Map ,
 	// server checks ownership again on every request that depends on it.
 	owner_id , err := models.OwnerID( handlers.Store )
 	if err != nil { return }
+	login_link , err := models.LiveLoginLink( handlers.Store , user.ID )
+	if err != nil { return }
 
 	payload = fiber.Map{
 		"authenticated":    true,
@@ -61,24 +65,26 @@ func ( handlers *Handlers ) meRow( actor *security.Actor ) ( payload fiber.Map ,
 		"role":             actor.Role,
 		"account_role":     user.Role,
 		"is_owner":         user.ID == owner_id,
-		"maintenance":      handlers.cfg().MaintenanceMode(),
+		"login_link":       login_link,
+		"maintenance":      handlers.cfg().MaintenanceMode(), // feature:maintenance
 		"version":          handlers.Version,
 		"announcement":     handlers.cfg().Announcement,
-		"has_pin":          user.HasPin(),
-		"username":           user.Username,
-		"has_password":       user.HasPassword(),
-		"password_blocked":   user.PasswordBlocked,
-		"two_factor":         user.TwoFactorOn(),
-		"passwords_enabled":  handlers.cfg().PasswordsEnabled,
-		"two_factor_enabled": handlers.cfg().TwoFactorEnabled,
+		"shortcuts":        myShortcuts( user ), // feature:shortcuts
+		"has_pin":          user.HasPin(), // feature:invite_links
+		"username":           user.Username, // feature:passwords
+		"has_password":       user.HasPassword(), // feature:passwords
+		"password_blocked":   user.PasswordBlocked, // feature:passwords
+		"two_factor":         user.TwoFactorOn(), // feature:two_factor
+		"passwords_enabled":  handlers.cfg().PasswordsEnabled, // feature:passwords
+		"two_factor_enabled": handlers.cfg().TwoFactorEnabled, // feature:two_factor
 		"auth":             actor.Method(),
-		"api_keys_enabled": handlers.cfg().APIKeysEnabled,
-		"files_enabled": handlers.cfg().Files.Enabled,
-		"invite_links_enabled": handlers.inviteLinksOn(),
-		"webhooks_enabled": handlers.cfg().Webhooks.Enabled,
-		// Whether track.js sends anything, and whether it sends clicks.
-		"logs_enabled":   handlers.Logs.Enabled(),
-		"logs_ui_clicks": handlers.Logs.Enabled() && handlers.cfg().Logs.UIClicks,
+		"api_keys_enabled": handlers.cfg().APIKeysEnabled, // feature:api_keys
+		"files_enabled": handlers.cfg().Files.Enabled, // feature:files
+		"invite_links_enabled": handlers.inviteLinksOn(), // feature:invite_links
+		"webhooks_enabled": handlers.cfg().Webhooks.Enabled, // feature:webhooks
+		// Whether track.js sends anything, and whether it sends clicks. // feature:logs
+		"logs_enabled":   handlers.Logs.Enabled(), // feature:logs
+		"logs_ui_clicks": handlers.Logs.Enabled() && handlers.cfg().Logs.UIClicks, // feature:logs
 	}
 	// Only a session has a CSRF token. A key-authenticated request has no
 	// ambient credential to protect, so there is nothing to hand back -- see
@@ -86,12 +92,23 @@ func ( handlers *Handlers ) meRow( actor *security.Actor ) ( payload fiber.Map ,
 	if actor.Session != nil {
 		payload[ "csrf_token" ] = actor.Session.CSRFToken
 	}
+	// >>> feature:api_keys
 	if actor.APIKey != nil {
 		payload[ "api_key_id" ] = actor.APIKey.ID
 		payload[ "api_key_name" ] = actor.APIKey.Name
 	}
+	// <<< feature:api_keys
 	return
 }
+
+// >>> feature:shortcuts
+// myShortcuts is never null, so the frontend can read it without checking.
+func myShortcuts( user *models.User ) ( result map[string]string ) {
+	result = user.Shortcuts
+	if result == nil { result = map[string]string{} }
+	return
+}
+// <<< feature:shortcuts
 
 func ( handlers *Handlers ) RenameAccount( c fiber.Ctx ) ( err error ) {
 	var body renameRequest
@@ -124,6 +141,7 @@ func ( handlers *Handlers ) RenameAccount( c fiber.Ctx ) ( err error ) {
 	return
 }
 
+// >>> feature:invite_links
 // SetPin sets, or with an empty pin clears, the PIN asked for when this
 // account signs back in through an invite link (see models/pin.go).
 func ( handlers *Handlers ) SetPin( c fiber.Ctx ) ( err error ) {
@@ -145,20 +163,44 @@ func ( handlers *Handlers ) SetPin( c fiber.Ctx ) ( err error ) {
 		err = serverError( c , set_err )
 		return
 	}
-	handlers.audit( c , logs.KindAuth , "pin changed" , fiber.Map{ "has_pin": body.Pin != "" } )
-	err = c.JSON( fiber.Map{ "ok": true , "has_pin": body.Pin != "" } )
+	handlers.audit( c , logs.KindAuth , "pin changed" , fiber.Map{ "has_pin": body.Pin != "" } ) // feature:invite_links
+	err = c.JSON( fiber.Map{ "ok": true , "has_pin": body.Pin != "" } ) // feature:invite_links
 	return
 }
+// <<< feature:invite_links
 
-// CreateMyLoginLink mints a one-time login link for the caller's own
-// account: the way to sign in on another device without asking an admin.
-// It is ReissueLogin pointed at yourself, so it has the same effect: any
-// unused link the account had stops working, and existing sessions stay
-// signed in.
+// CreateMyLoginLink mints a login link for the caller's own account: the way
+// to sign in on another device without asking an admin. Once by default, or
+// reusable, like ReissueLogin -- it is ReissueLogin pointed at yourself, so it
+// has the same effect: any link the account could still use stops working,
+// and existing sessions stay signed in.
 //
 // Session only (see routes.go): a login link becomes a session, so an API
 // key that could call this could turn itself into one.
 func ( handlers *Handlers ) CreateMyLoginLink( c fiber.Ctx ) ( err error ) {
+	var body loginLinkBody
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	options , ok := handlers.loginLinkOptions( c , body.LoginLinkRequest )
+	if ok == false { return }
+	credential , info , token_err := models.IssueLoginLink( handlers.Store , security.UserFrom( c ).ID , options )
+	if token_err != nil {
+		err = serverError( c , token_err )
+		return
+	}
+	handlers.audit( c , logs.KindAuth , "own login link created" , fiber.Map{ "max_uses": info.MaxUses , "expires_at": info.ExpiresAt } )
+	err = c.JSON( loginLinkResponse( credential , info ) )
+	return
+}
+
+// CancelMyLoginLink stops the caller's own live login link working.
+func ( handlers *Handlers ) CancelMyLoginLink( c fiber.Ctx ) ( err error ) {
 	var body csrfOnlyRequest
 	if c.Bind().JSON( &body ) != nil {
 		err = badRequest( c , "malformed request body" )
@@ -168,16 +210,13 @@ func ( handlers *Handlers ) CreateMyLoginLink( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	credential , token_err := models.IssueLoginToken( handlers.Store , security.UserFrom( c ).ID , handlers.cfg().LoginTokenTTL )
-	if token_err != nil {
-		err = serverError( c , token_err )
+	removed , cancel_err := models.CancelLoginLink( handlers.Store , security.UserFrom( c ).ID )
+	if cancel_err != nil {
+		err = serverError( c , cancel_err )
 		return
 	}
-	handlers.audit( c , logs.KindAuth , "own login link created" , nil )
-	err = c.JSON( fiber.Map{
-		"login_path":         "/login/" + credential,
-		"expires_in_seconds": int( handlers.cfg().LoginTokenTTL.Seconds() ),
-	} )
+	handlers.audit( c , logs.KindAuth , "own login link cancelled" , fiber.Map{ "removed": removed } )
+	err = c.JSON( fiber.Map{ "ok": true , "removed": removed } )
 	return
 }
 

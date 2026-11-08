@@ -1,11 +1,11 @@
 package models
 
 import (
-	errors "errors"
+	errors "errors" // feature:two_factor
 	time "time"
 
 	db "{{MODULE_PATH}}/server/db"
-	encryption "{{MODULE_PATH}}/server/encryption"
+	encryption "{{MODULE_PATH}}/server/encryption" // feature:two_factor
 )
 
 // The one place a proven first factor turns into a signed-in browser.
@@ -21,17 +21,19 @@ import (
 // is sha256'd for the same reason: the secret is random, there is nothing to
 // brute force. It lives for ChallengeTTL and is used once.
 
+// >>> feature:two_factor
 const ChallengeTTL = 5 * time.Minute
 
 // ErrChallengeInvalid covers expired, used, never existed, and an account
 // that can no longer sign in.
 var ErrChallengeInvalid = errors.New( "that sign-in has expired, start again" )
+// <<< feature:two_factor
 
 // SignInRules is what decides how a sign-in ends, from the running
 // configuration.
 type SignInRules struct {
 	SessionTTL time.Duration
-	TwoFactor  bool
+	TwoFactor  bool // feature:two_factor
 }
 
 // SignIn is a first factor that was accepted. Exactly one of
@@ -39,24 +41,29 @@ type SignInRules struct {
 type SignIn struct {
 	UserID            uint64
 	SessionCredential string
-	Challenge         string
+	Challenge         string // feature:two_factor
 }
 
+// >>> feature:two_factor
 type signInChallenge struct {
 	UserID     uint64    `json:"user_id"`
 	SecretHash string    `json:"secret_hash"`
 	ExpiresAt  time.Time `json:"expires_at"`
 }
+// <<< feature:two_factor
 
+// >>> feature:two_factor
 func ( challenge *signInChallenge ) live( secret string ) ( result bool ) {
 	result = time.Now().UTC().After( challenge.ExpiresAt ) == false &&
 		encryption.ConstantTimeEqual( challenge.SecretHash , encryption.Sha256Hex( secret ) )
 	return
 }
+// <<< feature:two_factor
 
 // startSignInTx stores a session, or a challenge if this account has to give
 // a code.
 func startSignInTx( tx *db.Tx , user *User , rules SignInRules ) ( signed *SignIn , err error ) {
+	// >>> feature:two_factor
 	if rules.TwoFactor && user.TwoFactorOn() {
 		challenge_id := encryption.GenerateURLToken( 12 )
 		secret := encryption.GenerateURLToken( 24 )
@@ -69,12 +76,14 @@ func startSignInTx( tx *db.Tx , user *User , rules SignInRules ) ( signed *SignI
 		signed = &SignIn{ UserID: user.ID , Challenge: challenge_id + "." + secret }
 		return
 	}
+	// <<< feature:two_factor
 	session_id , credential , session := newSession( user.ID , rules.SessionTTL )
 	if err = tx.Put( db.BucketSessions , []byte( session_id ) , session ); err != nil { return }
 	signed = &SignIn{ UserID: user.ID , SessionCredential: credential }
 	return
 }
 
+// >>> feature:two_factor
 // ChallengeUserID says whose challenge this is, or ok false for anything that
 // is not a live one. The route needs to know before it checks a code, to
 // count the guess.
@@ -87,7 +96,9 @@ func ChallengeUserID( store *db.Store , credential string ) ( user_id uint64 , o
 	user_id , ok = challenge.UserID , true
 	return
 }
+// <<< feature:two_factor
 
+// >>> feature:two_factor
 // FinishChallenge spends a challenge and a code on a session, in one
 // transaction, so two requests with the same code cannot both sign in, and an
 // account disabled meanwhile is refused. Returns ErrChallengeInvalid or
@@ -121,7 +132,9 @@ func FinishChallenge( store *db.Store , credential string , code string , sessio
 	if err != nil { signed , method = nil , "" }
 	return
 }
+// <<< feature:two_factor
 
+// >>> feature:two_factor
 // deleteChallengesForUser removes every challenge an account holds, inside the
 // caller's transaction: a challenge is a sign-in in progress, so anything that
 // ends an account's sign-ins ends these too.
@@ -133,7 +146,9 @@ func deleteChallengesForUser( tx *db.Tx , user_id uint64 ) ( err error ) {
 		} )
 	return
 }
+// <<< feature:two_factor
 
+// >>> feature:two_factor
 func PurgeExpiredChallenges( store *db.Store ) ( removed int , err error ) {
 	now := time.Now().UTC()
 	removed , err = store.DeleteWhere( db.BucketSignInChallenges ,
@@ -143,3 +158,4 @@ func PurgeExpiredChallenges( store *db.Store ) ( removed int , err error ) {
 		} )
 	return
 }
+// <<< feature:two_factor

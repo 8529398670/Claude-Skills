@@ -1,3 +1,4 @@
+# whole-file feature:logs
 """The activity log (app/core/logs.py). What these pin down: nothing secret
 reaches a line, an encrypted line reads back, a day rotates into parts and
 pages back newest first across them, retention and recycling delete the right

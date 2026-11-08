@@ -1,24 +1,32 @@
+# >>> feature:logs
 """The activity log's endpoints (see app/core/logs.py). Reading it is the
 owner's alone, under /api/owner/logs (RequireOwner); writing to it from the
 page -- what track.js sends -- is any signed-in user's, at /api/logs/events,
 since what they do is what gets logged. audit() and audit_as() are how the
 other route modules write auth and admin entries."""
+# <<< feature:logs
+# >>> feature:!logs
+"""What the other route modules call to write to the activity log, in a project
+without one: nothing is written."""
+# <<< feature:!logs
 from __future__ import annotations
 
+from typing import Any
+
+from starlette.requests import Request
+
+# >>> feature:logs
 import json
 import threading
 import time
 from collections import deque
-from typing import Any
-
-from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from app.core import logs, request_id, sse
 from app.core.config import trusted_proxy_networks
 from app.core.middleware import client_ip
 from app.core.security import actor_from, check_csrf, decrypt_cookie, log_actor, still_owner
-from app.models import users
+from app.models import ip_names, users
 from app.routes.helpers import PAGE_DEFAULT, PAGE_LIMIT_MESSAGE, PAGE_MAX, bad_request, conflict, error, forbidden, get_config, get_store, read_json, run, whole_number
 
 # Page events a browser may send per call, and per account per minute.
@@ -49,9 +57,15 @@ def _settings(logger: logs.Logger) -> dict[str, Any]:
     }
 
 
+async def _query(request: Request, text: str = "") -> logs.Query:
+    """A search that knows what the owner calls each address, which reading a
+    day, searching and downloading all need."""
+    return logs.Query(text, await run(ip_names.load_namer, get_store(request)))
+
+
 async def list_log_days(request: Request) -> Response:
     logger = get_logs(request)
-    days, total = await run(logger.days, logs.Query(request.query_params.get("q", "")))
+    days, total = await run(logger.days, await _query(request, request.query_params.get("q", "")))
     return JSONResponse({"days": days, "total_bytes": total, "dropped": logger.dropped, "settings": _settings(logger)})
 
 
@@ -65,20 +79,21 @@ async def get_log_day(request: Request) -> Response:
     limit = whole_number(request.query_params.get("limit"), PAGE_DEFAULT)
     if limit is None or not 1 <= limit <= PAGE_MAX:
         return bad_request(PAGE_LIMIT_MESSAGE)
-    query = logs.Query(request.query_params.get("q", ""))
+    query = await _query(request, request.query_params.get("q", ""))
     records, following = await run(get_logs(request).read_day, day, query, before, limit)
     return JSONResponse({"date": day, "entries": records, "next": following})
 
 
 async def download_log_day(request: Request) -> Response:
     """A day as plain JSON lines, decrypted: the file a person can grep, or
-    hand to whatever reads logs. Starlette walks the generator in a worker
+    hand to whatever reads logs. Each line has ip_name beside the address, as
+    named when this was asked for. Starlette walks the generator in a worker
     thread, so the file reads stay off the event loop."""
     day = request.path_params["date"]
     if not logs.valid_day(day):
         return bad_request("bad_day")
     return StreamingResponse(
-        get_logs(request).download(day),
+        get_logs(request).download(day, await _query(request)),
         media_type="application/x-ndjson",
         headers={"Content-Disposition": f'attachment; filename="logs-{day}.jsonl"'},
     )
@@ -110,6 +125,48 @@ async def prune_logs(request: Request) -> Response:
     result = await run(get_logs(request).prune)
     audit(request, logs.KIND_ADMIN, "logs pruned", {"compressed": result["compressed"], "deleted": result["deleted"]})
     return JSONResponse(result)
+
+
+async def list_ip_names(request: Request) -> Response:
+    """Everything the owner has named. It is short by nature, so unlike the lists
+    people's activity grows, it comes whole."""
+    names = await run(ip_names.list_names, get_store(request))
+    return JSONResponse({"names": names})
+
+
+async def set_ip_name(request: Request) -> Response:
+    """Names an address or a range, or renames one. The answer gives the target
+    as stored, which may not be how it was typed."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    target = ip_names.clean_target(body.get("target"))
+    if target is None:
+        return bad_request("bad_ip_target")
+    name = body.get("name")
+    if not ip_names.valid_name(name):
+        return bad_request("bad_ip_name")
+    await run(ip_names.set_name, get_store(request), target, name)
+    audit(request, logs.KIND_ADMIN, "ip name set", {"target": target})
+    return JSONResponse({"target": target, "name": name.strip()})
+
+
+async def delete_ip_name(request: Request) -> Response:
+    """Takes a name away. Its target is in the body, because a range has a slash
+    in it."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    target = ip_names.clean_target(body.get("target"))
+    if target is None:
+        return bad_request("bad_ip_target")
+    await run(ip_names.delete_name, get_store(request), target)
+    audit(request, logs.KIND_ADMIN, "ip name removed", {"target": target})
+    return JSONResponse({"deleted": True})
 
 
 async def stream_log_changes(request: Request) -> Response:
@@ -275,4 +332,20 @@ def user_actor(store: Any, user_id: int, method: str) -> dict[str, Any]:
         actor["name"] = user.display_name
         actor["role"] = user.role
     return actor
+# <<< feature:logs
+# >>> feature:!logs
 
+
+def audit(request: Request, kind: str, message: str, detail: dict[str, Any] | None = None) -> None:
+    pass
+
+
+def audit_as(
+    request: Request, actor: dict[str, Any], kind: str, level: str, message: str, detail: dict[str, Any] | None = None
+) -> None:
+    pass
+
+
+def user_actor(store: Any, user_id: int, method: str) -> dict[str, Any]:
+    return {}
+# <<< feature:!logs

@@ -6,7 +6,7 @@ rem   scripts\run.bat                    create/update .venv if needed, stop the
 rem                              this checkout started last, start a fresh one
 rem   scripts\run.bat stop               stop the copy this checkout started (in
 rem                              this window, another, or the hidden one
-rem                              scripts\login.bat starts)
+rem                              scripts\login.bat --background starts)
 rem   scripts\run.bat manage <command>   run an admin command against it (see below)
 rem   scripts\run.bat <anything else>    same: passed straight to `python -m app`
 rem
@@ -22,8 +22,8 @@ rem
 rem   scripts\run.bat manage list-users
 rem   scripts\login.bat                           the owner's login link
 rem   scripts\run.bat manage create-login --name "Grace" --role user
-rem   scripts\run.bat manage create-invite --user-id 1 --label "Book club"
-rem   scripts\run.bat manage create-key --user-id 1 --name "CI"
+rem   scripts\run.bat manage create-invite --user-id 1 --label "Book club"  # feature:invite_links
+rem   scripts\run.bat manage create-key --user-id 1 --name "CI"  # feature:api_keys
 rem   scripts\run.bat manage paths                        where the state lives
 rem   scripts\run.bat config check
 rem   scripts\run.bat version

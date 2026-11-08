@@ -30,8 +30,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.core import config, config_schema
-from app.core.config import Config, ConfigError, ValidationError, WebhooksConfig
-from app.core.config_schema import MODE_LIVE, MODE_RESTART, MODE_SCRIPTS
+from app.core.config import Config, ConfigError, ValidationError
+from app.core.config import WebhooksConfig  # feature:webhooks
+from app.core.config_schema import MODE_LIVE, MODE_SCRIPTS
+from app.core.config_schema import MODE_RESTART  # feature:settings
 from app.core.layout import PINNED, in_container
 
 
@@ -45,6 +47,7 @@ class StaleError(ConfigError):
         super().__init__("config.yaml was replaced on the host; restart the container to see the new one")
 
 
+# >>> feature:settings
 class ReadOnlyError(ConfigError):
     """This process cannot write config.yaml."""
 
@@ -52,11 +55,13 @@ class ReadOnlyError(ConfigError):
         super().__init__("config.yaml is not writable by the server")
 
 
+# <<< feature:settings
 class LockedError(ConfigError):
     """A key that cannot be changed from here -- docker.* inside the
     container, and what the image pins."""
 
 
+# >>> feature:settings
 class ConflictError(ConfigError):
     """config.yaml changed since the client read it."""
 
@@ -65,6 +70,7 @@ class ConflictError(ConfigError):
         self.version = version
 
 
+# <<< feature:settings
 class UnknownSettingError(ConfigError):
     def __init__(self, key: str) -> None:
         super().__init__(f"unknown setting {key!r}")
@@ -107,22 +113,24 @@ def live_config(boot: Config, boot_file: config.File, file: config.File) -> Conf
         rate_limit_max=file.server.rate_limit_max,
         rate_limit_window_seconds=file.server.rate_limit_window_seconds,
         rate_limit_signin_max=file.server.rate_limit_signin_max,
-        rate_limit_upload_max=file.server.rate_limit_upload_max,
-        mcp_enabled=file.server.mcp,
-        maintenance=file.server.maintenance,
+        rate_limit_upload_max=file.server.rate_limit_upload_max,  # feature:files
+        mcp_enabled=file.server.mcp,  # feature:mcp
+        maintenance=file.server.maintenance,  # feature:maintenance
         announcement=file.server.announcement,
-        metrics_enabled=file.metrics.enabled,
+        metrics_enabled=file.metrics.enabled,  # feature:metrics
         trust_proxy=file.server.trust_proxy,
         trusted_proxies=tuple(entry.strip() for entry in file.server.trusted_proxies),
         proxy_header=file.server.proxy_header,
         session_ttl_seconds=file.auth.session_ttl_seconds,
         session_max_age_seconds=file.auth.session_max_age_seconds,
         login_token_ttl_seconds=file.auth.login_token_ttl_seconds,
-        api_keys_enabled=file.auth.api_keys,
-        passwords_enabled=file.auth.passwords,
-        two_factor_enabled=file.auth.two_factor,
-        invite_links_enabled=file.auth.invite_links,
-        api_key_ttl_seconds=file.auth.api_key_ttl_seconds,
+        multi_use_login_token_ttl_seconds=file.auth.multi_use_login_token_ttl_seconds,
+        api_keys_enabled=file.auth.api_keys,  # feature:api_keys
+        passwords_enabled=file.auth.passwords,  # feature:passwords
+        two_factor_enabled=file.auth.two_factor,  # feature:two_factor
+        invite_links_enabled=file.auth.invite_links,  # feature:invite_links
+        api_key_ttl_seconds=file.auth.api_key_ttl_seconds,  # feature:api_keys
+        # >>> feature:logs
         logs=replace(
             boot.logs,
             retention_days=file.logs.retention_days,
@@ -133,11 +141,15 @@ def live_config(boot: Config, boot_file: config.File, file: config.File) -> Conf
             ui_clicks=file.logs.ui_clicks,
             echo=file.logs.echo,
         ),
+        # <<< feature:logs
+        # >>> feature:webhooks
         webhooks=WebhooksConfig(
             enabled=file.webhooks.enabled,
             timeout_seconds=file.webhooks.timeout_seconds,
             allow_private_targets=file.webhooks.allow_private_targets,
         ),
+        # <<< feature:webhooks
+        # >>> feature:files
         files=replace(
             boot.files,
             enabled=file.files.enabled,
@@ -145,12 +157,15 @@ def live_config(boot: Config, boot_file: config.File, file: config.File) -> Conf
             quota_bytes_per_user=file.files.quota_bytes_per_user,
             abandoned_upload_hours=file.files.abandoned_upload_hours,
         ),
+        # <<< feature:files
+        # >>> feature:backups
         backups=replace(
             boot.backups,
             enabled=file.backups.enabled,
             interval_hours=file.backups.interval_hours,
             keep=file.backups.keep,
         ),
+        # <<< feature:backups
         file=file,
     )
 
@@ -307,6 +322,7 @@ class Holder:
             subscriber(old, new)
         return result
 
+    # >>> feature:settings
     def save(self, expected_version: str, changes: dict[str, Any]) -> dict[str, Any]:
         """Apply changes from the Settings screen: check them, rewrite only
         those values in config.yaml, validate the whole result, write it, and
@@ -332,6 +348,7 @@ class Holder:
             self._stat = _stat(self.path)
             return result
 
+    # <<< feature:settings
     def poll(self) -> None:
         """Check config.yaml for a change made outside save() and apply it. A
         change is applied once two polls in a row have seen the same content,
@@ -389,6 +406,7 @@ class Holder:
         if self.report is not None:
             self.report(level, message, detail)
 
+    # >>> feature:settings
     def _writable(self) -> bool:
         """Whether save() could write config.yaml: the file itself when it is
         rewritten in place, otherwise the folder the replacement is created
@@ -407,6 +425,8 @@ class Holder:
         os.unlink(name)
         return True
 
+    # <<< feature:settings
+    # >>> feature:settings
     def snapshot(self) -> dict[str, Any]:
         """The whole Settings screen, read from config.yaml as it is on disk.
         When that does not validate, the values shown are the last good ones
@@ -463,6 +483,7 @@ class Holder:
             }
 
 
+    # <<< feature:settings
 def _describe(result: dict[str, Any]) -> str:
     """A reload in one line: "live server.rate_limit_max; on restart
     server.port"."""

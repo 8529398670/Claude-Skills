@@ -1,3 +1,4 @@
+// whole-file feature:logs
 package logs
 
 import (
@@ -223,11 +224,20 @@ func ( logger *Logger ) Days( query Query ) ( days []Day , total_bytes int64 , e
 	return
 }
 
-// Record is an entry as the Logs screen gets it: with Pos, its line number
-// within the day (0-based, across parts), which is what paging asks from.
+// Record is an entry as the Logs screen gets it: with what the owner calls its
+// address, and Pos, its line number within the day (0-based, across parts),
+// which is what paging asks from.
 type Record struct {
 	Entry
-	Pos int `json:"pos"`
+	IPName string `json:"ip_name,omitempty"`
+	Pos    int    `json:"pos"`
+}
+
+// namedEntry is an entry as a download has it. The name is worked out on the
+// way out: it is never in the file.
+type namedEntry struct {
+	Entry
+	IPName string `json:"ip_name,omitempty"`
 }
 
 // ReadDay is one page of a day, newest first: up to limit entries matching
@@ -256,7 +266,7 @@ func ( logger *Logger ) ReadDay( day string , query Query , before int , limit i
 				window = window[ 1: ]
 				more = true
 			}
-			window = append( window , Record{ Entry: *entry , Pos: here } )
+			window = append( window , Record{ Entry: *entry , IPName: query.name( entry.IP ) , Pos: here } )
 		} )
 		if scan_err != nil {
 			err = scan_err
@@ -274,8 +284,9 @@ func ( logger *Logger ) ReadDay( day string , query Query , before int , limit i
 	return
 }
 
-// Download writes a day as plain JSON lines, decrypted, oldest first.
-func ( logger *Logger ) Download( day string , out io.Writer ) ( err error ) {
+// Download writes a day as plain JSON lines, decrypted, oldest first, each with
+// what query's names call its address beside the address itself.
+func ( logger *Logger ) Download( day string , query Query , out io.Writer ) ( err error ) {
 	if ValidDay( day ) == false {
 		err = ErrBadDay
 		return
@@ -284,7 +295,9 @@ func ( logger *Logger ) Download( day string , out io.Writer ) ( err error ) {
 	parts , err := logger.dayFiles( day )
 	if err != nil { return }
 	for _ , file := range parts {
-		handle_err := logger.scanRaw( file , func( plain []byte ) {
+		handle_err := logger.scan( file , func( entry *Entry , text []byte ) {
+			plain , encode_err := json.Marshal( namedEntry{ Entry: *entry , IPName: query.name( entry.IP ) } )
+			if encode_err != nil { return }
 			out.Write( plain )
 			out.Write( []byte{ '\n' } )
 		} )
@@ -293,15 +306,6 @@ func ( logger *Logger ) Download( day string , out io.Writer ) ( err error ) {
 			return
 		}
 	}
-	return
-}
-
-// scanRaw is scan without parsing: each line's JSON as written.
-func ( logger *Logger ) scanRaw( file dayFile , visit func( plain []byte ) ) ( err error ) {
-	err = logger.scan( file , func( entry *Entry , text []byte ) {
-		plain , encode_err := json.Marshal( entry )
-		if encode_err == nil { visit( plain ) }
-	} )
 	return
 }
 

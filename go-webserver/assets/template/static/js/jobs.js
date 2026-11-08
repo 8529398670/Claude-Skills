@@ -1,3 +1,4 @@
+// whole-file feature:jobs
 // The Jobs screen (owner only): what runs in the background and how its last
 // run went. app.js calls Jobs.init( me ) for admins; only the owner gets past
 // the first line, and the server answers anyone else with a 404 regardless.
@@ -70,6 +71,7 @@ const Jobs = {
       ] } ) );
     } );
     if ( payload.jobs.length === 0 ) Pager.empty( Dom.get( "jobs-table" ) );
+    Pager.label( "jobs-table" );
     const running = payload.jobs.some( function ( job ) { return job.running; } );
     if ( running && Nav.current() === "jobs" ) {
       this.timer = window.setTimeout( () => this.refresh() , this.refreshMs );

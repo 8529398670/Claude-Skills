@@ -58,11 +58,13 @@ const (
 	DatabaseFileName  = "app.db"
 	ControlSocketName = "control.sock"
 	StorageDirName    = "storage"
+	// >>> feature:files
 	// FilesDirName is inside storage, so backups carry finished files.
 	FilesDirName      = "files"
 	// UploadsDirName is beside storage, not in it: a half-sent file is not
 	// worth a backup, and is still changing while one runs.
 	UploadsDirName    = "uploads"
+	// <<< feature:files
 	LogsDirName       = "logs"
 	BackupsDirName    = "backups"
 	LanguageFileName  = "language.yaml"
@@ -108,11 +110,11 @@ type File struct {
 	App    AppSection    `yaml:"app"`
 	Server ServerSection `yaml:"server"`
 	Auth   AuthSection   `yaml:"auth"`
-	Logs   LogsSection   `yaml:"logs"`
-	Backups BackupsSection `yaml:"backups"`
-	Metrics MetricsSection `yaml:"metrics"`
-	Webhooks WebhooksSection `yaml:"webhooks"`
-	Files    FilesSection    `yaml:"files"`
+	Logs   LogsSection   `yaml:"logs"` // feature:logs
+	Backups BackupsSection `yaml:"backups"` // feature:backups
+	Metrics MetricsSection `yaml:"metrics"` // feature:metrics
+	Webhooks WebhooksSection `yaml:"webhooks"` // feature:webhooks
+	Files    FilesSection    `yaml:"files"` // feature:files
 	Docker DockerSection `yaml:"docker"`
 	Build  BuildSection  `yaml:"build"`
 }
@@ -142,10 +144,10 @@ type ServerSection struct {
 	RateLimitMax           int    `yaml:"rate_limit_max"`
 	RateLimitWindowSeconds int    `yaml:"rate_limit_window_seconds"`
 	RateLimitSignInMax     int    `yaml:"rate_limit_signin_max"`
-	RateLimitUploadMax     int    `yaml:"rate_limit_upload_max"`
+	RateLimitUploadMax     int    `yaml:"rate_limit_upload_max"` // feature:files
 	ControlSocket          bool   `yaml:"control_socket"`
-	MCP                    bool   `yaml:"mcp"`
-	Maintenance            string `yaml:"maintenance"`
+	MCP                    bool   `yaml:"mcp"` // feature:mcp
+	Maintenance            string `yaml:"maintenance"` // feature:maintenance
 	Announcement           string `yaml:"announcement"`
 }
 
@@ -153,13 +155,15 @@ type AuthSection struct {
 	SessionTTLSeconds    int  `yaml:"session_ttl_seconds"`
 	SessionMaxAgeSeconds int  `yaml:"session_max_age_seconds"`
 	LoginTokenTTLSeconds int  `yaml:"login_token_ttl_seconds"`
-	APIKeys              bool `yaml:"api_keys"`
-	APIKeyTTLSeconds     int  `yaml:"api_key_ttl_seconds"`
-	Passwords            bool `yaml:"passwords"`
-	TwoFactor            bool `yaml:"two_factor"`
-	InviteLinks          bool `yaml:"invite_links"`
+	MultiUseLoginTokenTTLSeconds int `yaml:"multi_use_login_token_ttl_seconds"`
+	APIKeys              bool `yaml:"api_keys"` // feature:api_keys
+	APIKeyTTLSeconds     int  `yaml:"api_key_ttl_seconds"` // feature:api_keys
+	Passwords            bool `yaml:"passwords"` // feature:passwords
+	TwoFactor            bool `yaml:"two_factor"` // feature:two_factor
+	InviteLinks          bool `yaml:"invite_links"` // feature:invite_links
 }
 
+// >>> feature:logs
 type LogsSection struct {
 	Enabled           bool `yaml:"enabled"`
 	RetentionDays     int  `yaml:"retention_days"`
@@ -170,29 +174,38 @@ type LogsSection struct {
 	UIClicks          bool `yaml:"ui_clicks"`
 	Echo              bool `yaml:"echo"`
 }
+// <<< feature:logs
 
+// >>> feature:backups
 type BackupsSection struct {
 	Enabled       bool `yaml:"enabled"`
 	IntervalHours int  `yaml:"interval_hours"`
 	Keep          int  `yaml:"keep"`
 }
+// <<< feature:backups
 
+// >>> feature:metrics
 type MetricsSection struct {
 	Enabled bool `yaml:"enabled"`
 }
+// <<< feature:metrics
 
+// >>> feature:webhooks
 type WebhooksSection struct {
 	Enabled             bool `yaml:"enabled"`
 	TimeoutSeconds      int  `yaml:"timeout_seconds"`
 	AllowPrivateTargets bool `yaml:"allow_private_targets"`
 }
+// <<< feature:webhooks
 
+// >>> feature:files
 type FilesSection struct {
 	Enabled              bool `yaml:"enabled"`
 	MaxFileBytes         int  `yaml:"max_file_bytes"`
 	QuotaBytesPerUser    int  `yaml:"quota_bytes_per_user"`
 	AbandonedUploadHours int  `yaml:"abandoned_upload_hours"`
 }
+// <<< feature:files
 
 type DockerSection struct {
 	Image       string `yaml:"image"`
@@ -316,35 +329,52 @@ type Config struct {
 	SessionTTL    time.Duration
 	SessionMaxAge time.Duration
 	LoginTokenTTL time.Duration
+	// MultiUseLoginTokenTTL is the default expiry of a link that works more
+	// than once (see models.ResolveLoginLink).
+	MultiUseLoginTokenTTL time.Duration
 
+	// >>> feature:api_keys
 	// APIKeysEnabled decides whether the Authorization: Bearer header is
 	// believed at all, and whether the endpoints that mint keys exist.
 	// Turning it off stops existing keys from authenticating too -- the rows
 	// stay, so switching it back on restores them.
 	APIKeysEnabled bool
+	// <<< feature:api_keys
+	// >>> feature:passwords
 	// PasswordsEnabled decides whether a password is believed at all, and
 	// whether an account can set one. Off keeps the hashes, so switching it
 	// back on restores them.
 	PasswordsEnabled bool
+	// <<< feature:passwords
+	// >>> feature:two_factor
 	// TwoFactorEnabled decides whether 2FA is offered and asked for. Off keeps
 	// the secrets, the same way.
 	TwoFactorEnabled bool
+	// <<< feature:two_factor
+	// >>> feature:invite_links
 	// InviteLinksEnabled decides whether /join and every invite route answer,
 	// and whether a PIN can be set. Off keeps the links and PINs, the same way.
 	InviteLinksEnabled bool
+	// <<< feature:invite_links
 
+	// >>> feature:api_keys
 	// APIKeyTTL is how long a new key lasts when the request does not say.
 	// The default is bounded so that a forgotten key eventually stops being
 	// a live credential.
 	APIKeyTTL time.Duration
+	// <<< feature:api_keys
 
+	// >>> feature:mcp
 	// MCPEnabled decides whether POST /mcp exists. It answers only API keys,
 	// so with APIKeysEnabled off it is not registered either -- nothing could
 	// authenticate to it.
 	MCPEnabled bool
+	// <<< feature:mcp
+	// >>> feature:metrics
 	// MetricsEnabled decides whether GET /metrics answers. Like /mcp it takes
 	// keys only, so it also needs APIKeysEnabled.
 	MetricsEnabled bool
+	// <<< feature:metrics
 
 	// SecretKey encrypts session cookie payloads and, when EncryptAtRest is
 	// on, every value written to bolt. Losing it means losing the database
@@ -354,15 +384,19 @@ type Config struct {
 
 	RateLimitMax    int
 	RateLimitWindow time.Duration
+	// >>> feature:maintenance
 	// Maintenance is server.maintenance: read it through MaintenanceMode.
 	Maintenance string
+	// <<< feature:maintenance
 	// Announcement is server.announcement: shown on every signed-in page.
 	Announcement string
 
 	// RateLimitSignInMax is the separate budget for signing in and joining.
 	RateLimitSignInMax int
+	// >>> feature:files
 	// RateLimitUploadMax is the separate budget for the chunks of an upload.
 	RateLimitUploadMax int
+	// <<< feature:files
 	BodyLimit       int
 
 	// TrustProxy tells fiber to believe ProxyHeader -- but only on a
@@ -375,21 +409,28 @@ type Config struct {
 	TrustedProxies []string
 	ProxyHeader    string
 
+	// >>> feature:logs
 	// Logs is the activity log's settings; see server/logs.
 	Logs LogsConfig
+	// <<< feature:logs
 
 	// Backups is the scheduled backup's settings; see server/backup.
 	Backups BackupsConfig
+	// >>> feature:webhooks
 	// Webhooks is how outbound webhooks are sent; see server/webhooks.
 	Webhooks WebhooksConfig
+	// <<< feature:webhooks
+	// >>> feature:files
 	// Files is how uploads are limited; see models/file.go.
 	Files FilesConfig
+	// <<< feature:files
 
 	// file and raw are what this was built from, for NewHolder.
 	file *File
 	raw  []byte
 }
 
+// >>> feature:logs
 // LogsConfig is config.yaml's logs section, resolved: sizes in bytes, and the
 // directory the day files go in (<app_dir>/logs, created 0700 by Load).
 type LogsConfig struct {
@@ -403,17 +444,21 @@ type LogsConfig struct {
 	UIClicks          bool
 	Echo              bool
 }
+// <<< feature:logs
 
 // ErrRotationPending is what everything but the rotation itself says when one
 // was left half way inside the container.
 var ErrRotationPending = errors.New( "a key rotation was cut short -- run docker/rotate-key.sh on the host to finish it" )
 
+// >>> feature:files
 // FileChunkBytes is the size of every piece of an upload but the last. It sits
 // under server.body_limit_bytes on purpose: a file of any size arrives as
 // ordinary small requests, so nothing has to raise a limit that also protects
 // the public routes. See models/file.go.
 const FileChunkBytes = 768 * 1024
+// <<< feature:files
 
+// >>> feature:files
 // FilesConfig is config.yaml's files section, resolved.
 type FilesConfig struct {
 	Enabled           bool
@@ -424,22 +469,25 @@ type FilesConfig struct {
 	Dir        string
 	UploadsDir string
 }
+// <<< feature:files
 
+// >>> feature:webhooks
 // WebhooksConfig is config.yaml's webhooks section, resolved.
 type WebhooksConfig struct {
 	Enabled             bool
 	Timeout             time.Duration
 	AllowPrivateTargets bool
 }
+// <<< feature:webhooks
 
 // BackupsConfig is config.yaml's backups section, resolved. Dir is where every
 // backup goes unless `manage backup -out` says otherwise (<app_dir>/backups,
 // created 0700 the first time something is written there).
 type BackupsConfig struct {
-	Enabled  bool
+	Enabled  bool // feature:backups
 	Dir      string
-	Interval time.Duration
-	Keep     int
+	Interval time.Duration // feature:backups
+	Keep     int // feature:backups
 }
 
 // layout is what the container image pins, regardless of config.yaml. See
@@ -615,6 +663,7 @@ var (
 // out of range, a Docker size the daemon would refuse, a build target go
 // cannot parse. The docker and build values also end up in shell commands,
 // so they are held to strict patterns rather than trusted.
+// >>> feature:maintenance
 // The values of server.maintenance. "none" rather than "off": YAML 1.1 readers
 // take a bare off as false, and the Python template's reader is one of those.
 const (
@@ -632,6 +681,7 @@ func ( cfg *Config ) MaintenanceMode() ( mode string ) {
 	}
 	return
 }
+// <<< feature:maintenance
 
 func ( file *File ) Validate() ( err error ) {
 	var problems []string
@@ -664,31 +714,40 @@ func ( file *File ) Validate() ( err error ) {
 	check( server.RateLimitMax > 0 , "server.rate_limit_max must be positive" )
 	check( server.RateLimitWindowSeconds > 0 , "server.rate_limit_window_seconds must be positive" )
 	check( server.RateLimitSignInMax > 0 , "server.rate_limit_signin_max must be positive" )
-	check( server.RateLimitUploadMax > 0 , "server.rate_limit_upload_max must be positive" )
+	check( server.RateLimitUploadMax > 0 , "server.rate_limit_upload_max must be positive" ) // feature:files
+	// >>> feature:maintenance
 	check( server.Maintenance == MaintenanceNone || server.Maintenance == MaintenanceReadOnly || server.Maintenance == MaintenanceFull ,
 		"server.maintenance must be none, read_only or full" )
+	// <<< feature:maintenance
 	check( len( server.Announcement ) <= 500 , "server.announcement must be 500 characters or fewer" )
 
 	auth := file.Auth
 	check( auth.SessionTTLSeconds > 0 , "auth.session_ttl_seconds must be positive" )
 	check( auth.SessionMaxAgeSeconds >= auth.SessionTTLSeconds , "auth.session_max_age_seconds must be at least auth.session_ttl_seconds" )
 	check( auth.LoginTokenTTLSeconds > 0 , "auth.login_token_ttl_seconds must be positive" )
-	check( auth.APIKeyTTLSeconds > 0 , "auth.api_key_ttl_seconds must be positive" )
+	check( auth.MultiUseLoginTokenTTLSeconds > 0 , "auth.multi_use_login_token_ttl_seconds must be positive" )
+	check( auth.APIKeyTTLSeconds > 0 , "auth.api_key_ttl_seconds must be positive" ) // feature:api_keys
 
+	// >>> feature:logs
 	logs := file.Logs
 	check( logs.RetentionDays >= 1 && logs.RetentionDays <= 3650 , "logs.retention_days must be 1-3650, got %d" , logs.RetentionDays )
 	check( logs.MaxTotalMB >= 1 , "logs.max_total_mb must be positive" )
 	check( logs.MaxFileMB >= 1 && logs.MaxFileMB <= logs.MaxTotalMB , "logs.max_file_mb must be positive and no more than logs.max_total_mb" )
 	check( logs.CompressAfterDays >= 0 , "logs.compress_after_days must be 0 (never) or more" )
+	// <<< feature:logs
 
-	check( file.Webhooks.TimeoutSeconds >= 1 && file.Webhooks.TimeoutSeconds <= 60 , "webhooks.timeout_seconds must be 1-60, got %d" , file.Webhooks.TimeoutSeconds )
+	check( file.Webhooks.TimeoutSeconds >= 1 && file.Webhooks.TimeoutSeconds <= 60 , "webhooks.timeout_seconds must be 1-60, got %d" , file.Webhooks.TimeoutSeconds ) // feature:webhooks
+	// >>> feature:files
 	check( file.Files.MaxFileBytes > 0 , "files.max_file_bytes must be positive" )
 	check( file.Files.QuotaBytesPerUser > 0 , "files.quota_bytes_per_user must be positive" )
 	check( file.Files.AbandonedUploadHours > 0 , "files.abandoned_upload_hours must be positive" )
 	check( file.Files.Enabled == false || server.BodyLimitBytes >= FileChunkBytes , "server.body_limit_bytes must be at least %d while files.enabled is on: that is the size of one piece of an upload" , FileChunkBytes )
+	// <<< feature:files
+	// >>> feature:backups
 	backups := file.Backups
 	check( backups.IntervalHours >= 1 , "backups.interval_hours must be at least 1, got %d" , backups.IntervalHours )
 	check( backups.Keep >= 1 , "backups.keep must be at least 1, got %d" , backups.Keep )
+	// <<< feature:backups
 
 	docker := file.Docker
 	check( imagePattern.MatchString( docker.Image ) , "docker.image %q is not a valid lowercase image name" , docker.Image )
@@ -996,16 +1055,17 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		SessionTTL:    seconds( file.Auth.SessionTTLSeconds ),
 		SessionMaxAge: seconds( file.Auth.SessionMaxAgeSeconds ),
 		LoginTokenTTL: seconds( file.Auth.LoginTokenTTLSeconds ),
+		MultiUseLoginTokenTTL: seconds( file.Auth.MultiUseLoginTokenTTLSeconds ),
 
-		APIKeysEnabled: file.Auth.APIKeys,
-		PasswordsEnabled: file.Auth.Passwords,
-		TwoFactorEnabled: file.Auth.TwoFactor,
-		InviteLinksEnabled: file.Auth.InviteLinks,
-		APIKeyTTL:      seconds( file.Auth.APIKeyTTLSeconds ),
-		MCPEnabled:     file.Server.MCP,
-		Maintenance:    file.Server.Maintenance,
+		APIKeysEnabled: file.Auth.APIKeys, // feature:api_keys
+		PasswordsEnabled: file.Auth.Passwords, // feature:passwords
+		TwoFactorEnabled: file.Auth.TwoFactor, // feature:two_factor
+		InviteLinksEnabled: file.Auth.InviteLinks, // feature:invite_links
+		APIKeyTTL:      seconds( file.Auth.APIKeyTTLSeconds ), // feature:api_keys
+		MCPEnabled:     file.Server.MCP, // feature:mcp
+		Maintenance:    file.Server.Maintenance, // feature:maintenance
 		Announcement:   file.Server.Announcement,
-		MetricsEnabled: file.Metrics.Enabled,
+		MetricsEnabled: file.Metrics.Enabled, // feature:metrics
 
 		SecretKey:     secret_key,
 		EncryptAtRest: file.Server.EncryptAtRest,
@@ -1013,13 +1073,14 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		RateLimitMax:    file.Server.RateLimitMax,
 		RateLimitWindow: seconds( file.Server.RateLimitWindowSeconds ),
 		RateLimitSignInMax: file.Server.RateLimitSignInMax,
-		RateLimitUploadMax: file.Server.RateLimitUploadMax,
+		RateLimitUploadMax: file.Server.RateLimitUploadMax, // feature:files
 		BodyLimit:       file.Server.BodyLimitBytes,
 
 		TrustProxy:     file.Server.TrustProxy,
 		TrustedProxies: file.Server.TrustedProxies,
 		ProxyHeader:    file.Server.ProxyHeader,
 
+		// >>> feature:logs
 		Logs: LogsConfig{
 			Enabled:           file.Logs.Enabled,
 			Dir:               filepath.Join( paths.AppDir , LogsDirName ),
@@ -1031,12 +1092,16 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 			UIClicks:          file.Logs.UIClicks,
 			Echo:              file.Logs.Echo,
 		},
+		// <<< feature:logs
 
+		// >>> feature:webhooks
 		Webhooks: WebhooksConfig{
 			Enabled:             file.Webhooks.Enabled,
 			Timeout:             time.Duration( file.Webhooks.TimeoutSeconds ) * time.Second,
 			AllowPrivateTargets: file.Webhooks.AllowPrivateTargets,
 		},
+		// <<< feature:webhooks
+		// >>> feature:files
 		Files: FilesConfig{
 			Enabled:           file.Files.Enabled,
 			MaxFileBytes:      int64( file.Files.MaxFileBytes ),
@@ -1045,11 +1110,12 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 			Dir:               filepath.Join( paths.AppDir , StorageDirName , FilesDirName ),
 			UploadsDir:        filepath.Join( paths.AppDir , UploadsDirName ),
 		},
+		// <<< feature:files
 		Backups: BackupsConfig{
-			Enabled:  file.Backups.Enabled,
+			Enabled:  file.Backups.Enabled, // feature:backups
 			Dir:      filepath.Join( paths.AppDir , BackupsDirName ),
-			Interval: time.Duration( file.Backups.IntervalHours ) * time.Hour,
-			Keep:     file.Backups.Keep,
+			Interval: time.Duration( file.Backups.IntervalHours ) * time.Hour, // feature:backups
+			Keep:     file.Backups.Keep, // feature:backups
 		},
 
 		file: file,

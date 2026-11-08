@@ -5,8 +5,8 @@ import (
 	fmt "fmt"
 	io "io"
 	http "net/http"
-	os "os"
-	filepath "path/filepath"
+	os "os" // feature:logs
+	filepath "path/filepath" // feature:logs
 	regexp "regexp"
 	strings "strings"
 	atomic "sync/atomic"
@@ -16,10 +16,10 @@ import (
 	fiber "github.com/gofiber/fiber/v3"
 
 	config "{{MODULE_PATH}}/server/config"
-	logs "{{MODULE_PATH}}/server/logs"
-	metrics "{{MODULE_PATH}}/server/metrics"
+	logs "{{MODULE_PATH}}/server/logs" // feature:logs
+	metrics "{{MODULE_PATH}}/server/metrics" // feature:metrics
 	middleware "{{MODULE_PATH}}/server/middleware"
-	models "{{MODULE_PATH}}/server/models"
+	models "{{MODULE_PATH}}/server/models" // feature:api_keys
 )
 
 // monitored is the app the way main.go builds it, with the middleware and
@@ -27,29 +27,31 @@ import (
 type monitored struct {
 	*authFixture
 	app      *fiber.App
-	logDir   string
-	logger   *logs.Logger
-	adminKey string
-	userKey  string
+	logDir   string // feature:logs
+	logger   *logs.Logger // feature:logs
+	adminKey string // feature:api_keys
+	userKey  string // feature:api_keys
 }
 
 func newMonitored( t *testing.T , logging bool ) ( fixture *monitored ) {
 	t.Helper()
 	base := newAuthFixture( t )
-	base.cfg.MetricsEnabled = true
+	base.cfg.MetricsEnabled = true // feature:metrics
+	// >>> feature:logs
 	dir := t.TempDir()
 	logger := logs.New( config.LogsConfig{ Enabled: logging , Dir: dir , RetentionDays: 7 , MaxTotalBytes: 1 << 20 , MaxFileBytes: 1 << 20 } , base.cfg.SecretKey , false )
 	logger.Start()
+	// <<< feature:logs
 	settings := config.NewStaticHolder( base.cfg )
 	handlers := base.handlers
-	handlers.Logs = logger
-	handlers.Metrics = metrics.New()
+	handlers.Logs = logger // feature:logs
+	handlers.Metrics = metrics.New() // feature:metrics
 
 	app := fiber.New( fiber.Config{ ErrorHandler: middleware.NewErrorHandler( nil ) } )
 	app.Use( middleware.RequestID() )
-	app.Use( middleware.Metrics( handlers.Metrics ) )
+	app.Use( middleware.Metrics( handlers.Metrics ) ) // feature:metrics
 	app.Use( middleware.Recover( settings ) )
-	app.Use( middleware.RequestLog( logger ) )
+	app.Use( middleware.RequestLog( logger ) ) // feature:logs
 	app.Get( "/fail" , func( c fiber.Ctx ) ( err error ) {
 		err = serverError( c , errors.New( "the disk is on fire" ) )
 		return
@@ -59,11 +61,15 @@ func newMonitored( t *testing.T , logging bool ) ( fixture *monitored ) {
 	} )
 	handlers.Register( app )
 
-	admin_key , _ , err := models.IssueAPIKey( base.store , base.owner.ID , "scraper" , models.RoleAdmin , time.Hour )
-	if err != nil { t.Fatal( err ) }
-	user_key , _ , err := models.IssueAPIKey( base.store , base.alice.ID , "script" , models.RoleUser , time.Hour )
-	if err != nil { t.Fatal( err ) }
-	fixture = &monitored{ authFixture: base , app: app , logDir: dir , logger: logger , adminKey: admin_key , userKey: user_key }
+	fixture = &monitored{ authFixture: base , app: app }
+	// >>> feature:logs
+	fixture.logDir , fixture.logger = dir , logger
+	// <<< feature:logs
+	// >>> feature:api_keys
+	var err error
+	if fixture.adminKey , _ , err = models.IssueAPIKey( base.store , base.owner.ID , "scraper" , models.RoleAdmin , time.Hour ); err != nil { t.Fatal( err ) }
+	if fixture.userKey , _ , err = models.IssueAPIKey( base.store , base.alice.ID , "script" , models.RoleUser , time.Hour ); err != nil { t.Fatal( err ) }
+	// <<< feature:api_keys
 	base.app = app
 	return
 }
@@ -81,10 +87,12 @@ func ( fixture *monitored ) get( t *testing.T , path string , headers map[ strin
 	return
 }
 
+// >>> feature:api_keys
 func bearer( key string ) ( headers map[ string ]string ) {
 	headers = map[ string ]string{ "Authorization": "Bearer " + key }
 	return
 }
+// <<< feature:api_keys
 
 var requestIDShape = regexp.MustCompile( `^[0-9a-f]{16}$` )
 
@@ -112,6 +120,7 @@ func TestAFailureCanBeMatchedToItsLogLine( t *testing.T ) {
 		if strings.Contains( body , fmt.Sprintf( `"request_id":"%s"` , id ) ) == false {
 			t.Fatalf( "%s: no reference in the body: %s" , path , body )
 		}
+		// >>> feature:logs
 		fixture.logger.Close()
 		files , _ := filepath.Glob( filepath.Join( fixture.logDir , "*.jsonl" ) )
 		matched := false
@@ -126,6 +135,7 @@ func TestAFailureCanBeMatchedToItsLogLine( t *testing.T ) {
 		if matched == false {
 			t.Fatalf( "%s: no log line has both %s and the cause" , path , id )
 		}
+		// <<< feature:logs
 	}
 }
 
@@ -135,10 +145,12 @@ func TestLogsOffStillGivesIDsAndMetrics( t *testing.T ) {
 	if requestIDShape.MatchString( response.Header.Get( "X-Request-ID" ) ) == false || strings.Contains( body , "request_id" ) == false {
 		t.Fatalf( "%v %s" , response.Header , body )
 	}
+	// >>> feature:metrics
 	_ , scrape := fixture.get( t , "/metrics" , bearer( fixture.adminKey ) )
 	if strings.Contains( scrape , `app_http_requests_total{method="GET",status_class="5xx"} 1` ) == false {
 		t.Fatalf( "the failure was not counted:\n%s" , scrape )
 	}
+	// <<< feature:metrics
 }
 
 func TestReadyAnswersOnlyYesOrNo( t *testing.T ) {
@@ -190,6 +202,7 @@ func TestReadyGivesUpOnAStuckDatabaseAndSharesTheProbe( t *testing.T ) {
 	}
 }
 
+// >>> feature:metrics
 func TestMetricsAccess( t *testing.T ) {
 	fixture := newMonitored( t , false )
 	owner := fixture.signIn( t , fixture.owner.ID )
@@ -218,7 +231,9 @@ func TestMetricsAccess( t *testing.T ) {
 		t.Fatalf( "metrics off: %d" , response.StatusCode )
 	}
 }
+// <<< feature:metrics
 
+// >>> feature:metrics
 var sampleLine = regexp.MustCompile( `^[a-z_]+(\{[a-z_]+="[^"]*"(,[a-z_]+="[^"]*")*\})? [0-9.e+-]+$` )
 
 func TestMetricsFormatAndNoPathLabels( t *testing.T ) {
@@ -250,3 +265,4 @@ func TestMetricsFormatAndNoPathLabels( t *testing.T ) {
 		t.Fatalf( "an unknown method was not folded into OTHER:\n%s" , scrape )
 	}
 }
+// <<< feature:metrics

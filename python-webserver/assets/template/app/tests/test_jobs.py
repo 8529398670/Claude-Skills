@@ -5,17 +5,19 @@ run_due directly, so none of them sleep through a tick."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import tempfile
 import threading
 import time
 import unittest
-from dataclasses import replace
+from dataclasses import replace  # feature:backups
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from app.core import backup, db, encryption, housekeeping, jobs, logs
-from app.core.config import LogsConfig
+from app.core import db, encryption, housekeeping, jobs, logs
+from app.core import backup  # feature:backups
+from app.core.config import LogsConfig  # feature:logs
 from app.models import from_iso, sessions
 from app.models.jobs import get_job_record, mark_started
 from app.tests.support import new_holder
@@ -25,7 +27,8 @@ HOUR = timedelta(hours=1)
 
 
 def quiet_logger() -> logs.Logger:
-    return logs.Logger(LogsConfig(enabled=False), encryption.generate_key_hex(), False)
+    return logs.Logger(LogsConfig(enabled=False), encryption.generate_key_hex(), False)  # feature:logs
+    return logs.Logger()  # feature:!logs
 
 
 class JobsTestCase(unittest.IsolatedAsyncioTestCase):
@@ -291,11 +294,11 @@ class HousekeepingTest(unittest.TestCase):
     def test_every_purge_step_runs_and_the_errors_are_joined(self) -> None:
         session_id, _, session = sessions.new_session(1, -10)
         self.store.put(db.BUCKET_SESSIONS, session_id, session.to_record())
-        with mock.patch("app.models.api_keys.purge_dead_api_keys", side_effect=RuntimeError("keys broke")), mock.patch(
-            "app.models.login_tokens.purge_expired_login_tokens", side_effect=RuntimeError("tokens broke")
-        ):
+        with contextlib.ExitStack() as patches:
+            patches.enter_context(mock.patch("app.models.api_keys.purge_dead_api_keys", side_effect=RuntimeError("keys broke")))  # feature:api_keys
+            patches.enter_context(mock.patch("app.models.login_tokens.purge_expired_login_tokens", side_effect=RuntimeError("tokens broke")))
             note, error = housekeeping.purge(self.store)
-        self.assertIn("api keys: keys broke", error)
+        self.assertIn("api keys: keys broke", error)  # feature:api_keys
         self.assertIn("login tokens: tokens broke", error)
         self.assertIn("1 sessions", note)
         self.assertIsNone(self.store.get(db.BUCKET_SESSIONS, session_id))
@@ -303,6 +306,7 @@ class HousekeepingTest(unittest.TestCase):
     def test_a_clean_purge_says_so(self) -> None:
         self.assertEqual(housekeeping.purge(self.store), ("nothing to remove", ""))
 
+    # >>> feature:backups
     def test_backup_notes(self) -> None:
         logger = quiet_logger()
         self.assertEqual(housekeeping.scheduled_backup(self.store, self.holder, logger), ("off", ""))
@@ -328,7 +332,9 @@ class HousekeepingTest(unittest.TestCase):
         row = next(row for row in registry.rows() if row["name"] == "backup")
         self.assertFalse(row["last_ok"])
         self.assertEqual(row["last_error"], "disk full")
+    # <<< feature:backups
 
+    # >>> feature:logs
     def test_prune_logs_exists_only_with_the_log(self) -> None:
         names = {}
         for enabled in (True, False):
@@ -336,9 +342,13 @@ class HousekeepingTest(unittest.TestCase):
             registry = jobs.Registry(self.store, quiet_logger())
             housekeeping.register(registry, self.store, self.holder, logs.Logger(settings, encryption.generate_key_hex(), False))
             names[enabled] = [row["name"] for row in registry.rows()]
-        self.assertEqual(names[True], ["backup", "files", "prune-logs", "purge"])
-        self.assertEqual(names[False], ["backup", "files", "purge"])
+        always = ["purge"]
+        always.append("backup")  # feature:backups
+        always.append("files")  # feature:files
+        self.assertEqual(names[True], sorted([*always, "prune-logs"]))
+        self.assertEqual(names[False], sorted(always))
 
 
+    # <<< feature:logs
 if __name__ == "__main__":
     unittest.main()

@@ -1,3 +1,4 @@
+# whole-file feature:files
 """Uploaded files, below the routes: a file comes back exactly, nothing is on
 disk in the clear, a piece opens only in its own place, and the sweep removes
 what it should and nothing else. Go's twin is server/models/file_test.go."""

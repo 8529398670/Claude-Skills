@@ -1,3 +1,4 @@
+# whole-file feature:two_factor
 """Two-factor sign-in, from a person's point of view: finishing a sign-in with
 a code, and turning it on and off on their account (app/models/two_factor.py,
 app/models/sign_in.py).

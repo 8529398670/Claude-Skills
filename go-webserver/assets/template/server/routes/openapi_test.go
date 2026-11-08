@@ -1,3 +1,4 @@
+// whole-file feature:openapi
 package routes
 
 import (

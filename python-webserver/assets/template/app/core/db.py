@@ -50,6 +50,8 @@ BUCKET_WEBHOOKS = "webhooks"
 BUCKET_WEBHOOK_DELIVERIES = "webhook_deliveries"
 # Describes uploads; the bytes are on disk. See app/models/files.py.
 BUCKET_FILES = "files"
+# What the owner calls an address. See app/models/ip_names.py.
+BUCKET_IP_NAMES = "ip_names"
 BUCKET_META = "meta"
 
 BUCKETS = (
@@ -63,6 +65,7 @@ BUCKETS = (
     BUCKET_WEBHOOKS,
     BUCKET_WEBHOOK_DELIVERIES,
     BUCKET_FILES,
+    BUCKET_IP_NAMES,
     BUCKET_META,
 )
 
@@ -422,7 +425,7 @@ def rekey(path: Path, old_key: str, new_key: str, encrypt_at_rest: bool, rewrite
     """Rewrite a database file nothing is using from old_key to new_key, in
     one transaction, so it is all or nothing. Every record goes through
     rewrite, which changes it in place, for the fields a model encrypts a
-    second time on its own (see two_factor.rekey_record). With encrypt_at_rest
+    second time on its own (see sealed.rekey_record). With encrypt_at_rest
     off only rewrite has anything to change. Tables an app added through
     connect() are not encrypted by this module, so they are left alone."""
     reader = Store(path, old_key, encrypt_at_rest)

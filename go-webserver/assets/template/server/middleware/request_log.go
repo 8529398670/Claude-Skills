@@ -1,10 +1,10 @@
+// whole-file feature:logs
 package middleware
 
 import (
 	fmt "fmt"
 	log "log"
 	url "net/url"
-	path "path"
 	strings "strings"
 	time "time"
 
@@ -76,18 +76,6 @@ func skipRequestLog( c fiber.Ctx , settings config.LogsConfig ) ( skip bool ) {
 	case settings.StaticAssets == false && staticAsset( c.Method() , request_path ):
 		skip = true
 	}
-	return
-}
-
-// staticAsset is a file the page loads (/js/app.js, /vendor/...), as opposed
-// to the page itself, an API call, or a login or invite link -- whose
-// credential can contain a dot, which is why those are ruled out first.
-func staticAsset( method string , request_path string ) ( result bool ) {
-	if method != fiber.MethodGet && method != fiber.MethodHead { return }
-	for _ , prefix := range []string{ "/api/" , "/login/" , "/join/" , "/mcp" } {
-		if strings.HasPrefix( request_path , prefix ) { return }
-	}
-	result = path.Ext( request_path ) != ""
 	return
 }
 

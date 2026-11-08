@@ -1,7 +1,8 @@
 """Run with: python3 -B -m unittest discover -s tests  (from the skill directory)
 
 One test per merge rule, then the whole prepare/apply/rollback cycle on a real
-git repository, then every skill commit through the renderer.
+git repository, then upgrades being chosen or left out, then every skill commit
+through the renderer.
 """
 import argparse
 import contextlib
@@ -153,7 +154,7 @@ def run_git(directory, *arguments):
     subprocess.run(["git", "-C", str(directory), "-c", "user.name=t", "-c", "user.email=t@t", *arguments], check=True, capture_output=True)
 
 
-class Cycle(unittest.TestCase):
+class Repo(unittest.TestCase):
     """prepare, apply and rollback on a real repository, with the two renders
     stood in for so the test controls exactly what changed upstream."""
 
@@ -171,7 +172,7 @@ class Cycle(unittest.TestCase):
         (self.app / "gone.go").write_text("bye\n")
         (self.app / "config" / "secret.key").write_text("secret\n")
         (self.app / ".gitignore").write_text("config/secret.key\n*.json\n")
-        (self.app / ".skill-origin.yaml").write_text('skill: go-webserver\ncommit: aaaa\ndirty: false\nproject_name: "Thing"\nslug: thing\nport: 21000\nfeatures: [api_keys]\n')
+        (self.app / ".skill-origin.yaml").write_text('skill: go-webserver\ncommit: aaaa\nproject_name: "Thing"\nslug: thing\nport: 21000\nfeatures: [api_keys]\n')
         run_git(self.app, "init", "-q", "-b", "master")
         run_git(self.app, "add", ".")
         run_git(self.app, "commit", "-qm", "start")
@@ -188,6 +189,7 @@ class Cycle(unittest.TestCase):
         upgrade.render, upgrade.resolve_commit = self.saved
 
     def run_command(self, function, **extra):
+        extra.setdefault("skip", None)
         arguments = argparse.Namespace(app=str(self.app), state=str(self.state), to="HEAD", force=False, **extra)
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -203,6 +205,8 @@ class Cycle(unittest.TestCase):
     def resolve_both(self):
         self.staged("both.go").write_text("resolved\n")
 
+
+class Cycle(Repo):
     def test_prepare_leaves_the_app_alone(self):
         before = self.snapshot()
         output = self.run_command(upgrade.command_prepare)
@@ -231,7 +235,7 @@ class Cycle(unittest.TestCase):
         self.run_command(upgrade.command_rollback)
         self.assertEqual(self.snapshot(), before)
 
-    def test_dirty_touched_file_refuses_but_unrelated_does_not(self):
+    def test_uncommitted_touched_file_refuses_but_unrelated_does_not(self):
         (self.app / "notes.txt").write_text("unrelated\n")
         self.run_command(upgrade.command_prepare)
         (self.app / "same.go").write_text("edited\n")
@@ -274,6 +278,250 @@ class Cycle(unittest.TestCase):
         self.assertEqual(branches, ["master"])
         log = subprocess.run(["git", "-C", str(self.app), "rev-list", "--count", "HEAD"], capture_output=True, text=True).stdout.strip()
         self.assertEqual(log, "1")  # nothing committed
+
+
+ENTRIES = """## After abc
+
+**Upgrade `rename-things`: Renaming things.**
+Needs: `helpers`.
+Marks: `rename_thing`
+Files: `added.go`
+
+Prose that says how, with `quoted` words that are not marks.
+
+**Upgrade `hooks-edit`: Editing webhooks.**
+Needs: `webhooks`, `helpers`.
+Marks: `edit_hook`
+
+**Plumbing `helpers`: Shared helpers.**
+Marks: `helper_fn`
+
+**Some fix:** not labelled, so it always lands.
+"""
+
+
+class Items(unittest.TestCase):
+    def test_labels_are_read_and_prose_is_not(self):
+        items = upgrade.parse_items(ENTRIES)
+        self.assertEqual([item.name for item in items], ["rename-things", "hooks-edit", "helpers"])
+        self.assertEqual(items[0].needs, ["helpers"])
+        self.assertEqual(items[0].marks, ["rename_thing"])
+        self.assertEqual(items[0].files, ["added.go"])
+        self.assertTrue(items[2].plumbing)
+
+    def test_an_example_in_a_code_block_is_not_an_item(self):
+        self.assertEqual(upgrade.parse_items("```\n**Upgrade `x`: X.**\nMarks: `m`\n```\n"), [])
+
+    def offers(self, base=b"", new=b"rename_thing edit_hook helper_fn", ours=b"", earlier=()):
+        table = {"api_keys": ("auth", "api_keys", ()), "webhooks": ("webhooks", "enabled", ())}
+        return upgrade.sort_offers(upgrade.parse_items(ENTRIES), {"a": File(base)}, {"a": File(new)}, {"a": File(ours)}, IDENTITY, table, list(earlier))
+
+    def test_needing_an_off_feature_is_not_asked_about(self):
+        offers = self.offers()
+        self.assertEqual([item.name for item in offers.ask], ["rename-things"])
+        self.assertEqual([(item.name, missing) for item, missing in offers.off], [("hooks-edit", ["webhooks"])])
+
+    def test_already_in_the_template_the_app_is_on_is_not_new(self):
+        self.assertEqual(self.offers(base=b"rename_thing").ask, [])
+
+    def test_already_in_the_app_is_not_new(self):
+        self.assertEqual(self.offers(ours=b"rename_thing").ask, [])
+
+    def test_skipped_earlier_is_not_asked_again(self):
+        offers = self.offers(earlier=["rename-things"])
+        self.assertEqual(offers.ask, [])
+        self.assertEqual(offers.earlier, ["rename-things"])
+
+    def test_plumbing_stays_only_for_what_needs_it(self):
+        taken, left = upgrade.settle(self.offers(), set())
+        self.assertEqual({item.name for item in taken}, {"rename-things", "helpers"})
+        self.assertEqual({item.name for item in left}, {"hooks-edit"})
+        taken, left = upgrade.settle(self.offers(), {"rename-things"})
+        self.assertEqual(taken, [])
+        self.assertEqual({item.name for item in left}, {"rename-things", "hooks-edit", "helpers"})
+
+    def test_needing_a_skipped_upgrade_skips_it_too(self):
+        entries = "**Upgrade `one`: One.**\nMarks: `m1`\n\n**Upgrade `two`: Two.**\nNeeds: `one`.\nMarks: `m2`\n"
+        offers = upgrade.sort_offers(upgrade.parse_items(entries), {}, {"a": File(b"m1 m2")}, {}, IDENTITY, {}, [])
+        taken, left = upgrade.settle(offers, {"one"})
+        self.assertEqual(taken, [])
+        self.assertEqual({item.name for item in left}, {"one", "two"})
+
+    def test_a_whole_feature_the_stamp_lists_is_not_offered(self):
+        entries = "**Upgrade `api_keys`: Keys.**\nMarks: `m1`\n"
+        table = {"api_keys": ("auth", "api_keys", ())}
+        offers = upgrade.sort_offers(upgrade.parse_items(entries), {}, {"a": File(b"m1")}, {}, IDENTITY, table, [])
+        self.assertEqual(offers.ask, [])
+
+
+class Entries(unittest.TestCase):
+    """Labels in the real UPGRADING.md files have to match the real templates."""
+
+    def test_every_mark_and_file_is_in_the_template(self):
+        repo = Path(upgrade.SKILLS_REPO)
+        for skill in ("go-webserver", "python-webserver"):
+            template = repo / skill / "assets" / "template"
+            items = upgrade.parse_items((repo / skill / "UPGRADING.md").read_text(encoding="utf-8"))
+            self.assertTrue(items)
+            text = b"\n".join(path.read_bytes() for path in template.rglob("*") if path.is_file())
+            for item in items:
+                self.assertTrue(item.marks, item.name)
+                for mark in item.marks:
+                    self.assertIn(mark.encode(), text, f"{skill} {item.name}")
+                for name in item.files:
+                    self.assertTrue((template / name).exists(), f"{skill} {name}")
+
+
+class Skipping(Repo):
+    def setUp(self):
+        super().setUp()
+        self.renders["bbbb"]["same.go"] = File(b"new rename_thing\n")
+        self.items = upgrade.parse_items("**Upgrade `rename-things`: Renaming things.**\nMarks: `rename_thing`\nFiles: `added.go`\n")
+        self.saved_items = upgrade.upgrade_items
+        upgrade.upgrade_items = lambda commit, skill: self.items
+        self.addCleanup(lambda: setattr(upgrade, "upgrade_items", self.saved_items))
+
+    def test_prepare_wants_a_decision(self):
+        with self.assertRaises(upgrade.Refused):
+            self.run_command(upgrade.command_prepare)
+
+    def test_unknown_name_refuses(self):
+        with self.assertRaises(upgrade.Refused):
+            self.run_command(upgrade.command_prepare, skip="nope")
+
+    def test_taken_lands_whole(self):
+        self.run_command(upgrade.command_prepare, skip="none")
+        self.assertTrue(self.staged("added.go").exists())
+
+    def test_left_out_file_stays_out_and_fixes_land(self):
+        self.run_command(upgrade.command_prepare, skip="rename-things")
+        self.assertFalse(self.staged("added.go").exists())
+        self.staged("same.go").write_text("new\n")
+        self.staged("both.go").write_text("mine\ny\n")
+        self.run_command(upgrade.command_apply)
+        self.assertFalse((self.app / "added.go").exists())
+        self.assertEqual((self.app / "same.go").read_text(), "new\n")
+        self.assertIn("skipped: [rename-things]", (self.app / ".skill-origin.yaml").read_text())
+
+    def test_apply_refuses_a_leftover_mark(self):
+        self.run_command(upgrade.command_prepare, skip="rename-things")
+        self.staged("both.go").write_text("mine\ny\n")
+        with self.assertRaises(upgrade.Refused) as caught:
+            self.run_command(upgrade.command_apply)
+        self.assertIn("rename_thing", str(caught.exception))
+
+    def test_the_apps_own_use_of_a_mark_is_not_a_leftover(self):
+        self.items[0].marks.append("hello")
+        (self.app / "same.go").write_text("old\n# rename_thing of our own\n")
+        run_git(self.app, "add", ".")
+        run_git(self.app, "commit", "-qm", "own")
+        self.run_command(upgrade.command_prepare, skip="rename-things")
+        self.staged("same.go").write_text("new\n# rename_thing of our own\n")
+        self.staged("both.go").write_text("mine\ny\n")
+        self.run_command(upgrade.command_apply)
+
+    def test_rollback_restores_the_stamp(self):
+        before = (self.app / ".skill-origin.yaml").read_text()
+        self.run_command(upgrade.command_prepare, skip="rename-things")
+        self.staged("same.go").write_text("new\n")
+        self.staged("both.go").write_text("mine\ny\n")
+        self.run_command(upgrade.command_apply)
+        self.run_command(upgrade.command_rollback)
+        self.assertEqual((self.app / ".skill-origin.yaml").read_text(), before)
+
+    def test_a_second_update_does_not_bring_it_back(self):
+        self.run_command(upgrade.command_prepare, skip="rename-things")
+        self.staged("same.go").write_text("new\n")
+        self.staged("both.go").write_text("mine\ny\n")
+        self.run_command(upgrade.command_apply)
+        run_git(self.app, "add", ".")
+        run_git(self.app, "commit", "-qm", "first")
+        later = dict(self.renders["bbbb"])
+        later["added.go"] = File(b"hello again\n")
+        later["same.go"] = File(b"new rename_thing\nmore\n")
+        self.renders["cccc"] = later
+        upgrade.resolve_commit = lambda reference: "cccc"
+        output = self.run_command(upgrade.command_prepare)
+        self.assertNotIn("Refused", output)
+        self.assertFalse(self.staged("added.go").exists())
+        self.assertNotIn("added.go", output)
+
+
+class Pruned(Repo):
+    """An app scaffolded without a part: the renders stand in for what scaffold.py
+    produces with and without it."""
+
+    def setUp(self):
+        super().setUp()
+        stamp = self.app / ".skill-origin.yaml"
+        stamp.write_text(stamp.read_text() + "pruned: [metrics, webhooks]\n")
+        (self.app / "same.go").write_text("// mine\n\nold\n")
+        run_git(self.app, "add", ".")
+        run_git(self.app, "commit", "-qm", "stamped")
+        (self.app / "both.go").write_text("x\n")
+        (self.app / "gone.go").unlink()
+        run_git(self.app, "add", ".")
+        run_git(self.app, "commit", "-qm", "tidy")
+        self.calls = []
+
+        def render(commit, identity, table=None):
+            self.calls.append((commit, list(identity.pruned), list(identity.features)))
+            files = {"same.go": File(b"old\n"), "both.go": File(b"x\n")}
+            if "webhooks" not in identity.pruned:
+                files["hooks.go"] = File(b"hooks\n")
+                files["same.go"] = File(b"old\nwire\n")
+            if "metrics" not in identity.pruned:
+                files["metrics.go"] = File(b"metrics\n")
+            return files, {"webhooks": ("webhooks", "enabled", ()), "metrics": ("metrics", "enabled", ("api_keys",))}
+
+        upgrade.render = render
+        saved = upgrade.needs_table
+        upgrade.needs_table = lambda commit, skill: {"webhooks": (), "metrics": ("api_keys",), "logs": ()}
+        self.addCleanup(lambda: setattr(upgrade, "needs_table", saved))
+
+    def add(self, features):
+        arguments = argparse.Namespace(app=str(self.app), state=str(self.state), features=features)
+        with contextlib.redirect_stdout(io.StringIO()):
+            upgrade.command_add_feature(arguments)
+
+    def test_identify_reads_the_list(self):
+        self.assertEqual(upgrade.identify(self.app).pruned, ["metrics", "webhooks"])
+
+    def test_adding_brings_the_part_and_keeps_what_the_app_changed(self):
+        self.add("webhooks")
+        self.assertEqual(self.calls[-1][1], ["metrics"])
+        self.assertIn("webhooks", self.calls[-1][2])
+        self.assertFalse((self.app / "hooks.go").exists())
+        with contextlib.redirect_stdout(io.StringIO()):
+            upgrade.command_apply(argparse.Namespace(app=str(self.app), state=str(self.state)))
+        self.assertEqual((self.app / "hooks.go").read_text(), "hooks\n")
+        self.assertFalse((self.app / "metrics.go").exists())
+        self.assertIn("wire", (self.app / "same.go").read_text())
+        self.assertIn("mine", (self.app / "same.go").read_text())
+        stamp = (self.app / ".skill-origin.yaml").read_text()
+        self.assertIn("pruned: [metrics]", stamp)
+        self.assertIn("webhooks", stamp.split("features:")[1].split("\n")[0])
+        self.assertIn("commit: aaaa", stamp)
+
+    def test_something_the_app_has_cannot_be_added(self):
+        with self.assertRaisesRegex(upgrade.Refused, "not scaffolded without logs"):
+            self.add("logs")
+
+
+class OldApps(Repo):
+    def test_an_app_from_before_pruning_has_nothing_pruned(self):
+        self.assertEqual(upgrade.identify(self.app).pruned, [])
+
+    def test_an_update_never_takes_a_part_out_of_it(self):
+        # The new render is the same template with every marker gone, so nothing
+        # that the app holds is read as removed upstream.
+        self.renders["aaaa"] = {"hooks.go": File(b"hooks\n"), "same.go": File(b"old\n")}
+        self.renders["bbbb"] = {"hooks.go": File(b"hooks\nfixed\n"), "same.go": File(b"old\n")}
+        (self.app / "hooks.go").write_text("hooks\n")
+        run_git(self.app, "add", ".")
+        run_git(self.app, "commit", "-qm", "hooks")
+        self.run_command(upgrade.command_prepare)
+        self.assertEqual(self.staged("hooks.go").read_text(), "hooks\nfixed\n")
 
 
 class EveryCommit(unittest.TestCase):

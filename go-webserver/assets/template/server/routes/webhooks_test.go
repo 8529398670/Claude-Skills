@@ -1,3 +1,4 @@
+// whole-file feature:webhooks
 package routes
 
 import (
@@ -10,14 +11,6 @@ import (
 	models "{{MODULE_PATH}}/server/models"
 	webhooks "{{MODULE_PATH}}/server/webhooks"
 )
-
-// send is a POST with the session's csrf token.
-func send( t *testing.T , client *browser , path string , body fiber.Map ) ( status int , reply map[ string ]any ) {
-	t.Helper()
-	body[ "csrf_token" ] = client.csrf( t )
-	status , reply = client.post( t , path , body )
-	return
-}
 
 func createdWebhook( t *testing.T , owner *browser ) ( id string , secret string ) {
 	t.Helper()
@@ -66,6 +59,92 @@ func TestCreatingAWebhookChecksTheAddress( t *testing.T ) {
 	}
 	status , reply := send( t , owner , "/api/owner/webhooks" , fiber.Map{ "name": "x" , "url": "https://a.example" , "events": []string{ "made.up" } } )
 	if status != fiber.StatusBadRequest { t.Fatalf( "%d %v" , status , reply ) }
+}
+
+func TestRenamingAWebhook( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	id , _ := createdWebhook( t , owner )
+	path := "/api/owner/webhooks/" + id + "/rename"
+
+	status , reply := send( t , owner , path , fiber.Map{ "name": "  Alerts  " } )
+	if status != fiber.StatusOK || reply[ "name" ] != "Alerts" { t.Fatalf( "%d %v" , status , reply ) }
+	if status , _ = send( t , owner , path , fiber.Map{ "name": "  " } ); status != fiber.StatusBadRequest { t.Fatalf( "%d" , status ) }
+
+	// An undo that finds a different name leaves it alone, and says what is there.
+	status , reply = send( t , owner , path , fiber.Map{ "name": "old" , "expect": "stale" } )
+	if status != fiber.StatusConflict || reply[ "name" ] != "Alerts" { t.Fatalf( "%d %v" , status , reply ) }
+
+	models.DeleteWebhook( fixture.store , id , fixture.owner.ID )
+	if status , _ = send( t , owner , path , fiber.Map{ "name": "gone" } ); status != fiber.StatusNotFound { t.Fatalf( "%d" , status ) }
+}
+
+func TestChangingWhereAWebhookGoes( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	id , _ := createdWebhook( t , owner )
+	path := "/api/owner/webhooks/" + id + "/target"
+	events := []string{ models.EventUserCreated }
+
+	status , reply := send( t , owner , path , fiber.Map{ "url": "https://new.example.com/in" , "events": events } )
+	if status != fiber.StatusOK { t.Fatalf( "%d %v" , status , reply ) }
+	hook , _ := models.GetWebhook( fixture.store , id )
+	if hook.URL != "https://new.example.com/in" || len( hook.Events ) != 1 || hook.Events[ 0 ] != models.EventUserCreated { t.Fatalf( "%+v" , hook ) }
+
+	// The same check as a new endpoint's, so an edit cannot aim one at this machine.
+	for _ , target := range []string{ "http://hooks.example.com/in" , "https://127.0.0.1/in" , "https://169.254.169.254/" } {
+		if status , _ = send( t , owner , path , fiber.Map{ "url": target , "events": events } ); status != fiber.StatusBadRequest { t.Fatalf( "%s: %d" , target , status ) }
+	}
+	for _ , picked := range [][]string{ {} , { "made.up" } } {
+		if status , _ = send( t , owner , path , fiber.Map{ "url": "https://a.example" , "events": picked } ); status != fiber.StatusBadRequest { t.Fatalf( "%v: %d" , picked , status ) }
+	}
+
+	// An undo that finds something else leaves it alone: the address or the events.
+	for _ , stale := range []fiber.Map{
+		{ "url": "https://old.example.com/in" , "events": events },
+		{ "url": "https://new.example.com/in" , "events": []string{ "*" } },
+	} {
+		status , _ = send( t , owner , path , fiber.Map{ "url": "https://a.example" , "events": []string{ "*" } , "expect": stale } )
+		if status != fiber.StatusConflict { t.Fatalf( "%v: %d" , stale , status ) }
+	}
+	hook , _ = models.GetWebhook( fixture.store , id )
+	if hook.URL != "https://new.example.com/in" { t.Fatalf( "%+v" , hook ) }
+	status , _ = send( t , owner , path , fiber.Map{ "url": "https://a.example" , "events": []string{ "*" } ,
+		"expect": fiber.Map{ "url": "https://new.example.com/in" , "events": events } } )
+	if status != fiber.StatusOK { t.Fatalf( "%d" , status ) }
+
+	models.DeleteWebhook( fixture.store , id , fixture.owner.ID )
+	if status , _ = send( t , owner , path , fiber.Map{ "url": "https://a.example" , "events": events } ); status != fiber.StatusNotFound { t.Fatalf( "%d" , status ) }
+}
+
+func TestRotatingAWebhookSecret( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	id , before := createdWebhook( t , owner )
+	path := "/api/owner/webhooks/" + id + "/rotate-secret"
+
+	status , reply := send( t , owner , path , fiber.Map{} )
+	after , _ := reply[ "secret" ].( string )
+	if status != fiber.StatusOK || strings.HasPrefix( after , "whsec_" ) == false || after == before { t.Fatalf( "%d %v" , status , reply ) }
+
+	// The sender opens the new one, so a delivery is signed with what was shown.
+	hook , _ := models.GetWebhook( fixture.store , id )
+	opened , err := models.OpenWebhookSecret( hook , fixture.handlers.cfg().SecretKey )
+	if err != nil || opened != after { t.Fatalf( "%q %v" , opened , err ) }
+
+	models.DeleteWebhook( fixture.store , id , fixture.owner.ID )
+	if status , _ = send( t , owner , path , fiber.Map{} ); status != fiber.StatusNotFound { t.Fatalf( "%d" , status ) }
+}
+
+func TestEditingAWebhookIsTheOwnersAlone( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	id , _ := createdWebhook( t , owner )
+	for _ , verb := range []string{ "rename" , "target" , "rotate-secret" } {
+		status , _ := send( t , alice , "/api/owner/webhooks/"+id+"/"+verb , fiber.Map{ "name": "x" , "url": "https://a.example" , "events": []string{ "*" } } )
+		if status != fiber.StatusNotFound { t.Fatalf( "%s: %d" , verb , status ) }
+	}
 }
 
 func TestATestEventQueuesADeliveryAndListsIt( t *testing.T ) {

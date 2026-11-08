@@ -1,3 +1,4 @@
+// whole-file feature:logs
 // Package logs is the activity log: every request the server answers, every
 // sign-in and admin action, and what people did on the page (sent by
 // static/js/track.js). Only the owner reads it, on the Logs screen.
@@ -21,10 +22,8 @@
 package logs
 
 import (
-	url "net/url"
 	strings "strings"
 	time "time"
-	utf8 "unicode/utf8"
 )
 
 // Kinds. The Logs screen has a filter button for each.
@@ -94,63 +93,39 @@ type UI struct {
 	At string `json:"at,omitempty"`
 }
 
+// owned is the entry with its own copy of every string a request could have
+// lent it. A line is written after the request ends, and fiber's strings view a
+// buffer it reuses for the next request, so a line that kept them could hold
+// that request's bytes: its headers, cookie included. Copying here covers every
+// caller, so a route need not remember to. Actor comes from the database and UI
+// from a decoded body, so neither views the buffer.
+func ( entry Entry ) owned() ( result Entry ) {
+	result = entry
+	result.RequestID = strings.Clone( entry.RequestID )
+	result.IP = strings.Clone( entry.IP )
+	result.UA = strings.Clone( entry.UA )
+	result.Msg = strings.Clone( entry.Msg )
+	if entry.Request != nil {
+		request := *entry.Request
+		request.Method = strings.Clone( request.Method )
+		request.Path = strings.Clone( request.Path )
+		request.Referer = strings.Clone( request.Referer )
+		result.Request = &request
+	}
+	if entry.Detail != nil {
+		result.Detail = make( map[string]any , len( entry.Detail ) )
+		for name , value := range entry.Detail {
+			if text , is_text := value.( string ); is_text {
+				value = strings.Clone( text )
+			}
+			result.Detail[ name ] = value
+		}
+	}
+	return
+}
+
 // Anonymous is the Actor of a request nobody signed in made.
 func Anonymous() ( actor *Actor ) {
 	actor = &Actor{ Method: "anon" }
-	return
-}
-
-// The path prefixes whose next segment is a credential: a login link, an
-// invite link. Opening one is logged; the credential is not.
-var secretPathPrefixes = []string{ "/login/" , "/join/" }
-
-// Query parameters whose values are never written, whatever route they are on.
-var secretQueryKeys = map[string]bool{
-	"token": true , "key": true , "secret": true , "code": true ,
-	"credential": true , "csrf_token": true , "pin": true , "password": true ,
-	"password_digest": true , "challenge": true , "recovery_code": true ,
-}
-
-const maxPathLength = 300
-
-// Redact makes a request path safe to keep: the credential in a login or
-// invite link becomes "…", secret-looking query values become "…", and the
-// whole is capped so a pathological URL cannot bloat a line.
-func Redact( path string , raw_query string ) ( result string ) {
-	result = path
-	for _ , prefix := range secretPathPrefixes {
-		if strings.HasPrefix( result , prefix ) && len( result ) > len( prefix ) {
-			result = prefix + "…"
-			break
-		}
-	}
-	if raw_query != "" {
-		values , err := url.ParseQuery( raw_query )
-		if err != nil {
-			result += "?…"
-		} else {
-			for name := range values {
-				if secretQueryKeys[ strings.ToLower( name ) ] {
-					values.Set( name , "…" )
-				}
-			}
-			result += "?" + values.Encode()
-		}
-	}
-	if len( result ) > maxPathLength {
-		result = result[ :maxPathLength ] + "…"
-	}
-	return
-}
-
-// Truncate caps a string from a browser or a header at max bytes, on a rune
-// boundary.
-func Truncate( value string , max int ) ( result string ) {
-	result = value
-	if len( result ) <= max { return }
-	result = result[ :max ]
-	for len( result ) > 0 && utf8.ValidString( result ) == false {
-		result = result[ :len( result ) - 1 ]
-	}
 	return
 }

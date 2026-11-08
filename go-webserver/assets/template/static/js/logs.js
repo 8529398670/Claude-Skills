@@ -1,3 +1,4 @@
+// whole-file feature:logs
 // The Logs screen (owner only): everything the server and the browsers have
 // logged, one collapsible block per day, newest first. app.js calls
 // Logs.init( me ) for admins; only the owner gets past the first line, and
@@ -9,6 +10,10 @@
 // and a leading minus excludes (-kind:request). The kind buttons under the
 // box add a kind: term for you.
 //
+// An address can be given a name, so the log says who is who. Clicking one in a
+// row names it, and the list under the search manages them. Names live in the
+// database and are added as the log is read, so naming an address names its past.
+//
 // The whole screen is data-no-track in index.html: reading the log would
 // otherwise write to it.
 const Logs = {
@@ -17,7 +22,6 @@ const Logs = {
   searchDelayMs: 300,
   // The least time between reads while Live is on, however busy the server is.
   liveMs: 2000,
-  searchTimer: null,
   liveOn: false,
   liveSource: null,
   liveTimer: null,
@@ -33,15 +37,97 @@ const Logs = {
       event.preventDefault();
       this.search();
     } );
-    Dom.get( "logs-query" ).addEventListener( "input" , () => {
-      window.clearTimeout( this.searchTimer );
-      this.searchTimer = window.setTimeout( () => this.search() , this.searchDelayMs );
-    } );
+    Dom.typed( Dom.get( "logs-query" ) , () => this.search() , this.searchDelayMs );
     Dom.get( "logs-live" ).addEventListener( "click" , () => this.toggleLive() );
-    Dom.get( "logs-prune" ).addEventListener( "click" , () => this.onPrune() );
+    Dom.onPress( Dom.get( "logs-prune" ) , () => this.onPrune() );
+    Dom.onPress( Dom.get( "ip-names-add" ) , () => this.onNameIp( "" , "" ) );
     window.addEventListener( "hashchange" , () => this.followScreen() );
     this.renderKinds();
-    await this.refresh();
+    await Promise.all( [ this.refresh() , this.refreshNames() ] );
+  },
+
+  async refreshNames() {
+    let listing;
+    try {
+      listing = await Api.ipNames();
+    } catch ( error ) {
+      App.showError( error.message );
+      return;
+    }
+    Dom.text( Dom.get( "ip-names-summary" ) , I18n.get( "logs.ip_names_heading" ).replace( "{count}" , String( listing.names.length ) ) );
+    const table = Dom.get( "ip-names-table" );
+    const body = table.querySelector( "tbody" );
+    Dom.clear( body );
+    listing.names.forEach( ( item ) => body.appendChild( Dom.el( "tr" , { children: [
+      Dom.el( "td" , { children: [ Dom.editable( item.name , {
+        label: I18n.get( "logs.ip_name_label" ),
+        maxLength: 80,
+        save: async ( name ) => {
+          await Api.setIpName( item.target , name );
+          await this.refresh();
+        },
+      } ) ] } ),
+      Dom.el( "td" , { class: "font-monospace" , text: item.target } ),
+      Dom.el( "td" , { children: [ Dom.rowActions( item.name , [ Dom.el( "button" , {
+        class: "btn btn-sm btn-outline-danger",
+        text: I18n.get( "logs.ip_name_delete" ),
+        on: { click: () => this.onDeleteName( item ) },
+      } ) ] ) ] } ),
+    ] } ) ) );
+    if ( listing.names.length === 0 ) Pager.empty( table );
+    Pager.label( "ip-names-table" );
+  },
+
+  // target is what the field starts with: the address clicked, or nothing. Saving
+  // a target that already has a name renames it.
+  async onNameIp( target , name ) {
+    const saved = await Dom.form( {
+      title: I18n.get( "logs.ip_name_title" ),
+      fields: [
+        { name: "target" , label: I18n.get( "logs.ip_target_label" ) , value: target , help: I18n.get( "logs.ip_target_help" ) , required: true , maxLength: 64 },
+        { name: "name" , label: I18n.get( "logs.ip_name_label" ) , value: name , required: true , maxLength: 80 },
+      ],
+      save: ( values ) => Api.setIpName( values.target , values.name ),
+    } );
+    if ( !saved ) return;
+    await Promise.all( [ this.refresh() , this.refreshNames() ] );
+    Dom.toast( I18n.get( "logs.ip_named" ).replace( "{name}" , () => saved.name ) , "ok" );
+  },
+
+  async onDeleteName( item ) {
+    const remove = async () => {
+      await Api.deleteIpName( item.target );
+      await Promise.all( [ this.refresh() , this.refreshNames() ] );
+    };
+    const restore = async () => {
+      await Api.setIpName( item.target , item.name );
+      await Promise.all( [ this.refresh() , this.refreshNames() ] );
+    };
+    try {
+      await remove();
+    } catch ( error ) {
+      App.showError( error.message );
+      return;
+    }
+    Undo.record( { label: I18n.get( "undo.ip_name" ) , toast: true , undo: restore , redo: remove } );
+  },
+
+  // The address, or what it is called with the address under it. Pressing it
+  // names it, rather than opening the row.
+  ipCell( entry ) {
+    if ( !entry.ip ) return Dom.el( "td" );
+    const label = I18n.get( "logs.ip_name_button" ).replace( "{ip}" , () => entry.ip );
+    return Dom.el( "td" , { class: "text-nowrap" , children: [ Dom.el( "button" , {
+      class: "log-ip",
+      attrs: { type: "button" , "aria-label": label , title: label },
+      children: entry.ip_name
+        ? [ Dom.el( "span" , { text: entry.ip_name } ) , Dom.el( "span" , { class: "log-ip-address" , text: entry.ip } ) ]
+        : [ Dom.el( "span" , { text: entry.ip } ) ],
+      on: { click: ( event ) => {
+        event.stopPropagation();
+        return this.onNameIp( entry.ip , entry.ip_name || "" );
+      } },
+    } ) ] } );
   },
 
   // A new search starts with the newest matching day open again.
@@ -161,7 +247,7 @@ const Logs = {
       on: { click: () => this.onDeleteDay( day.date ) },
     } );
     const body = Dom.el( "div" , { class: "log-day-body" , children: [
-      Dom.el( "div" , { class: "row-actions mb-2" , children: [ download , remove ].filter( Boolean ) } ),
+      Dom.el( "div" , { class: "mb-2" , children: [ Dom.rowActions( this.dayLabel( day.date ) , [ download , remove ] ) ] } ),
     ] } );
 
     const block = Dom.el( "details" , { class: "log-day" , attrs: { "data-date": day.date } , children: [ summary , body ] } );
@@ -187,11 +273,11 @@ const Logs = {
     if ( !table ) {
       table = Dom.el( "table" , { class: "table table-sm table-hover align-middle log-table" , children: [
         Dom.el( "thead" , { children: [ Dom.el( "tr" , { children: [
-          Dom.el( "th" , { text: I18n.get( "logs.table_time" ) } ),
-          Dom.el( "th" , { text: I18n.get( "logs.table_kind" ) } ),
-          Dom.el( "th" , { text: I18n.get( "logs.table_user" ) } ),
-          Dom.el( "th" , { text: I18n.get( "logs.table_what" ) } ),
-          Dom.el( "th" , { text: I18n.get( "logs.table_ip" ) } ),
+          Dom.el( "th" , { text: I18n.get( "logs.table_time" ) , attrs: { scope: "col" } } ),
+          Dom.el( "th" , { text: I18n.get( "logs.table_kind" ) , attrs: { scope: "col" } } ),
+          Dom.el( "th" , { text: I18n.get( "logs.table_user" ) , attrs: { scope: "col" } } ),
+          Dom.el( "th" , { text: I18n.get( "logs.table_what" ) , attrs: { scope: "col" } } ),
+          Dom.el( "th" , { text: I18n.get( "logs.table_ip" ) , attrs: { scope: "col" } } ),
         ] } ) ] } ),
         Dom.el( "tbody" ),
       ] } );
@@ -221,7 +307,8 @@ const Logs = {
     const actor = entry.actor || {};
     if ( !actor.user_id ) return I18n.get( "logs.anonymous" );
     const name = actor.name || "#" + actor.user_id;
-    return actor.method === "api_key" ? name + " " + I18n.get( "logs.via_key" ) : name;
+    return actor.method === "api_key" ? name + " " + I18n.get( "logs.via_key" ) : name; // feature:api_keys
+    return name; // feature:!api_keys
   },
 
   what( entry ) {
@@ -238,10 +325,14 @@ const Logs = {
 
   // A row, and under it the whole entry as JSON, shown by clicking the row.
   appendEntry( rows , entry ) {
+    const json = Dom.el( "pre" , { class: "log-json" , text: JSON.stringify( entry , null , 2 ) } );
+    const copy = I18n.get( "ui.copy" ) === "" ? null : Dom.el( "button" , {
+      class: "btn btn-sm btn-outline-secondary mb-2 log-copy",
+      text: I18n.get( "ui.copy" ),
+      on: { click: () => Dom.copy( json ) },
+    } );
     const detail = Dom.el( "tr" , { class: "log-detail" , attrs: { hidden: "" } , children: [
-      Dom.el( "td" , { attrs: { colspan: "5" } , children: [
-        Dom.el( "pre" , { class: "log-json" , text: JSON.stringify( entry , null , 2 ) } ),
-      ] } ),
+      Dom.el( "td" , { attrs: { colspan: "5" } , children: [ copy , json ].filter( Boolean ) } ),
     ] } );
     const row = Dom.el( "tr" , {
       class: "log-row",
@@ -251,7 +342,7 @@ const Logs = {
         Dom.el( "td" , { children: [ Dom.badge( I18n.get( "logs.kind_" + entry.kind ) || entry.kind , this.tone( entry ) ) ] } ),
         Dom.el( "td" , { class: "text-nowrap" , text: this.who( entry ) } ),
         Dom.el( "td" , { class: "log-what" , text: this.what( entry ) } ),
-        Dom.el( "td" , { class: "text-nowrap" , text: entry.ip || "" } ),
+        this.ipCell( entry ),
       ],
     } );
     const toggle = () => {
@@ -260,6 +351,8 @@ const Logs = {
     };
     row.addEventListener( "click" , toggle );
     row.addEventListener( "keydown" , ( event ) => {
+      // A button in the row has these keys for itself.
+      if ( event.target !== row ) return;
       if ( event.key === "Enter" || event.key === " " ) {
         event.preventDefault();
         toggle();
@@ -355,6 +448,7 @@ const Logs = {
     try {
       await Api.deleteLogDay( date );
       await this.refresh();
+      Dom.toast( I18n.get( "logs.deleted" ).replace( "{date}" , () => this.dayLabel( date ) ) , "ok" );
     } catch ( error ) {
       App.showError( error.message );
     }

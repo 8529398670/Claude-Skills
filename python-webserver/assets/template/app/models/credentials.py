@@ -1,5 +1,5 @@
 """Operations on everything an account can sign in with at once -- its
-sessions, its unused login links, its password, and its API keys -- and on the
+sessions, its live login links, its password, and its API keys -- and on the
 account as a whole: disabling it, and deleting it. They live here, rather than in
 users.py, because each one spans several buckets in one transaction and so
 needs all three models.
@@ -12,14 +12,15 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from app.core.db import BUCKET_API_KEYS, BUCKET_USERS, Store, Transaction
+from app.core.db import BUCKET_USERS, Store, Transaction
+from app.core.db import BUCKET_API_KEYS  # feature:api_keys
 from app.models import to_iso, utc_now
-from app.models.api_keys import APIKey
+from app.models.api_keys import APIKey  # feature:api_keys
 from app.models.login_tokens import delete_login_tokens_for_user, delete_pending_login_tokens
 from app.models.sessions import destroy_sessions_for_user
-from app.models.sign_in import delete_challenges_for_user
-from app.models.two_factor import clear_record
-from app.models.users import User, owner_id_tx
+from app.models.sign_in import delete_challenges_for_user  # feature:two_factor
+from app.models.two_factor import clear_record  # feature:two_factor
+from app.models.users import ROLE_ADMIN, RenameConflictError, User, owner_id_tx
 
 
 class OwnerProtectedError(Exception):
@@ -48,6 +49,15 @@ class SelfDeleteError(Exception):
         super().__init__("you cannot delete your own account")
 
 
+class SelfRoleError(Exception):
+    """Refusal for changing your own role: it could only take your own admin
+    rights away, or sign you out."""
+
+    def __init__(self) -> None:
+        super().__init__("you cannot change your own role")
+
+
+# >>> feature:two_factor
 class SelfResetError(Exception):
     """Refusal for resetting your own 2FA: that would skip the code turning
     it off asks for."""
@@ -56,6 +66,7 @@ class SelfResetError(Exception):
         super().__init__("you cannot reset your own two-factor sign-in")
 
 
+# <<< feature:two_factor
 def _refuse_owner(tx: Transaction, user_id: int) -> None:
     if owner_id_tx(tx) == user_id:
         raise OwnerProtectedError()
@@ -68,8 +79,8 @@ class Revoked:
 
     sessions: int = 0
     login_links: int = 0
-    api_keys: int = 0
-    passwords: int = 0
+    api_keys: int = 0  # feature:api_keys
+    passwords: int = 0  # feature:passwords
 
     def to_dict(self) -> dict[str, int]:
         return asdict(self)
@@ -99,13 +110,71 @@ def set_user_disabled(store: Store, user_id: int, disabled: bool) -> bool:
         if disabled:
             destroy_sessions_for_user(tx, user_id)
             delete_pending_login_tokens(tx, user_id)
-            delete_challenges_for_user(tx, user_id)
+            delete_challenges_for_user(tx, user_id)  # feature:two_factor
+    return True
+
+
+def rename_user_as(store: Store, user_id: int, actor_id: int, display_name: str, expect: str | None = None) -> bool:
+    """users.rename_user for one account acting on another: any admin may
+    rename an ordinary user, and only the owner may rename an admin
+    (OwnerRequiredError), because a name is how people tell who they are
+    dealing with. Your own name goes through rename_user, from the Account
+    screen. False if there is no such account."""
+    with store.transaction() as tx:
+        record = tx.get(BUCKET_USERS, user_id)
+        if record is None:
+            return False
+        if User.from_record(record).is_admin and actor_id != owner_id_tx(tx):
+            raise OwnerRequiredError()
+        if expect is not None and record["display_name"] != expect.strip():
+            raise RenameConflictError(record["display_name"])
+        record["display_name"] = display_name.strip()
+        tx.put(BUCKET_USERS, user_id, record)
+    return True
+
+
+def set_user_role(store: Store, user_id: int, actor_id: int, role: str) -> bool | None:
+    """Make an account an admin or an ordinary user, and say whether that
+    changed anything; None if there is no such account. The rules follow
+    deleting: nobody changes their own role (SelfRoleError), the owner is
+    always an admin (OwnerProtectedError, transfer ownership first), and only
+    the owner takes an admin's rights away (OwnerRequiredError). Any admin may
+    make one, as any admin can create one.
+
+    Becoming an admin ends the account's sessions and live login links in
+    the same transaction. Whoever holds an invite link can sign in as an
+    account that joined through it, so a session already open may not be the
+    person being promoted. An admin cannot sign in through an invite link, so
+    a new login link is the way back in.
+
+    Losing admin rights ends nothing: the role is read on every request, so it
+    applies at once, and API keys narrow to it. Invite links the account made
+    stop working while it is not an admin."""
+    with store.transaction() as tx:
+        record = tx.get(BUCKET_USERS, user_id)
+        if record is None:
+            return None
+        if user_id == actor_id:
+            raise SelfRoleError()
+        owner_id = owner_id_tx(tx)
+        if user_id == owner_id:
+            raise OwnerProtectedError()
+        if record["role"] == role:
+            return False
+        if User.from_record(record).is_admin and actor_id != owner_id:
+            raise OwnerRequiredError()
+        record["role"] = role
+        tx.put(BUCKET_USERS, user_id, record)
+        if role == ROLE_ADMIN:
+            destroy_sessions_for_user(tx, user_id)
+            delete_pending_login_tokens(tx, user_id)
+            delete_challenges_for_user(tx, user_id)  # feature:two_factor
     return True
 
 
 def revoke_all_credentials(store: Store, user_id: int, allow_owner: bool = False) -> Revoked | None:
     """The "this account may be compromised" operation: every session is
-    deleted, every unused login link is deleted, the password is removed, and
+    deleted, the live login link is deleted, the password is removed, and
     every live API key is revoked, in one transaction. Afterwards nothing
     issued before this moment can act as the account; the way back in is a new
     login link from an admin. None if there is no such account.
@@ -134,17 +203,21 @@ def revoke_all_credentials(store: Store, user_id: int, allow_owner: bool = False
         revoked = Revoked(
             sessions=destroy_sessions_for_user(tx, user_id),
             login_links=delete_pending_login_tokens(tx, user_id),
-            passwords=1 if record.get("password_hash", "") != "" else 0,
+            passwords=1 if record.get("password_hash", "") != "" else 0,  # feature:passwords
         )
-        delete_challenges_for_user(tx, user_id)
+        delete_challenges_for_user(tx, user_id)  # feature:two_factor
+        # >>> feature:passwords
         record["password_hash"] = ""
         tx.put(BUCKET_USERS, user_id, record)
+        # <<< feature:passwords
+        # >>> feature:api_keys
         now = to_iso(utc_now())
         for key_id, record in tx.all(BUCKET_API_KEYS):
             if record["user_id"] == user_id and APIKey.from_record(record).live:
                 record["revoked_at"] = now
                 tx.put(BUCKET_API_KEYS, key_id, record)
                 revoked.api_keys += 1
+        # <<< feature:api_keys
     return revoked
 
 
@@ -181,14 +254,15 @@ def delete_user(store: Store, user_id: int, actor_id: int | None) -> Revoked | N
         removed = Revoked(
             sessions=destroy_sessions_for_user(tx, user_id),
             login_links=delete_login_tokens_for_user(tx, user_id),
-            api_keys=tx.delete_where(BUCKET_API_KEYS, lambda _key, key_record: key_record["user_id"] == user_id),
-            passwords=1 if record.get("password_hash", "") != "" else 0,
+            api_keys=tx.delete_where(BUCKET_API_KEYS, lambda _key, key_record: key_record["user_id"] == user_id),  # feature:api_keys
+            passwords=1 if record.get("password_hash", "") != "" else 0,  # feature:passwords
         )
-        delete_challenges_for_user(tx, user_id)
+        delete_challenges_for_user(tx, user_id)  # feature:two_factor
         tx.delete(BUCKET_USERS, user_id)
     return removed
 
 
+# >>> feature:two_factor
 def reset_two_factor(store: Store, user_id: int, actor_id: int | None) -> bool:
     """Take 2FA off an account whose person lost both the phone and the
     recovery codes; False if there is no such account. Sign-ins waiting on a
@@ -218,3 +292,4 @@ def reset_two_factor(store: Store, user_id: int, actor_id: int | None) -> bool:
         tx.put(BUCKET_USERS, user_id, record)
         delete_challenges_for_user(tx, user_id)
     return True
+# <<< feature:two_factor

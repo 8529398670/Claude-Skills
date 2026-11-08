@@ -36,7 +36,9 @@ class NotFoundTests(ErrorPageCase):
         self.assertEqual((response.status_code, response.json()), (404, {"error": "not found"}))
 
     def test_the_app_pages_still_serve(self) -> None:
-        for path in ["/", "/login/some-credential", "/join/some-credential", "/index.html"]:
+        paths = ["/", "/login/some-credential", "/index.html"]
+        paths.append("/join/some-credential")  # feature:invite_links
+        for path in paths:
             response = self.fetch(path, BROWSER)
             self.assertEqual(response.status_code, 200, path)
             self.assertIn('id="users-table"', response.text, path)

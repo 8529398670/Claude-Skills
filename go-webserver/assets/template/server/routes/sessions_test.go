@@ -1,9 +1,9 @@
 package routes
 
 import (
-	encoding_json "encoding/json"
-	fmt "fmt"
-	io "io"
+	encoding_json "encoding/json" // feature:sessions
+	fmt "fmt" // feature:sessions
+	io "io" // feature:sessions
 	http "net/http"
 	strings "strings"
 	testing "testing"
@@ -12,10 +12,11 @@ import (
 	fiber "github.com/gofiber/fiber/v3"
 
 	db "{{MODULE_PATH}}/server/db"
-	jobs "{{MODULE_PATH}}/server/jobs"
+	jobs "{{MODULE_PATH}}/server/jobs" // feature:jobs
 	models "{{MODULE_PATH}}/server/models"
 )
 
+// >>> feature:sessions
 // devices is a browser's GET /api/account/sessions: the rows of its first page.
 func ( client *browser ) devices( t *testing.T ) ( rows []map[ string ]any ) {
 	t.Helper()
@@ -38,7 +39,9 @@ func ( client *browser ) devices( t *testing.T ) ( rows []map[ string ]any ) {
 	rows = page.Sessions
 	return
 }
+// <<< feature:sessions
 
+// >>> feature:sessions
 func other( t *testing.T , rows []map[ string ]any ) ( id string ) {
 	t.Helper()
 	for _ , row := range rows {
@@ -50,7 +53,9 @@ func other( t *testing.T , rows []map[ string ]any ) ( id string ) {
 	t.Fatal( "no other session listed" )
 	return
 }
+// <<< feature:sessions
 
+// >>> feature:sessions
 func TestDevicesListMarksThisOneAndRecordsTheSignIn( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	first := fixture.signIn( t , fixture.alice.ID )
@@ -75,7 +80,10 @@ func TestDevicesListMarksThisOneAndRecordsTheSignIn( t *testing.T ) {
 		t.Fatal( "listing ended a session" )
 	}
 }
+// <<< feature:sessions
 
+// >>> feature:sessions
+// >>> feature:two_factor
 func TestTwoFactorSignInRecordsTheDevice( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	client := fixture.signIn( t , fixture.alice.ID )
@@ -95,7 +103,10 @@ func TestTwoFactorSignInRecordsTheDevice( t *testing.T ) {
 		t.Fatalf( "%d of %d sessions were recorded" , recorded , len( sessions ) )
 	}
 }
+// <<< feature:two_factor
+// <<< feature:sessions
 
+// >>> feature:sessions
 func TestRevokeOneDevice( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	here := fixture.signIn( t , fixture.alice.ID )
@@ -116,7 +127,9 @@ func TestRevokeOneDevice( t *testing.T ) {
 		t.Fatal( "revoking the other device ended this one" )
 	}
 }
+// <<< feature:sessions
 
+// >>> feature:sessions
 func TestSomeoneElsesSessionLooksLikeNoSession( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	alice := fixture.signIn( t , fixture.alice.ID )
@@ -134,7 +147,9 @@ func TestSomeoneElsesSessionLooksLikeNoSession( t *testing.T ) {
 		t.Fatal( "another account's session was ended" )
 	}
 }
+// <<< feature:sessions
 
+// >>> feature:sessions
 func TestThisDeviceIsNotRevokedHere( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	client := fixture.signIn( t , fixture.alice.ID )
@@ -147,7 +162,9 @@ func TestThisDeviceIsNotRevokedHere( t *testing.T ) {
 		t.Fatal( "this session was ended" )
 	}
 }
+// <<< feature:sessions
 
+// >>> feature:sessions
 func TestRevokeOthersKeepsThisOne( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	here := fixture.signIn( t , fixture.alice.ID )
@@ -166,7 +183,10 @@ func TestRevokeOthersKeepsThisOne( t *testing.T ) {
 		t.Fatal( "the wrong session ended" )
 	}
 }
+// <<< feature:sessions
 
+// >>> feature:sessions
+// >>> feature:api_keys
 func TestAnAPIKeyCannotManageDevices( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	key , _ , err := models.IssueAPIKey( fixture.store , fixture.alice.ID , "script" , models.RoleUser , time.Hour )
@@ -179,12 +199,31 @@ func TestAnAPIKeyCannotManageDevices( t *testing.T ) {
 		t.Fatalf( "status %d" , response.StatusCode )
 	}
 }
+// <<< feature:api_keys
+// <<< feature:sessions
+
+// sessionsOf reads an account's session records straight from the bucket.
+func ( fixture *authFixture ) sessionsOf( t *testing.T , user_id uint64 ) ( sessions []*models.Session ) {
+	t.Helper()
+	err := fixture.store.ForEach( db.BucketSessions ,
+		func() any { return &models.Session{} } ,
+		func( key []byte , item any ) bool {
+			session := item.( *models.Session )
+			if session.UserID == user_id {
+				session.ID = string( key )
+				sessions = append( sessions , session )
+			}
+			return true
+		} )
+	if err != nil { t.Fatal( err ) }
+	return
+}
 
 func TestTouchIsThrottledAndCannotBringASessionBack( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	client := fixture.signIn( t , fixture.alice.ID )
-	sessions , _ := models.ListSessionsForUser( fixture.store , fixture.alice.ID )
-	session := sessions[ 0 ]
+	session := fixture.sessionsOf( t , fixture.alice.ID )[ 0 ]
+	models.TouchSession( fixture.store , session , time.Hour , time.Hour )
 	stamp := *session.LastSeenAt
 
 	models.TouchSession( fixture.store , session , time.Hour , time.Hour )
@@ -198,7 +237,7 @@ func TestTouchIsThrottledAndCannotBringASessionBack( t *testing.T ) {
 		t.Fatal( "not touched after the interval" )
 	}
 
-	if err := models.RevokeSession( fixture.store , fixture.alice.ID , session.ID ); err != nil { t.Fatal( err ) }
+	if err := fixture.store.Delete( db.BucketSessions , []byte( session.ID ) ); err != nil { t.Fatal( err ) }
 	session.LastSeenAt = &stale
 	models.TouchSession( fixture.store , session , time.Hour , time.Hour )
 	if client.signedIn( t ) {
@@ -210,12 +249,12 @@ func TestTouchIsThrottledAndCannotBringASessionBack( t *testing.T ) {
 // remaining, and last used long enough ago for the next request to count.
 func ( fixture *authFixture ) age( t *testing.T , user_id uint64 , signed_in time.Duration , remaining time.Duration ) ( session_id string ) {
 	t.Helper()
-	sessions , err := models.ListSessionsForUser( fixture.store , user_id )
-	if err != nil || len( sessions ) != 1 { t.Fatalf( "%d sessions, %v" , len( sessions ) , err ) }
+	sessions := fixture.sessionsOf( t , user_id )
+	if len( sessions ) != 1 { t.Fatalf( "%d sessions" , len( sessions ) ) }
 	session_id = sessions[ 0 ].ID
 	now := time.Now().UTC()
 	stale := now.Add( -time.Hour )
-	err = fixture.store.UpdateValue( db.BucketSessions , []byte( session_id ) ,
+	err := fixture.store.UpdateValue( db.BucketSessions , []byte( session_id ) ,
 		func() any { return &models.Session{} } ,
 		func( item any ) ( mutate_err error ) {
 			stored := item.( *models.Session )
@@ -291,6 +330,7 @@ func TestASessionStopsExtendingAtItsLimit( t *testing.T ) {
 	}
 }
 
+// >>> feature:logs
 func TestALiveStreamCheckIsNotUse( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	fixture.cfg.SessionMaxAge = 24 * time.Hour
@@ -307,6 +347,7 @@ func TestALiveStreamCheckIsNotUse( t *testing.T ) {
 		t.Fatal( "a stream re-checking its session kept it alive" )
 	}
 }
+// <<< feature:logs
 
 func TestLoggingOutOnARequestThatExtendsStillClearsTheCookie( t *testing.T ) {
 	fixture := newAuthFixture( t )
@@ -321,6 +362,7 @@ func TestLoggingOutOnARequestThatExtendsStillClearsTheCookie( t *testing.T ) {
 	}
 }
 
+// >>> feature:sessions
 func TestAnAdminEndsOneOfSomeonesDevices( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	owner := fixture.signIn( t , fixture.owner.ID )
@@ -345,7 +387,9 @@ func TestAnAdminEndsOneOfSomeonesDevices( t *testing.T ) {
 		t.Fatal( "one device should have ended and the other not" )
 	}
 }
+// <<< feature:sessions
 
+// >>> feature:sessions
 func TestOnlyTheOwnerReachesTheOwnersSessionsAndAddresses( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	peer , err := models.CreateUser( fixture.store , "Peer" , models.RoleAdmin )
@@ -364,7 +408,9 @@ func TestOnlyTheOwnerReachesTheOwnersSessionsAndAddresses( t *testing.T ) {
 		t.Fatal( "an admin who is not the owner sees an address" )
 	}
 }
+// <<< feature:sessions
 
+// >>> feature:sessions
 func TestSessionAdminRoutesRefuse( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	owner := fixture.signIn( t , fixture.owner.ID )
@@ -391,6 +437,7 @@ func TestSessionAdminRoutesRefuse( t *testing.T ) {
 		t.Fatalf( "no CSRF token: %d" , status )
 	}
 }
+// <<< feature:sessions
 
 func TestSearchingUsersKeepsPagingHonest( t *testing.T ) {
 	fixture := newAuthFixture( t )
@@ -418,6 +465,7 @@ func TestMeSaysTheVersionAndTheAnnouncement( t *testing.T ) {
 	}
 }
 
+// >>> feature:sessions
 func TestSessionFromBeforeTheseFieldsStillLoads( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	client := fixture.signIn( t , fixture.alice.ID )
@@ -430,7 +478,9 @@ func TestSessionFromBeforeTheseFieldsStillLoads( t *testing.T ) {
 		t.Fatalf( "rows %v" , rows )
 	}
 }
+// <<< feature:sessions
 
+// >>> feature:jobs
 func TestJobsAreTheOwnersAlone( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	handlers_jobs := jobs.New( fixture.store , nil )
@@ -470,3 +520,78 @@ func TestJobsAreTheOwnersAlone( t *testing.T ) {
 		t.Fatal( "the job did not finish" )
 	}
 }
+// <<< feature:jobs
+
+// >>> feature:sessions
+func TestNamingADevice( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	other := fixture.signIn( t , fixture.alice.ID )
+	rows := alice.devices( t )
+	current , _ := rows[ 0 ][ "id" ].( string )
+	if rows[ 0 ][ "current" ] != true { current , _ = rows[ 1 ][ "id" ].( string ) }
+	path := "/api/account/sessions/" + current + "/label"
+
+	status , reply := send( t , alice , path , fiber.Map{ "label": "  Work laptop  " } )
+	if status != fiber.StatusOK || reply[ "label" ] != "Work laptop" { t.Fatalf( "%d %v" , status , reply ) }
+	if status , _ = send( t , alice , path , fiber.Map{ "label": strings.Repeat( "a" , 81 ) } ); status != fiber.StatusBadRequest { t.Fatalf( "%d" , status ) }
+
+	// An undo that finds a different name leaves it alone, and says what is there.
+	status , reply = send( t , alice , path , fiber.Map{ "label": "" , "expect": "stale" } )
+	if status != fiber.StatusConflict || reply[ "label" ] != "Work laptop" { t.Fatalf( "%d %v" , status , reply ) }
+
+	// Another device of yours sees it, and it lasts through a touch, which
+	// rewrites the record.
+	sessions , err := models.ListSessionsForUser( fixture.store , fixture.alice.ID )
+	if err != nil { t.Fatal( err ) }
+	for _ , session := range sessions { models.TouchSession( fixture.store , session , time.Hour , 24 * time.Hour ) }
+	found := false
+	for _ , row := range other.devices( t ) {
+		found = found || row[ "label" ] == "Work laptop"
+	}
+	if found == false { t.Fatal( "the label went missing" ) }
+
+	// Nothing clears it, and the row goes back to having none.
+	if status , _ = send( t , alice , path , fiber.Map{ "label": "  " , "expect": "Work laptop" } ); status != fiber.StatusOK { t.Fatalf( "%d" , status ) }
+	for _ , row := range alice.devices( t ) {
+		if _ , present := row[ "label" ]; present { t.Fatalf( "%v" , row ) }
+	}
+}
+// <<< feature:sessions
+
+// >>> feature:sessions
+func TestOnlyYouNameYourDevices( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	id , _ := alice.devices( t )[ 0 ][ "id" ].( string )
+
+	// Someone else's looks the same as one that does not exist.
+	if status , _ := send( t , owner , "/api/account/sessions/"+id+"/label" , fiber.Map{ "label": "x" } ); status != fiber.StatusNotFound { t.Fatalf( "%d" , status ) }
+	if status , _ := send( t , alice , "/api/account/sessions/nope/label" , fiber.Map{ "label": "x" } ); status != fiber.StatusNotFound { t.Fatalf( "%d" , status ) }
+
+	// An admin looking at the account sees the name.
+	if status , _ := send( t , alice , "/api/account/sessions/"+id+"/label" , fiber.Map{ "label": "Phone" } ); status != fiber.StatusOK { t.Fatalf( "%d" , status ) }
+	status , page := owner.do( t , http.MethodGet , fmt.Sprintf( "/api/admin/users/%d/sessions" , fixture.alice.ID ) , nil )
+	rows , _ := page[ "sessions" ].( []any )
+	if status != fiber.StatusOK || len( rows ) != 1 || rows[ 0 ].( map[ string ]any )[ "label" ] != "Phone" { t.Fatalf( "%d %v" , status , page ) }
+}
+// <<< feature:sessions
+
+// >>> feature:sessions
+// >>> feature:api_keys
+func TestAKeyCannotNameADevice( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	id , _ := alice.devices( t )[ 0 ][ "id" ].( string )
+	key , _ , err := models.IssueAPIKey( fixture.store , fixture.alice.ID , "ops" , models.RoleUser , time.Hour )
+	if err != nil { t.Fatal( err ) }
+	request , _ := http.NewRequest( http.MethodPost , "/api/account/sessions/"+id+"/label" , strings.NewReader( `{"label":"x"}` ) )
+	request.Header.Set( "Authorization" , "Bearer " + key )
+	request.Header.Set( "Content-Type" , "application/json" )
+	response , test_err := fixture.app.Test( request )
+	if test_err != nil { t.Fatal( test_err ) }
+	if response.StatusCode != fiber.StatusForbidden { t.Fatalf( "%d" , response.StatusCode ) }
+}
+// <<< feature:api_keys
+// <<< feature:sessions

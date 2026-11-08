@@ -1,3 +1,4 @@
+// whole-file feature:invite_links
 package models
 
 import (

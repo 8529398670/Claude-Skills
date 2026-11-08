@@ -1,3 +1,4 @@
+# whole-file feature:settings
 """The owner's Settings screen: config.yaml, one field per key (see
 static/js/settings.js). Both routes are the owner's alone, from a browser
 session (RequireOwner, in app/routes/__init__.py), like the activity log.

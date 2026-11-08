@@ -1,3 +1,4 @@
+// whole-file feature:logs
 package stream
 
 import (

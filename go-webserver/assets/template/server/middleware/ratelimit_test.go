@@ -14,7 +14,9 @@ import (
 // are separate, and no spelling of a path gets around either.
 
 func limitedApp( general int , sign_in int ) ( app *fiber.App ) {
-	settings := config.NewHolder( &config.Config{ RateLimitMax: general , RateLimitSignInMax: sign_in , RateLimitUploadMax: 3 , RateLimitWindow: time.Minute } )
+	cfg := &config.Config{ RateLimitMax: general , RateLimitSignInMax: sign_in , RateLimitWindow: time.Minute }
+	cfg.RateLimitUploadMax = 3 // feature:files
+	settings := config.NewHolder( cfg )
 	app = fiber.New()
 	app.Use( RateLimit( settings ) )
 	app.All( "/*" , func( c fiber.Ctx ) ( err error ) {
@@ -51,6 +53,7 @@ func TestStaticFilesNeverSpendTheBudget( t *testing.T ) {
 	if code := status( t , app , http.MethodGet , "/api/me" ); code != 429 { t.Fatalf( "past the budget: %d" , code ) }
 }
 
+// >>> feature:files
 func TestPiecesOfAnUploadHaveTheirOwnBudget( t *testing.T ) {
 	app := limitedApp( 2 , 2 )
 	for count := 0; count < 3; count++ {
@@ -63,19 +66,23 @@ func TestPiecesOfAnUploadHaveTheirOwnBudget( t *testing.T ) {
 	}
 	if code := status( t , app , http.MethodPost , "/api/files/abc/finish" ); code != 429 { t.Fatalf( "general budget: %d" , code ) }
 }
+// <<< feature:files
 
 func TestTheBudgetsAreSeparate( t *testing.T ) {
 	app := limitedApp( 3 , 2 )
 	for count := 0; count < 2; count++ {
 		if code := status( t , app , http.MethodPost , "/api/login" ); code != 200 { t.Fatalf( "sign-in %d: %d" , count , code ) }
 	}
-	if code := status( t , app , http.MethodPost , "/api/login/password" ); code != 429 { t.Fatalf( "past the sign-in budget: %d" , code ) }
-	if code := status( t , app , http.MethodPost , "/api/join/claim" ); code != 429 { t.Fatalf( "joining shares it: %d" , code ) }
+	if code := status( t , app , http.MethodPost , "/api/login" ); code != 429 { t.Fatalf( "past the sign-in budget: %d" , code ) }
+	if code := status( t , app , http.MethodPost , "/api/login/password" ); code != 429 { t.Fatalf( "passwords share it: %d" , code ) } // feature:passwords
+	if code := status( t , app , http.MethodPost , "/api/join/claim" ); code != 429 { t.Fatalf( "joining shares it: %d" , code ) } // feature:invite_links
 	if code := status( t , app , http.MethodGet , "/api/me" ); code != 200 { t.Fatalf( "the general budget was spent by sign-in: %d" , code ) }
 }
 
 func TestNoSpellingGetsAroundTheBudgets( t *testing.T ) {
-	for _ , target := range []string{ "/API/login" , "/Api/Login/" , "/api/login/" , "/api/LOGIN/two-factor" } {
+	spellings := []string{ "/API/login" , "/Api/Login/" , "/api/login/" }
+	spellings = append( spellings , "/api/LOGIN/two-factor" ) // feature:two_factor
+	for _ , target := range spellings {
 		app := limitedApp( 100 , 1 )
 		status( t , app , http.MethodPost , "/api/login" )
 		if code := status( t , app , http.MethodPost , target ); code != 429 {

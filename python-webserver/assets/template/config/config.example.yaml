@@ -165,10 +165,14 @@ server:
 # last time it was used, so only an idle one ends then. session_max_age_seconds
 # is the limit on that, counted from signing in, so a stolen cookie cannot be
 # kept alive forever. Set the two equal for a fixed lifetime.
+# login_token_ttl_seconds is how long a one-time login link lasts when whoever
+# makes it does not pick an expiry; multi_use_login_token_ttl_seconds is the
+# same for a link that works more than once.
 auth:
   session_ttl_seconds: 1209600     # 14 days
   session_max_age_seconds: 7776000 # 90 days
   login_token_ttl_seconds: 1800    # 30 minutes
+  multi_use_login_token_ttl_seconds: 604800 # 7 days
 
   # API keys let a script, a cron job, or another service call the API at the
   # role of the account that owns them, never higher. false closes the surface

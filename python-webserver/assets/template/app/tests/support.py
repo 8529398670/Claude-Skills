@@ -13,15 +13,15 @@ from app.core import config, config_live, config_secret, layout, yaml_edit
 # A project's defaults.yaml says which features it chose. These tests are about
 # the features themselves, so they run on the template's choice whatever that was.
 TEMPLATE_SWITCHES = [
-    ("auth.api_keys", True),
-    ("auth.invite_links", True),
-    ("auth.two_factor", True),
-    ("auth.passwords", False),
-    ("server.mcp", True),
-    ("files.enabled", True),
-    ("webhooks.enabled", True),
-    ("metrics.enabled", False),
-    ("backups.enabled", False),
+    ("auth.api_keys", True),  # feature:api_keys
+    ("auth.invite_links", True),  # feature:invite_links
+    ("auth.two_factor", True),  # feature:two_factor
+    ("auth.passwords", False),  # feature:passwords
+    ("server.mcp", True),  # feature:mcp
+    ("files.enabled", True),  # feature:files
+    ("webhooks.enabled", True),  # feature:webhooks
+    ("metrics.enabled", False),  # feature:metrics
+    ("backups.enabled", False), # feature:backups
 ]
 
 
@@ -64,10 +64,10 @@ def sample_value(key: Any) -> Any:
         "server.public_url": "https://app.example.com",
         "server.trusted_proxies": ["10.0.0.0/8"],
         "server.proxy_header": "X-Real-IP",
-        "server.maintenance": "read_only",
+        "server.maintenance": "read_only",  # feature:maintenance
         "server.host": "0.0.0.0",
         "server.port": 9999,
-        "logs.max_file_mb": 10,
+        "logs.max_file_mb": 10,  # feature:logs
         "docker.image": "other-image",
         "docker.container": "other-container",
         "docker.bind_address": "0.0.0.0",

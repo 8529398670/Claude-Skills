@@ -6,22 +6,17 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import timedelta
+from datetime import timedelta  # feature:api_keys|invite_links
 from pathlib import Path
 
 from app.core import db
-from app.core.db import BUCKET_API_KEYS, BUCKET_INVITE_LINKS
-from app.models import (
-    RESTORE_WINDOW,
-    RestoreExpiredError,
-    RestoreForbiddenError,
-    RestoreGoneError,
-    api_keys,
-    invite_links,
-    to_iso,
-    users,
-    utc_now,
-)
+from app.core.db import BUCKET_API_KEYS  # feature:api_keys
+from app.core.db import BUCKET_INVITE_LINKS  # feature:invite_links
+from app.models import users
+from app.models import RESTORE_WINDOW, RestoreExpiredError, RestoreForbiddenError, to_iso, utc_now  # feature:api_keys|invite_links
+from app.models import RestoreGoneError  # feature:api_keys
+from app.models import api_keys  # feature:api_keys
+from app.models import invite_links  # feature:invite_links
 
 
 class StoreTestCase(unittest.TestCase):
@@ -36,6 +31,7 @@ class StoreTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         self.directory.cleanup()
 
+    # >>> feature:api_keys|invite_links
     def backdate(self, bucket: str, key: str) -> None:
         """Move a deletion to just past the restore window."""
 
@@ -45,6 +41,8 @@ class StoreTestCase(unittest.TestCase):
         self.store.update_value(bucket, key, mutate)
 
 
+    # <<< feature:api_keys|invite_links
+# >>> feature:api_keys
 class APIKeySoftDeleteTest(StoreTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -106,6 +104,8 @@ class APIKeySoftDeleteTest(StoreTestCase):
         self.assertIsNone(api_keys.get_api_key(self.store, self.key.id))
 
 
+# <<< feature:api_keys
+# >>> feature:invite_links
 class InviteLinkSoftDeleteTest(StoreTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -142,6 +142,7 @@ class InviteLinkSoftDeleteTest(StoreTestCase):
         self.assertIsNone(invite_links.get_invite_link(self.store, self.link.id))
 
 
+# <<< feature:invite_links
 class RenameExpectTest(StoreTestCase):
     def test_rename_with_a_stale_expect_is_refused(self) -> None:
         users.rename_user(self.store, self.alice.id, "Alice B", expect="Alice")

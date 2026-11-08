@@ -1,3 +1,4 @@
+// whole-file feature:two_factor
 // Two-factor sign-in: the step that asks for a code during any sign-in, and
 // the panel where a person turns it on or off. The server decides when a code
 // is needed; a sign-in call answers { two_factor: true, challenge } instead of
@@ -11,7 +12,8 @@ const TwoFactor = {
 
   ask( challenge ) {
     this.challenge = challenge;
-    [ "signed-out" , "login-confirm" , "join" ].forEach( function ( id ) {
+    [ "signed-out" , "login-confirm" , "join" ].forEach( function ( id ) { // feature:invite_links
+    [ "signed-out" , "login-confirm" ].forEach( function ( id ) { // feature:!invite_links
       Dom.show( Dom.get( id ) , false );
     } );
     Dom.show( Dom.get( "two-factor-step" ) , true );
@@ -35,8 +37,8 @@ const TwoFactor = {
         return;
       }
       input.value = "";
+      App.showFieldError( error.message , { two_factor_wrong: "two-factor-step-code" } );
       input.focus();
-      App.showError( error.message );
     }
   },
 
@@ -46,7 +48,7 @@ const TwoFactor = {
     this.me = me;
     if ( !me.two_factor_enabled || me.auth !== "session" ) return;
     Dom.show( Dom.get( "two-factor-panel" ) , true );
-    Dom.get( "two-factor-start-button" ).addEventListener( "click" , this.onStart.bind( this ) );
+    Dom.onPress( Dom.get( "two-factor-start-button" ) , this.onStart.bind( this ) );
     Dom.onSubmit( Dom.get( "two-factor-confirm-form" ) , this.onConfirm.bind( this ) );
     Dom.onSubmit( Dom.get( "two-factor-disable-form" ) , this.onDisable.bind( this ) );
     Dom.get( "two-factor-recovery-copy" ).addEventListener( "click" , () => Dom.copy( Dom.get( "two-factor-recovery-codes" ) ) );
@@ -101,9 +103,9 @@ const TwoFactor = {
       Dom.text( Dom.get( "two-factor-recovery-codes" ) , confirmed.recovery_codes.join( "\n" ) );
       Dom.text( Dom.get( "two-factor-secret" ) , "" );
       this.show( "recovery" );
-      Password.render();
+      Password.render(); // feature:passwords
     } catch ( error ) {
-      App.showError( error.message );
+      App.showFieldError( error.message , { two_factor_wrong: "two-factor-code" } );
     }
   },
 
@@ -115,10 +117,10 @@ const TwoFactor = {
       this.me.two_factor = false;
       input.value = "";
       this.show( "status" );
-      Password.render();
+      Password.render(); // feature:passwords
       Dom.toast( I18n.get( "ui.saved" ) , "ok" );
     } catch ( error ) {
-      App.showError( error.message );
+      App.showFieldError( error.message , { two_factor_wrong: "two-factor-disable-code" } );
     }
   },
 };

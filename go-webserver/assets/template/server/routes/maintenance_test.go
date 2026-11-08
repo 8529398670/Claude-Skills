@@ -1,3 +1,4 @@
+// whole-file feature:maintenance
 package routes
 
 import (
@@ -12,7 +13,7 @@ import (
 	config "{{MODULE_PATH}}/server/config"
 	errorpage "{{MODULE_PATH}}/server/errorpage"
 	language "{{MODULE_PATH}}/server/language"
-	models "{{MODULE_PATH}}/server/models"
+	models "{{MODULE_PATH}}/server/models" // feature:api_keys
 )
 
 func testErrorPages( t *testing.T ) ( pages *errorpage.Pages ) {
@@ -23,6 +24,7 @@ func testErrorPages( t *testing.T ) ( pages *errorpage.Pages ) {
 	return
 }
 
+// >>> feature:api_keys
 func keyGet( t *testing.T , fixture *authFixture , key string , path string ) ( response *http.Response ) {
 	t.Helper()
 	request , _ := http.NewRequest( http.MethodGet , path , nil )
@@ -31,13 +33,16 @@ func keyGet( t *testing.T , fixture *authFixture , key string , path string ) ( 
 	if err != nil { t.Fatal( err ) }
 	return
 }
+// <<< feature:api_keys
 
 func TestFullMaintenanceLeavesOnlyTheOwnersSession( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	owner := fixture.signIn( t , fixture.owner.ID )
 	alice := fixture.signIn( t , fixture.alice.ID )
+	// >>> feature:api_keys
 	owner_key , _ , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "script" , models.RoleAdmin , time.Hour )
 	if err != nil { t.Fatal( err ) }
+	// <<< feature:api_keys
 	fixture.cfg.Maintenance = config.MaintenanceFull
 
 	if status , reply := owner.do( t , http.MethodGet , "/api/team" , nil ); status != fiber.StatusOK {
@@ -47,12 +52,14 @@ func TestFullMaintenanceLeavesOnlyTheOwnersSession( t *testing.T ) {
 	if status != fiber.StatusServiceUnavailable || reply[ "maintenance" ] != "full" {
 		t.Fatalf( "%d %v" , status , reply )
 	}
+	// >>> feature:api_keys
 	// The owner's key is not the owner's session.
 	response := keyGet( t , fixture , owner_key , "/api/team" )
 	if response.StatusCode != fiber.StatusServiceUnavailable {
 		t.Fatalf( "status %d" , response.StatusCode )
 	}
 	if response.Header.Get( "Retry-After" ) == "" { t.Fatal( "no Retry-After" ) }
+	// <<< feature:api_keys
 
 	// Still able to find out why.
 	if status , reply = alice.do( t , http.MethodGet , "/api/me" , nil ); status != fiber.StatusOK || reply[ "maintenance" ] != "full" {

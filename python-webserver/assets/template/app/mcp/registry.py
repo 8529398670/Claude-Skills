@@ -1,3 +1,4 @@
+# whole-file feature:mcp
 """What a tool is, how it reads its arguments, and how it says no.
 
 Adding one is the MCP version of adding a route: write it next to the others

@@ -117,17 +117,22 @@ server:
   # handing an invite link to a large group in one room. [live]
   rate_limit_signin_max: 60
 
+  # >>> feature:files
   # One piece of an upload counts against this budget instead, out of the same
   # window. A piece is 768 KiB, so 1200 is about 900 MB a minute per address.
   # [live]
   rate_limit_upload_max: 1200
+  # <<< feature:files
 
+  # >>> feature:mcp
   # POST /mcp: the Model Context Protocol, so an agent (Claude Code, any MCP
   # client that can send a header) can use this app with an API key, at that
   # key's role. Only keys are accepted there, never a browser session. Needs
   # auth.api_keys; false makes /mcp answer 404. [live]
   mcp: true
+  # <<< feature:mcp
 
+  # >>> feature:maintenance
   # Maintenance mode. none is normal running. read_only keeps the app readable
   # and refuses every write; full refuses everything. Either way the owner's
   # browser session still works, signing in still works (scripts/login.sh gets
@@ -135,6 +140,7 @@ server:
   # Everyone else gets a 503 with Retry-After. Background jobs keep running.
   # [live]
   maintenance: none
+  # <<< feature:maintenance
 
   # One line at the top of every signed-in page: planned downtime, say. Empty
   # shows nothing. Anyone can dismiss it, and a changed message comes back.
@@ -146,11 +152,16 @@ server:
 # last time it was used, so only an idle one ends then. session_max_age_seconds
 # is the limit on that, counted from signing in, so a stolen cookie cannot be
 # kept alive forever. Set the two equal for a fixed lifetime.
+# login_token_ttl_seconds is how long a one-time login link lasts when whoever
+# makes it does not pick an expiry; multi_use_login_token_ttl_seconds is the
+# same for a link that works more than once.
 auth:
   session_ttl_seconds: 1209600     # 14 days
   session_max_age_seconds: 7776000 # 90 days
   login_token_ttl_seconds: 1800    # 30 minutes
+  multi_use_login_token_ttl_seconds: 604800 # 7 days
 
+  # >>> feature:api_keys
   # API keys let a script, a cron job, or another service call the API at the
   # role of the account that owns them, never higher. false closes the surface
   # completely: the Authorization header stops being believed, existing keys
@@ -161,7 +172,9 @@ auth:
   # Lifetime of a new key when the request does not say. A key that never
   # expires has to be asked for (expires_in_days: 0, or `--days 0`). [live]
   api_key_ttl_seconds: 7776000     # 90 days
+  # <<< feature:api_keys
 
+  # >>> feature:passwords
   # Password sign-in. true lets any account set a username and password on
   # its own screen, after signing in with a link -- there is still no signup,
   # and a forgotten password is still "get a new login link". The owner can
@@ -170,14 +183,18 @@ auth:
   # restores them. Needs HTTPS (or localhost), because the browser hashes the
   # password with WebCrypto before sending it. [live]
   passwords: false
+  # <<< feature:passwords
 
+  # >>> feature:two_factor
   # Two-factor sign-in with an authenticator app, which each person turns on
   # for themselves. It is asked for on every browser sign-in -- password,
   # login link, and invite link -- never for an API key. false stops offering
   # it and stops asking for it; the secrets stay, so switching it back on
   # restores them. [live]
   two_factor: true
+  # <<< feature:two_factor
 
+  # >>> feature:invite_links
   # Invite links: one link a whole group can join through, and the PINs that
   # guard a name on it. false hides the Invite links and PIN screens and makes
   # /join and every invite route answer 404, so a link already handed out stops
@@ -185,7 +202,9 @@ auth:
   # meanwhile. The links and PINs stay, so switching it back on restores them.
   # [live]
   invite_links: true
+  # <<< feature:invite_links
 
+# >>> feature:logs
 # The activity log: every request, every sign-in and admin action, and what
 # people do on the page (see static/js/track.js). Only the owner can read it,
 # on the Logs screen. It is written as one file per UTC day under
@@ -200,7 +219,9 @@ logs:
   static_assets: false             # also log requests for /js, /css, /vendor files
   ui_clicks: true                  # log every click; screen changes, submits and errors always are
   echo: true                       # print a one-line summary of each request to stdout
+# <<< feature:logs
 
+# >>> feature:backups
 # Scheduled backups, written to <app_dir>/backups by the hourly backup job. They are
 # the same files `manage backup` makes: the database, config.yaml and storage/,
 # but never secret.key and never the activity log. The disk that holds the
@@ -211,7 +232,9 @@ backups:
   enabled: false                   # [live]
   interval_hours: 24               # [live]
   keep: 7                          # [live]
+# <<< feature:backups
 
+# >>> feature:metrics
 # GET /metrics: Prometheus text about requests, the activity log and background
 # jobs. It answers only an admin API key, so whatever scrapes it holds a
 # credential that can do what an admin can (see auth.api_keys, which it also
@@ -219,7 +242,9 @@ backups:
 # /metrics answer 404. [live]
 metrics:
   enabled: false                   # [live]
+# <<< feature:metrics
 
+# >>> feature:webhooks
 # Events sent to the endpoints on the owner's Webhooks screen.
 webhooks:
   # false hides the screen, makes its routes answer 404, queues no new events
@@ -232,7 +257,9 @@ webhooks:
   # http. Off, nothing on the Webhooks screen can reach anything internal.
   # Only turn this on if whoever is the owner should have that reach.
   allow_private_targets: false     # [live]
+# <<< feature:webhooks
 
+# >>> feature:files
 # The Files screen and /api/files. Files are always encrypted on disk, whatever
 # encrypt_at_rest says.
 files:
@@ -246,6 +273,7 @@ files:
   quota_bytes_per_user: 1073741824 # [live]
   # An upload that has had nothing new for this long is removed.
   abandoned_upload_hours: 24       # [live]
+# <<< feature:files
 
 # [scripts] Read by docker/run.sh, which applies a change the next time it
 # runs. Edit these on the host: inside the container they are read-only.

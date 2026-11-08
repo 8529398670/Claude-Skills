@@ -166,14 +166,14 @@ func ( client *Client ) ListUsers() ( users []UserResponse , err error ) {
 	return
 }
 
-func ( client *Client ) CreateUser( display_name string , role string ) ( user UserResponse , err error ) {
+func ( client *Client ) CreateUser( display_name string , role string , link models.LoginLinkRequest ) ( user UserResponse , err error ) {
 	err = client.do( http.MethodPost , "/v1/users" ,
-		CreateUserRequest{ DisplayName: display_name , Role: role } , &user )
+		CreateUserRequest{ DisplayName: display_name , Role: role , LoginLinkRequest: link } , &user )
 	return
 }
 
-func ( client *Client ) ReissueLogin( user_id uint64 ) ( user UserResponse , err error ) {
-	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/users/%d/login-token" , user_id ) , nil , &user )
+func ( client *Client ) ReissueLogin( user_id uint64 , link models.LoginLinkRequest ) ( user UserResponse , err error ) {
+	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/users/%d/login-token" , user_id ) , link , &user )
 	return
 }
 
@@ -188,11 +188,14 @@ func ( client *Client ) RevokeAccess( user_id uint64 ) ( revoked models.Revoked 
 	return
 }
 
+// >>> feature:two_factor
 func ( client *Client ) ResetTwoFactor( user_id uint64 ) ( err error ) {
 	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/users/%d/reset-two-factor" , user_id ) , nil , nil )
 	return
 }
+// <<< feature:two_factor
 
+// >>> feature:api_keys
 // ListAPIKeys returns every key, or one user's when user_id is non-zero.
 func ( client *Client ) ListAPIKeys( user_id uint64 ) ( keys []APIKeyResponse , err error ) {
 	keys = []APIKeyResponse{}
@@ -203,7 +206,9 @@ func ( client *Client ) ListAPIKeys( user_id uint64 ) ( keys []APIKeyResponse , 
 	err = client.do( http.MethodGet , path , nil , &keys )
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 // CreateAPIKey mints a key for a user. The response carries the credential,
 // which is the only time it exists outside the caller that asked for it.
 func ( client *Client ) CreateAPIKey( user_id uint64 , name string , role string , expires_in_days *int ) ( key APIKeyResponse , err error ) {
@@ -211,12 +216,16 @@ func ( client *Client ) CreateAPIKey( user_id uint64 , name string , role string
 		CreateAPIKeyRequest{ UserID: user_id , Name: name , Role: role , ExpiresInDays: expires_in_days } , &key )
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func ( client *Client ) RevokeAPIKey( key_id string ) ( key APIKeyResponse , err error ) {
 	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/api-keys/%s/revoke" , key_id ) , nil , &key )
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:invite_links
 // CreateInviteLink makes an invite link as the admin user_id. The response
 // carries the credential, the only time it exists.
 func ( client *Client ) CreateInviteLink( user_id uint64 , label string , max_uses int , days int ) ( link InviteLinkResponse , err error ) {
@@ -224,12 +233,15 @@ func ( client *Client ) CreateInviteLink( user_id uint64 , label string , max_us
 		CreateInviteLinkRequest{ UserID: user_id , Label: label , MaxUses: max_uses , Days: days } , &link )
 	return
 }
+// <<< feature:invite_links
 
+// >>> feature:api_keys
 // DeleteAPIKey returns the key as it was just before it was removed.
 func ( client *Client ) DeleteAPIKey( key_id string ) ( key APIKeyResponse , err error ) {
 	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/api-keys/%s/delete" , key_id ) , nil , &key )
 	return
 }
+// <<< feature:api_keys
 
 func ( client *Client ) DeleteUser( user_id uint64 ) ( removed models.Revoked , err error ) {
 	err = client.do( http.MethodPost , fmt.Sprintf( "/v1/users/%d/delete" , user_id ) , nil , &removed )

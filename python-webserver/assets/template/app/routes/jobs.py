@@ -1,3 +1,4 @@
+# whole-file feature:jobs
 """The owner's Jobs screen: what runs in the background, how it last went, and
 starting one now (app/core/jobs.py). A run is started and answered at once;
 the page reads the outcome from the list."""

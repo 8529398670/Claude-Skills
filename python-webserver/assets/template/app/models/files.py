@@ -1,3 +1,4 @@
+# whole-file feature:files
 """Uploaded files. The record here describes one; the bytes are on disk. Go's
 twin is server/models/file.go.
 
@@ -8,7 +9,7 @@ sits in a temp directory in the clear.
 
 Each file has its own random key, and only that key is sealed with the secret
 key. Moving to a new secret key therefore rewrites one field of the record (see
-two_factor.SEALED_FIELDS) rather than every file on disk, and needs nothing from
+sealed.SEALED_FIELDS) rather than every file on disk, and needs nothing from
 rotate-key or a restore beyond what they already do for a sealed field.
 
 Each piece is sealed on its own, bound to the file's id, its index and the
@@ -50,6 +51,11 @@ STRAY_AGE_SECONDS = 24 * 60 * 60
 class BadFileError(Exception):
     def __init__(self) -> None:
         super().__init__("a file needs a name and a size")
+
+
+class BadFileNameError(ValueError):
+    def __init__(self) -> None:
+        super().__init__("a file name must be 1-255 bytes")
 
 
 class FileTooLargeError(Exception):
@@ -299,6 +305,33 @@ def finish_file(store: Store, cfg: Config, file: File) -> File:
     if record is None:
         raise FileMissingError()
     return File.from_record(record)
+
+
+def rename_file(store: Store, file_id: str, name: str, expect: str | None = None) -> str | None:
+    """Change the name a file is shown and downloaded under, and answer it as
+    cleaned. Only the record changes: paths on disk use the id, and a piece is
+    sealed to the id too. None when there is no such file, it is deleted, or it
+    is still uploading.
+
+    expect, when given, is the name the caller believes is stored, as in
+    users.rename_user: RenameConflictError if it is not."""
+    clean = clean_name(name)
+    if not clean or len(clean.encode()) > NAME_MAX:
+        raise BadFileNameError()
+    found = False
+
+    def mutate(record: Record) -> None:
+        nonlocal found
+        if record.get("deleted_at") is not None or record["state"] != READY:
+            return
+        found = True
+        if expect is not None and record["name"] != expect:
+            raise users.RenameConflictError(record["name"])
+        record["name"] = clean
+
+    if store.update_value(BUCKET_FILES, file_id, mutate) is None or not found:
+        return None
+    return clean
 
 
 def delete_file(store: Store, file_id: str, actor_id: int) -> bool:

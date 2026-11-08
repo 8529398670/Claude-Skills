@@ -35,7 +35,8 @@ server:  host, port, public_url, app_dir, static_dir, language_file,
          rate_limit_window_seconds, rate_limit_signin_max,
          rate_limit_upload_max, control_socket, mcp
 auth:    session_ttl_seconds, session_max_age_seconds,
-         login_token_ttl_seconds, api_keys,
+         login_token_ttl_seconds, multi_use_login_token_ttl_seconds,
+         api_keys,
          api_key_ttl_seconds, passwords, two_factor
 logs:    enabled, retention_days, max_total_mb, max_file_mb,
          compress_after_days, static_assets, ui_clicks, echo
@@ -402,8 +403,9 @@ it is rewritten in place, after the previous version is copied to
 
 `scaffold.py --features` sets these in `config/defaults.yaml` when a project is
 made (see Step 1b in SKILL.md). All of them are `[live]`, so one change on the
-Settings screen, or `config set`, takes effect without a restart. The code is in
-every project either way, and switching a feature off keeps its data.
+Settings screen, or `config set`, takes effect without a restart. A project only
+has the switches of the features it was scaffolded with, because the rest are cut
+out of it. Switching a feature off keeps its data.
 
 | Feature | Switch | Template default | While off |
 |---|---|---|---|

@@ -1,3 +1,4 @@
+// whole-file feature:files
 package models
 
 import (

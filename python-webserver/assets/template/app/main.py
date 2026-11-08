@@ -20,14 +20,17 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
-from app.core import assets, bootstrap, config, config_live, db, graceful, housekeeping, jobs, language, logs, metrics, server_lock, sse, webhooks
-from app.core.maintenance import Maintenance
+from app.core import assets, bootstrap, config, config_live, db, graceful, housekeeping, jobs, language, logs, server_lock
+from app.core import metrics  # feature:metrics
+from app.core import sse  # feature:logs
+from app.core import webhooks  # feature:webhooks
+from app.core.maintenance import Maintenance  # feature:maintenance
 from app.core.middleware import EXCEPTION_HANDLERS, RateLimit, SecurityHeaders
 from app.core.request_id import RequestID
-from app.core.request_log import RequestLog
+from app.core.request_log import RequestLog  # feature:logs
 from app.core.security import LoadActor
 from app.core.static_files import StaticServer
-from app.models import webhooks as webhook_models
+from app.models import webhooks as webhook_models  # feature:webhooks
 from app.routes import build_routes
 
 # How often config.yaml is checked for edits made outside the Settings screen.
@@ -52,6 +55,7 @@ def build_app(
     # body limit, the log's routes and directory). Everything read per
     # request comes from settings, which follows edits to config.yaml.
     cfg = settings.boot()
+    # >>> feature:logs
     # The activity log writes from its own thread; closing it, last, lets the
     # final requests make it to disk.
     logger = logs.Logger(cfg.logs, cfg.secret_key, cfg.encrypt_at_rest)
@@ -59,6 +63,8 @@ def build_app(
     # A change to config.yaml reaches the activity log's own settings, and is
     # reported on stdout and in the log itself.
     settings.on_change(lambda old, new: logger.apply(new.logs))
+    # <<< feature:logs
+    logger = logs.Logger()  # feature:!logs
 
     def report(level: str, message: str, detail: dict) -> None:
         print(f"[config] {message}", flush=True)
@@ -68,6 +74,7 @@ def build_app(
 
     registry = jobs.Registry(store, logger)
     housekeeping.register(registry, store, settings, logger)
+    # >>> feature:webhooks
     dispatcher = webhooks.Dispatcher(store, settings)
     dispatcher.registry = registry
     registry.register(webhooks.JOB_NAME, webhooks.JOB_INTERVAL_SECONDS, dispatcher.run)
@@ -79,15 +86,18 @@ def build_app(
             dispatcher.emit(webhook_models.EVENT_JOB_FAILED, {"job": name})
 
     registry.on_failure = job_failed
-    log_hub = sse.Hub()
-    measured = metrics.Metrics()
+    # <<< feature:webhooks
+    log_hub = sse.Hub()  # feature:logs
+    measured = metrics.Metrics()  # feature:metrics
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
-        loop = asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()  # feature:logs|webhooks
+        # >>> feature:logs
         logger.on_flushed = lambda: sse.publish_from_thread(loop, log_hub, sse.CHANGED)
-        dispatcher.loop = loop
-        logger.start()
+        # <<< feature:logs
+        dispatcher.loop = loop  # feature:webhooks
+        logger.start()  # feature:logs
         logger.system(logs.LEVEL_INFO, "server started", {"version": version})
         if cfg.secret_migrated:
             logger.system(logs.LEVEL_WARN, "secret key moved to secret.key", {"config": str(cfg.config_file), "secret": str(cfg.secret_file)})
@@ -99,12 +109,12 @@ def build_app(
             # By now requests have finished and streams have ended (serve's
             # on_stop). Jobs next, since they write to the log; the log last.
             watcher.cancel()
-            dispatcher.loop = None
+            dispatcher.loop = None  # feature:webhooks
             await registry.stop()
-            log_hub.close()
-            logger.on_flushed = None
+            log_hub.close()  # feature:logs
+            logger.on_flushed = None  # feature:logs
             logger.system(logs.LEVEL_INFO, "server stopped")
-            await run_in_threadpool(logger.close)
+            await run_in_threadpool(logger.close)  # feature:logs
 
     app = Starlette(
         routes=build_routes(static_server, cfg),
@@ -118,13 +128,13 @@ def build_app(
         # it; and only then can maintenance mode refuse it, knowing who asked.
         middleware=[
             Middleware(RequestID),
-            Middleware(metrics.MeasureRequests, metrics=measured),
+            Middleware(metrics.MeasureRequests, metrics=measured),  # feature:metrics
             Middleware(SecurityHeaders, settings=settings),
             Middleware(RequestBodyLimitMiddleware, max_body_size=cfg.body_limit_bytes),
             Middleware(RateLimit, settings=settings),
             Middleware(LoadActor, store=store, settings=settings),
-            Middleware(RequestLog, settings=settings, logger=logger),
-            Middleware(Maintenance, store=store, settings=settings),
+            Middleware(RequestLog, settings=settings, logger=logger),  # feature:logs
+            Middleware(Maintenance, store=store, settings=settings),  # feature:maintenance
         ],
         exception_handlers=EXCEPTION_HANDLERS,
         lifespan=lifespan,
@@ -133,9 +143,9 @@ def build_app(
     app.state.store = store
     app.state.logs = logger
     app.state.jobs = registry
-    app.state.webhooks = dispatcher
-    app.state.log_hub = log_hub
-    app.state.metrics = measured
+    app.state.webhooks = dispatcher  # feature:webhooks
+    app.state.log_hub = log_hub  # feature:logs
+    app.state.metrics = measured  # feature:metrics
     app.state.language = lang
     # Reported to MCP clients as serverInfo.version.
     app.state.version = version
@@ -181,15 +191,20 @@ def serve(version: str) -> None:
     if cfg.config_warning:
         print(f"[config] warning: {cfg.config_warning}")
     print(f"[state]  {cfg.app_dir}")
+    # >>> feature:logs
     if cfg.logs.enabled:
         print(f"[logs]   {cfg.logs.dir} (keeping {cfg.logs.retention_days} days, up to {cfg.logs.max_total_bytes // 1024 // 1024} MB)")
+    # <<< feature:logs
     print(f"[assets] {bundle.source}", flush=True)
 
     graceful.run(
         app,
+        # >>> feature:logs
         # Before uvicorn waits for connections: it would otherwise wait the
         # full 10 seconds for a stream that is never going to finish.
         on_stop=app.state.log_hub.close,
+        # <<< feature:logs
+        on_stop=lambda: None,  # feature:!logs
         host=cfg.host,
         port=cfg.port,
         # An empty Server header keeps the response from advertising which

@@ -96,7 +96,7 @@ for TARGET in "${TARGETS[@]}"; do
 
   printf "  %-22s " "${GOOS}/${GOARCH}"
   if CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-       go build -trimpath -ldflags="$LDFLAGS" -o "$OUTPUT" . 2>/tmp/build_err_$$; then
+       go build -buildvcs=false -trimpath -ldflags="$LDFLAGS" -o "$OUTPUT" . 2>/tmp/build_err_$$; then
     SIZE="$( du -h "$OUTPUT" | cut -f1 | tr -d ' ' )"
     echo "ok  ${SIZE}  ${OUTPUT}"
   else

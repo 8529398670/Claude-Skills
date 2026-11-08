@@ -1,3 +1,4 @@
+# whole-file feature:passwords|two_factor|invite_links
 """Limits wrong guesses at anything a person types: a PIN, a password, a
 two-factor code. Six digits is a million guesses, and four is ten thousand, so
 without this those are decoration.

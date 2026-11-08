@@ -24,7 +24,7 @@
     data-i18n replaces an element's text, so wherever an icon sits next to a
     label the key goes on an inner <span>, never on the element holding both.
   -->
-  <nav class="navbar app-navbar border-bottom sticky-top">
+  <nav class="navbar app-navbar border-bottom sticky-top" data-i18n-attr="aria-label:nav.top_label">
     <div class="container-fluid gap-2">
       <!-- The menu button, left, beside the sidebar it controls: on a phone it
            slides the sidebar in, on a wide screen it collapses and expands it
@@ -36,10 +36,14 @@
       <!-- The app's name is the way home, from any screen. -->
       <a href="/" class="navbar-brand fw-semibold me-auto" data-i18n="app.title"></a>
       <span class="navbar-text small d-none d-md-inline" data-i18n="app.tagline"></span>
+      <!-- >>> feature:!appearance -->
+      <!-- Light/dark from anywhere. With the Appearance screen the choice
+           lives there instead, so this button is left out. -->
       <button id="theme-toggle" class="btn btn-link app-icon-button" type="button"
               data-i18n-attr="aria-label:nav.theme_toggle,title:nav.theme_toggle">
         <i class="bi bi-moon-stars" aria-hidden="true"></i>
       </button>
+      <!-- <<< feature:!appearance -->
       <div id="app-nav" class="d-flex align-items-center gap-2" hidden>
         <!-- The app's own top-level links go here. Your account is in the
              sidebar, not up here. -->
@@ -61,25 +65,26 @@
                 data-i18n-attr="aria-label:nav.close"></button>
       </div>
       <div class="offcanvas-body">
-        <nav id="sidebar-nav" class="nav nav-pills flex-column w-100 gap-1">
+        <nav id="sidebar-nav" class="nav nav-pills flex-column w-100 gap-1" data-i18n-attr="aria-label:nav.sidebar_label">
           <!-- Account, first: its second line names who is signed in (App.labelAccount). -->
           <a class="nav-link" href="#account" data-nav="account"><i class="bi bi-person-circle" aria-hidden="true"></i><span class="nav-link-text"><span data-i18n="nav.account"></span><span id="sidebar-user" class="nav-link-sub"></span></span></a>
-          <a class="nav-link" href="#appearance" data-nav="appearance"><i class="bi bi-palette" aria-hidden="true"></i><span data-i18n="nav.appearance"></span></a>
-          <a class="nav-link" href="#pin" data-nav="pin"><i class="bi bi-key" aria-hidden="true"></i><span data-i18n="nav.pin"></span></a>
-          <a class="nav-link" href="#password" data-nav="password"><i class="bi bi-lock" aria-hidden="true"></i><span data-i18n="nav.password"></span></a>
-          <a class="nav-link" href="#two-factor" data-nav="two-factor"><i class="bi bi-shield-lock" aria-hidden="true"></i><span data-i18n="nav.two_factor"></span></a>
-          <a class="nav-link" href="#api-keys" data-nav="api-keys"><i class="bi bi-code-square" aria-hidden="true"></i><span data-i18n="nav.api_keys"></span></a>
-          <a class="nav-link" href="#files" data-nav="files"><i class="bi bi-folder" aria-hidden="true"></i><span data-i18n="nav.files"></span></a>
+          <a class="nav-link" href="#appearance" data-nav="appearance"><i class="bi bi-palette" aria-hidden="true"></i><span data-i18n="nav.appearance"></span></a> <!-- feature:appearance -->
+          <a class="nav-link" href="#shortcuts" data-nav="shortcuts"><i class="bi bi-keyboard" aria-hidden="true"></i><span data-i18n="nav.shortcuts"></span></a> <!-- feature:shortcuts -->
+          <a class="nav-link" href="#pin" data-nav="pin"><i class="bi bi-key" aria-hidden="true"></i><span data-i18n="nav.pin"></span></a> <!-- feature:invite_links -->
+          <a class="nav-link" href="#password" data-nav="password"><i class="bi bi-lock" aria-hidden="true"></i><span data-i18n="nav.password"></span></a> <!-- feature:passwords -->
+          <a class="nav-link" href="#two-factor" data-nav="two-factor"><i class="bi bi-shield-lock" aria-hidden="true"></i><span data-i18n="nav.two_factor"></span></a> <!-- feature:two_factor -->
+          <a class="nav-link" href="#api-keys" data-nav="api-keys"><i class="bi bi-code-square" aria-hidden="true"></i><span data-i18n="nav.api_keys"></span></a> <!-- feature:api_keys -->
+          <a class="nav-link" href="#files" data-nav="files"><i class="bi bi-folder" aria-hidden="true"></i><span data-i18n="nav.files"></span></a> <!-- feature:files -->
 
           <div id="sidebar-admin" class="sidebar-group" hidden>
             <h3 class="sidebar-heading" data-i18n="nav.admin_heading"></h3>
             <a class="nav-link" href="#users" data-nav="users"><i class="bi bi-people" aria-hidden="true"></i><span data-i18n="nav.users"></span></a>
-            <a class="nav-link" href="#invite-links" data-nav="invite-links"><i class="bi bi-link-45deg" aria-hidden="true"></i><span data-i18n="nav.invite_links"></span></a>
-            <a class="nav-link" href="#all-keys" data-nav="all-keys"><i class="bi bi-shield-lock" aria-hidden="true"></i><span data-i18n="nav.all_keys"></span></a>
-            <a class="nav-link" href="#logs" data-nav="logs"><i class="bi bi-journal-text" aria-hidden="true"></i><span data-i18n="nav.logs"></span></a>
-            <a class="nav-link" href="#jobs" data-nav="jobs"><i class="bi bi-clock-history" aria-hidden="true"></i><span data-i18n="nav.jobs"></span></a>
-            <a class="nav-link" href="#webhooks" data-nav="webhooks"><i class="bi bi-broadcast" aria-hidden="true"></i><span data-i18n="nav.webhooks"></span></a>
-            <a class="nav-link" href="#settings" data-nav="settings"><i class="bi bi-sliders" aria-hidden="true"></i><span data-i18n="nav.settings"></span></a>
+            <a class="nav-link" href="#invite-links" data-nav="invite-links"><i class="bi bi-link-45deg" aria-hidden="true"></i><span data-i18n="nav.invite_links"></span></a> <!-- feature:invite_links -->
+            <a class="nav-link" href="#all-keys" data-nav="all-keys"><i class="bi bi-shield-lock" aria-hidden="true"></i><span data-i18n="nav.all_keys"></span></a> <!-- feature:api_keys -->
+            <a class="nav-link" href="#logs" data-nav="logs"><i class="bi bi-journal-text" aria-hidden="true"></i><span data-i18n="nav.logs"></span></a> <!-- feature:logs -->
+            <a class="nav-link" href="#jobs" data-nav="jobs"><i class="bi bi-clock-history" aria-hidden="true"></i><span data-i18n="nav.jobs"></span></a> <!-- feature:jobs -->
+            <a class="nav-link" href="#webhooks" data-nav="webhooks"><i class="bi bi-broadcast" aria-hidden="true"></i><span data-i18n="nav.webhooks"></span></a> <!-- feature:webhooks -->
+            <a class="nav-link" href="#settings" data-nav="settings"><i class="bi bi-sliders" aria-hidden="true"></i><span data-i18n="nav.settings"></span></a> <!-- feature:settings -->
           </div>
           <p id="sidebar-version" class="sidebar-version" hidden></p>
         </nav>
@@ -87,13 +92,17 @@
     </aside>
 
     <main hidden id="main" class="app-main" tabindex="-1">
-      <p id="maintenance-banner" class="alert alert-warning" role="status" hidden></p>
+      <p id="maintenance-banner" class="alert alert-warning" role="status" hidden></p> <!-- feature:maintenance -->
       <!-- server.announcement, until dismissed. See App.showAnnouncement. -->
       <div id="announcement-banner" class="alert alert-info alert-dismissible" role="status" hidden>
         <span id="announcement-text"></span>
         <button id="announcement-dismiss" type="button" class="btn-close" data-i18n-attr="aria-label:nav.close"></button>
       </div>
-      <p id="error-banner" class="alert alert-danger" role="alert" hidden></p>
+      <div id="error-banner" class="alert alert-danger alert-dismissible" role="alert" hidden>
+        <span id="error-banner-text"></span>
+        <button id="error-copy-button" type="button" class="btn btn-sm btn-outline-danger ms-2" data-i18n="ui.copy"></button>
+        <button type="button" class="btn-close" data-box-close="" data-i18n-attr="aria-label:nav.close"></button>
+      </div>
 
       <!-- While the signed-in screens fetch what they show. See App.renderSignedIn. -->
       <div id="app-loading" class="app-loading" role="status" hidden>
@@ -108,6 +117,7 @@
           <p id="invalid-link" class="alert alert-warning mb-0" data-i18n="signed_out.invalid_link" hidden></p>
           <p id="sign-in-expired" class="alert alert-warning mb-0" data-i18n="signed_out.sign_in_expired" hidden></p>
           <p id="session-ended" class="alert alert-warning mb-0" data-i18n="signed_out.session_ended" hidden></p>
+          <!-- >>> feature:passwords -->
 
           <!-- Only while the owner has auth.passwords on; see password.js. -->
           <div id="password-login" class="mt-3" hidden>
@@ -124,9 +134,11 @@
               <button id="password-login-button" type="submit" class="btn btn-primary" data-i18n="signed_out.password_button"></button>
             </form>
           </div>
+          <!-- <<< feature:passwords -->
         </div>
       </section>
 
+      <!-- >>> feature:two_factor -->
       <!-- Asked for during any sign-in on an account with two-factor on. See
            two_factor.js. -->
       <section id="two-factor-step" class="card" hidden>
@@ -143,6 +155,7 @@
         </div>
       </section>
 
+      <!-- <<< feature:two_factor -->
       <!-- What a login link opens. Nothing is redeemed until the button is
            pressed -- see renderLoginConfirm in app.js. -->
       <section id="login-confirm" class="card" hidden>
@@ -154,6 +167,7 @@
         </div>
       </section>
 
+      <!-- >>> feature:invite_links -->
       <!-- What an invite link opens: type a name, then either pick yourself
            from "did you mean" or join as someone new. See join.js. -->
       <section id="join" class="card" hidden>
@@ -202,6 +216,7 @@
         </div>
       </section>
 
+      <!-- <<< feature:invite_links -->
       <section id="signed-in" hidden>
         <section class="card view" data-view="account" id="account-panel">
           <div class="card-body">
@@ -223,9 +238,15 @@
                  Any signed-in user may mint one; see Api.createMyLoginLink. -->
             <h3 class="h6" data-i18n="account.device_heading"></h3>
             <p class="text-body-secondary" data-i18n="account.device_description"></p>
+            <!-- The link you could still use, if any, and a way to stop it. -->
+            <div id="my-live-link" class="d-flex flex-wrap align-items-center gap-2 mb-3" hidden>
+              <span id="my-live-link-text" class="text-body-secondary"></span>
+              <button id="my-link-cancel-button" class="btn btn-sm btn-outline-danger" data-i18n="login_links.cancel_button"></button>
+            </div>
             <button id="my-link-button" class="btn btn-outline-secondary" data-i18n="account.device_button"></button>
-            <div id="my-link-box" class="alert alert-info mt-3" hidden>
-              <p class="mb-2" data-i18n="account.device_link_notice"></p>
+            <div id="my-link-box" class="alert alert-info alert-dismissible mt-3" hidden>
+              <button type="button" class="btn-close" data-box-close="my-link-button" data-i18n-attr="aria-label:nav.close"></button>
+              <p id="my-link-notice" class="mb-2"></p>
               <div class="link-box">
                 <code id="my-link-value"></code>
                 <button id="my-link-copy-button" class="btn btn-sm btn-outline-secondary" data-i18n="account.copy_button"></button>
@@ -236,6 +257,7 @@
 
             <hr />
 
+            <!-- >>> feature:sessions -->
             <!-- Every device with a live session on this account; see sessions.js. -->
             <h3 class="h6" data-i18n="sessions.heading"></h3>
             <p class="text-body-secondary" data-i18n="sessions.description"></p>
@@ -243,11 +265,11 @@
               <table id="sessions-table" class="table table-hover align-middle" data-empty="sessions.empty">
                 <thead>
                   <tr>
-                    <th data-i18n="sessions.table_device"></th>
-                    <th data-i18n="sessions.table_ip"></th>
-                    <th data-i18n="sessions.table_seen"></th>
-                    <th data-i18n="sessions.table_signed_in"></th>
-                    <th data-i18n="sessions.table_actions"></th>
+                    <th scope="col" data-i18n="sessions.table_device"></th>
+                    <th scope="col" data-i18n="sessions.table_ip"></th>
+                    <th scope="col" data-i18n="sessions.table_seen"></th>
+                    <th scope="col" data-i18n="sessions.table_signed_in"></th>
+                    <th scope="col" data-i18n="sessions.table_actions"></th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -257,10 +279,12 @@
 
             <hr />
 
+            <!-- <<< feature:sessions -->
             <button id="logout-button" class="btn btn-outline-danger" data-i18n="account.logout_button"></button>
           </div>
         </section>
 
+        <!-- >>> feature:appearance -->
         <!-- Light, dark, or a ready-made theme; kept in this browser. See
              theme.js. -->
         <section class="card view" data-view="appearance" id="appearance">
@@ -271,6 +295,33 @@
           </div>
         </section>
 
+        <!-- <<< feature:appearance -->
+        <!-- >>> feature:shortcuts -->
+        <!-- Each person's own keys, saved to their account. See shortcuts.js. -->
+        <section class="card view" data-view="shortcuts" id="shortcuts">
+          <div class="card-body">
+            <h2 class="h4 card-title" data-i18n="shortcuts.heading"></h2>
+            <p class="text-body-secondary" data-i18n="shortcuts.description"></p>
+            <p id="shortcuts-detected" class="small text-body-secondary"></p>
+            <div class="table-responsive">
+              <table id="shortcuts-table" class="table align-middle shortcut-table">
+                <thead>
+                  <tr>
+                    <th scope="col" data-i18n="shortcuts.table_action"></th>
+                    <th scope="col" data-i18n="shortcuts.table_keys"></th>
+                    <th scope="col" class="text-end"><span class="visually-hidden" data-i18n="shortcuts.table_buttons"></span></th>
+                  </tr>
+                </thead>
+                <tbody id="shortcuts-rows"></tbody>
+              </table>
+            </div>
+            <p class="small text-body-secondary" data-i18n="shortcuts.escape_note"></p>
+            <button id="shortcuts-reset-all" type="button" class="btn btn-outline-secondary" data-i18n="shortcuts.reset_all" hidden></button>
+          </div>
+        </section>
+
+        <!-- <<< feature:shortcuts -->
+        <!-- >>> feature:invite_links -->
         <!-- Only for non-admin accounts; see pin.js. -->
         <section class="card view" data-view="pin" id="pin-panel" hidden>
           <div class="card-body">
@@ -291,6 +342,8 @@
           </div>
         </section>
 
+        <!-- <<< feature:invite_links -->
+        <!-- >>> feature:passwords -->
         <!-- Only while the owner has auth.passwords on; see password.js. -->
         <section class="card view" data-view="password" id="password-panel" hidden>
           <div class="card-body">
@@ -313,10 +366,12 @@
                 <label for="password-confirm" class="form-label" data-i18n="password.confirm_label"></label>
                 <input id="password-confirm" class="form-control" name="confirm_password" type="password" autocomplete="new-password" required />
               </div>
+              <!-- >>> feature:two_factor -->
               <div id="password-code-row" class="mb-3" hidden>
                 <label for="password-code" class="form-label" data-i18n="two_factor.code_label"></label>
                 <input id="password-code" class="form-control" name="code" autocomplete="one-time-code" spellcheck="false" maxlength="24" />
               </div>
+              <!-- <<< feature:two_factor -->
               <div class="row-actions">
                 <button type="submit" class="btn btn-primary" data-i18n="password.save_button"></button>
                 <button type="button" id="password-remove-button" class="btn btn-outline-danger" data-i18n="password.remove_button" hidden></button>
@@ -325,6 +380,8 @@
           </div>
         </section>
 
+        <!-- <<< feature:passwords -->
+        <!-- >>> feature:two_factor -->
         <!-- Only while the owner has auth.two_factor on; see two_factor.js. -->
         <section class="card view" data-view="two-factor" id="two-factor-panel" hidden>
           <div class="card-body">
@@ -370,6 +427,8 @@
           </div>
         </section>
 
+        <!-- <<< feature:two_factor -->
+        <!-- >>> feature:api_keys -->
         <!--
           API keys: the non-browser way in, for every signed-in user. The role
           select is revealed only for an admin (see keys.js) because a key can
@@ -403,7 +462,8 @@
               </div>
             </form>
 
-            <div id="key-secret-box" class="alert alert-info mt-3" hidden>
+            <div id="key-secret-box" class="alert alert-info alert-dismissible mt-3" hidden>
+              <button type="button" class="btn-close" data-box-close="key-name" data-i18n-attr="aria-label:nav.close"></button>
               <p class="mb-2" data-i18n="api_keys.secret_notice"></p>
               <div class="link-box">
                 <code id="key-secret-value"></code>
@@ -411,16 +471,26 @@
               </div>
             </div>
 
-            <div class="table-responsive mt-4">
+            <div class="mt-4" role="search">
+              <label for="keys-search" class="visually-hidden" data-i18n="api_keys.search_label"></label>
+              <input id="keys-search" class="form-control" type="search" autocomplete="off"
+                     data-i18n-attr="placeholder:api_keys.search_label" />
+            </div>
+            <div class="form-check mt-2">
+              <input id="keys-live-only" class="form-check-input" type="checkbox" />
+              <label for="keys-live-only" class="form-check-label" data-i18n="api_keys.live_only_label"></label>
+            </div>
+
+            <div class="table-responsive mt-3">
               <table id="keys-table" class="table table-hover align-middle" data-empty="api_keys.empty">
                 <thead>
                   <tr>
-                    <th data-i18n="api_keys.table_name"></th>
-                    <th data-i18n="api_keys.table_role"></th>
-                    <th data-i18n="api_keys.table_status"></th>
-                    <th data-i18n="api_keys.table_last_used"></th>
-                    <th data-i18n="api_keys.table_expires"></th>
-                    <th data-i18n="api_keys.table_actions"></th>
+                    <th scope="col" data-sort="name"><button type="button" class="th-sort" data-i18n="api_keys.table_name"></button></th>
+                    <th scope="col" data-sort="role"><button type="button" class="th-sort" data-i18n="api_keys.table_role"></button></th>
+                    <th scope="col" data-i18n="api_keys.table_status"></th>
+                    <th scope="col" data-sort="last_used_at"><button type="button" class="th-sort" data-i18n="api_keys.table_last_used"></button></th>
+                    <th scope="col" data-sort="expires_at"><button type="button" class="th-sort" data-i18n="api_keys.table_expires"></button></th>
+                    <th scope="col" data-i18n="api_keys.table_actions"></th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -429,6 +499,8 @@
           </div>
         </section>
 
+        <!-- <<< feature:api_keys -->
+        <!-- >>> feature:files -->
         <section class="card view" data-view="files" id="files-panel" hidden>
           <div class="card-body">
             <h2 class="h4 card-title" data-i18n="files.heading"></h2>
@@ -457,15 +529,21 @@
             </div>
             <p id="files-usage-all" class="small text-body-secondary mt-2 mb-0" hidden></p>
 
+            <div class="mt-3" role="search">
+              <label for="files-search" class="visually-hidden" data-i18n="files.search_label"></label>
+              <input id="files-search" class="form-control" type="search" autocomplete="off"
+                     data-i18n-attr="placeholder:files.search_label" />
+            </div>
+
             <div class="table-responsive mt-3">
               <table id="files-table" class="table table-hover align-middle">
                 <thead>
                   <tr>
-                    <th data-i18n="files.table_name"></th>
-                    <th id="files-owner-column" data-i18n="files.table_owner" hidden></th>
-                    <th data-i18n="files.table_size"></th>
-                    <th data-i18n="files.table_uploaded"></th>
-                    <th data-i18n="files.table_actions"></th>
+                    <th scope="col" data-sort="name"><button type="button" class="th-sort" data-i18n="files.table_name"></button></th>
+                    <th scope="col" id="files-owner-column" data-sort="user_name" hidden><button type="button" class="th-sort" data-i18n="files.table_owner"></button></th>
+                    <th scope="col" data-sort="size"><button type="button" class="th-sort" data-i18n="files.table_size"></button></th>
+                    <th scope="col" data-sort="created_at"><button type="button" class="th-sort" data-i18n="files.table_uploaded"></button></th>
+                    <th scope="col" data-i18n="files.table_actions"></th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -475,6 +553,7 @@
           </div>
         </section>
 
+        <!-- <<< feature:files -->
         <section class="card view" data-view="users" id="admin-panel" hidden>
           <div class="card-body">
             <h2 class="h4 card-title" data-i18n="admin.heading"></h2>
@@ -493,13 +572,25 @@
                   <option value="admin" data-i18n="admin.role_admin"></option>
                 </select>
               </div>
+              <!-- How often and how long the link works; LoginLinks fills these. -->
+              <div class="col-md">
+                <label for="new-uses" class="form-label" data-i18n="login_links.uses_label"></label>
+                <select id="new-uses" class="form-select" name="uses"></select>
+              </div>
+              <div class="col-md">
+                <label for="new-expires" class="form-label" data-i18n="login_links.expires_label"></label>
+                <select id="new-expires" class="form-select" name="expires" aria-describedby="new-expires-help"></select>
+              </div>
+              <div id="new-expires-help" class="col-12 form-text mt-1 order-last" data-i18n="login_links.expires_help"></div>
               <div class="col-md-auto">
                 <button type="submit" class="btn btn-primary" data-i18n="admin.create_button"></button>
               </div>
             </form>
 
-            <div id="login-link-box" class="alert alert-info mt-3" hidden>
-              <p class="mb-2" data-i18n="admin.link_notice"></p>
+            <div id="login-link-box" class="alert alert-info alert-dismissible mt-3" hidden>
+              <button type="button" class="btn-close" data-box-close="new-name" data-i18n-attr="aria-label:nav.close"></button>
+              <p id="login-link-for" class="fw-semibold mb-1"></p>
+              <p id="login-link-notice" class="mb-2"></p>
               <div class="link-box">
                 <code id="login-link-value"></code>
                 <button id="copy-link-button" class="btn btn-sm btn-outline-secondary" data-i18n="admin.copy_button"></button>
@@ -518,18 +609,20 @@
               <table id="users-table" class="table table-hover align-middle" data-empty="admin.empty">
                 <thead>
                   <tr>
-                    <th data-i18n="admin.table_name"></th>
-                    <th data-i18n="admin.table_role"></th>
-                    <th data-i18n="admin.table_status"></th>
-                    <th data-i18n="admin.table_actions"></th>
+                    <th scope="col" data-sort="display_name"><button type="button" class="th-sort" data-i18n="admin.table_name"></button></th>
+                    <th scope="col" data-sort="role"><button type="button" class="th-sort" data-i18n="admin.table_role"></button></th>
+                    <th scope="col" data-sort="disabled"><button type="button" class="th-sort" data-i18n="admin.table_status"></button></th>
+                    <th scope="col" data-sort="created_at"><button type="button" class="th-sort" data-i18n="admin.table_created"></button></th>
+                    <th scope="col" data-i18n="admin.table_actions"></th>
                   </tr>
                 </thead>
                 <tbody></tbody>
               </table>
             </div>
+            <!-- >>> feature:sessions -->
 
             <!-- One account's devices, from its Sessions button. See Sessions.showFor. -->
-            <div id="user-sessions" class="mt-4" hidden>
+            <div id="user-sessions" class="app-nested mt-4" hidden>
               <div class="d-flex align-items-center justify-content-between gap-2">
                 <h3 id="user-sessions-heading" class="h6 mb-0"></h3>
                 <button id="user-sessions-close" type="button" class="btn-close" data-i18n-attr="aria-label:nav.close"></button>
@@ -538,20 +631,22 @@
                 <table id="user-sessions-table" class="table table-hover align-middle" data-empty="sessions.user_empty">
                   <thead>
                     <tr>
-                      <th data-i18n="sessions.table_device"></th>
-                      <th data-i18n="sessions.table_ip"></th>
-                      <th data-i18n="sessions.table_seen"></th>
-                      <th data-i18n="sessions.table_signed_in"></th>
-                      <th data-i18n="sessions.table_actions"></th>
+                      <th scope="col" data-i18n="sessions.table_device"></th>
+                      <th scope="col" data-i18n="sessions.table_ip"></th>
+                      <th scope="col" data-i18n="sessions.table_seen"></th>
+                      <th scope="col" data-i18n="sessions.table_signed_in"></th>
+                      <th scope="col" data-i18n="sessions.table_actions"></th>
                     </tr>
                   </thead>
                   <tbody></tbody>
                 </table>
               </div>
             </div>
+            <!-- <<< feature:sessions -->
           </div>
         </section>
 
+        <!-- >>> feature:invite_links -->
         <!-- One link a whole group can join through; see invites.js. -->
         <section class="card view" data-view="invite-links" id="invite-links-panel" hidden>
           <div class="card-body">
@@ -577,7 +672,8 @@
               </div>
             </form>
 
-            <div id="invite-link-box" class="alert alert-info mt-3" hidden>
+            <div id="invite-link-box" class="alert alert-info alert-dismissible mt-3" hidden>
+              <button type="button" class="btn-close" data-box-close="invite-label" data-i18n-attr="aria-label:nav.close"></button>
               <p class="mb-2" data-i18n="invite_links.link_notice"></p>
               <div class="link-box">
                 <code id="invite-link-value"></code>
@@ -587,15 +683,21 @@
               <canvas id="invite-link-qr" class="link-qr" role="img" data-i18n-attr="aria-label:ui.qr_label" hidden></canvas>
             </div>
 
-            <div class="table-responsive mt-4">
+            <div class="mt-4" role="search">
+              <label for="invites-search" class="visually-hidden" data-i18n="invite_links.search_label"></label>
+              <input id="invites-search" class="form-control" type="search" autocomplete="off"
+                     data-i18n-attr="placeholder:invite_links.search_label" />
+            </div>
+
+            <div class="table-responsive mt-3">
               <table id="invite-links-table" class="table table-hover align-middle" data-empty="invite_links.empty">
                 <thead>
                   <tr>
-                    <th data-i18n="invite_links.table_label"></th>
-                    <th data-i18n="invite_links.table_joined"></th>
-                    <th data-i18n="invite_links.table_status"></th>
-                    <th data-i18n="invite_links.table_expires"></th>
-                    <th data-i18n="invite_links.table_actions"></th>
+                    <th scope="col" data-sort="label"><button type="button" class="th-sort" data-i18n="invite_links.table_label"></button></th>
+                    <th scope="col" data-sort="used"><button type="button" class="th-sort" data-i18n="invite_links.table_joined"></button></th>
+                    <th scope="col" data-i18n="invite_links.table_status"></th>
+                    <th scope="col" data-sort="expires_at"><button type="button" class="th-sort" data-i18n="invite_links.table_expires"></button></th>
+                    <th scope="col" data-i18n="invite_links.table_actions"></th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -604,6 +706,8 @@
           </div>
         </section>
 
+        <!-- <<< feature:invite_links -->
+        <!-- >>> feature:api_keys -->
         <!-- Every key in the app, whoever owns it: the admin answer to "what
              has standing access", and where a lost laptop's key gets killed. -->
         <section class="card view" data-view="all-keys" id="admin-keys-panel" hidden>
@@ -642,7 +746,8 @@
               </div>
             </form>
 
-            <div id="user-key-secret-box" class="alert alert-info mt-3" hidden>
+            <div id="user-key-secret-box" class="alert alert-info alert-dismissible mt-3" hidden>
+              <button type="button" class="btn-close" data-box-close="user-key-name" data-i18n-attr="aria-label:nav.close"></button>
               <p class="mb-2" data-i18n="api_keys.secret_notice"></p>
               <div class="link-box">
                 <code id="user-key-secret-value"></code>
@@ -650,16 +755,27 @@
               </div>
             </div>
 
+            <div class="mt-3" role="search">
+              <label for="admin-keys-search" class="visually-hidden" data-i18n="api_keys.all_search_label"></label>
+              <input id="admin-keys-search" class="form-control" type="search" autocomplete="off"
+                     data-i18n-attr="placeholder:api_keys.all_search_label" />
+            </div>
+            <div class="form-check mt-2">
+              <input id="admin-keys-live-only" class="form-check-input" type="checkbox" />
+              <label for="admin-keys-live-only" class="form-check-label" data-i18n="api_keys.live_only_label"></label>
+            </div>
+
             <div class="table-responsive mt-3">
               <table id="admin-keys-table" class="table table-hover align-middle" data-empty="api_keys.all_empty">
                 <thead>
                   <tr>
-                    <th data-i18n="admin_keys.table_owner"></th>
-                    <th data-i18n="api_keys.table_name"></th>
-                    <th data-i18n="api_keys.table_role"></th>
-                    <th data-i18n="api_keys.table_status"></th>
-                    <th data-i18n="api_keys.table_last_used"></th>
-                    <th data-i18n="api_keys.table_actions"></th>
+                    <th scope="col" data-sort="display_name"><button type="button" class="th-sort" data-i18n="admin_keys.table_owner"></button></th>
+                    <th scope="col" data-sort="name"><button type="button" class="th-sort" data-i18n="api_keys.table_name"></button></th>
+                    <th scope="col" data-sort="role"><button type="button" class="th-sort" data-i18n="api_keys.table_role"></button></th>
+                    <th scope="col" data-i18n="api_keys.table_status"></th>
+                    <th scope="col" data-sort="last_used_at"><button type="button" class="th-sort" data-i18n="api_keys.table_last_used"></button></th>
+                    <th scope="col" data-sort="expires_at"><button type="button" class="th-sort" data-i18n="api_keys.table_expires"></button></th>
+                    <th scope="col" data-i18n="api_keys.table_actions"></th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -668,6 +784,8 @@
           </div>
         </section>
 
+        <!-- <<< feature:api_keys -->
+        <!-- >>> feature:logs -->
         <!-- The activity log, owner only; see logs.js. data-no-track keeps
              reading the log from writing to it (track.js). -->
         <section class="card view" data-view="logs" id="logs-panel" data-no-track hidden>
@@ -690,12 +808,32 @@
             </form>
             <p class="form-text" data-i18n="logs.search_help"></p>
             <div id="logs-kinds" class="row-actions mb-3" role="group" data-i18n-attr="aria-label:logs.kinds_label"></div>
+            <!-- What the owner calls addresses. See Logs.refreshNames. -->
+            <details class="app-nested mb-3">
+              <summary id="ip-names-summary" class="ip-names-summary"></summary>
+              <div class="table-responsive mt-2">
+                <table id="ip-names-table" class="table table-hover align-middle" data-empty="logs.ip_names_empty">
+                  <thead>
+                    <tr>
+                      <th scope="col" data-i18n="logs.table_ip_name"></th>
+                      <th scope="col" data-i18n="logs.table_ip_target"></th>
+                      <th scope="col" data-i18n="logs.table_ip_actions"></th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <button id="ip-names-add" type="button" class="btn btn-sm btn-outline-secondary" data-i18n="logs.ip_names_add"></button>
+            </details>
+
             <p id="logs-settings" class="small text-body-secondary"></p>
             <p id="logs-empty" class="text-body-secondary" hidden></p>
             <div id="logs-days" class="log-days"></div>
           </div>
         </section>
 
+        <!-- <<< feature:logs -->
+        <!-- >>> feature:webhooks -->
         <!-- Telling other systems what happens here, owner only; see webhooks.js. -->
         <section class="card view" data-view="webhooks" id="webhooks-panel" hidden>
           <div class="card-body">
@@ -726,40 +864,50 @@
               <button type="submit" class="btn btn-primary mt-3" data-i18n="webhooks.create_button"></button>
             </form>
 
-            <div id="webhook-secret-box" class="alert alert-info mt-3" hidden>
-              <p class="mb-2" data-i18n="webhooks.secret_notice"></p>
+            <div id="webhook-secret-box" class="alert alert-info alert-dismissible mt-3" hidden>
+              <button type="button" class="btn-close" data-box-close="webhook-name" data-i18n-attr="aria-label:nav.close"></button>
+              <p id="webhook-secret-notice" class="mb-2" data-i18n="webhooks.secret_notice"></p>
               <div class="link-box">
                 <code id="webhook-secret-value"></code>
                 <button id="copy-webhook-button" class="btn btn-sm btn-outline-secondary" data-i18n="webhooks.copy_button"></button>
               </div>
             </div>
 
-            <div class="table-responsive mt-4">
+            <div class="mt-4" role="search">
+              <label for="webhooks-search" class="visually-hidden" data-i18n="webhooks.search_label"></label>
+              <input id="webhooks-search" class="form-control" type="search" autocomplete="off"
+                     data-i18n-attr="placeholder:webhooks.search_label" />
+            </div>
+
+            <div class="table-responsive mt-3">
               <table id="webhooks-table" class="table table-hover align-middle" data-empty="webhooks.empty">
                 <thead>
                   <tr>
-                    <th data-i18n="webhooks.table_name"></th>
-                    <th data-i18n="webhooks.table_url"></th>
-                    <th data-i18n="webhooks.table_status"></th>
-                    <th data-i18n="webhooks.table_actions"></th>
+                    <th scope="col" data-sort="name"><button type="button" class="th-sort" data-i18n="webhooks.table_name"></button></th>
+                    <th scope="col" data-sort="url"><button type="button" class="th-sort" data-i18n="webhooks.table_url"></button></th>
+                    <th scope="col" data-sort="enabled"><button type="button" class="th-sort" data-i18n="webhooks.table_status"></button></th>
+                    <th scope="col" data-i18n="webhooks.table_actions"></th>
                   </tr>
                 </thead>
                 <tbody></tbody>
               </table>
             </div>
 
-            <div id="webhook-deliveries" class="mt-4" hidden>
-              <h3 id="webhook-deliveries-heading" class="h6"></h3>
+            <div id="webhook-deliveries" class="app-nested mt-4" hidden>
+              <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                <h3 id="webhook-deliveries-heading" class="h6 mb-0"></h3>
+                <button id="webhook-deliveries-close" type="button" class="btn-close" data-i18n-attr="aria-label:nav.close"></button>
+              </div>
               <div class="table-responsive">
                 <table id="webhook-deliveries-table" class="table table-hover align-middle" data-empty="webhooks.deliveries_empty">
                   <thead>
                     <tr>
-                      <th data-i18n="webhooks.table_event"></th>
-                      <th data-i18n="webhooks.table_delivery"></th>
-                      <th data-i18n="webhooks.table_attempts"></th>
-                      <th data-i18n="webhooks.table_result"></th>
-                      <th data-i18n="webhooks.table_when"></th>
-                      <th data-i18n="webhooks.table_actions"></th>
+                      <th scope="col" data-i18n="webhooks.table_event"></th>
+                      <th scope="col" data-i18n="webhooks.table_delivery"></th>
+                      <th scope="col" data-i18n="webhooks.table_attempts"></th>
+                      <th scope="col" data-i18n="webhooks.table_result"></th>
+                      <th scope="col" data-i18n="webhooks.table_when"></th>
+                      <th scope="col" data-i18n="webhooks.table_actions"></th>
                     </tr>
                   </thead>
                   <tbody></tbody>
@@ -769,6 +917,8 @@
           </div>
         </section>
 
+        <!-- <<< feature:webhooks -->
+        <!-- >>> feature:jobs -->
         <!-- Background jobs, owner only; see jobs.js. -->
         <section class="card view" data-view="jobs" id="jobs-panel" hidden>
           <div class="card-body">
@@ -778,12 +928,12 @@
               <table id="jobs-table" class="table table-hover align-middle" data-empty="jobs.empty">
                 <thead>
                   <tr>
-                    <th data-i18n="jobs.table_name"></th>
-                    <th data-i18n="jobs.table_status"></th>
-                    <th data-i18n="jobs.table_last"></th>
-                    <th data-i18n="jobs.table_next"></th>
-                    <th data-i18n="jobs.table_note"></th>
-                    <th data-i18n="jobs.table_actions"></th>
+                    <th scope="col" data-i18n="jobs.table_name"></th>
+                    <th scope="col" data-i18n="jobs.table_status"></th>
+                    <th scope="col" data-i18n="jobs.table_last"></th>
+                    <th scope="col" data-i18n="jobs.table_next"></th>
+                    <th scope="col" data-i18n="jobs.table_note"></th>
+                    <th scope="col" data-i18n="jobs.table_actions"></th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -792,6 +942,8 @@
           </div>
         </section>
 
+        <!-- <<< feature:jobs -->
+        <!-- >>> feature:settings -->
         <!-- Owner only: config.yaml, one field per setting. See js/settings.js. -->
         <section class="card view" data-view="settings" id="settings-panel" hidden>
           <div class="card-body">
@@ -803,6 +955,17 @@
             <div id="settings-invalid" class="alert alert-danger settings-help" role="alert" hidden></div>
             <div id="settings-stale" class="alert alert-warning" role="alert" data-i18n="settings.stale" hidden></div>
             <div id="settings-read-only" class="alert alert-secondary" role="status" data-i18n="settings.read_only" hidden></div>
+
+            <!-- Outside the form, so Enter in the filter is not a save. -->
+            <div class="settings-tools" role="search">
+              <div class="d-flex align-items-center gap-2">
+                <label for="settings-filter" class="visually-hidden" data-i18n="settings.filter_label"></label>
+                <input id="settings-filter" class="form-control" type="search" autocomplete="off"
+                       data-i18n-attr="placeholder:settings.filter_label" />
+                <span id="settings-filter-status" class="small text-body-secondary text-nowrap" role="status"></span>
+              </div>
+              <nav id="settings-jump" class="settings-jump" data-i18n-attr="aria-label:settings.jump_label"></nav>
+            </div>
 
             <form id="settings-form" autocomplete="off" novalidate>
               <div id="settings-sections"></div>
@@ -818,6 +981,7 @@
             </form>
           </div>
         </section>
+        <!-- <<< feature:settings -->
       </section>
     </main>
   </div>
@@ -845,6 +1009,48 @@
     </div>
   </div>
 
+  <!-- >>> feature:shortcuts -->
+  <!-- What ? opens: see shortcuts.js. -->
+  <div id="shortcuts-modal" class="modal fade" tabindex="-1" aria-labelledby="shortcuts-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="shortcuts-title" class="modal-title fs-5" data-i18n="shortcuts.heading"></h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-attr="aria-label:nav.close"></button>
+        </div>
+        <div class="modal-body">
+          <!-- Filled from the list in shortcuts.js, with this person's own keys. -->
+          <dl id="shortcut-list" class="shortcut-list mb-0"></dl>
+        </div>
+        <div class="modal-footer">
+          <a id="shortcuts-list-change" href="#shortcuts" class="btn btn-link" data-i18n="shortcuts.list_change" hidden></a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- <<< feature:shortcuts -->
+  <!-- A small form in a dialog: see Dom.form, which fills it in. -->
+  <div id="form-modal" class="modal fade" tabindex="-1" aria-labelledby="form-modal-title" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <form id="form-modal-form" autocomplete="off">
+          <div class="modal-header">
+            <h2 id="form-modal-title" class="modal-title fs-5"></h2>
+          </div>
+          <div class="modal-body">
+            <div id="form-modal-fields" class="vstack gap-3"></div>
+            <div id="form-modal-problem" class="alert alert-danger mt-3 mb-0" role="alert" hidden></div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-i18n="ui.cancel"></button>
+            <button id="form-modal-save" type="submit" class="btn btn-primary"></button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <!--
     Plain scripts in dependency order. No bundler, no modules that need a
     build step: each file adds one global and the browser runs them as-is.
@@ -855,24 +1061,26 @@
   <script src="/vendor/qrcode.js"></script>
   <script src="/js/dom.js"></script>
   <script src="/js/qr.js"></script>
+  <script src="/js/login_links.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/undo.js"></script>
+  <script src="/js/shortcuts.js"></script> <!-- feature:shortcuts -->
   <script src="/js/api.js"></script>
-  <script src="/js/track.js"></script>
+  <script src="/js/track.js"></script> <!-- feature:logs -->
   <script src="/js/nav.js"></script>
   <script src="/js/pager.js"></script>
-  <script src="/js/keys.js"></script>
-  <script src="/js/sessions.js"></script>
-  <script src="/js/files.js"></script>
-  <script src="/js/join.js"></script>
-  <script src="/js/pin.js"></script>
-  <script src="/js/password.js"></script>
-  <script src="/js/two_factor.js"></script>
-  <script src="/js/invites.js"></script>
-  <script src="/js/logs.js"></script>
-  <script src="/js/jobs.js"></script>
-  <script src="/js/webhooks.js"></script>
-  <script src="/js/settings.js"></script>
+  <script src="/js/keys.js"></script> <!-- feature:api_keys -->
+  <script src="/js/sessions.js"></script> <!-- feature:sessions -->
+  <script src="/js/files.js"></script> <!-- feature:files -->
+  <script src="/js/join.js"></script> <!-- feature:invite_links -->
+  <script src="/js/pin.js"></script> <!-- feature:invite_links -->
+  <script src="/js/password.js"></script> <!-- feature:passwords -->
+  <script src="/js/two_factor.js"></script> <!-- feature:two_factor -->
+  <script src="/js/invites.js"></script> <!-- feature:invite_links -->
+  <script src="/js/logs.js"></script> <!-- feature:logs -->
+  <script src="/js/jobs.js"></script> <!-- feature:jobs -->
+  <script src="/js/webhooks.js"></script> <!-- feature:webhooks -->
+  <script src="/js/settings.js"></script> <!-- feature:settings -->
   <script src="/js/fresh.js"></script>
   <script src="/js/app.js"></script>
 </body>

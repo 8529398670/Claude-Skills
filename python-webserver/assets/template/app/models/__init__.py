@@ -7,8 +7,10 @@ helpers below are the only place that conversion happens.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+from datetime import timedelta  # feature:api_keys|files|invite_links|webhooks
 
+# >>> feature:api_keys|files|invite_links|webhooks
 # How long a deleted API key or invite link can still be put back. Delete is
 # the undoable one of the two ways to switch something off (revoke is final),
 # and this is the length of that undo: long enough for the toast's Undo and a
@@ -16,8 +18,10 @@ from datetime import datetime, timedelta, timezone
 # The row is dead the moment it is deleted; the window only decides how long
 # the purge leaves it lying there.
 RESTORE_WINDOW = timedelta(minutes=10)
+# <<< feature:api_keys|files|invite_links|webhooks
 
 
+# >>> feature:api_keys|files|invite_links|webhooks
 class RestoreError(Exception):
     """Why a deleted row cannot be put back. The message is safe to show."""
 
@@ -37,6 +41,7 @@ class RestoreExpiredError(RestoreError):
         super().__init__("it was deleted too long ago to put back")
 
 
+# <<< feature:api_keys|files|invite_links|webhooks
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -49,6 +54,7 @@ def from_iso(value: str | None) -> datetime | None:
     return None if value is None else datetime.fromisoformat(value)
 
 
+# >>> feature:api_keys|files|invite_links|webhooks
 def mark_deleted(record: dict, actor_id: int | None) -> None:
     """The soft delete both deletable records share: dead now, restorable for
     RESTORE_WINDOW. Deleting twice keeps the first mark, like revoking."""
@@ -75,3 +81,4 @@ def deleted_long_ago(record: dict) -> bool:
     """For the purges: a deletion past its undo window."""
     deleted_at = from_iso(record.get("deleted_at"))
     return deleted_at is not None and utc_now() - deleted_at > RESTORE_WINDOW
+# <<< feature:api_keys|files|invite_links|webhooks

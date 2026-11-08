@@ -14,7 +14,7 @@
 
 app:
   title: "{{PROJECT_NAME}}"
-  tagline: "Sign in with a one-time link."
+  tagline: "Sign in with a login link."
 
 # The sidebar, one entry per signed-in screen. menu labels the header's
 # button that opens/collapses it.
@@ -22,41 +22,94 @@ nav:
   menu: "Menu"
   close: "Close"
   skip: "Skip to content"
-  theme_toggle: "Switch between light and dark"
+  theme_toggle: "Switch between light and dark" # feature:!appearance
+  # What a screen reader calls the two sets of links.
+  top_label: "Top bar"
+  sidebar_label: "Screens"
   # The browser tab, per screen. {screen} is the screen's heading.
   page_title: "{screen} · {app}"
   # Foot of the sidebar, for admins.
   version: "Version {version}"
   account: "Account"
-  appearance: "Appearance"
-  pin: "PIN"
-  password: "Password"
-  two_factor: "Two-factor"
-  api_keys: "API keys"
-  files: "Files"
+  appearance: "Appearance" # feature:appearance
+  shortcuts: "Shortcuts" # feature:shortcuts
+  pin: "PIN" # feature:invite_links
+  password: "Password" # feature:passwords
+  two_factor: "Two-factor" # feature:two_factor
+  api_keys: "API keys" # feature:api_keys
+  files: "Files" # feature:files
   admin_heading: "Admin"
   users: "Users"
-  invite_links: "Invite links"
-  all_keys: "All API keys"
-  logs: "Logs"
-  jobs: "Jobs"
-  webhooks: "Webhooks"
-  settings: "Settings"
+  invite_links: "Invite links" # feature:invite_links
+  all_keys: "All API keys" # feature:api_keys
+  logs: "Logs" # feature:logs
+  jobs: "Jobs" # feature:jobs
+  webhooks: "Webhooks" # feature:webhooks
+  settings: "Settings" # feature:settings
 
 # Short confirmations shown as a toast at the bottom of the screen.
 ui:
   saved: "Saved."
   copied: "Copied."
+  copy: "Copy"
+  # The ... button on a table row. {name} is the row.
+  more_actions: "More actions for {name}"
+  # Saving something that has not changed.
+  unchanged: "Nothing to save."
   # Where the browser refuses to copy (plain http), the text is selected instead.
   copy_hint: "Selected. Press Ctrl+C, or Cmd+C on a Mac, to copy."
   load_more: "Load more"
+  no_matches: "Nothing matches."
   loading: "Loading"
   cancel: "Cancel"
+  save: "Save"
+  # The name a screen reader gives a value that edits in place, and its tooltip.
+  # {label} says what it is, {value} what it holds now.
+  edit: "Edit {label}: {value}"
   confirm: "Yes, go ahead"
   qr_button: "QR code"
   qr_label: "QR code for the link above"
   show_password: "Show password"
 
+# >>> feature:shortcuts
+# The Shortcuts screen, and the list ? opens (static/js/shortcuts.js). Empty
+# heading to leave both out; the keys still work. An action's label set to ""
+# leaves it off the lists but keeps it working.
+shortcuts:
+  heading: "Keyboard shortcuts"
+  description: "Change any key to suit you. Your choices are saved to your account, so they work on every device you sign in on."
+  # {os} is one of the os_ names below.
+  detected: "Showing keys for {os}. On another computer they switch to its keys by themselves."
+  os_mac: "macOS"
+  os_windows: "Windows"
+  os_linux: "Linux"
+  table_action: "Action"
+  table_keys: "Keys"
+  table_buttons: "Change"
+  change: "Change"
+  change_named: "Change the keys for {name}"
+  turn_off: "Turn off"
+  turn_off_named: "Turn off the keys for {name}"
+  reset: "Reset"
+  reset_named: "Put back the usual keys for {name}"
+  reset_all: "Put every key back"
+  press_keys: "Press the new keys… (Esc to cancel)"
+  off: "Off"
+  or: "or"
+  # {keys} is what was pressed, {other} the action that has it, {name} the one being changed.
+  conflict: "{keys} is already {other}. Use it for {name} instead? {other} gets {name}'s old keys."
+  escape_note: "Esc always closes a dialog too, whatever you set here."
+  list_change: "Change shortcuts"
+  # The actions.
+  search: "Go to this screen's search box"
+  help: "Show the list of shortcuts"
+  undo: "Undo"
+  redo: "Redo"
+  edit_save: "Save a name you are editing"
+  edit_cancel: "Cancel editing a name"
+  close_dialog: "Close a dialog"
+
+# <<< feature:shortcuts
 # Coming back to a tab that was left open (static/js/fresh.js).
 fresh:
   new_version: "A new version is available."
@@ -77,14 +130,23 @@ undo:
   button: "Undo"
   redo_button: "Redo"
   theme: "theme change"
+  shortcuts: "shortcut change" # feature:shortcuts
+  ip_name: "address name deleted" # feature:logs
   sidebar: "sidebar"
   rename: "name changed"
-  deleted_key: "API key deleted"
-  deleted_invite: "invite link deleted"
-  deleted_webhook: "webhook deleted"
-  deleted_file: "file deleted"
-  settings: "settings change"
+  rename_key: "API key name changed" # feature:api_keys
+  rename_invite: "invite link label changed" # feature:invite_links
+  rename_webhook: "webhook name changed" # feature:webhooks
+  rename_file: "file name changed" # feature:files
+  rename_session: "device name changed" # feature:sessions
+  edit_webhook: "webhook changed" # feature:webhooks
+  deleted_key: "API key deleted" # feature:api_keys
+  deleted_invite: "invite link deleted" # feature:invite_links
+  deleted_webhook: "webhook deleted" # feature:webhooks
+  deleted_file: "file deleted" # feature:files
+  settings: "settings change" # feature:settings
 
+# >>> feature:appearance
 # The Appearance card. Light is always the default; a pick is remembered in
 # this browser only. Names for the presets in static/js/theme.js.
 theme:
@@ -103,24 +165,65 @@ theme:
   preset_dark_pink: "Dark pink"
   preset_wsu_dark: "WSU dark"
 
+# <<< feature:appearance
 signed_out:
   heading: "You are not signed in"
-  body: "There is no signup form here on purpose. Ask an admin for a one-time login link, or for your group's invite link."
-  invalid_link: "That login link is invalid, expired, or has already been used. Ask for a new one."
+  body: "There is no signup form here on purpose. Ask an admin for a login link, or for your group's invite link." # feature:invite_links
+  body: "There is no signup form here on purpose. Ask an admin for a login link." # feature:!invite_links
+  invalid_link: "That login link is invalid, expired, cancelled, or used up. Ask for a new one."
   sign_in_expired: "That sign-in took too long and has expired. Start again."
   session_ended: "You have been signed out. Your session ended, or it was signed out from another device."
+  # >>> feature:passwords
   password_heading: "Sign in with a password"
   username_label: "Username"
   password_label: "Password"
   password_button: "Sign in"
+  # <<< feature:passwords
 
 login_confirm:
   heading: "Sign in"
-  body: "This is a one-time login link. It stops working once you use it."
+  body: "This is a login link for one account. It may work only once, so open it on the device you mean to use."
   # {name} is replaced with the account currently signed in.
   switch_warning: "You are signed in as {name}. Continuing signs you out of that account and into the one this link is for."
   button: "Sign in"
 
+# How many times a login link works and for how long: the choices on the
+# create-user form and the New link and Sign in on another device dialogs,
+# and how a link is described afterwards. {count}, {used}, {max} are numbers,
+# {date} a date, {name} an account's display name.
+login_links:
+  uses_label: "Works"
+  uses_once: "Once"
+  uses_times: "{count} times"
+  uses_unlimited: "Any number of times"
+  expires_label: "Expires"
+  expires_default: "Default"
+  expires_help: "Default is the auth setting: short for a link that works once, longer for one that works more than once."
+  expires_30m: "In 30 minutes"
+  expires_1h: "In 1 hour"
+  expires_1d: "In 1 day"
+  expires_7d: "In 7 days"
+  expires_30d: "In 30 days"
+  expires_90d: "In 90 days"
+  expires_never: "Never"
+  make_button: "Make link"
+  works_once: "Works once"
+  works_times: "Works up to {count} times"
+  works_unlimited: "Works any number of times"
+  until: "until {date}"
+  never_expires: "never expires"
+  # On a user's row and the Account screen: the link they could still use.
+  live: "Link: {used} of {max} used, {expires}"
+  live_unlimited: "Link: used {used} times, {expires}"
+  cancel_button: "Cancel link"
+  cancel_confirm: "Stop {name}'s login link working? Devices already signed in stay signed in."
+  cancelled_toast: "{name}'s login link has stopped working."
+  my_live: "Your login link: {used} of {max} used, {expires}."
+  my_live_unlimited: "Your login link: used {used} times, {expires}."
+  my_cancel_confirm: "Stop your login link working? Devices already signed in stay signed in."
+  my_cancelled_toast: "Your login link has stopped working."
+
+# >>> feature:invite_links
 # What an invite link opens (/join/...). Nothing is created until a button
 # is pressed. {label} is the link's label, {name} the name typed or picked.
 join:
@@ -144,6 +247,7 @@ join:
   invalid_heading: "This link is not working"
   invalid: "This invite link is invalid, expired, or has been switched off. Ask whoever shared it for a new one."
 
+# <<< feature:invite_links
 account:
   heading: "Account"
   display_name_label: "Display name"
@@ -151,11 +255,12 @@ account:
   save_button: "Save"
   logout_button: "Log out"
   device_heading: "Sign in on another device"
-  device_description: "Make a one-time login link for your own account and open it on your phone or another computer. Making a new one cancels any earlier link you have not used yet; devices already signed in stay signed in."
+  device_description: "Make a login link for your own account and open it on your phone or another computer. It can work once, or several times until it expires. Making a new one cancels the link you had; devices already signed in stay signed in."
   device_button: "Make a login link"
-  device_link_notice: "Open this on the other device. It works once."
+  device_link_notice: "Open this on the other device. {summary}."
   copy_button: "Copy"
 
+# >>> feature:sessions
 # Where this account is signed in, on the Account screen (static/js/sessions.js).
 sessions:
   empty: "No other devices."
@@ -180,6 +285,8 @@ sessions:
   # Empty this string to stop asking for confirmation.
   revoke_others_confirm: "Sign out every device but this one? They will need a new way in."
 
+# <<< feature:sessions
+# >>> feature:passwords
 # The password panel, shown while the owner has auth.passwords on.
 password:
   heading: "Password"
@@ -195,6 +302,8 @@ password:
   remove_button: "Remove password"
   remove_confirm: "Remove your password? You will sign in with login links only."
 
+# <<< feature:passwords
+# >>> feature:two_factor
 # The two-factor panel, and the step every sign-in shows on an account with
 # it on.
 two_factor:
@@ -202,7 +311,8 @@ two_factor:
   download_button: "Download"
   recovery_filename: "recovery-codes.txt"
   heading: "Two-factor sign-in"
-  description: "Ask for a code from an authenticator app every time you sign in in a browser, whichever way you sign in. API keys are not affected."
+  description: "Ask for a code from an authenticator app every time you sign in in a browser, whichever way you sign in. API keys are not affected." # feature:api_keys
+  description: "Ask for a code from an authenticator app every time you sign in in a browser, whichever way you sign in." # feature:!api_keys
   status_on: "On"
   status_off: "Off"
   start_button: "Set up"
@@ -219,46 +329,88 @@ two_factor:
   step_body: "This account has two-factor sign-in on. Enter the code from your authenticator app, or a recovery code."
   step_button: "Sign in"
 
+# <<< feature:two_factor
 admin:
   empty: "No one to show."
-  search_label: "Search by name or username"
-  sessions_button: "Sessions"
+  search_label: "Search by name or username" # feature:passwords
+  search_label: "Search by name" # feature:!passwords
+  sessions_button: "Sessions" # feature:sessions
   heading: "Admin"
-  description: "Create an account by minting a login link. Send the link to the person; it works once."
+  description: "Create an account by minting a login link and send it to the person. It works once unless you choose otherwise."
   new_name_label: "Name"
   new_name_placeholder: "Their name"
   new_role_label: "Role"
   role_user: "user"
   role_admin: "admin"
   create_button: "Create login link"
-  link_notice: "Send this one-time link. It is shown once and cannot be recovered, and any earlier unused link for this person has stopped working."
+  link_notice: "{summary}. Send it now: it is shown once and cannot be recovered, and any earlier link for this person has stopped working."
   copy_button: "Copy"
   table_name: "Name"
   table_role: "Role"
   table_status: "Status"
+  table_created: "Created"
   table_actions: "Actions"
   status_active: "active"
   status_disabled: "disabled"
+  two_factor_badge: "2FA" # feature:two_factor
   reissue_button: "New link"
+  # The New link dialog: its heading, and the line under the choices.
+  reissue_heading: "New login link for {name}"
+  reissue_confirm: "A link {name} could still use stops working."
+  # Above the link, so it is clear whose it is.
+  link_for: "Login link for {name}"
   revoke_button: "Revoke access"
   # {name} is replaced with the account's display name.
-  revoke_confirm: "End every session, unused login link and API key that {name} has? The account stays enabled; send them a new link to let them back in."
+  revoke_confirm: "End every session, login link and API key that {name} has? The account stays enabled; send them a new link to let them back in." # feature:api_keys
+  revoke_confirm: "End every session and login link that {name} has? The account stays enabled; send them a new link to let them back in." # feature:!api_keys
+  # >>> feature:passwords
   block_password_button: "Block password"
   allow_password_button: "Allow password"
+  # <<< feature:passwords
+  # >>> feature:two_factor
   reset_two_factor_button: "Reset 2FA"
   # {name} is replaced with the account's display name.
   reset_two_factor_confirm: "Turn off two-factor sign-in for {name}? Do this only if you are sure it is them asking."
+  # <<< feature:two_factor
+  make_admin_button: "Make admin"
+  make_user_button: "Make user"
+  make_admin_confirm: "Make {name} an admin? They can then manage accounts. This signs them out everywhere and stops their login link, so send them a new link. They can no longer sign in through an invite link." # feature:invite_links
+  make_admin_confirm: "Make {name} an admin? They can then manage accounts. This signs them out everywhere and stops their login link, so send them a new link." # feature:!invite_links
+  # >>> feature:api_keys
+  make_user_confirm: "Take admin rights from {name}? It applies at once. Their admin API keys drop to user level, and invite links they made stop working until they are an admin again." # feature:invite_links
+  make_user_confirm: "Take admin rights from {name}? It applies at once. Their admin API keys drop to user level." # feature:!invite_links
+  # <<< feature:api_keys
+  # >>> feature:!api_keys
+  make_user_confirm: "Take admin rights from {name}? It applies at once. Invite links they made stop working until they are an admin again." # feature:invite_links
+  make_user_confirm: "Take admin rights from {name}? It applies at once." # feature:!invite_links
+  # <<< feature:!api_keys
+  role_changed_toast: "{name} is now: {role}"
   disable_button: "Disable"
+  # {name} is replaced with the account's display name. Empty this string to
+  # stop asking for confirmation before disabling.
+  disable_confirm: "Disable {name}? They are signed out everywhere, their login link stops working, and their API keys stop until the account is enabled again." # feature:api_keys
+  disable_confirm: "Disable {name}? They are signed out everywhere and their login link stops working." # feature:!api_keys
+  # Shown once it is done. {name} as above. Empty either to switch it off.
+  disabled_toast: "{name} disabled"
+  revoked_toast: "{name} is signed out everywhere, and their links and keys have stopped working." # feature:api_keys
+  revoked_toast: "{name} is signed out everywhere, and their links have stopped working." # feature:!api_keys
+  two_factor_reset_toast: "Two-factor sign-in reset for {name}." # feature:two_factor
+  enabled_toast: "{name} enabled. They may need a new link to sign in."
   enable_button: "Enable"
   delete_button: "Delete"
   # Empty this string to stop asking for confirmation before deleting.
-  delete_confirm: "Permanently delete {name}? Their sessions, login links and API keys go with the account, and it cannot be undone. Disable the account instead if they might come back."
+  delete_confirm: "Permanently delete {name}? Their sessions, login links and API keys go with the account, and it cannot be undone. Disable the account instead if they might come back." # feature:api_keys
+  delete_confirm: "Permanently delete {name}? Their sessions and login links go with the account, and it cannot be undone. Disable the account instead if they might come back." # feature:!api_keys
   # Shown after the role of the one owner account, e.g. "admin (owner)".
   owner_label: "owner"
 
+# >>> feature:api_keys
 api_keys:
   empty: "No API keys yet."
   all_empty: "No one has an API key yet."
+  search_label: "Search by name"
+  all_search_label: "Search by name or owner"
+  live_only_label: "Hide revoked and expired keys"
   heading: "API keys"
   description: "For scripts, cron jobs, and other services. A key does exactly what your account can do -- send it as an Authorization: Bearer header. It is shown once."
   name_label: "What is it for"
@@ -281,14 +433,23 @@ api_keys:
   status_revoked: "revoked"
   status_expired: "expired"
   never: "never"
+  # Empty expiry_button to take the button away.
+  expiry_button: "Expiry"
+  # {name} is the key's name.
+  expiry_heading: "Change when {name} expires"
+  expiry_help: "Counted from today. 0 means it never expires."
+  expiry_changed: "Expiry changed."
   revoke_button: "Revoke"
   # Empty this string to stop asking for confirmation before revoking.
   revoke_confirm: "Revoke this key? Anything using it stops working immediately."
   delete_button: "Delete"
-  # Empty this string to stop asking for confirmation before deleting.
   # Under a key an admin made for someone else. {name} is that admin.
   created_by: "Created by {name}"
+  # Followed by when, as in "Created 3 days ago".
+  created: "Created"
 
+# <<< feature:api_keys
+# >>> feature:files
 # The Files screen (static/js/files.js). {name} is the file's name, {percent} how
 # much has gone up, and {count} a number.
 files:
@@ -302,8 +463,11 @@ files:
   usage_all_disk: "{used} stored across every account, {free} free on disk."
   # {names} is who failed, {reason} why the last of them did.
   failed_list: "Not uploaded: {names}. {reason}"
+  uploaded: "Files uploaded: {count}"
+  drop_busy: "An upload is still running. Drop these when it finishes."
   uploading: "Uploading {name}: {percent}%"
   everyone_label: "Show everyone's files"
+  search_label: "Search files"
   table_name: "Name"
   table_owner: "Owner"
   table_size: "Size"
@@ -317,6 +481,8 @@ files:
   size_mb: "{count} MB"
   size_gb: "{count} GB"
 
+# <<< feature:files
+# >>> feature:invite_links
 # Only offered to non-admin accounts: an admin can never be signed in to
 # through an invite link, so a PIN would protect nothing.
 pin:
@@ -328,9 +494,16 @@ pin:
   placeholder: "4 to 8 digits"
   save_button: "Set PIN"
   clear_button: "Remove PIN"
+  # Empty this string to stop asking for confirmation.
+  clear_confirm: "Remove your PIN? Anyone holding the invite link could then pick your name and sign in as you."
+  cleared: "PIN removed."
 
+# <<< feature:invite_links
+# >>> feature:invite_links
 invite_links:
   empty: "No invite links yet."
+  search_label: "Search by label or maker"
+  made_by: "Made by {name}"
   heading: "Invite links"
   description: "One link for a group: post it in a group chat and each person who opens it joins as a new user, until the places run out. People who joined through it can sign back in on a new device with the same link."
   label_label: "What is it for"
@@ -353,12 +526,22 @@ invite_links:
   status_revoked: "switched off"
   # The admin who made it was disabled, deleted, or is no longer an admin.
   status_orphaned: "maker no longer an admin"
+  edit_button: "Edit"
+  # {label} is the link's label.
+  edit_heading: "Edit {label}"
+  edit_days_help: "Counted from today. Leave blank to keep the current expiry."
+  edited: "Invite link changed."
+  switch_on_button: "Switch on"
+  # Empty this string to stop asking for confirmation.
+  switch_on_confirm: "Switch this link back on? The same link works again for anyone who has it, until it expires or its places run out."
+  switched_on: "Invite link switched back on."
   revoke_button: "Switch off"
   # Empty this string to stop asking for confirmation.
   revoke_confirm: "Switch off this link? Nobody can join or sign back in through it any more. Accounts it made keep working."
   delete_button: "Delete"
-  # Empty this string to stop asking for confirmation.
 
+# <<< feature:invite_links
+# >>> feature:api_keys
 admin_keys:
   heading: "All API keys"
   description: "Every key in this app and who owns it. Revoke or delete one to cut off whatever is using it, right away."
@@ -367,6 +550,8 @@ admin_keys:
   create_description: "The key acts as that person, at no more than their permission, and they can see that you made it."
   user_label: "Account"
 
+# <<< feature:api_keys
+# >>> feature:logs
 # The Logs screen (owner only; static/js/logs.js). Placeholders in {braces}
 # are filled in by the page. Days are UTC dates; times are the viewer's own.
 # kind_* label both the filter buttons and each row's badge.
@@ -405,6 +590,21 @@ logs:
   delete_button: "Delete day"
   # {date} is the day. Empty this string to stop asking for confirmation.
   delete_confirm: "Delete every entry from {date}? This cannot be undone."
+  deleted: "Deleted {date}."
+  # Names for addresses. {count} is how many, {ip} the address, {name} the name.
+  ip_names_heading: "Names for addresses ({count})"
+  ip_names_empty: "No names yet. Click an address in the log to name it."
+  ip_names_add: "Add a name"
+  ip_name_title: "Name an address"
+  ip_name_button: "Name {ip}"
+  ip_name_label: "Name"
+  ip_target_label: "Address or range"
+  ip_target_help: "One address, or a range such as 10.0.0.0/24. The most specific name wins."
+  ip_name_delete: "Delete"
+  ip_named: "Named {name}."
+  table_ip_name: "Name"
+  table_ip_target: "Address"
+  table_ip_actions: "Actions"
   load_more: "Load more"
   table_time: "Time"
   table_kind: "Kind"
@@ -412,8 +612,10 @@ logs:
   table_what: "What"
   table_ip: "IP"
   anonymous: "signed out"
-  via_key: "(API key)"
+  via_key: "(API key)" # feature:api_keys
 
+# <<< feature:logs
+# >>> feature:jobs
 # The Jobs screen (owner only; static/js/jobs.js). A job you add can have a
 # name here, as job_<name> with dashes as underscores; one without shows its
 # own name.
@@ -435,16 +637,19 @@ jobs:
   never: "Never"
   run_button: "Run now"
   job_purge: "Clear out expired records"
-  job_prune_logs: "Apply log retention"
-  job_backup: "Scheduled backup"
-  job_webhooks: "Send webhooks"
-  job_files: "Clear out deleted and abandoned files"
+  job_prune_logs: "Apply log retention" # feature:logs
+  job_backup: "Scheduled backup" # feature:backups
+  job_webhooks: "Send webhooks" # feature:webhooks
+  job_files: "Clear out deleted and abandoned files" # feature:files
 
+# <<< feature:jobs
+# >>> feature:webhooks
 # The Webhooks screen (owner only; static/js/webhooks.js). {name} is the
 # endpoint's name. Event names are shown as they are: they are what the
 # receiver sees.
 webhooks:
   empty: "No webhooks yet."
+  search_label: "Search by name or address"
   deliveries_empty: "Nothing sent yet."
   heading: "Webhooks"
   description: "Tell other systems when something happens here. Each event is signed and sent to the address you give it, and retried for a while if it does not arrive. Only you, the owner, can see this."
@@ -467,6 +672,12 @@ webhooks:
   disable_button: "Turn off"
   test_button: "Send test"
   test_sent: "Test event queued."
+  edit_button: "Edit"
+  edit_heading: "Edit {name}"
+  edit_url_help: "Deliveries still waiting will go to the new address."
+  rotate_button: "New secret"
+  rotate_confirm: "Replace the signing secret for {name}? The old one stops working at once and cannot be brought back. Until the receiver has the new one it may refuse deliveries, which are retried for about fifteen hours."
+  rotated_notice: "New signing secret for {name}. Copy it now: it will not be shown again. The old one has stopped working."
   resend_button: "Resend"
   resent: "Queued to send again."
   deliveries_button: "Deliveries"
@@ -481,6 +692,8 @@ webhooks:
   delivery_failed: "Failed"
   delivery_pending: "Waiting"
 
+# <<< feature:webhooks
+# >>> feature:settings
 # The Settings screen (owner only; static/js/settings.js): config.yaml, one
 # field per setting. Placeholders in {braces} are filled in by the page. The
 # help text under each field is the comment above that key in
@@ -499,6 +712,14 @@ settings:
   # {running} is the value the server started with.
   pending_restart: "Saved. The server keeps running with {running} until it restarts."
   default: "Default: {value}"
+  # Fills the default in; Save writes it. Empty it to leave the button out.
+  reset_button: "Use default"
+  # {name} is the setting, for screen readers.
+  reset_label: "Use the default for {name}"
+  filter_label: "Filter settings"
+  # {count} of {total} settings are showing.
+  filter_count: "{count} of {total}"
+  jump_label: "Jump to a section"
   empty: "(empty)"
   list_help: "One per line."
   locked: "Fixed inside the container. Change it in config/config.yaml on the host."
@@ -515,6 +736,7 @@ settings:
   read_only: "The server cannot write config.yaml, so it can only be changed by editing the file by hand."
   stale: "config.yaml was replaced on the host since this container started. Restart the container to see and change the new version."
 
+# <<< feature:settings
 # The page a browser gets when a page load fails (404, 429, 500 and so on).
 # The server renders this, so it works when the app itself cannot load. "other"
 # is any status without its own pair. {reference} is what finds a 5xx in the
@@ -529,23 +751,27 @@ error_page:
   rate_limited_message: "Please wait a minute, then try again."
   server_error_title: "Something went wrong"
   server_error_message: "This is a problem on the server, not with anything you did. Please try again."
-  maintenance_title: "Down for maintenance"
-  maintenance_message: "This app is being worked on and will be back shortly. Please try again in a few minutes."
+  maintenance_title: "Down for maintenance" # feature:maintenance
+  maintenance_message: "This app is being worked on and will be back shortly. Please try again in a few minutes." # feature:maintenance
   other_title: "That did not work"
   other_message: "The server could not answer this request."
   reference: "Reference: {reference}"
 
+# >>> feature:maintenance
 # The banner across the top of the app while server.maintenance is on.
 maintenance:
   read_only_banner: "Maintenance mode: this app is read-only for now. Changes are refused."
-  full_banner: "Maintenance mode: only you can reach this app right now. Turn it off in Settings."
+  full_banner: "Maintenance mode: only you can reach this app right now. Turn it off in Settings." # feature:settings
+  full_banner: "Maintenance mode: only you can reach this app right now. Turn it off in config.yaml." # feature:!settings
 
+# <<< feature:maintenance
 errors:
   generic: "Something went wrong. Please try again."
   # {reference} finds this failure in the Logs screen's search.
   reference: "Something went wrong on the server. Reference: {reference}"
   network: "Could not reach the server."
-  delivery_not_failed: "That delivery has not failed, so there is nothing to resend."
+  delivery_not_failed: "That delivery has not failed, so there is nothing to resend." # feature:webhooks
+  # >>> feature:invite_links
   # Error codes the invite link and PIN routes answer with, by name.
   invite_link_invalid: "This invite link is invalid, expired, or has been switched off."
   invite_link_full: "This link has no places left."
@@ -554,7 +780,15 @@ errors:
   pin_wrong: "That PIN is not right."
   pin_locked: "Too many wrong PINs. Try again in 15 minutes."
   bad_pin: "A PIN is 4 to 8 digits."
+  # <<< feature:invite_links
+  # >>> feature:logs
+  # The Logs screen's names for addresses.
+  bad_ip_target: "That is not an address or a range. Try 10.0.0.5 or 10.0.0.0/24."
+  bad_ip_name: "A name is 1 to 80 characters."
+  # <<< feature:logs
+  # >>> feature:passwords|two_factor
   # And the ones password and two-factor sign-in answer with.
+  # >>> feature:passwords
   invalid_login: "That username or password is not right."
   login_locked: "Too many wrong tries. Try again in 15 minutes."
   use_password: "This account has a password. Open the home page and sign in with it."
@@ -565,16 +799,23 @@ errors:
   password_too_short: "A password is at least 12 characters."
   password_mismatch: "Those two passwords are not the same."
   insecure_context: "Password sign-in needs HTTPS. Your password was not sent."
+  # <<< feature:passwords
+  # >>> feature:two_factor
   two_factor_wrong: "That code is not right."
   two_factor_locked: "Too many wrong codes. Try again in 15 minutes."
   two_factor_on: "Two-factor sign-in is already on."
   two_factor_off: "Two-factor sign-in is not on."
   challenge_invalid: "That sign-in has expired. Start again."
-  logs_today: "Today's log is still being written, so it cannot be deleted."
+  # <<< feature:two_factor
+  # <<< feature:passwords|two_factor
+  logs_today: "Today's log is still being written, so it cannot be deleted." # feature:logs
+  # >>> feature:files
   # What an upload answers with.
   file_too_large: "That file is over the size limit."
   file_quota: "That would go over your storage limit."
   upload_lost: "That upload was lost, so it has to start again."
+  # <<< feature:files
+  # >>> feature:settings
   # The Settings screen's save, by code.
   settings_changed: "config.yaml was changed while you were editing. Reload from file to see it."
   settings_stale: "config.yaml was replaced on the host. Restart the container first."
@@ -583,3 +824,4 @@ errors:
   invalid_settings: "That value is not allowed."
   unknown_setting: "There is no such setting."
   settings_hand_edit: "config.yaml is written in a way this screen cannot change. Edit the file by hand."
+  # <<< feature:settings

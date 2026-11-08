@@ -1,3 +1,4 @@
+# whole-file feature:api_keys
 """API keys are how anything that is not a browser calls this API: a script, a
 cron job, a CI pipeline, another service. A key carries a role from the same
 set users do, so there is one permission model rather than two -- see
@@ -30,14 +31,16 @@ from starlette.responses import JSONResponse, Response
 from app.core.db import Store
 from app.core.logs import KIND_ADMIN
 from app.core.security import Guard, actor_from, check_csrf
-from app.models import RestoreError, api_keys, to_iso, users, webhooks
+from app.models import RestoreError, api_keys, to_iso, users
+from app.models import webhooks  # feature:webhooks
 from app.routes.helpers import (
     bad_request,
     conflict,
-    emit,
+    emit,  # feature:webhooks
     forbidden,
     get_config,
     get_store,
+    match_rows,
     not_found,
     read_json,
     restore_refused,
@@ -99,6 +102,12 @@ async def display_names(store: Store) -> dict[int, str]:
     return {user.id: user.display_name for user in await run(users.list_users, store)}
 
 
+def _only_live(request: Request, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """?live=true, for hiding keys that no longer work. The lists keep them
+    otherwise: a key that used to exist is part of the answer."""
+    return [row for row in rows if row["live"]] if request.query_params.get("live") == "true" else rows
+
+
 async def list_my_keys(request: Request) -> Response:
     """Answers "what has standing access as me". Revoked and expired keys are
     included, marked as such, because a key that used to exist is part of
@@ -108,7 +117,9 @@ async def list_my_keys(request: Request) -> Response:
     # Most people have no key someone else made, so the names are only loaded
     # when one is there to be named.
     names = await display_names(store) if any(key.created_by is not None for key in keys) else {}
-    return send_page(request, "keys", [name_creator(api_key_row(key), key, names) for key in keys])
+    rows = [name_creator(api_key_row(key), key, names) for key in keys]
+    rows = _only_live(request, match_rows(rows, request.query_params.get("q", ""), "name"))
+    return send_page(request, "keys", rows, ("name", "role", "last_used_at", "expires_at", "created_at"))
 
 
 async def create_my_key(request: Request) -> Response:
@@ -155,7 +166,7 @@ async def create_my_key(request: Request) -> Response:
     row = api_key_row(key)
     row["credential"] = credential
     audit(request, KIND_ADMIN, "api key created", {"key_id": key.id, "name": key.name, "role": key.role})
-    await emit(request, webhooks.EVENT_API_KEY_CREATED, {"key_id": key.id, "user_id": key.user_id, "name": key.name, "role": key.role})
+    await emit(request, webhooks.EVENT_API_KEY_CREATED, {"key_id": key.id, "user_id": key.user_id, "name": key.name, "role": key.role})  # feature:webhooks
     return JSONResponse(row, status_code=201)
 
 
@@ -205,8 +216,90 @@ async def create_key_for_user(request: Request) -> Response:
     row = api_key_row(key)
     row["credential"] = credential
     audit(request, KIND_ADMIN, "api key created", {"key_id": key.id, "name": key.name, "role": key.role, "user_id": key.user_id, "created_by": actor.id})
-    await emit(request, webhooks.EVENT_API_KEY_CREATED, {"key_id": key.id, "user_id": key.user_id, "name": key.name, "role": key.role, "created_by": actor.id})
+    await emit(request, webhooks.EVENT_API_KEY_CREATED, {"key_id": key.id, "user_id": key.user_id, "name": key.name, "role": key.role, "created_by": actor.id})  # feature:webhooks
     return JSONResponse(row, status_code=201)
+
+
+async def rename_my_key(request: Request) -> Response:
+    """Rename one of your own keys. Someone else's is "no such api key", for
+    the same reason as in revoke_my_key."""
+    return await _rename(request, own_only=True)
+
+
+async def rename_any_key(request: Request) -> Response:
+    """An admin renaming anyone's key. A name changes nothing about what a key
+    can do, so unlike its expiry this needs no ladder."""
+    return await _rename(request, own_only=False)
+
+
+async def _rename(request: Request, own_only: bool) -> Response:
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    name = body.get("name")
+    if not api_keys.valid_name(name):
+        return bad_request("name must be 1-80 characters")
+    # Optional: the name the caller expects to replace. The frontend always
+    # sends it, so its undo cannot overwrite a rename made elsewhere.
+    expect = body.get("expect")
+    if expect is not None and not isinstance(expect, str):
+        return bad_request("expect must be a string")
+
+    store = get_store(request)
+    key = await run(api_keys.get_api_key, store, request.path_params["key_id"])
+    if key is None or (own_only and key.user_id != actor_from(request).user.id):
+        return not_found("no such api key")
+    try:
+        renamed = await run(api_keys.rename_api_key, store, key.id, name, expect)
+    except users.RenameConflictError as refusal:
+        return conflict(str(refusal), name=refusal.current)
+    if not renamed:
+        return not_found("no such api key")
+    audit(request, KIND_ADMIN, "api key renamed", {"key_id": key.id, "name": name.strip()})
+    return JSONResponse({"ok": True, "name": name.strip()})
+
+
+async def set_my_key_expiry(request: Request) -> Response:
+    """Change when one of your own keys expires. The session this group
+    requires is what stops a leaked key from extending itself."""
+    return await _set_expiry(request, own_only=True)
+
+
+async def set_any_key_expiry(request: Request) -> Response:
+    """The same for an admin. Whose keys they may change is
+    api_keys.set_api_key_expiry's to say."""
+    return await _set_expiry(request, own_only=False)
+
+
+async def _set_expiry(request: Request, own_only: bool) -> Response:
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    # Counts from now, and 0 means never, as when minting. Here it is required:
+    # there is no default to fall back on.
+    days = body.get("expires_in_days")
+    ttl_seconds = None if days is None else api_keys.ttl_from_days(days, 0)
+    if ttl_seconds is None:
+        return bad_request(f"expires_in_days must be 0 (never) or up to {api_keys.API_KEY_MAX_DAYS}")
+
+    store, actor = get_store(request), actor_from(request).user
+    found = await run(api_keys.get_api_key, store, request.path_params["key_id"])
+    if found is None or (own_only and found.user_id != actor.id):
+        return not_found("no such api key")
+    try:
+        key = await run(api_keys.set_api_key_expiry, store, found.id, actor.id, ttl_seconds)
+    except api_keys.APIKeyDeadError:
+        return bad_request("only a live key can have its expiry changed -- create a new one instead")
+    except (api_keys.APIKeyExpiryOwnerError, api_keys.APIKeyExpiryAdminError) as refusal:
+        return forbidden(str(refusal))
+    if key is None:
+        return not_found("no such api key")
+    audit(request, KIND_ADMIN, "api key expiry changed", {"key_id": key.id, "expires_in_days": days})
+    return JSONResponse(api_key_row(key))
 
 
 async def revoke_my_key(request: Request) -> Response:
@@ -225,7 +318,7 @@ async def revoke_my_key(request: Request) -> Response:
         return not_found("no such api key")
     await run(api_keys.revoke_api_key, store, key.id)
     audit(request, KIND_ADMIN, "api key revoked", {"key_id": request.path_params["key_id"]})
-    await emit(request, webhooks.EVENT_API_KEY_REVOKED, {"key_id": key.id, "user_id": key.user_id})
+    await emit(request, webhooks.EVENT_API_KEY_REVOKED, {"key_id": key.id, "user_id": key.user_id})  # feature:webhooks
     return JSONResponse({"ok": True})
 
 
@@ -289,7 +382,9 @@ async def list_all_keys(request: Request) -> Response:
     store = get_store(request)
     keys = await run(api_keys.list_api_keys, store)
     names = await display_names(store)
-    return send_page(request, "keys", [name_creator(api_key_row(key, names.get(key.user_id, "")), key, names) for key in keys])
+    rows = [name_creator(api_key_row(key, names.get(key.user_id, "")), key, names) for key in keys]
+    rows = _only_live(request, match_rows(rows, request.query_params.get("q", ""), "name", "display_name"))
+    return send_page(request, "keys", rows, ("display_name", "name", "role", "last_used_at", "expires_at", "created_at"))
 
 
 async def revoke_any_key(request: Request) -> Response:
@@ -305,7 +400,7 @@ async def revoke_any_key(request: Request) -> Response:
     if revoked is None:
         return not_found("no such api key")
     audit(request, KIND_ADMIN, "api key revoked", {"key_id": request.path_params["key_id"]})
-    await emit(request, webhooks.EVENT_API_KEY_REVOKED, {"key_id": revoked.id, "user_id": revoked.user_id})
+    await emit(request, webhooks.EVENT_API_KEY_REVOKED, {"key_id": revoked.id, "user_id": revoked.user_id})  # feature:webhooks
     return JSONResponse({"ok": True})
 
 

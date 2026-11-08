@@ -1,8 +1,10 @@
+// whole-file feature:webhooks
 package models
 
 import (
 	json "encoding/json"
 	errors "errors"
+	slices "slices"
 	sort "sort"
 	strings "strings"
 	time "time"
@@ -61,7 +63,12 @@ var webhookBackoff = []time.Duration{
 	time.Minute , 5 * time.Minute , 30 * time.Minute , 2 * time.Hour , 12 * time.Hour ,
 }
 
-var ErrBadWebhook = errors.New( "name must be 1-80 characters, the url at most 2000, and at least one known event picked" )
+var (
+	ErrBadWebhook       = errors.New( "name must be 1-80 characters, the url at most 2000, and at least one known event picked" )
+	ErrBadWebhookName   = errors.New( "name must be 1-80 characters" )
+	ErrBadWebhookTarget = errors.New( "the url must be at most 2000 characters, with at least one known event picked" )
+	ErrWebhookChanged   = errors.New( "the webhook was changed somewhere else in the meantime" )
+)
 
 // Webhook is one endpoint that wants to hear about things. Secret signs what
 // is sent to it, so unlike a key's secret it has to come back: it is sealed
@@ -77,6 +84,12 @@ type Webhook struct {
 	CreatedBy uint64    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
 	SoftDelete
+}
+
+// WebhookTarget is where an endpoint's events go and which ones it wants.
+type WebhookTarget struct {
+	URL    string   `json:"url"`
+	Events []string `json:"events"`
 }
 
 // Wants says whether an event should go to this endpoint.
@@ -112,8 +125,21 @@ type WebhookDelivery struct {
 // ValidWebhook checks everything but the address, which is
 // webhooks.CheckURL's job: that depends on the running config.
 func ValidWebhook( name string , url string , events []string ) ( result bool ) {
+	result = ValidWebhookName( name ) && ValidWebhookTarget( WebhookTarget{ URL: url , Events: events } )
+	return
+}
+
+// ValidWebhookName is the name half of ValidWebhook, for a rename.
+func ValidWebhookName( name string ) ( result bool ) {
 	trimmed := strings.TrimSpace( name )
-	if len( trimmed ) < 1 || len( trimmed ) > webhookNameMax { return }
+	result = len( trimmed ) >= 1 && len( trimmed ) <= webhookNameMax
+	return
+}
+
+// ValidWebhookTarget is the rest of ValidWebhook. The address itself is
+// webhooks.CheckURL's job here too.
+func ValidWebhookTarget( target WebhookTarget ) ( result bool ) {
+	url , events := target.URL , target.Events
 	if len( url ) < 1 || len( url ) > webhookURLMax || len( events ) == 0 { return }
 	for _ , event := range events {
 		known := event == WebhookAllEvents
@@ -195,6 +221,78 @@ func SetWebhookEnabled( store *db.Store , webhook_id string , enabled bool ) ( e
 			hook.Enabled = enabled
 			return
 		} )
+	return
+}
+
+// RenameWebhook changes an endpoint's name. db.ErrNotFound when there is none
+// or it is deleted. expect, when not nil, is the name the caller believes is
+// stored, as in RenameUser: a *RenameConflictError if it is not.
+func RenameWebhook( store *db.Store , webhook_id string , name string , expect *string ) ( err error ) {
+	err = store.UpdateValue( db.BucketWebhooks , []byte( webhook_id ) ,
+		func() any { return &Webhook{} } ,
+		func( item any ) ( mutate_err error ) {
+			hook := item.( *Webhook )
+			if hook.Deleted() {
+				mutate_err = db.ErrNotFound
+				return
+			}
+			if expect != nil && hook.Name != strings.TrimSpace( *expect ) {
+				mutate_err = &RenameConflictError{ Current: hook.Name }
+				return
+			}
+			hook.Name = strings.TrimSpace( name )
+			return
+		} )
+	return
+}
+
+// SetWebhookTarget changes an endpoint's address and events. The sender reads
+// the endpoint at each attempt, so deliveries still waiting go to the new
+// address: that is what fixing a mistyped one needs. Their events were picked
+// when they were queued and stay queued. db.ErrNotFound when there is no such
+// endpoint or it is deleted. expect, when not nil, is what the caller believes
+// is stored: ErrWebhookChanged if it is not, so an undo cannot overwrite a
+// later edit.
+func SetWebhookTarget( store *db.Store , webhook_id string , target WebhookTarget , expect *WebhookTarget ) ( err error ) {
+	err = store.UpdateValue( db.BucketWebhooks , []byte( webhook_id ) ,
+		func() any { return &Webhook{} } ,
+		func( item any ) ( mutate_err error ) {
+			hook := item.( *Webhook )
+			if hook.Deleted() {
+				mutate_err = db.ErrNotFound
+				return
+			}
+			if expect != nil && ( hook.URL != expect.URL || slices.Equal( hook.Events , expect.Events ) == false ) {
+				mutate_err = ErrWebhookChanged
+				return
+			}
+			hook.URL , hook.Events = target.URL , target.Events
+			return
+		} )
+	return
+}
+
+// RotateWebhookSecret gives an endpoint a new signing secret and returns it,
+// the only time it is shown, as with CreateWebhook. The old one stops at once
+// and cannot come back. Each attempt is signed as it is sent, so a receiver
+// that refuses deliveries until it has the new secret gets them on a retry.
+// db.ErrNotFound when there is no such endpoint or it is deleted.
+func RotateWebhookSecret( store *db.Store , secret_key string , webhook_id string ) ( secret string , err error ) {
+	fresh := "whsec_" + encryption.GenerateURLToken( 24 )
+	sealed , err := encryption.ChaChaEncryptString( secret_key , fresh )
+	if err != nil { return }
+	err = store.UpdateValue( db.BucketWebhooks , []byte( webhook_id ) ,
+		func() any { return &Webhook{} } ,
+		func( item any ) ( mutate_err error ) {
+			hook := item.( *Webhook )
+			if hook.Deleted() {
+				mutate_err = db.ErrNotFound
+				return
+			}
+			hook.Secret = sealed
+			return
+		} )
+	if err == nil { secret = fresh }
 	return
 }
 

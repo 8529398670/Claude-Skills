@@ -1,3 +1,4 @@
+// whole-file feature:two_factor
 package routes
 
 import (
@@ -37,11 +38,6 @@ func ( handlers *Handlers ) RequireTwoFactor( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	err = c.Next()
-	return
-}
-
-func tooMany( c fiber.Ctx , code string ) ( err error ) {
-	err = c.Status( fiber.StatusTooManyRequests ).JSON( fiber.Map{ "error": code } )
 	return
 }
 

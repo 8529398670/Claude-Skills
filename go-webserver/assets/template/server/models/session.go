@@ -1,8 +1,8 @@
 package models
 
 import (
-	errors "errors"
-	sort "sort"
+	errors "errors" // feature:sessions
+	sort "sort" // feature:sessions
 	strings "strings"
 	time "time"
 
@@ -23,12 +23,20 @@ type Session struct {
 	CSRFToken  string    `json:"csrf_token"`
 	CreatedAt  time.Time `json:"created_at"`
 	ExpiresAt  time.Time `json:"expires_at"`
+	// >>> feature:sessions
 	// What the account owner sees on their devices list. All three are
 	// optional: the address and browser are recorded just after the session
 	// is made, and a session from before they existed has none.
 	IP         string     `json:"ip,omitempty"`
 	UserAgent  string     `json:"user_agent,omitempty"`
+	// <<< feature:sessions
 	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+	// >>> feature:sessions
+	// Label is what the account's owner calls this device. It sits beside the
+	// browser and system rather than replacing them, so a name cannot hide
+	// what a device says it is.
+	Label string `json:"label,omitempty"`
+	// <<< feature:sessions
 	// ID is the record's key, filled in when a session is read. It is not
 	// stored, since the key already says it, and is no use without the secret.
 	ID string `json:"-"`
@@ -39,12 +47,24 @@ type Session struct {
 // write per request for a number nobody reads to the second.
 const sessionTouchInterval = 15 * time.Minute
 
-// SessionUserAgentMax is how much of a User-Agent header is kept.
-const SessionUserAgentMax = 256
+// SessionUserAgentMax is how much of a User-Agent header is kept. // feature:sessions
+const SessionUserAgentMax = 256 // feature:sessions
 
+const sessionLabelMax = 80 // feature:sessions
+
+// >>> feature:sessions
 // ErrSessionNotFound answers both an unknown session and someone else's, so
 // the difference cannot be used to find out which ids exist.
 var ErrSessionNotFound = errors.New( "session not found" )
+// <<< feature:sessions
+
+// >>> feature:passwords
+// SessionID is the record key inside a session credential, or "".
+func SessionID( credential string ) ( session_id string ) {
+	session_id , _ , _ = splitCredential( credential )
+	return
+}
+// <<< feature:passwords
 
 func splitCredential( raw string ) ( id string , secret string , ok bool ) {
 	parts := strings.SplitN( raw , "." , 2 )
@@ -57,12 +77,6 @@ func splitCredential( raw string ) ( id string , secret string , ok bool ) {
 // startSignInTx, FinishChallenge, JoinInviteLink -- store it in the
 // same transaction that checks the link and the account are still good, so
 // there is deliberately no CreateSession that writes one on its own.
-// SessionID is the record key inside a session credential, or "".
-func SessionID( credential string ) ( session_id string ) {
-	session_id , _ , _ = splitCredential( credential )
-	return
-}
-
 func newSession( user_id uint64 , ttl time.Duration ) ( session_id string , credential string , session *Session ) {
 	session_id = encryption.GenerateURLToken( 16 )
 	secret := encryption.GenerateURLToken( 32 )
@@ -103,6 +117,7 @@ func LoadSession( store *db.Store , credential string ) ( session *Session , use
 	return
 }
 
+// >>> feature:sessions
 // RecordSessionDevice notes where a session was signed in from. The session is
 // made inside the sign-in transaction, which has no request to read this from,
 // so it is added straight after; failing here is ignored, because a sign-in
@@ -122,6 +137,7 @@ func RecordSessionDevice( store *db.Store , credential string , ip string , user
 			return
 		} )
 }
+// <<< feature:sessions
 
 // sessionExpiry is when a session used now should end: ttl from now, but never
 // later than max_age after it was signed in, and never earlier than it already
@@ -167,6 +183,7 @@ func TouchSession( store *db.Store , session *Session , ttl time.Duration , max_
 	return
 }
 
+// >>> feature:sessions
 // ListSessionsForUser is an account's live sessions, newest first.
 func ListSessionsForUser( store *db.Store , user_id uint64 ) ( sessions []*Session , err error ) {
 	sessions = []*Session{}
@@ -187,7 +204,43 @@ func ListSessionsForUser( store *db.Store , user_id uint64 ) ( sessions []*Sessi
 	} )
 	return
 }
+// <<< feature:sessions
 
+// >>> feature:sessions
+// ValidSessionLabel is true for a label, or for nothing, which clears it.
+func ValidSessionLabel( label string ) ( result bool ) {
+	result = len( strings.TrimSpace( label ) ) <= sessionLabelMax
+	return
+}
+// <<< feature:sessions
+
+// >>> feature:sessions
+// LabelSession names one of an account's own devices, and an empty label clears
+// the name. ErrSessionNotFound for someone else's, as with RevokeSession. expect,
+// when not nil, is the label the caller believes is stored, as in RenameUser: a
+// *RenameConflictError if it is not.
+func LabelSession( store *db.Store , user_id uint64 , session_id string , label string , expect *string ) ( err error ) {
+	err = store.UpdateValue( db.BucketSessions , []byte( session_id ) ,
+		func() any { return &Session{} } ,
+		func( item any ) ( mutate_err error ) {
+			session := item.( *Session )
+			if session.UserID != user_id {
+				mutate_err = ErrSessionNotFound
+				return
+			}
+			if expect != nil && session.Label != strings.TrimSpace( *expect ) {
+				mutate_err = &RenameConflictError{ Current: session.Label }
+				return
+			}
+			session.Label = strings.TrimSpace( label )
+			return
+		} )
+	if errors.Is( err , db.ErrNotFound ) { err = ErrSessionNotFound }
+	return
+}
+// <<< feature:sessions
+
+// >>> feature:sessions
 // RevokeSession ends one of an account's own sessions. The ownership check and
 // the delete share a transaction, so what was checked is what goes.
 func RevokeSession( store *db.Store , user_id uint64 , session_id string ) ( err error ) {
@@ -204,7 +257,9 @@ func RevokeSession( store *db.Store , user_id uint64 , session_id string ) ( err
 	} )
 	return
 }
+// <<< feature:sessions
 
+// >>> feature:sessions
 // RevokeOtherSessions ends every session an account holds but keep_session_id.
 func RevokeOtherSessions( store *db.Store , user_id uint64 , keep_session_id string ) ( removed int , err error ) {
 	removed , err = store.DeleteWhere( db.BucketSessions ,
@@ -214,6 +269,7 @@ func RevokeOtherSessions( store *db.Store , user_id uint64 , keep_session_id str
 		} )
 	return
 }
+// <<< feature:sessions
 
 func DestroySession( store *db.Store , credential string ) ( err error ) {
 	session_id , _ , ok := splitCredential( credential )

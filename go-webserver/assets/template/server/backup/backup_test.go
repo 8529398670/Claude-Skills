@@ -9,7 +9,7 @@ import (
 	filepath "path/filepath"
 	strings "strings"
 	testing "testing"
-	time "time"
+	time "time" // feature:backups
 
 	config "{{MODULE_PATH}}/server/config"
 	db "{{MODULE_PATH}}/server/db"
@@ -33,7 +33,8 @@ func testConfig( t *testing.T ) ( cfg *config.Config ) {
 		StorageDir:    filepath.Join( directory , "storage" ),
 		SecretKey:     encryption.GenerateKeyHex(),
 		EncryptAtRest: true,
-		Backups:       config.BackupsConfig{ Dir: filepath.Join( directory , "backups" ) , Interval: 24 * time.Hour , Keep: 2 , Enabled: true },
+		Backups:       config.BackupsConfig{ Dir: filepath.Join( directory , "backups" ) , Interval: 24 * time.Hour , Keep: 2 , Enabled: true }, // feature:backups
+		Backups:       config.BackupsConfig{ Dir: filepath.Join( directory , "backups" ) }, // feature:!backups
 	}
 	if err := os.WriteFile( cfg.ConfigFile , []byte( "app:\n  name: Test\n" ) , 0o600 ); err != nil { t.Fatal( err ) }
 	if err := os.MkdirAll( filepath.Join( cfg.StorageDir , "photos" ) , 0o700 ); err != nil { t.Fatal( err ) }
@@ -190,8 +191,10 @@ func TestRestoreMovesAnOldBackupOntoTheCurrentKey( t *testing.T ) {
 	store := openStore( t , cfg )
 	user , err := models.CreateUser( store , "Second factor" , models.RoleUser )
 	if err != nil { t.Fatal( err ) }
+	// >>> feature:two_factor
 	secret , err := models.StartTwoFactorSetup( store , user.ID , cfg.SecretKey )
 	if err != nil { t.Fatal( err ) }
+	// <<< feature:two_factor
 	made , err := Create( store , cfg , Options{} )
 	if err != nil { t.Fatal( err ) }
 	store.Close()
@@ -206,10 +209,13 @@ func TestRestoreMovesAnOldBackupOntoTheCurrentKey( t *testing.T ) {
 
 	reopened := openStore( t , cfg )
 	defer reopened.Close()
+	if _ , err = models.GetUser( reopened , user.ID ); err != nil { t.Fatal( err ) }
+	// >>> feature:two_factor
 	stored , err := models.GetUser( reopened , user.ID )
 	if err != nil { t.Fatal( err ) }
 	opened , err := encryption.ChaChaDecryptBase64String( cfg.SecretKey , stored.TOTPPending )
 	if err != nil || opened != secret { t.Fatalf( "two-factor secret after the move: %q %v" , opened , err ) }
+	// <<< feature:two_factor
 }
 
 func TestRestoreUsesAKeyPackedInTheBackup( t *testing.T ) {
@@ -266,6 +272,7 @@ func TestRestoreRefusesANewerSchema( t *testing.T ) {
 	}
 }
 
+// >>> feature:backups
 func TestScheduledBackupsFollowTheSettings( t *testing.T ) {
 	cfg := testConfig( t )
 	store := openStore( t , cfg )
@@ -299,3 +306,4 @@ func TestScheduledBackupsFollowTheSettings( t *testing.T ) {
 	if names[ 0 ] != "auto-20261108-030000.tar.gz" { t.Fatalf( "newest is %s" , names[ 0 ] ) }
 	if _ , err := os.Stat( manual.Path ); err != nil { t.Fatalf( "a backup made by hand was pruned: %v" , err ) }
 }
+// <<< feature:backups

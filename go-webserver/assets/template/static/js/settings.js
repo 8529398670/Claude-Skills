@@ -1,3 +1,4 @@
+// whole-file feature:settings
 // The Settings screen (owner only): config.yaml, one field per setting,
 // grouped by section. app.js calls Settings.init( me ) for admins; only the
 // owner gets past the first line, and the server answers anyone else with a
@@ -19,6 +20,10 @@
 // secret key is not in config.yaml and never reaches this page; the screen
 // only says which file holds it.
 //
+// The filter and the jump links only hide and scroll: a field the filter hides
+// still counts as changed, and still saves. Use default fills the field in and
+// marks it changed like typing would, so nothing is written until Save.
+//
 // A save is undoable (Ctrl+Z, or the toast's button): the undo puts the old
 // values back through the same route, and is refused the same way if the
 // file has moved on since.
@@ -26,17 +31,20 @@ const Settings = {
   refreshMs: 10000,
   timer: null,
   snapshot: null,
-  // key -> { input , state } for every field on screen.
+  // key -> { input , state , reset , row } for every field on screen.
   fields: {},
+  // Each section's fieldset, its jump link, and its fields' rows.
+  sections: [],
 
   async init( me ) {
     if ( !me.is_owner ) return;
     Dom.show( Dom.get( "settings-panel" ) , true );
-    Dom.get( "settings-form" ).addEventListener( "submit" , ( event ) => {
+    Dom.onSubmit( Dom.get( "settings-form" ) , async ( event ) => {
       event.preventDefault();
-      this.save();
+      await this.save();
     } );
-    Dom.get( "settings-reload" ).addEventListener( "click" , () => this.onReload() );
+    Dom.onPress( Dom.get( "settings-reload" ) , () => this.onReload() );
+    Dom.get( "settings-filter" ).addEventListener( "input" , () => this.applyFilter() );
     window.addEventListener( "beforeunload" , ( event ) => {
       if ( this.changes().count > 0 ) event.preventDefault();
     } );
@@ -90,16 +98,73 @@ const Settings = {
     Dom.show( Dom.get( "settings-problems" ) , false );
 
     const holder = Dom.get( "settings-sections" );
+    const jump = Dom.get( "settings-jump" );
     Dom.clear( holder );
+    Dom.clear( jump );
     this.fields = {};
+    this.sections = [];
     snapshot.sections.forEach( ( section ) => {
-      const block = Dom.el( "fieldset" , { class: "settings-section" } );
+      const block = Dom.el( "fieldset" , { class: "settings-section" , attrs: { tabindex: "-1" } } );
       block.appendChild( Dom.el( "legend" , { class: "h5" , text: section.name } ) );
       if ( section.help ) block.appendChild( Dom.el( "p" , { class: "form-text settings-help" , text: section.help } ) );
-      section.keys.forEach( ( state ) => block.appendChild( this.renderKey( state ) ) );
+      const rows = section.keys.map( ( state ) => {
+        const row = this.renderKey( state );
+        block.appendChild( row );
+        // What the filter looks through.
+        return { row: row , text: [ section.name , state.key , state.name , state.help , this.format( state.value ) ].join( " " ).toLowerCase() };
+      } );
       holder.appendChild( block );
+      const link = Dom.el( "button" , {
+        class: "btn btn-sm btn-outline-secondary",
+        text: section.name,
+        attrs: { type: "button" },
+        on: { click: () => this.jumpTo( block ) },
+      } );
+      jump.appendChild( link );
+      this.sections.push( { block: block , link: link , rows: rows } );
     } );
+    this.applyFilter();
     this.updateSave();
+  },
+
+  // Every word has to match somewhere in the field or its section.
+  applyFilter() {
+    const words = Dom.get( "settings-filter" ).value.trim().toLowerCase().split( /\s+/ ).filter( Boolean );
+    let shown = 0;
+    let total = 0;
+    this.sections.forEach( ( section ) => {
+      const matches = section.rows.filter( ( item ) => {
+        const match = words.every( ( word ) => item.text.includes( word ) );
+        Dom.show( item.row , match );
+        return match;
+      } ).length;
+      Dom.show( section.block , matches > 0 );
+      Dom.show( section.link , matches > 0 );
+      shown += matches;
+      total += section.rows.length;
+    } );
+    let status = "";
+    if ( words.length > 0 ) {
+      status = shown === 0 ? I18n.get( "ui.no_matches" )
+        : I18n.get( "settings.filter_count" ).replace( "{count}" , shown ).replace( "{total}" , total );
+    }
+    Dom.text( Dom.get( "settings-filter-status" ) , status );
+  },
+
+  clearFilter() {
+    Dom.get( "settings-filter" ).value = "";
+    this.applyFilter();
+  },
+
+  // By script rather than a #link, because the hash says which screen this is.
+  // Measured, because the tools above stay on screen and can wrap.
+  jumpTo( block ) {
+    const tools = document.querySelector( ".settings-tools" );
+    const sticky = getComputedStyle( tools ).position === "sticky";
+    const offset = document.querySelector( ".app-navbar" ).getBoundingClientRect().bottom + ( sticky ? tools.offsetHeight : 0 ) + 8;
+    // Instant: the page scrolls smoothly by default, too slowly over this length.
+    window.scrollTo( { top: window.scrollY + block.getBoundingClientRect().top - offset , behavior: "instant" } );
+    block.focus( { preventScroll: true } );
   },
 
   renderKey( state ) {
@@ -125,7 +190,7 @@ const Settings = {
     input.disabled = disabled;
     input.addEventListener( "input" , () => this.updateSave() );
     input.addEventListener( "change" , () => this.updateSave() );
-    this.fields[ state.key ] = { input: input , state: state };
+    const field = this.fields[ state.key ] = { input: input , state: state , reset: null };
 
     const tone = { live: "success" , restart: "warning" , scripts: "secondary" }[ state.apply ] || "secondary";
     const label = Dom.el( "label" , { class: "form-label settings-label" , attrs: { for: id } , children: [
@@ -137,13 +202,22 @@ const Settings = {
     const notes = Dom.el( "div" , { class: "form-text" } );
     if ( state.help ) notes.appendChild( Dom.el( "div" , { class: "settings-help" , text: state.help } ) );
     if ( state.type === "list" ) notes.appendChild( Dom.el( "div" , { text: I18n.get( "settings.list_help" ) } ) );
-    notes.appendChild( Dom.el( "div" , { text: I18n.get( "settings.default" ).replace( "{value}" , this.format( state.default ) ) } ) );
+    const fallback = Dom.el( "div" , { text: I18n.get( "settings.default" ).replace( "{value}" , this.format( state.default ) ) } );
+    if ( !disabled && I18n.get( "settings.reset_button" ) !== "" ) {
+      const reset = I18n.get( "settings.reset_label" ).replace( "{name}" , () => state.name );
+      field.reset = Dom.el( "button" , {
+        class: "btn btn-link btn-sm settings-reset",
+        text: I18n.get( "settings.reset_button" ),
+        attrs: { type: "button" , "aria-label": reset , title: reset },
+        on: { click: () => this.useDefault( field ) },
+      } );
+      fallback.append( " " , field.reset );
+    }
+    notes.appendChild( fallback );
     if ( state.pending_restart ) {
       notes.appendChild( Dom.el( "div" , { class: "text-warning-emphasis" , text: I18n.get( "settings.pending_restart" ).replace( "{running}" , this.format( state.running ) ) } ) );
     }
     if ( state.locked ) notes.appendChild( Dom.el( "div" , { text: I18n.get( "settings.locked" ) } ) );
-    const problem = Dom.el( "div" , { class: "invalid-feedback" } );
-    this.fields[ state.key ].problem = problem;
 
     const row = Dom.el( "div" , { class: "settings-key" , attrs: { "data-key": state.key } } );
     if ( state.type === "bool" ) {
@@ -153,9 +227,20 @@ const Settings = {
       row.appendChild( label );
       row.appendChild( input );
     }
-    row.appendChild( problem );
     row.appendChild( notes );
     return row;
+  },
+
+  // Fills the field in with its default. The button goes as the value matches,
+  // so the focus moves to the field.
+  useDefault( field ) {
+    const value = field.state.default;
+    if ( field.state.type === "bool" ) field.input.checked = Boolean( value );
+    else if ( field.state.type === "list" ) field.input.value = ( value || [] ).join( "\n" );
+    else field.input.value = String( value );
+    Dom.clearFieldError( field.input );
+    this.updateSave();
+    field.input.focus();
   },
 
   format( value ) {
@@ -181,7 +266,8 @@ const Settings = {
       const field = entry[ 1 ];
       const value = this.read( field );
       const changed = JSON.stringify( value ) !== JSON.stringify( field.state.value );
-      field.input.classList.toggle( "settings-dirty" , changed );
+      field.input.classList.toggle( "settings-changed" , changed );
+      if ( field.reset ) Dom.show( field.reset , JSON.stringify( value ) !== JSON.stringify( field.state.default ) );
       if ( !changed ) return;
       result.values[ entry[ 0 ] ] = value;
       result.previous[ entry[ 0 ] ] = field.state.value;
@@ -202,12 +288,13 @@ const Settings = {
       // Each problem starts with the key it is about.
       const key = Object.keys( this.fields ).filter( ( name ) => problem.startsWith( name ) ).sort( ( a , b ) => b.length - a.length )[ 0 ];
       if ( key ) {
-        this.fields[ key ].input.classList.add( "is-invalid" );
-        Dom.text( this.fields[ key ].problem , problem );
+        Dom.fieldError( this.fields[ key ].input , problem );
       } else {
         general.push( problem );
       }
     } );
+    // An error the filter is hiding would look like a save that did nothing.
+    if ( Object.values( this.fields ).some( ( field ) => field.input.classList.contains( "is-invalid" ) && field.input.offsetParent === null ) ) this.clearFilter();
     const box = Dom.get( "settings-problems" );
     Dom.text( box , general.join( "\n" ) );
     Dom.show( box , general.length > 0 );
@@ -218,7 +305,7 @@ const Settings = {
   async save() {
     const pending = this.changes();
     if ( pending.count === 0 ) return;
-    Object.values( this.fields ).forEach( ( field ) => field.input.classList.remove( "is-invalid" ) );
+    Object.values( this.fields ).forEach( ( field ) => Dom.clearFieldError( field.input ) );
     let result;
     try {
       result = await this.apply( this.snapshot.version , pending.values );

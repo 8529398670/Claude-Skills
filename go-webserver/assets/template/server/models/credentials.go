@@ -1,7 +1,7 @@
 package models
 
 import (
-	time "time"
+	time "time" // feature:api_keys
 
 	db "{{MODULE_PATH}}/server/db"
 	encryption "{{MODULE_PATH}}/server/encryption"
@@ -12,12 +12,12 @@ import (
 type Revoked struct {
 	Sessions   int `json:"sessions"`
 	LoginLinks int `json:"login_links"`
-	APIKeys    int `json:"api_keys"`
-	Passwords  int `json:"passwords"`
+	APIKeys    int `json:"api_keys"` // feature:api_keys
+	Passwords  int `json:"passwords"` // feature:passwords
 }
 
 // RevokeAllCredentials is the "this account may be compromised" operation:
-// every session is deleted, every unused login link is deleted, the password
+// every session is deleted, the live login link is deleted, the password
 // is removed, and every live API key is revoked, in one transaction.
 // Afterwards nothing issued before this moment can act as the account; the way
 // back in is a new login link from an admin.
@@ -46,11 +46,14 @@ func RevokeAllCredentials( store *db.Store , user_id uint64 , allow_owner bool )
 		}
 		if revoked.Sessions , tx_err = destroySessionsForUser( tx , user_id ); tx_err != nil { return }
 		if revoked.LoginLinks , tx_err = deletePendingLoginTokens( tx , user_id ); tx_err != nil { return }
-		if tx_err = deleteChallengesForUser( tx , user_id ); tx_err != nil { return }
+		if tx_err = deleteChallengesForUser( tx , user_id ); tx_err != nil { return } // feature:two_factor
+		// >>> feature:passwords
 		if user.HasPassword() { revoked.Passwords = 1 }
 		user.PasswordHash = ""
 		if tx_err = tx.Put( db.BucketUsers , user_key , user ); tx_err != nil { return }
+		// <<< feature:passwords
 
+		// >>> feature:api_keys
 		live := []*APIKey{}
 		tx_err = tx.ForEach( db.BucketAPIKeys ,
 			func() any { return &APIKey{} } ,
@@ -68,6 +71,7 @@ func RevokeAllCredentials( store *db.Store , user_id uint64 , allow_owner bool )
 			if tx_err = tx.Put( db.BucketAPIKeys , []byte( key.ID ) , key ); tx_err != nil { return }
 		}
 		revoked.APIKeys = len( live )
+		// <<< feature:api_keys
 		return
 	} )
 	if err != nil { revoked = Revoked{} }
@@ -114,14 +118,16 @@ func DeleteUser( store *db.Store , user_id uint64 , actor_id uint64 ) ( removed 
 
 		if removed.Sessions , tx_err = destroySessionsForUser( tx , user_id ); tx_err != nil { return }
 		if removed.LoginLinks , tx_err = deleteLoginTokensForUser( tx , user_id ); tx_err != nil { return }
-		if tx_err = deleteChallengesForUser( tx , user_id ); tx_err != nil { return }
-		if target.HasPassword() { removed.Passwords = 1 }
+		if tx_err = deleteChallengesForUser( tx , user_id ); tx_err != nil { return } // feature:two_factor
+		if target.HasPassword() { removed.Passwords = 1 } // feature:passwords
+		// >>> feature:api_keys
 		removed.APIKeys , tx_err = tx.DeleteWhere( db.BucketAPIKeys ,
 			func() any { return &APIKey{} } ,
 			func( key []byte , item any ) bool {
 				return item.( *APIKey ).UserID == user_id
 			} )
 		if tx_err != nil { return }
+		// <<< feature:api_keys
 		tx_err = tx.Delete( db.BucketUsers , encryption.Uint64ToBytes( user_id ) )
 		return
 	} )
@@ -129,6 +135,7 @@ func DeleteUser( store *db.Store , user_id uint64 , actor_id uint64 ) ( removed 
 	return
 }
 
+// >>> feature:two_factor
 // ResetTwoFactor takes 2FA off an account whose person lost both the phone and
 // the recovery codes. Sign-ins waiting on a code end with it.
 //
@@ -171,3 +178,4 @@ func ResetTwoFactor( store *db.Store , user_id uint64 , actor_id uint64 ) ( err 
 	} )
 	return
 }
+// <<< feature:two_factor

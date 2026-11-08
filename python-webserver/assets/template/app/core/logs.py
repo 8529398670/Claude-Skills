@@ -1,3 +1,4 @@
+# >>> feature:logs
 """The activity log: every request the server answers, every sign-in and admin
 action, and what people did on the page (sent by static/js/track.js). Only
 the owner reads it, on the Logs screen.
@@ -22,8 +23,19 @@ anything typed into the page. See redact() and track.js.
 The day files, the line format, the search grammar and the JSON the Logs
 screen reads are the same as the Go template's, so the two frontends are one.
 """
+# <<< feature:logs
+# >>> feature:!logs
+"""The constants and helpers the rest of the app shares with the activity log,
+in a project without one. Logger takes what is reported to it and drops it, so
+nothing that reports has to know.
+"""
+# <<< feature:!logs
 from __future__ import annotations
 
+from typing import Any
+from urllib.parse import parse_qsl, urlencode
+
+# >>> feature:logs
 import base64
 import gzip
 import json
@@ -35,11 +47,11 @@ import time
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator
-from urllib.parse import parse_qsl, urlencode
+from typing import Callable, Iterator
 
 from app.core import encryption
 from app.core.config import LogsConfig
+# <<< feature:logs
 
 # Kinds. The Logs screen has a filter button for each.
 KIND_REQUEST = "request"  # every HTTP request (app/core/request_log.py)
@@ -53,6 +65,7 @@ LEVEL_INFO = "info"
 LEVEL_WARN = "warn"
 LEVEL_ERROR = "error"
 
+# >>> feature:logs
 DAY_FORMAT = "%Y-%m-%d"
 
 # QUEUE_SIZE entries can wait for the writer. Past that, log() drops rather
@@ -70,6 +83,7 @@ MAX_LINE_BYTES = 1024 * 1024
 
 _DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _FILE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.jsonl(\.gz)?$")
+# <<< feature:logs
 
 # The path prefixes whose next segment is a credential: a login link, an
 # invite link. Opening one is logged; the credential is not.
@@ -82,6 +96,7 @@ _SECRET_QUERY_KEYS = {
 MAX_PATH_LENGTH = 300
 
 
+# >>> feature:logs
 class LogsError(Exception):
     """Base for the refusals below; str() is the error code the Logs screen
     words (errors.<code> in language.yaml)."""
@@ -109,11 +124,13 @@ def now_iso(moment: datetime | None = None) -> str:
     return moment.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+# <<< feature:logs
 def anonymous() -> dict[str, Any]:
     """The actor of a request nobody signed in made."""
     return {"method": "anon"}
 
 
+# >>> feature:logs
 def entry(kind: str, level: str = LEVEL_INFO, **fields: Any) -> dict[str, Any]:
     """One log line: ts, kind, level, then whichever of request_id, actor, ip,
     ua, request, ui, client, msg and detail are given. Empty ones are left
@@ -126,6 +143,7 @@ def entry(kind: str, level: str = LEVEL_INFO, **fields: Any) -> dict[str, Any]:
     return record
 
 
+# <<< feature:logs
 def redact(path: str, raw_query: str = "") -> str:
     """A request path safe to keep: the credential in a login or invite link
     becomes "…", secret-looking query values become "…", and the whole is
@@ -144,6 +162,7 @@ def redact(path: str, raw_query: str = "") -> str:
     return result
 
 
+# >>> feature:logs
 def truncate(value: Any, limit: int) -> str:
     """A string from a browser or a header, capped at limit bytes on a
     character boundary."""
@@ -192,11 +211,16 @@ class Query:
         -kind:request      a leading minus means the term must NOT hold
 
     Keys: kind, level, user (name substring or exact id), status (a code, or
-    a class like 5xx), method, path (prefix), ip (prefix), action, screen. An
-    unknown key is free text, so pasting "a:b" from an entry still finds it.
+    a class like 5xx), method, path (prefix), ip (prefix, or part of what the
+    owner calls it), action, screen. An unknown key is free text, so pasting
+    "a:b" from an entry still finds it.
+
+    names says what the owner calls an address. Names are not in the log, so a
+    search has to be told them: free text and ip: both find them.
     """
 
-    def __init__(self, text: str = "") -> None:
+    def __init__(self, text: str = "", names: Callable[[str], str] | None = None) -> None:
+        self.names = names
         self.terms: list[_Term] = []
         for word in _split_words(text or ""):
             negate = word.startswith("-") and len(word) > 1
@@ -218,11 +242,16 @@ class Query:
 
     def match(self, record: dict[str, Any], text: str) -> bool:
         """text is the entry's JSON, lowercased."""
+        name = self.name(str(record.get("ip", ""))).lower()
         for term in self.terms:
-            holds = any(_matches(term.key, record, text, value) for value in term.values)
+            holds = any(_matches(term.key, record, text, name, value) for value in term.values)
             if holds == term.negate:
                 return False
         return True
+
+
+    def name(self, ip: str) -> str:
+        return self.names(ip) if self.names is not None else ""
 
 
 def _split_words(text: str) -> list[str]:
@@ -243,11 +272,11 @@ def _split_words(text: str) -> list[str]:
     return words
 
 
-def _matches(key: str, record: dict[str, Any], text: str, value: str) -> bool:
+def _matches(key: str, record: dict[str, Any], text: str, name: str, value: str) -> bool:
     request = record.get("request") or {}
     ui = record.get("ui") or {}
     if key == "":
-        return value in text
+        return value in text or value in name
     if key == "kind":
         return str(record.get("kind", "")).lower() == value
     if key == "level":
@@ -269,7 +298,7 @@ def _matches(key: str, record: dict[str, Any], text: str, value: str) -> bool:
     if key == "path":
         return bool(request) and str(request.get("path", "")).lower().startswith(value)
     if key == "ip":
-        return str(record.get("ip", "")).lower().startswith(value)
+        return str(record.get("ip", "")).lower().startswith(value) or value in name
     if key == "action":
         return bool(ui) and str(ui.get("action", "")).lower() == value
     if key == "screen":
@@ -630,18 +659,19 @@ class Logger:
                 if len(window) == limit:
                     window.pop(0)
                     more = True
-                window.append({**record, "pos": here})
+                window.append({**_named(record, query), "pos": here})
         window.reverse()
         return window, (window[-1]["pos"] if more and window else None)
 
-    def download(self, day: str) -> Iterator[bytes]:
-        """A day as plain JSON lines, decrypted, oldest first."""
+    def download(self, day: str, query: Query | None = None) -> Iterator[bytes]:
+        """A day as plain JSON lines, decrypted, oldest first, each with what
+        query's names call its address beside the address itself."""
         if not valid_day(day):
             raise BadDayError()
         self.flush()
         for file in self.day_files(day):
             for record, _ in self._scan(file):
-                yield json.dumps(record, ensure_ascii=False).encode("utf-8") + b"\n"
+                yield json.dumps(_named(record, query or Query()), ensure_ascii=False).encode("utf-8") + b"\n"
 
     # -----------------------------------------------------------------------
     # deleting and retention
@@ -715,6 +745,13 @@ class Logger:
         return result
 
 
+def _named(record: dict[str, Any], query: Query) -> dict[str, Any]:
+    """An entry with what the owner calls its address. Worked out on the way out:
+    it is never in the file."""
+    name = query.name(str(record.get("ip", "")))
+    return {**record, "ip_name": name} if name else record
+
+
 def _total(by_day: dict[str, list[DayFile]]) -> int:
     return sum(file.size for parts in by_day.values() for file in parts)
 
@@ -776,3 +813,15 @@ def _compress(file: DayFile) -> None:
         raise
     os.replace(temporary, target)
     file.path.unlink()
+# <<< feature:logs
+# >>> feature:!logs
+class Logger:
+    """Takes what the jobs and the server report, and drops it."""
+
+    enabled = False
+    # What /metrics reports as dropped entries.
+    dropped = 0
+
+    def system(self, level: str, message: str, detail: dict[str, Any] | None = None) -> None:
+        pass
+# <<< feature:!logs

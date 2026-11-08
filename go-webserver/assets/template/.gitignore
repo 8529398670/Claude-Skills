@@ -32,7 +32,7 @@ go.work
 go.work.sum
 
 # scripts/run.sh's pid file, scripts/run.bat's staged build, and the log of
-# the background server scripts/login.sh starts.
+# the background server scripts/login.sh --background starts.
 .run/
 
 # Logs and stray temp files.

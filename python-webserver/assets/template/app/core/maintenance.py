@@ -1,3 +1,4 @@
+# whole-file feature:maintenance
 """Maintenance mode: server.maintenance, read per request so switching it
 applies at once.
 
@@ -43,14 +44,14 @@ RETRY_SECONDS = 300
 ALWAYS = frozenset({
     "/api/health",
     "/api/ready",
-    "/metrics",
+    "/metrics",  # feature:metrics
     "/api/language",
     "/api/me",
     "/api/logout",
     "/api/login",
-    "/api/login/options",
-    "/api/login/two-factor",
-    "/api/login/password",
+    "/api/login/options",  # feature:passwords
+    "/api/login/two-factor",  # feature:two_factor
+    "/api/login/password",  # feature:passwords
 })
 
 
@@ -74,8 +75,10 @@ def allows(mode: str, method: str, path: str) -> bool:
         return True
     if mode == MAINTENANCE_FULL:
         return False
+    # >>> feature:invite_links
     if normalised == "/join" or normalised.startswith(("/join/", "/api/join/")):
         return False
+    # <<< feature:invite_links
     return method in ("GET", "HEAD")
 
 

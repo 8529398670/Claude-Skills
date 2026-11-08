@@ -1,8 +1,9 @@
+// whole-file feature:mcp
 package routes
 
 import (
-	io "io"
 	json "encoding/json"
+	io "io"
 	http "net/http"
 	filepath "path/filepath"
 	strings "strings"
@@ -44,8 +45,8 @@ func newMCPFixture( t *testing.T ) ( fixture *mcpFixture ) {
 		CookieName:     "session",
 		APIKeysEnabled: true,
 		MCPEnabled:     true,
-		InviteLinksEnabled: true,
-		Webhooks:       config.WebhooksConfig{ Enabled: true },
+		InviteLinksEnabled: true, // feature:invite_links
+		Webhooks:       config.WebhooksConfig{ Enabled: true }, // feature:webhooks
 		SessionTTL:     time.Hour,
 	}
 	store , err := db.Open( cfg )

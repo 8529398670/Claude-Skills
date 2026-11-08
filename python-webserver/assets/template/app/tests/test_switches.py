@@ -1,15 +1,22 @@
+# whole-file feature:invite_links|webhooks
 """What auth.invite_links and webhooks.enabled do while they are off, and that
 switching one back on restores what was there."""
 from __future__ import annotations
 
-from dataclasses import replace
-from typing import Any
+from dataclasses import replace  # feature:webhooks
+from typing import Any  # feature:invite_links
 
-from app.models import api_keys, invite_links
-from app.models.users import ROLE_ADMIN
+# >>> feature:invite_links
+from app.models import api_keys  # feature:mcp
+# <<< feature:invite_links
+from app.models import invite_links  # feature:invite_links
+# >>> feature:invite_links
+from app.models.users import ROLE_ADMIN  # feature:mcp
+# <<< feature:invite_links
 from app.tests.route_support import RoutesTestCase
 
 
+# >>> feature:invite_links
 class InviteLinkSwitch(RoutesTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -36,6 +43,7 @@ class InviteLinkSwitch(RoutesTestCase):
         response = self.request("GET", f"/join/{self.credential}")
         self.assertEqual(response.headers["referrer-policy"], "no-referrer")
 
+    # >>> feature:mcp
     def test_the_tools_follow_the_switch(self) -> None:
         key = api_keys.issue_api_key(self.store, self.owner.id, "admin", ROLE_ADMIN, 3600)[0]
         headers = {"authorization": "Bearer " + key, "accept": "application/json, text/event-stream", "content-type": "application/json"}
@@ -52,9 +60,13 @@ class InviteLinkSwitch(RoutesTestCase):
         self.assertIn("error", rpc("tools/call", {"name": "admin_list_invite_links", "arguments": {}}))
 
 
+    # <<< feature:mcp
+# <<< feature:invite_links
+# >>> feature:webhooks
 class WebhookSwitch(RoutesTestCase):
     def test_off(self) -> None:
         self.assertEqual(self.call("GET", "/api/owner/webhooks", cookie=self.owner_cookie)[0], 200)
         self.set_config(webhooks=replace(self.holder.get().webhooks, enabled=False))
         self.assertEqual(self.call("GET", "/api/owner/webhooks", cookie=self.owner_cookie)[0], 404)
         self.assertIs(self.call("GET", "/api/me", cookie=self.owner_cookie)[1]["webhooks_enabled"], False)
+# <<< feature:webhooks

@@ -1,3 +1,4 @@
+# whole-file feature:logs
 """Live updates (app/core/sse.py). Through the whole app with a raw ASGI call,
 because TestClient waits for a response to end and these do not. Each test
 ends with the slot it took given back, which is the thing most worth proving."""
@@ -132,7 +133,7 @@ class NudgeTest(unittest.TestCase):
 class StillOwnerTest(RoutesTestCase):
     def credential(self, user_id: int) -> str:
         login = login_tokens.issue_login_token(self.store, user_id, 3600)
-        return login_tokens.redeem_login_token(self.store, login, SignInRules(3600, False)).session_credential
+        return login_tokens.redeem_login_token(self.store, login, SignInRules(3600)).session_credential
 
     def test_the_owner(self) -> None:
         self.assertTrue(security.still_owner(self.store, self.credential(self.owner.id)))
@@ -160,11 +161,11 @@ class StreamTest(RoutesTestCase, unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.hub: sse.Hub = self.app.state.log_hub
-        self.set_config(metrics_enabled=True)
+        self.set_config(metrics_enabled=True)  # feature:metrics
 
     def owner_session(self) -> tuple[str, str]:
         login = login_tokens.issue_login_token(self.store, self.owner.id, 3600)
-        credential = login_tokens.redeem_login_token(self.store, login, SignInRules(3600, False)).session_credential
+        credential = login_tokens.redeem_login_token(self.store, login, SignInRules(3600)).session_credential
         return credential, f"{self.cfg.cookie_name}={encryption.xchacha_encrypt_string(self.cfg.secret_key, credential)}"
 
     async def open(self, cookie: str | None = None):
@@ -299,6 +300,7 @@ class StreamTest(RoutesTestCase, unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(task, 5)
         self.assertEqual(self.hub.clients, set())
 
+    # >>> feature:metrics
     async def test_streams_stay_out_of_the_timing_but_are_counted(self) -> None:
         measured = self.app.state.metrics
         before = measured.duration_count
@@ -310,6 +312,7 @@ class StreamTest(RoutesTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(measured.duration_count, before)
         self.assertEqual(measured.requests.get(("GET", "2xx")), 1)
 
+    # <<< feature:metrics
     async def test_the_stream_is_not_in_the_activity_log(self) -> None:
         """Nothing is writing here (no lifespan), so anything logged is still
         in the queue. A stream that logged itself would nudge itself."""

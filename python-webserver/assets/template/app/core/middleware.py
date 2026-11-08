@@ -169,20 +169,21 @@ def static_asset(method: str, path: str) -> bool:
 # each of those calls takes a PIN or mints an account.
 SIGN_IN_PATHS = frozenset({
     "/api/login",
-    "/api/login/two-factor",
-    "/api/login/password",
-    "/api/join/info",
-    "/api/join/match",
-    "/api/join/claim",
-    "/api/join/create",
+    "/api/login/two-factor",  # feature:two_factor
+    "/api/login/password",  # feature:passwords
+    "/api/join/info",  # feature:invite_links
+    "/api/join/match",  # feature:invite_links
+    "/api/join/claim",  # feature:invite_links
+    "/api/join/create",  # feature:invite_links
 })
 
 BUDGET_GENERAL = "general"
 BUDGET_SIGN_IN = "sign-in"
-BUDGET_UPLOAD = "upload"
+BUDGET_UPLOAD = "upload"  # feature:files
 BUDGET_NONE = "none"
 
 
+# >>> feature:files
 def upload_chunk(method: str, normalised: str) -> bool:
     """Exactly POST /api/files/<id>/chunks/<index>. A file arrives as many of
     these, so they have a budget of their own: on the general one a big upload
@@ -191,6 +192,7 @@ def upload_chunk(method: str, normalised: str) -> bool:
     return method == "POST" and len(parts) == 6 and parts[1:3] == ["api", "files"] and parts[4] == "chunks"
 
 
+# <<< feature:files
 def budget_for(method: str, path: str) -> str:
     """Which limit a request counts against.
 
@@ -208,8 +210,10 @@ def budget_for(method: str, path: str) -> str:
         normalised = normalised.rstrip("/")
     if method == "POST" and normalised in SIGN_IN_PATHS:
         return BUDGET_SIGN_IN
+    # >>> feature:files
     if upload_chunk(method, normalised):
         return BUDGET_UPLOAD
+    # <<< feature:files
     if static_asset(method, normalised):
         return BUDGET_NONE
     return BUDGET_GENERAL
@@ -259,7 +263,9 @@ class RateLimit:
             await self.app(scope, receive, send)
             return
         cfg = self.settings.get()
-        limit = {BUDGET_SIGN_IN: cfg.rate_limit_signin_max, BUDGET_UPLOAD: cfg.rate_limit_upload_max}.get(budget, cfg.rate_limit_max)
+        limits = {BUDGET_SIGN_IN: cfg.rate_limit_signin_max}
+        limits[BUDGET_UPLOAD] = cfg.rate_limit_upload_max  # feature:files
+        limit = limits.get(budget, cfg.rate_limit_max)
         window = float(cfg.rate_limit_window_seconds)
         now = time.monotonic()
         self._sweep(now, window)
@@ -323,7 +329,7 @@ def internal_error(request: Request, cause: object, status: int = 500, headers: 
         file=sys.stderr,
         flush=True,
     )
-    request.state.error_cause = str(cause)
+    request.state.error_cause = str(cause)  # feature:logs
     security = SECURE_HEADERS if request.app.state.settings.get().secure_cookies else PLAIN_HEADERS
     all_headers = {**security, **(headers or {}), request_id.HEADER: reference}
     if error_page.wanted(request):

@@ -1,3 +1,4 @@
+# whole-file feature:mcp
 """JSON-RPC for POST /mcp.
 
 It speaks the Streamable HTTP transport in its simplest legal form: stateless,

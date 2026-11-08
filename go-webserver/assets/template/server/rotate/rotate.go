@@ -38,7 +38,7 @@ import (
 	config "{{MODULE_PATH}}/server/config"
 	db "{{MODULE_PATH}}/server/db"
 	encryption "{{MODULE_PATH}}/server/encryption"
-	logs "{{MODULE_PATH}}/server/logs"
+	logs "{{MODULE_PATH}}/server/logs" // feature:logs
 	models "{{MODULE_PATH}}/server/models"
 )
 
@@ -61,7 +61,7 @@ type Result struct {
 	RetiredKey     string
 	OldFingerprint string
 	NewFingerprint string
-	LogFiles       int
+	LogFiles       int // feature:logs
 }
 
 // Run rotates the key.
@@ -71,7 +71,7 @@ func Run( cfg *config.Config , options Options ) ( result Result , err error ) {
 	// Only the container gets here with a marker: everywhere else, loading
 	// the config already finished the job.
 	if config.RotationPending( cfg.AppDir ) {
-		err = config.FinishRotationData( cfg.AppDir , cfg.DatabasePath , cfg.Logs.Dir )
+		err = config.FinishRotationData( cfg.AppDir , cfg.DatabasePath , filepath.Join( cfg.AppDir , config.LogsDirName ) )
 		result.Resumed = true
 		return
 	}
@@ -81,7 +81,8 @@ func Run( cfg *config.Config , options Options ) ( result Result , err error ) {
 	result.OldFingerprint = encryption.KeyFingerprint( cfg.SecretKey )
 	result.NewFingerprint = encryption.KeyFingerprint( new_key )
 
-	if result.LogFiles , err = stage( cfg , new_key ); err != nil {
+	if result.LogFiles , err = stage( cfg , new_key ); err != nil { // feature:logs
+	if _ , err = stage( cfg , new_key ); err != nil { // feature:!logs
 		os.RemoveAll( config.RotationDir( cfg.AppDir ) )
 		return
 	}
@@ -101,7 +102,7 @@ func Run( cfg *config.Config , options Options ) ( result Result , err error ) {
 	}
 
 	if err = config.MarkRotation( cfg.AppDir ); err != nil { return }
-	if err = config.FinishRotationData( cfg.AppDir , cfg.DatabasePath , cfg.Logs.Dir ); err != nil { return }
+	if err = config.FinishRotationData( cfg.AppDir , cfg.DatabasePath , filepath.Join( cfg.AppDir , config.LogsDirName ) ); err != nil { return }
 
 	if options.NewKeyFile != "" { return }
 	if result.RetiredKey , err = config.FinishRotationKey( cfg.SecretFile ); err != nil { return }
@@ -145,9 +146,11 @@ func stage( cfg *config.Config , new_key string ) ( log_files int , err error ) 
 		}
 	}
 
+	// >>> feature:logs
 	if cfg.EncryptAtRest {
 		log_files , err = logs.RekeyFiles( cfg.Logs.Dir , filepath.Join( directory , config.LogsDirName ) , cfg.SecretKey , new_key )
 	}
+	// <<< feature:logs
 	return
 }
 

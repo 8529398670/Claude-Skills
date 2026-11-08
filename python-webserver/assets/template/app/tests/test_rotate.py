@@ -3,9 +3,9 @@ failure before the marker changes nothing, and a stop at any point after it
 ends with the key and the data matching."""
 from __future__ import annotations
 
-import base64
-import gzip
-import json
+import base64  # feature:logs
+import gzip  # feature:logs
+import json  # feature:logs
 import os
 import tempfile
 import unittest
@@ -13,8 +13,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
-from app.core import backup, config, config_secret, db, encryption, logs, rotate, server_lock
-from app.models import files, two_factor, users
+from app.core import config, config_secret, db, encryption, rotate, server_lock
+from app.core import backup
+from app.core import logs  # feature:logs
+from app.models import users
+from app.models import files  # feature:files
+from app.models import two_factor  # feature:two_factor
 from app.tests.support import pin_switches
 
 
@@ -36,8 +40,9 @@ class Deployment:
 
         store = db.open_store(self.cfg.database_path, self.cfg.secret_key, True)
         self.user = users.create_user(store, "Second factor", users.ROLE_USER)
-        self.secret = two_factor.start_setup(store, self.user.id, self.cfg.secret_key)
+        self.secret = two_factor.start_setup(store, self.user.id, self.cfg.secret_key)  # feature:two_factor
 
+        # >>> feature:logs
         def line(text: str) -> bytes:
             sealed = encryption.xchacha_encrypt_bytes(self.cfg.secret_key, json.dumps({"msg": text}).encode())
             return base64.b64encode(sealed) + b"\n"
@@ -45,6 +50,7 @@ class Deployment:
         (self.cfg.logs.dir / "2026-11-01.jsonl").write_bytes(line("plain day") + b"this line was cut sho")
         with gzip.open(self.cfg.logs.dir / "2026-10-31.jsonl.gz", "wb") as zipped:
             zipped.write(line("gzipped day"))
+        # <<< feature:logs
 
     def assert_whole(self, test: unittest.TestCase) -> config.Config:
         """As a fresh process would find it: the key on disk opens the
@@ -52,17 +58,21 @@ class Deployment:
         cfg = config.load_path(self.path, True)
         store = db.open_store(cfg.database_path, cfg.secret_key, True)
         record = store.get(db.BUCKET_USERS, self.user.id)
-        test.assertEqual(encryption.xchacha_decrypt_string(cfg.secret_key, record["totp_pending"]), self.secret)
+        test.assertIsNotNone(record)
+        test.assertEqual(encryption.xchacha_decrypt_string(cfg.secret_key, record["totp_pending"]), self.secret)  # feature:two_factor
+        # >>> feature:logs
         reader = logs.Logger(cfg.logs, cfg.secret_key, cfg.encrypt_at_rest)
         for day, wanted in (("2026-11-01", "plain day"), ("2026-10-31", "gzipped day")):
             records, _ = reader.read_day(day, logs.Query(""), -1, 10)
             test.assertEqual(len(records), 1, day)
             test.assertIn(wanted, json.dumps(records))
+        # <<< feature:logs
         test.assertFalse(config_secret.rotation_pending(cfg.app_dir))
         test.assertFalse(config_secret.rotation_dir(cfg.app_dir).exists())
         return cfg
 
 
+# >>> feature:files
 def store_file(d: Deployment, cfg: config.Config) -> str:
     """Uploads into the deployment. The file's bytes never move in a rotation,
     so only its sealed key changes."""
@@ -80,7 +90,9 @@ def read_file(d: Deployment, file_id: str) -> bytes:
     return b"".join(files.FileReader(cfg, files.get_file(store, file_id)))
 
 
+# <<< feature:files
 class RotateTest(unittest.TestCase):
+    # >>> feature:files
     def test_a_file_survives_rotation_with_record_encryption_on_or_off(self) -> None:
         for encrypted in (True, False):
             d = Deployment(self)
@@ -95,6 +107,8 @@ class RotateTest(unittest.TestCase):
             rotate.run(d.cfg)
             self.assertEqual(read_file(d, file_id), b"hello")
 
+    # <<< feature:files
+    # >>> feature:files
     def test_a_file_survives_a_restore_onto_a_new_key(self) -> None:
         d = Deployment(self)
         file_id = store_file(d, d.cfg)
@@ -105,18 +119,19 @@ class RotateTest(unittest.TestCase):
         backup.restore(cfg, str(made.path), key_file=str(result.retired_key))
         self.assertEqual(read_file(d, file_id), b"hello")
 
+    # <<< feature:files
     def test_keeps_everything_readable(self) -> None:
         d = Deployment(self)
         old_key = d.cfg.secret_key
         result = rotate.run(d.cfg)
-        self.assertEqual(result.log_files, 2)
+        self.assertEqual(result.log_files, 2)  # feature:logs
 
         cfg = d.assert_whole(self)
         self.assertNotEqual(cfg.secret_key, old_key)
         self.assertEqual(encryption.key_fingerprint(cfg.secret_key), result.new_fingerprint)
         self.assertEqual(config_secret.read_secret(result.retired_key), old_key)
         self.assertEqual(result.retired_key.stat().st_mode & 0o777, 0o600)
-        self.assertTrue((cfg.logs.dir / "2026-11-01.jsonl").read_bytes().endswith(b"this line was cut sho"), "a broken line was dropped")
+        self.assertTrue((cfg.logs.dir / "2026-11-01.jsonl").read_bytes().endswith(b"this line was cut sho"), "a broken line was dropped")  # feature:logs
 
     def test_refuses_a_running_server(self) -> None:
         d = Deployment(self)
@@ -140,18 +155,22 @@ class RotateTest(unittest.TestCase):
         def database_only(cfg: config.Config) -> None:
             os.replace(config_secret.rotation_dir(cfg.app_dir) / "app.db", cfg.database_path)
 
+        # >>> feature:logs
         def one_log_file(cfg: config.Config) -> None:
             database_only(cfg)
             os.replace(config_secret.rotation_dir(cfg.app_dir) / "logs" / "2026-11-01.jsonl", cfg.logs.dir / "2026-11-01.jsonl")
 
+        # <<< feature:logs
         def all_the_data(cfg: config.Config) -> None:
-            config_secret.finish_rotation_data(cfg.app_dir, cfg.database_path, cfg.logs.dir)
+            config_secret.finish_rotation_data(cfg.app_dir, cfg.database_path, cfg.logs.dir)  # feature:logs
+            config_secret.finish_rotation_data(cfg.app_dir, cfg.database_path)  # feature:!logs
 
         def the_key(cfg: config.Config) -> None:
             all_the_data(cfg)
             config_secret.finish_rotation_key(cfg.secret_file)
 
-        stops: list[Callable[[config.Config], None]] = [nothing, database_only, one_log_file, all_the_data, the_key]
+        stops: list[Callable[[config.Config], None]] = [nothing, database_only, all_the_data, the_key]
+        stops.append(one_log_file)  # feature:logs
         for stop in stops:
             with self.subTest(stop.__name__):
                 d = Deployment(self)
@@ -187,7 +206,8 @@ class RotateTest(unittest.TestCase):
         wal = d.cfg.database_path.with_name("app.db-wal")
         self.assertTrue(wal.exists())
         leftover = wal.read_bytes()
-        config_secret.finish_rotation_data(d.cfg.app_dir, d.cfg.database_path, d.cfg.logs.dir)
+        config_secret.finish_rotation_data(d.cfg.app_dir, d.cfg.database_path, d.cfg.logs.dir)  # feature:logs
+        config_secret.finish_rotation_data(d.cfg.app_dir, d.cfg.database_path)  # feature:!logs
         self.assertFalse(wal.exists())
         self.assertTrue(leftover)
         config_secret.finish_rotation_key(d.cfg.secret_file)

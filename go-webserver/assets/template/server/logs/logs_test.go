@@ -1,3 +1,4 @@
+// whole-file feature:logs
 package logs
 
 import (
@@ -7,6 +8,7 @@ import (
 	strings "strings"
 	testing "testing"
 	time "time"
+	unsafe "unsafe"
 
 	config "{{MODULE_PATH}}/server/config"
 	encryption "{{MODULE_PATH}}/server/encryption"
@@ -62,6 +64,29 @@ func TestRedact( t *testing.T ) {
 	if got := Redact( "/"+strings.Repeat( "a" , 1000 ) , "" ); len( got ) > maxPathLength + 4 {
 		t.Errorf( "a long path was not capped: %d bytes" , len( got ) )
 	}
+}
+
+// A line is written after its request has ended. Fiber hands out strings that
+// view the request's buffer and reuses it for the next request, so an entry that
+// kept them could log another request's bytes, headers and all.
+func TestAnEntryOwnsItsStrings( t *testing.T ) {
+	logger := testLogger( t , false )
+	buffer := []byte( "request" )
+	view := unsafe.String( &buffer[ 0 ] , len( buffer ) )
+	logger.Log( Entry{
+		Kind: KindAdmin , RequestID: view , IP: view , UA: view , Msg: view ,
+		Request: &Request{ Method: view , Path: view , Referer: view },
+		Detail: map[string]any{ "link_id": view , "count": 1 },
+	} )
+	copy( buffer , "another" )
+
+	entry := <-logger.queue
+	got := []any{ entry.RequestID , entry.IP , entry.UA , entry.Msg ,
+		entry.Request.Method , entry.Request.Path , entry.Request.Referer , entry.Detail[ "link_id" ] }
+	for index , value := range got {
+		if value != "request" { t.Errorf( "field %d reads %q" , index , value ) }
+	}
+	if entry.Detail[ "count" ] != 1 { t.Errorf( "%v" , entry.Detail ) }
 }
 
 func TestEncryptedLinesReadBack( t *testing.T ) {
@@ -224,4 +249,34 @@ func change( logger *Logger , edit func( settings *config.LogsConfig ) ) {
 	settings := logger.Settings()
 	edit( &settings )
 	logger.settings.Store( &settings )
+}
+
+func TestNamesAreSearchedAndAddedButNeverWritten( t *testing.T ) {
+	logger := testLogger( t , false )
+	first , second := request( "/one" , 200 ) , request( "/two" , 200 )
+	first.IP , second.IP = "10.0.0.5" , "10.0.0.6"
+	writeNow( logger , first , second )
+	names := func( ip string ) string {
+		if ip == "10.0.0.5" { return "Front Desk" }
+		return ""
+	}
+	day := logger.today()
+	for _ , text := range []string{ "ip:front" , `"front desk"` , "ip:10.0.0.5" } {
+		records , _ , err := logger.ReadDay( day , ParseQuery( text ).WithNames( names ) , -1 , 10 )
+		if err != nil { t.Fatal( err ) }
+		if len( records ) != 1 || records[ 0 ].IPName != "Front Desk" {
+			t.Fatalf( "%s: %+v" , text , records )
+		}
+	}
+	if records , _ , _ := logger.ReadDay( day , ParseQuery( "-ip:front" ).WithNames( names ) , -1 , 10 ); len( records ) != 1 || records[ 0 ].IP != "10.0.0.6" {
+		t.Fatalf( "negated: %+v" , records )
+	}
+	var out bytes.Buffer
+	if err := logger.Download( day , ParseQuery( "" ).WithNames( names ) , &out ); err != nil { t.Fatal( err ) }
+	if bytes.Count( out.Bytes() , []byte( `"ip_name":"Front Desk"` ) ) != 1 || bytes.Count( out.Bytes() , []byte( `"ip":"10.0.0.5"` ) ) != 1 {
+		t.Fatalf( "download: %s" , out.String() )
+	}
+	stored , err := os.ReadFile( filepath.Join( logger.Settings().Dir , partName( day , 0 , false ) ) )
+	if err != nil { t.Fatal( err ) }
+	if bytes.Contains( stored , []byte( "Front Desk" ) ) { t.Fatalf( "a name reached the file: %s" , stored ) }
 }

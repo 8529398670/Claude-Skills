@@ -3,34 +3,38 @@ apply path for the Settings screen and for hand edits, and the writer that
 puts config.yaml back on disk."""
 from __future__ import annotations
 
-import json
+import json  # feature:settings
 import os
 import tempfile
 import unittest
 from pathlib import Path
 
 from app.core import config_live
-from app.core.config import ValidationError
-from app.tests.support import in_container, new_holder
+from app.core.config import ValidationError  # feature:settings
+from app.tests.support import new_holder
+from app.tests.support import in_container  # feature:settings
 
 
+# >>> feature:settings
 def version_of(path: Path) -> str:
     return config_live.version(config_live.read_raw(path))
 
 
+# <<< feature:settings
 def write(path: Path, text: str) -> None:
     path.write_bytes(text.encode("utf-8"))
 
 
 class HolderTest(unittest.TestCase):
+    # >>> feature:settings
     def test_save_applies_live_keys(self) -> None:
         holder, path = new_holder(self)
-        result = holder.save(version_of(path), {"server.rate_limit_max": 7, "server.port": 9999, "logs.echo": True})
+        result = holder.save(version_of(path), {"server.rate_limit_max": 7, "server.port": 9999, "server.secure_cookies": True})
         self.assertEqual(holder.get().rate_limit_max, 7)
         self.assertNotEqual(holder.get().port, 9999)
         self.assertEqual(result["applied"], ["server.rate_limit_max"])
         self.assertEqual(result["restart"], ["server.port"])
-        self.assertEqual(result["unchanged"], ["logs.echo"])
+        self.assertEqual(result["unchanged"], ["server.secure_cookies"])
         raw = config_live.read_raw(path)
         self.assertIn("rate_limit_max: 7 ", raw)
         self.assertIn("# [live]", raw)
@@ -56,6 +60,7 @@ class HolderTest(unittest.TestCase):
             with self.subTest(key), self.assertRaises(config_live.UnknownSettingError):
                 holder.save(version_of(path), {key: "x"})
 
+    # <<< feature:settings
     def test_poll_applies_a_hand_edit(self) -> None:
         holder, path = new_holder(self)
         notified = []
@@ -74,26 +79,33 @@ class HolderTest(unittest.TestCase):
         write(path, edited.replace(f"port: {holder.boot().port}", "port: 0", 1))
         holder.poll()
         holder.poll()
+        # >>> feature:settings
         snapshot = holder.snapshot()
         self.assertIsNotNone(snapshot["error"])
         self.assertIn("server.port", snapshot["error"]["message"])
+        # <<< feature:settings
         self.assertEqual(holder.get().rate_limit_max, 7)
 
         # Fixing it clears the error.
         write(path, edited.replace("rate_limit_max: 7  ", "rate_limit_max: 8  ", 1))
         holder.poll()
         holder.poll()
+        # >>> feature:settings
         snapshot = holder.snapshot()
         self.assertIsNone(snapshot["error"])
+        # <<< feature:settings
         self.assertEqual(holder.get().rate_limit_max, 8)
 
+        # >>> feature:settings
         # The server's own save is not news to the watcher.
         before = len(notified)
-        holder.save(snapshot["version"], {"logs.echo": False})
+        holder.save(snapshot["version"], {"server.secure_cookies": False})
         holder.poll()
         holder.poll()
         self.assertEqual(len(notified), before + 1)
+        # <<< feature:settings
 
+    # >>> feature:settings
     def test_snapshot_never_holds_the_key(self) -> None:
         holder, _ = new_holder(self)
         encoded = json.dumps(holder.snapshot())
@@ -106,6 +118,7 @@ class HolderTest(unittest.TestCase):
             with self.assertRaises(config_live.LockedError):
                 holder.save(version_of(path), {"docker.data_dir": "/home"})
 
+    # <<< feature:settings
     def test_write_in_place_keeps_the_file_and_a_backup(self) -> None:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

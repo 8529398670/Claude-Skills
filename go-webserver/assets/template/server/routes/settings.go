@@ -1,3 +1,4 @@
+// whole-file feature:settings
 package routes
 
 import (

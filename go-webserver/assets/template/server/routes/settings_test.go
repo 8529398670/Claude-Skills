@@ -1,3 +1,4 @@
+// whole-file feature:settings
 package routes
 
 import (
@@ -9,13 +10,12 @@ import (
 	strings "strings"
 	testing "testing"
 	fstest "testing/fstest"
-	time "time"
+	time "time" // feature:api_keys
 
 	fiber "github.com/gofiber/fiber/v3"
 
 	config "{{MODULE_PATH}}/server/config"
 	db "{{MODULE_PATH}}/server/db"
-	encryption "{{MODULE_PATH}}/server/encryption"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 	static "{{MODULE_PATH}}/server/static"
@@ -31,7 +31,7 @@ type settingsFixture struct {
 	owner    string // a session cookie
 	csrf     string
 	admin    string // another admin's session cookie
-	key      string // the owner's admin API key
+	key      string // the owner's admin API key // feature:api_keys
 }
 
 func useDefaults( t *testing.T ) {
@@ -45,9 +45,15 @@ func useDefaults( t *testing.T ) {
 	// about the features themselves, so they run on the template's choice
 	// whatever that was.
 	pinned , _ , err := config.EditChanges( defaults , map[string]any{
-		"auth.api_keys": true , "auth.invite_links": true , "auth.two_factor": true , "auth.passwords": false ,
-		"server.mcp": true , "files.enabled": true , "webhooks.enabled": true ,
-		"metrics.enabled": false , "backups.enabled": false ,
+		"auth.api_keys": true , // feature:api_keys
+		"auth.invite_links": true , // feature:invite_links
+		"auth.two_factor": true , // feature:two_factor
+		"auth.passwords": false , // feature:passwords
+		"server.mcp": true , // feature:mcp
+		"files.enabled": true , // feature:files
+		"webhooks.enabled": true , // feature:webhooks
+		"metrics.enabled": false , // feature:metrics
+		"backups.enabled": false , // feature:backups
 	} , "defaults.yaml" , false )
 	if err != nil { t.Fatal( err ) }
 	config.UseEmbedded( pinned , header )
@@ -73,8 +79,10 @@ func newSettingsFixture( t *testing.T ) ( fixture *settingsFixture ) {
 	owner , _ := models.CreateUser( store , "Owner" , models.RoleAdmin )
 	if _ , err = models.EnsureOwner( store ); err != nil { t.Fatal( err ) }
 	other , _ := models.CreateUser( store , "Other admin" , models.RoleAdmin )
+	// >>> feature:api_keys
 	key , _ , err := models.IssueAPIKey( store , owner.ID , "admin" , models.RoleAdmin , time.Hour )
 	if err != nil { t.Fatal( err ) }
+	// <<< feature:api_keys
 
 	settings := config.NewHolder( cfg )
 	static_server , _ := static.New( fstest.MapFS{ "index.html": { Data: []byte( "index" ) } } )
@@ -82,22 +90,12 @@ func newSettingsFixture( t *testing.T ) ( fixture *settingsFixture ) {
 	app := fiber.New()
 	handlers.Register( app )
 
-	fixture = &settingsFixture{ app: app , settings: settings , path: path , key: key }
+	fixture = &settingsFixture{ app: app , settings: settings , path: path }
+	fixture.key = key // feature:api_keys
 	fixture.owner = sessionCookie( t , store , cfg , owner.ID )
 	fixture.admin = sessionCookie( t , store , cfg , other.ID )
 	_ , me := fixture.request( t , http.MethodGet , "/api/me" , fixture.owner , "" , "" )
 	fixture.csrf , _ = me[ "csrf_token" ].( string )
-	return
-}
-
-func sessionCookie( t *testing.T , store *db.Store , cfg *config.Config , user_id uint64 ) ( cookie string ) {
-	t.Helper()
-	login , err := models.IssueLoginToken( store , user_id , time.Hour )
-	if err != nil { t.Fatal( err ) }
-	signed , err := models.RedeemLoginToken( store , login , models.SignInRules{ SessionTTL: time.Hour } )
-	if err != nil { t.Fatal( err ) }
-	sealed , _ := encryption.ChaChaEncryptString( cfg.SecretKey , signed.SessionCredential )
-	cookie = cfg.CookieName + "=" + sealed
 	return
 }
 
@@ -127,9 +125,11 @@ func TestSettingsAreTheOwnersAlone( t *testing.T ) {
 	if status , _ := fixture.request( t , http.MethodGet , "/api/owner/settings" , fixture.admin , "" , "" ); status != 404 {
 		t.Errorf( "another admin: status %d, want 404" , status )
 	}
+	// >>> feature:api_keys
 	if status , _ := fixture.request( t , http.MethodGet , "/api/owner/settings" , "" , fixture.key , "" ); status != 404 {
 		t.Errorf( "the owner's API key: status %d, want 404" , status )
 	}
+	// <<< feature:api_keys
 	status , reply := fixture.request( t , http.MethodGet , "/api/owner/settings" , fixture.owner , "" , "" )
 	if status != 200 {
 		t.Fatalf( "owner: status %d" , status )
@@ -169,6 +169,7 @@ func TestSaveSettings( t *testing.T ) {
 	}
 }
 
+// >>> feature:mcp
 func TestMCPFollowsTheSetting( t *testing.T ) {
 	fixture := newSettingsFixture( t )
 	ping := `{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}`
@@ -183,3 +184,4 @@ func TestMCPFollowsTheSetting( t *testing.T ) {
 		t.Fatalf( "/mcp should 404 once server.mcp is off, got %d" , status )
 	}
 }
+// <<< feature:mcp

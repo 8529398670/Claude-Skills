@@ -1,18 +1,20 @@
+// whole-file feature:invite_links|webhooks
 package routes
 
 import (
 	http "net/http"
 	testing "testing"
-	time "time"
+	time "time" // feature:invite_links
 
-	fiber "github.com/gofiber/fiber/v3"
+	fiber "github.com/gofiber/fiber/v3" // feature:invite_links
 
-	models "{{MODULE_PATH}}/server/models"
+	models "{{MODULE_PATH}}/server/models" // feature:invite_links
 )
 
 // What auth.invite_links and webhooks.enabled do while they are off, and that
 // switching one back on restores what was there.
 
+// >>> feature:invite_links
 func TestInviteLinksSwitchedOffAndBackOn( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	credential , _ , err := models.IssueInviteLink( fixture.store , "Club" , 10 , 24*time.Hour , fixture.owner.ID )
@@ -50,7 +52,10 @@ func TestInviteLinksSwitchedOffAndBackOn( t *testing.T ) {
 		t.Fatalf( "the same link should work again: %d %v" , status , reply )
 	}
 }
+// <<< feature:invite_links
 
+// >>> feature:invite_links
+// >>> feature:mcp
 func TestInviteToolsFollowTheSwitch( t *testing.T ) {
 	fixture := newMCPFixture( t )
 	listed := func() ( found bool ) {
@@ -66,7 +71,10 @@ func TestInviteToolsFollowTheSwitch( t *testing.T ) {
 	_ , reply := fixture.post( t , fixture.admin_key , callTool( "admin_list_invite_links" , "{}" ) )
 	if reply[ "error" ] == nil { t.Fatalf( "calling it should answer like an unknown tool: %v" , reply ) }
 }
+// <<< feature:mcp
+// <<< feature:invite_links
 
+// >>> feature:webhooks
 func TestWebhooksSwitchedOff( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	owner := fixture.browser()
@@ -82,3 +90,4 @@ func TestWebhooksSwitchedOff( t *testing.T ) {
 		t.Errorf( "/api/me should say it is off: %v" , me )
 	}
 }
+// <<< feature:webhooks

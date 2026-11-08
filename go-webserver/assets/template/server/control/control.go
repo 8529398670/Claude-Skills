@@ -225,14 +225,14 @@ func ( server *Server ) routes() ( handler http.Handler ) {
 	mux.HandleFunc( "POST /v1/users/{id}/login-token" , server.handleReissueLogin )
 	mux.HandleFunc( "POST /v1/users/{id}/disabled" , server.handleSetDisabled )
 	mux.HandleFunc( "POST /v1/users/{id}/revoke-access" , server.handleRevokeAccess )
-	mux.HandleFunc( "POST /v1/users/{id}/reset-two-factor" , server.handleResetTwoFactor )
+	mux.HandleFunc( "POST /v1/users/{id}/reset-two-factor" , server.handleResetTwoFactor ) // feature:two_factor
 	mux.HandleFunc( "POST /v1/users/{id}/delete" , server.handleDeleteUser )
 	mux.HandleFunc( "POST /v1/owner" , server.handleTransferOwner )
-	mux.HandleFunc( "GET /v1/api-keys" , server.handleListAPIKeys )
-	mux.HandleFunc( "POST /v1/api-keys" , server.handleCreateAPIKey )
-	mux.HandleFunc( "POST /v1/api-keys/{id}/revoke" , server.handleRevokeAPIKey )
-	mux.HandleFunc( "POST /v1/api-keys/{id}/delete" , server.handleDeleteAPIKey )
-	mux.HandleFunc( "POST /v1/invite-links" , server.handleCreateInviteLink )
+	mux.HandleFunc( "GET /v1/api-keys" , server.handleListAPIKeys ) // feature:api_keys
+	mux.HandleFunc( "POST /v1/api-keys" , server.handleCreateAPIKey ) // feature:api_keys
+	mux.HandleFunc( "POST /v1/api-keys/{id}/revoke" , server.handleRevokeAPIKey ) // feature:api_keys
+	mux.HandleFunc( "POST /v1/api-keys/{id}/delete" , server.handleDeleteAPIKey ) // feature:api_keys
+	mux.HandleFunc( "POST /v1/invite-links" , server.handleCreateInviteLink ) // feature:invite_links
 	mux.HandleFunc( "POST /v1/backup" , server.handleBackup )
 	handler = mux
 	return
@@ -306,6 +306,8 @@ type UserResponse struct {
 	Disabled    bool   `json:"disabled"`
 	Owner       bool   `json:"owner"`
 	Credential  string `json:"credential,omitempty"`
+	// LoginLink describes the link Credential opens: how often, how long.
+	LoginLink *models.LoginLinkInfo `json:"login_link,omitempty"`
 }
 
 func userResponse( user *models.User , owner_id uint64 , credential string ) ( result UserResponse ) {
@@ -327,7 +329,7 @@ type TransferOwnerRequest struct {
 
 // writeOwnedUser re-reads a user and the owner marker and answers with both,
 // so every response reflects what is actually stored.
-func ( server *Server ) writeOwnedUser( w http.ResponseWriter , user_id uint64 , credential string ) {
+func ( server *Server ) writeOwnedUser( w http.ResponseWriter , user_id uint64 , credential string , link *models.LoginLinkInfo ) {
 	user , err := models.GetUser( server.store , user_id )
 	if err != nil {
 		writeError( w , http.StatusInternalServerError , err.Error() )
@@ -338,13 +340,28 @@ func ( server *Server ) writeOwnedUser( w http.ResponseWriter , user_id uint64 ,
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
 	}
-	writeJSON( w , http.StatusOK , userResponse( user , owner_id , credential ) )
+	result := userResponse( user , owner_id , credential )
+	result.LoginLink = link
+	writeJSON( w , http.StatusOK , result )
 }
 
 // CreateUserRequest is the body of POST /v1/users.
 type CreateUserRequest struct {
 	DisplayName string `json:"display_name"`
 	Role        string `json:"role"`
+	models.LoginLinkRequest
+}
+
+// loginLink resolves a link request against the live config, as the web
+// routes do.
+func ( server *Server ) loginLink( w http.ResponseWriter , request models.LoginLinkRequest ) ( options models.LoginLinkOptions , ok bool ) {
+	options , err := models.ResolveLoginLink( request , server.cfg().LoginTokenTTL , server.cfg().MultiUseLoginTokenTTL )
+	if err != nil {
+		writeError( w , http.StatusBadRequest , err.Error() )
+		return
+	}
+	ok = true
+	return
 }
 
 // SetDisabledRequest is the body of POST /v1/users/{id}/disabled.
@@ -352,6 +369,7 @@ type SetDisabledRequest struct {
 	Disabled bool `json:"disabled"`
 }
 
+// >>> feature:api_keys
 // APIKeyResponse is a stored API key as a caller sees it. Credential is set
 // only by the endpoint that mints one, and is the one moment it is ever
 // visible; the stored hash is never exposed at all.
@@ -370,7 +388,9 @@ type APIKeyResponse struct {
 	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
 	Credential  string     `json:"credential,omitempty"`
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 // CreateAPIKeyRequest is the body of POST /v1/api-keys. ExpiresInDays is a
 // pointer for the same reason it is in the HTTP API: absent means "the
 // server's default", 0 means "never expires", and those must stay
@@ -381,7 +401,9 @@ type CreateAPIKeyRequest struct {
 	Role          string `json:"role"`
 	ExpiresInDays *int   `json:"expires_in_days"`
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 func apiKeyResponse( key *models.APIKey , display_name string , credential string ) ( result APIKeyResponse ) {
 	result = APIKeyResponse{
 		ID:          key.ID,
@@ -400,7 +422,9 @@ func apiKeyResponse( key *models.APIKey , display_name string , credential strin
 	}
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 // displayNames builds the id -> name lookup the key listings need, in one
 // pass, rather than reading a user record per key.
 func ( server *Server ) displayNames() ( names map[ uint64 ]string , err error ) {
@@ -412,7 +436,9 @@ func ( server *Server ) displayNames() ( names map[ uint64 ]string , err error )
 	}
 	return
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 // handleListAPIKeys lists every key, or one user's with ?user_id=N.
 func ( server *Server ) handleListAPIKeys( w http.ResponseWriter , r *http.Request ) {
 	var user_id uint64
@@ -449,7 +475,9 @@ func ( server *Server ) handleListAPIKeys( w http.ResponseWriter , r *http.Reque
 	}
 	writeJSON( w , http.StatusOK , out )
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 // handleCreateAPIKey mints a key on someone's behalf -- the CLI's way to hand
 // a CI system or a cron job a credential without anyone signing in.
 //
@@ -496,7 +524,9 @@ func ( server *Server ) handleCreateAPIKey( w http.ResponseWriter , r *http.Requ
 	}
 	writeJSON( w , http.StatusOK , apiKeyResponse( key , user.DisplayName , credential ) )
 }
+// <<< feature:api_keys
 
+// >>> feature:invite_links
 // CreateInviteLinkRequest is the body of POST /v1/invite-links. UserID is
 // the admin the link is made as: it lives only while they stay an enabled
 // admin, exactly like one made in the web UI.
@@ -506,7 +536,9 @@ type CreateInviteLinkRequest struct {
 	MaxUses int    `json:"max_uses"`
 	Days    int    `json:"days"`
 }
+// <<< feature:invite_links
 
+// >>> feature:invite_links
 // InviteLinkResponse carries the credential once, on creation.
 type InviteLinkResponse struct {
 	ID         string    `json:"id"`
@@ -515,7 +547,9 @@ type InviteLinkResponse struct {
 	ExpiresAt  time.Time `json:"expires_at"`
 	Credential string    `json:"credential,omitempty"`
 }
+// <<< feature:invite_links
 
+// >>> feature:invite_links
 func InviteLinkFromModel( link *models.InviteLink , credential string ) ( result InviteLinkResponse ) {
 	result = InviteLinkResponse{
 		ID:         link.ID,
@@ -526,7 +560,9 @@ func InviteLinkFromModel( link *models.InviteLink , credential string ) ( result
 	}
 	return
 }
+// <<< feature:invite_links
 
+// >>> feature:invite_links
 func ( server *Server ) handleCreateInviteLink( w http.ResponseWriter , r *http.Request ) {
 	body := CreateInviteLinkRequest{}
 	if decodeBody( w , r , &body ) == false { return }
@@ -541,7 +577,9 @@ func ( server *Server ) handleCreateInviteLink( w http.ResponseWriter , r *http.
 	}
 	writeJSON( w , http.StatusOK , InviteLinkFromModel( link , credential ) )
 }
+// <<< feature:invite_links
 
+// >>> feature:api_keys
 func ( server *Server ) handleRevokeAPIKey( w http.ResponseWriter , r *http.Request ) {
 	key_id := r.PathValue( "id" )
 	key , err := models.GetAPIKey( server.store , key_id )
@@ -568,7 +606,9 @@ func ( server *Server ) handleRevokeAPIKey( w http.ResponseWriter , r *http.Requ
 	}
 	writeJSON( w , http.StatusOK , apiKeyResponse( key , names[ key.UserID ] , "" ) )
 }
+// <<< feature:api_keys
 
+// >>> feature:api_keys
 // handleDeleteAPIKey answers with the key as it was just before deletion, so
 // the CLI can say what it removed.
 func ( server *Server ) handleDeleteAPIKey( w http.ResponseWriter , r *http.Request ) {
@@ -594,6 +634,7 @@ func ( server *Server ) handleDeleteAPIKey( w http.ResponseWriter , r *http.Requ
 	}
 	writeJSON( w , http.StatusOK , apiKeyResponse( key , names[ key.UserID ] , "" ) )
 }
+// <<< feature:api_keys
 
 func ( server *Server ) handleHealth( w http.ResponseWriter , r *http.Request ) {
 	writeJSON( w , http.StatusOK , HealthResponse{
@@ -635,22 +676,30 @@ func ( server *Server ) handleCreateUser( w http.ResponseWriter , r *http.Reques
 		writeError( w , http.StatusBadRequest , "role must be admin or user" )
 		return
 	}
+	options , ok := server.loginLink( w , body.LoginLinkRequest )
+	if ok == false { return }
 
 	user , err := models.CreateUser( server.store , body.DisplayName , body.Role )
 	if err != nil {
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
 	}
-	credential , err := models.IssueLoginToken( server.store , user.ID , server.cfg().LoginTokenTTL )
+	credential , info , err := models.IssueLoginLink( server.store , user.ID , options )
 	if err != nil {
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
 	}
-	server.writeOwnedUser( w , user.ID , credential )
+	server.writeOwnedUser( w , user.ID , credential , &info )
 }
 
 func ( server *Server ) handleReissueLogin( w http.ResponseWriter , r *http.Request ) {
 	user_id , ok := pathUserID( w , r )
+	if ok == false { return }
+
+	// The body is optional: no body is a link that works once.
+	body := models.LoginLinkRequest{}
+	if r.ContentLength != 0 && decodeBody( w , r , &body ) == false { return }
+	options , ok := server.loginLink( w , body )
 	if ok == false { return }
 
 	user , err := models.GetUser( server.store , user_id )
@@ -658,16 +707,16 @@ func ( server *Server ) handleReissueLogin( w http.ResponseWriter , r *http.Requ
 		writeError( w , http.StatusNotFound , fmt.Sprintf( "no user with id %d" , user_id ) )
 		return
 	}
-	credential , err := models.IssueLoginToken( server.store , user.ID , server.cfg().LoginTokenTTL )
+	credential , info , err := models.IssueLoginLink( server.store , user.ID , options )
 	if err != nil {
 		writeError( w , http.StatusInternalServerError , err.Error() )
 		return
 	}
-	server.writeOwnedUser( w , user.ID , credential )
+	server.writeOwnedUser( w , user.ID , credential , &info )
 }
 
 // handleSetDisabled goes through models.SetUserDisabled, which deletes the
-// account's sessions and unused login links in the same transaction as the
+// account's sessions and live login links in the same transaction as the
 // change. Keeping that in the model rather than in each caller is what keeps
 // "disabled" meaning "logged out now" no matter which door the change came
 // through.
@@ -694,11 +743,11 @@ func ( server *Server ) handleSetDisabled( w http.ResponseWriter , r *http.Reque
 
 	// Re-read rather than patching the copy in hand, so the response
 	// reflects what is actually stored.
-	server.writeOwnedUser( w , user.ID , "" )
+	server.writeOwnedUser( w , user.ID , "" , nil )
 }
 
 // handleRevokeAccess is models.RevokeAllCredentials over the socket: every
-// session, unused login link, and live API key the account holds stops
+// session, live login link, and live API key the account holds stops
 // working now. The account stays enabled.
 //
 // Unlike the web route, this one may cut off the owner: when it is the
@@ -719,6 +768,7 @@ func ( server *Server ) handleRevokeAccess( w http.ResponseWriter , r *http.Requ
 	writeJSON( w , http.StatusOK , revoked )
 }
 
+// >>> feature:two_factor
 // handleResetTwoFactor is models.ResetTwoFactor with the operator as the actor,
 // who may reset anyone: it is the way back for an owner locked out.
 func ( server *Server ) handleResetTwoFactor( w http.ResponseWriter , r *http.Request ) {
@@ -735,6 +785,7 @@ func ( server *Server ) handleResetTwoFactor( w http.ResponseWriter , r *http.Re
 		writeError( w , http.StatusInternalServerError , err.Error() )
 	}
 }
+// <<< feature:two_factor
 
 // handleDeleteUser is models.DeleteUser with the operator as the actor: any
 // account but the owner can be deleted, admins included. The owner has to be
@@ -765,7 +816,7 @@ func ( server *Server ) handleTransferOwner( w http.ResponseWriter , r *http.Req
 	err := models.TransferOwner( server.store , body.UserID )
 	switch {
 	case err == nil:
-		server.writeOwnedUser( w , body.UserID , "" )
+		server.writeOwnedUser( w , body.UserID , "" , nil )
 	case errors.Is( err , db.ErrNotFound ):
 		writeError( w , http.StatusNotFound , fmt.Sprintf( "no user with id %d" , body.UserID ) )
 	case errors.Is( err , models.ErrNotAdmin ):

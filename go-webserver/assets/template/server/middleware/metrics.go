@@ -1,3 +1,4 @@
+// whole-file feature:metrics
 package middleware
 
 import (

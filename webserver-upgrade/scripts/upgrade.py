@@ -12,9 +12,19 @@ Commands:
     baseline <app>                         the skill commit an unstamped app fits best
     stamp    <app> --commit SHA --features a,b
                                            write .skill-origin.yaml by hand
-    prepare  <app> [--to SHA]              merge into a staging directory
+    offers   <app> [--to SHA]              the upgrades to ask about, read-only
+    prepare  <app> [--to SHA] --skip a,b   merge into a staging directory
+    add-feature <app> a,b                  stage a part the app was scaffolded without
     apply    <app>                         copy staging into the app
+    render   <app> --out DIR [--commit SHA]
+                                           the template as this app would get it
     rollback <app>                         undo the last apply, byte for byte
+
+Fixes always land in code the app has. An upgrade, which is anything labelled as
+one in the skill's UPGRADING.md, lands only if it is wanted: see Item and sort_offers.
+A part cut out of the app (`pruned:` in its stamp) is cut out of both renders too, so
+an update brings none of it. An app from before pruning has no such list, keeps all
+its code, and goes on getting fixes in all of it. Nothing here ever removes a part.
 
 It never commits, pushes, deploys or opens a database. Everything before
 `apply` happens outside the app, so an unresolved conflict cannot reach a repo
@@ -70,6 +80,9 @@ PORT_LINES = (
 )
 TOP_LEVEL_KEY = re.compile(r"^[a-z_]+:")
 CONFLICT_LINE = re.compile(rb"^(<<<<<<<|\|\|\|\|\|\|\||>>>>>>>)( |$)", re.MULTILINE)
+ITEM_LINE = re.compile(r"^\*\*(Upgrade|Plumbing) `([a-z0-9_-]+)`: *(.*?)\*\*\s*$")
+ITEM_FIELD = re.compile(r"^(Needs|Marks|Files):")
+QUOTED = re.compile(r"`([^`]+)`")
 
 
 class Refused(Exception):
@@ -92,6 +105,8 @@ class Identity:
     port: int | None
     host_port: int | None
     features: list[str]
+    # What was cut out of this app when it was scaffolded. See prune.py.
+    pruned: list[str] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -101,6 +116,26 @@ class Action:
     data: bytes | None = None
     mode: int | None = None
     note: str = ""
+
+
+@dataclasses.dataclass
+class Item:
+    """One labelled entry in a skill's UPGRADING.md. Anything unlabelled is a fix
+    and always lands. Plumbing is never offered: it comes with what needs it."""
+    name: str
+    title: str
+    plumbing: bool = False
+    needs: list[str] = dataclasses.field(default_factory=list)
+    marks: list[str] = dataclasses.field(default_factory=list)
+    files: list[str] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class Offers:
+    ask: list[Item]  # new, and the app could use it
+    off: list[tuple[Item, list[str]]]  # new, but a feature it needs is off
+    plumbing: list[Item]  # new helpers, kept only if something taken needs them
+    earlier: list[str]  # skipped by an earlier update, from the stamp
 
 
 NOTICES = {
@@ -174,13 +209,12 @@ def read_origin(app: Path) -> dict[str, str] | None:
     return values
 
 
-def origin_text(identity: Identity, commit: str, dirty: bool = False) -> str:
+def origin_text(identity: Identity, commit: str) -> str:
     lines = [
         "# Written by the skill that scaffolded this app; `webserver-upgrade` reads and",
         "# updates it. Commit it: it is how an update knows where this app started.",
         f"skill: {identity.skill}",
         f"commit: {commit}",
-        f"dirty: {'true' if dirty else 'false'}",
         f'project_name: "{identity.name}"',
         f"slug: {identity.slug}",
     ]
@@ -188,11 +222,105 @@ def origin_text(identity: Identity, commit: str, dirty: bool = False) -> str:
         lines.append(f"module_path: {identity.module}")
     lines.append(f"port: {identity.port}")
     lines.append(f"features: [{', '.join(identity.features)}]")
+    if identity.pruned:
+        lines.append(f"pruned: [{', '.join(identity.pruned)}]")
     return "\n".join(lines) + "\n"
 
 
 def parse_features(value: str) -> list[str]:
     return [name.strip() for name in value.strip("[] ").split(",") if name.strip()]
+
+
+def parse_items(text: str) -> list[Item]:
+    items: list[Item] = []
+    current: Item | None = None
+    field = ""
+    fenced = False
+    for line in text.splitlines():
+        if line.startswith("```"):  # the format's own example is not an item
+            fenced = not fenced
+            current = None
+        if fenced:
+            continue
+        match = ITEM_LINE.match(line)
+        if match:
+            current = Item(match.group(2), match.group(3).rstrip(". "), match.group(1) == "Plumbing")
+            items.append(current)
+            field = ""
+            continue
+        if current is None:
+            continue
+        if not line.strip():
+            current = None
+            continue
+        start = ITEM_FIELD.match(line)
+        if start:
+            field = start.group(1).lower()
+        if field:
+            getattr(current, field).extend(QUOTED.findall(line))
+    return items
+
+
+def upgrade_items(commit: str, skill: str) -> list[Item]:
+    """The labelled items in the skill's UPGRADING.md at this commit. A commit
+    from before the labels has none, so everything in it counts as a fix."""
+    text = git(SKILLS_REPO, "show", f"{commit}:{skill}/UPGRADING.md", check=False)
+    return parse_items(text.decode("utf-8", errors="replace"))
+
+
+def contains(files: dict[str, File], mark: str) -> bool:
+    data = mark.encode()
+    return any(data in item.data for item in files.values())
+
+
+def sort_offers(items: list[Item], base: dict[str, File], new: dict[str, File], ours: dict[str, File], identity: Identity, table: dict[str, tuple], earlier: list[str]) -> Offers:
+    """An item is new to this update if none of its marks are in the template the
+    app is on and one is in the target, so an entry's place in UPGRADING.md does
+    not matter. The app already has a whole feature its stamp lists, and anything
+    with all its marks in the app's files: an app scaffolded from uncommitted
+    work can be ahead of its stamped commit."""
+    fresh = [item for item in items
+             if item.name not in earlier
+             and not (item.name in table and item.name in identity.features)
+             and any(contains(new, mark) for mark in item.marks)
+             and not any(contains(base, mark) for mark in item.marks)
+             and not all(contains(ours, mark) for mark in item.marks)]
+    names = {item.name for item in fresh}
+    offers = Offers([], [], [], list(earlier))
+    for item in fresh:
+        missing = [need for need in item.needs if need in identity.pruned or (need in table and need not in identity.features and need not in names)]
+        if item.plumbing:
+            offers.plumbing.append(item)
+        elif missing:
+            offers.off.append((item, missing))
+        else:
+            offers.ask.append(item)
+    return offers
+
+
+def settle(offers: Offers, unwanted: set[str]) -> tuple[list[Item], list[Item]]:
+    """What is taken and what is skipped. An upgrade that needs a skipped one is
+    skipped with it, and plumbing stays only if something taken needs it."""
+    skipped = unwanted | {item.name for item, _ in offers.off}
+    changed = True
+    while changed:
+        changed = False
+        for item in offers.ask:
+            if item.name not in skipped and skipped & set(item.needs):
+                skipped.add(item.name)
+                changed = True
+    taken = [item for item in offers.ask if item.name not in skipped]
+    wanted = {need for item in taken for need in item.needs}
+    changed = True
+    while changed:
+        changed = False
+        for item in offers.plumbing:
+            if item.name in wanted and item not in taken:
+                taken.append(item)
+                wanted |= set(item.needs)
+                changed = True
+    left = [item for item in offers.ask + [entry for entry, _ in offers.off] + offers.plumbing if item not in taken]
+    return taken, left
 
 
 def identify(app: Path, features: list[str] | None = None) -> Identity:
@@ -225,7 +353,7 @@ def identify(app: Path, features: list[str] | None = None) -> Identity:
 
     if features is None:
         features = parse_features(origin.get("features", ""))
-    return Identity(skill, name, origin.get("slug") or slugify(name), module, number(port), number(host_port), features)
+    return Identity(skill, name, origin.get("slug") or slugify(name), module, number(port), number(host_port), features, parse_features(origin.get("pruned", "")))
 
 
 # ---------------------------------------------------------------- rendering
@@ -318,6 +446,11 @@ def render(commit: str, identity: Identity, table: dict[str, tuple] | None = Non
         arguments = [sys.executable, "-B", str(scaffold), str(root / "out"), identity.name]
         if identity.skill == "go-webserver" and identity.module:
             arguments.append(identity.module)
+        # A commit from before pruning has nothing to cut, and takes no such flag.
+        if "--prune" in scaffold.read_text(encoding="utf-8"):
+            arguments += ["--prune", ",".join(identity.pruned) or "none"]
+        elif identity.pruned:
+            raise Refused(f"{commit} is older than pruning, so it cannot be rendered without {', '.join(identity.pruned)}.")
         done = subprocess.run(arguments, capture_output=True, cwd=root)
         if done.returncode != 0:
             raise Refused(f"scaffold.py at {commit} failed: {(done.stderr or done.stdout).decode(errors='replace').strip()}")
@@ -363,7 +496,7 @@ def read_app(app: Path, paths) -> dict[str, File]:
     return files
 
 
-def dirty_paths(app: Path) -> set[str]:
+def uncommitted_paths(app: Path) -> set[str]:
     output = git(app, "status", "--porcelain", "-z", "--untracked-files=all")
     paths: set[str] = set()
     records = output.split(b"\0")
@@ -557,11 +690,31 @@ def regenerate_example(actions: list[Action], ours: dict[str, File], new: dict[s
         actions.append(Action(EXAMPLE, kind, data, 0o644, "regenerated from the merged defaults"))
 
 
-def compute(app: Path, identity: Identity, old: str, new_commit: str) -> tuple[list[Action], list[str]]:
+def needs_table(commit: str, skill: str) -> dict[str, tuple[str, ...]]:
+    """Everything that can be cut at this commit, and what each part needs."""
+    with tempfile.TemporaryDirectory(prefix="webserver-upgrade-") as scratch:
+        scaffold = export_commit(commit, skill, Path(scratch)) / "scripts" / "scaffold.py"
+        spec = importlib.util.spec_from_file_location("scaffold_at_commit", scaffold)
+        module = importlib.util.module_from_spec(spec)
+        sys.dont_write_bytecode = True
+        spec.loader.exec_module(module)
+    table = {name: tuple(values[2]) for name, values in getattr(module, "FEATURES", {}).items()}
+    table.update({name: tuple(needs) for name, needs in getattr(module, "PIECES", {}).items()})
+    return table
+
+
+def render_pair(identity: Identity, old: str, new_commit: str) -> tuple[dict[str, File], dict[str, File], dict[str, tuple]]:
     new_files, table = render(new_commit, identity)
     base_files, _ = render(old, identity, table)
+    return base_files, new_files, table
+
+
+def compute(app: Path, base_files: dict[str, File], new_files: dict[str, File], left_out: set[str] = frozenset()) -> tuple[list[Action], list[str]]:
+    """The merge. `left_out` is the whole files of skipped upgrades: they are not
+    added, and one the app is already without is not reported as removed."""
     ours = read_app(app, set(base_files) | set(new_files))
     actions = plan_merge(base_files, new_files, ours)
+    actions = [action for action in actions if not (action.path in left_out and action.kind in ("add", "app-deleted"))]
     regenerate_example(actions, ours, new_files)
     added = [action.path for action in actions if action.kind == "add"]
     ignored = []
@@ -595,9 +748,11 @@ def require_origin(app: Path) -> dict[str, str]:
     origin = read_origin(app)
     if not origin:
         raise Refused(f"{app.name} has no {ORIGIN_FILE}. Run `baseline` first, then `stamp`.")
-    if origin.get("dirty") == "true":
-        print(f"Note: {app.name} was stamped from uncommitted skill changes, so {short(origin['commit'])} is only close.")
     return origin
+
+
+def files_of(items: list[Item], names) -> set[str]:
+    return {path for item in items if item.name in names for path in item.files}
 
 
 def looks_scaffolded(path: Path) -> bool:
@@ -608,6 +763,7 @@ def command_status(arguments: argparse.Namespace) -> None:
     root = Path(arguments.root).expanduser()
     rows: list[tuple[str, ...]] = []
     unmanaged: list[str] = []
+    skipped_notes: list[str] = []
     for path in sorted(root.iterdir()):
         if not path.is_dir():
             continue
@@ -619,14 +775,22 @@ def command_status(arguments: argparse.Namespace) -> None:
         identity = identify(path)
         target = resolve_commit("HEAD")
         count = behind_count(origin["commit"], target, identity.skill)
+        earlier = parse_features(origin.get("skipped", ""))
+        if earlier:
+            skipped_notes.append(f"{path.name}: {', '.join(earlier)}")
         if count == 0:
             rows.append((path.name, identity.skill, short(origin["commit"]), "up to date", ""))
             continue
-        actions, ignored = compute(path, identity, origin["commit"], target)
+        base, new, table = render_pair(identity, origin["commit"], target)
+        items = upgrade_items(target, identity.skill)
+        offers = sort_offers(items, base, new, read_app(path, new), identity, table, earlier)
+        actions, ignored = compute(path, base, new, files_of(items, earlier))
         counts = tally(actions)
         detail = ", ".join(f"{value} {key}" for key, value in sorted(counts.items()))
         if ignored:
             detail += f"; {len(ignored)} new file(s) git would ignore"
+        if offers.ask:
+            detail += f"; {len(offers.ask)} upgrade(s) to choose from"
         rows.append((path.name, identity.skill, short(origin["commit"]), f"{count} commit(s) behind", detail))
     if rows:
         width = max(len(row[0]) for row in rows)
@@ -634,6 +798,10 @@ def command_status(arguments: argparse.Namespace) -> None:
             print(f"{row[0]:<{width}}  {row[1]:<16}  {row[2]}  {row[3]}" + (f"  ({row[4]})" if row[4] else ""))
     else:
         print("No stamped apps found.")
+    if skipped_notes:
+        print("\nUpgrades left out:")
+        for note in skipped_notes:
+            print(f"  {note}")
     if unmanaged:
         print(f"\nUnmanaged, never touched: {', '.join(unmanaged)}")
     if git(SKILLS_REPO, "status", "--porcelain").strip():
@@ -697,26 +865,13 @@ def refuse_if_unsettled(app: Path, state: Path) -> None:
         return
     recorded = json.loads((journal / "journal.json").read_text(encoding="utf-8"))
     touched = set(recorded["written"]) | set(recorded["created"]) | set(recorded["deleted"])
-    if touched & dirty_paths(app):
+    if touched & uncommitted_paths(app):
         raise Refused(f"The last apply to {app.name} is not committed yet. Commit it, or run `rollback`.")
     shutil.rmtree(journal)
 
 
-def command_prepare(arguments: argparse.Namespace) -> None:
-    app = app_dir(arguments.app)
-    origin = require_origin(app)
-    identity = identify(app)
-    state = state_dir(arguments, identity)
-    refuse_if_unsettled(app, state)
-    target = resolve_commit(arguments.to)
-    if origin["commit"] == target:
-        print(f"{app.name} is already at {short(target)}.")
-        return
-    actions, ignored = compute(app, identity, origin["commit"], target)
-    dirty = sorted(dirty_paths(app) & {action.path for action in actions if action.kind in WRITES})
-    if dirty:
-        raise Refused(f"{app.name} has uncommitted changes in files this update touches: {', '.join(dirty)}")
-
+def stage(app: Path, state: Path, old: str, target: str, actions: list[Action], ignored: list[str], skipped: list[str], identity: Identity, marks: dict[str, list[str]]) -> tuple[Path, list[dict]]:
+    """Write what apply needs. Nothing here touches the app."""
     staging = state / "staging"
     shutil.rmtree(staging, ignore_errors=True)
     (staging / "files").mkdir(parents=True)
@@ -728,11 +883,17 @@ def command_prepare(arguments: argparse.Namespace) -> None:
             target_path.write_bytes(action.data)
         records.append({"path": action.path, "kind": action.kind, "mode": action.mode, "note": action.note})
     head = git(app, "rev-parse", "HEAD").decode().strip()
-    plan = {"app": str(app), "from": origin["commit"], "to": target, "head": head, "ignored": ignored, "actions": records}
+    plan = {
+        "app": str(app), "from": old, "to": target, "head": head, "ignored": ignored, "actions": records,
+        "skipped": skipped, "features": identity.features, "pruned": identity.pruned, "marks": marks,
+    }
     (staging / "plan.json").write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+    return staging, records
 
+
+def report(app: Path, old: str, target: str, actions: list[Action], ignored: list[str]) -> None:
     counts = tally(actions)
-    print(f"{app.name}: {short(origin['commit'])} -> {short(target)}")
+    print(f"{app.name}: {short(old)} -> {short(target)}")
     for kind, count in sorted(counts.items()):
         print(f"  {count:>4} {kind}")
     conflicts = [action.path for action in actions if action.kind == "conflict"]
@@ -747,7 +908,148 @@ def command_prepare(arguments: argparse.Namespace) -> None:
             print(f"  note: {action.path}: {action.note}")
     for path in ignored:
         print(f"  warning: {path} is new and git would ignore it, so it would never be committed")
+
+
+def command_add_feature(arguments: argparse.Namespace) -> None:
+    """Stage a part the app was scaffolded without, at the commit it is on: two
+    renders that differ only by that part, merged like any update. A switch comes
+    on with it. Anything it needs comes too."""
+    app = app_dir(arguments.app)
+    origin = require_origin(app)
+    identity = identify(app)
+    state = state_dir(arguments, identity)
+    refuse_if_unsettled(app, state)
+    commit = origin["commit"]
+    wanted = set(parse_features(arguments.features))
+    extra = wanted - set(identity.pruned)
+    if extra:
+        raise Refused(f"{app.name} was not scaffolded without {', '.join(sorted(extra))}, so there is nothing to add.")
+    table = needs_table(commit, identity.skill)
+    adding: set[str] = set()
+    waiting = list(wanted)
+    while waiting:
+        name = waiting.pop()
+        if name in adding or name not in identity.pruned:
+            continue
+        adding.add(name)
+        waiting.extend(table.get(name, ()))
+    base, _ = render(commit, identity)
+    _, switches = render(commit, dataclasses.replace(identity, pruned=[]))
+    after = dataclasses.replace(
+        identity,
+        features=identity.features + sorted(name for name in adding if name in switches),
+        pruned=[name for name in identity.pruned if name not in adding],
+    )
+    new, _ = render(commit, after)
+    actions, ignored = compute(app, base, new)
+    uncommitted = sorted(uncommitted_paths(app) & {action.path for action in actions if action.kind in WRITES})
+    if uncommitted:
+        raise Refused(f"{app.name} has uncommitted changes in files this touches: {', '.join(uncommitted)}")
+    staging, _ = stage(app, state, commit, commit, actions, ignored, parse_features(origin.get("skipped", "")), after, {})
+    report(app, commit, commit, actions, ignored)
+    print(f"\nAdding: {', '.join(sorted(adding))}")
+    print(f"Staged in {staging}")
+
+
+def command_prepare(arguments: argparse.Namespace) -> None:
+    app = app_dir(arguments.app)
+    origin = require_origin(app)
+    identity = identify(app)
+    state = state_dir(arguments, identity)
+    refuse_if_unsettled(app, state)
+    target = resolve_commit(arguments.to)
+    if origin["commit"] == target:
+        print(f"{app.name} is already at {short(target)}.")
+        return
+    earlier = parse_features(origin.get("skipped", ""))
+    items = upgrade_items(target, identity.skill)
+    base, new, table = render_pair(identity, origin["commit"], target)
+    offers = sort_offers(items, base, new, read_app(app, new), identity, table, earlier)
+    if offers.ask and arguments.skip is None:
+        names = ", ".join(item.name for item in offers.ask)
+        raise Refused(f"Upgrades need a decision first: {names}. Run `offers`, ask, then pass --skip a,b or --skip none.")
+    unwanted = set(parse_features(arguments.skip or "")) - {"none"}
+    known = {item.name for item in offers.ask} | {item.name for item, _ in offers.off}
+    if unwanted - known:
+        raise Refused(f"Not an upgrade in this update: {', '.join(sorted(unwanted - known))}")
+    taken, left = settle(offers, unwanted)
+    switched_on = [item.name for item in taken if item.name in table]
+    if switched_on:  # a whole feature they chose comes on, as it would in a new app
+        identity = dataclasses.replace(identity, features=identity.features + switched_on)
+        base, new, table = render_pair(identity, origin["commit"], target)
+    skipped = sorted(set(earlier) | {item.name for item in left})
+    actions, ignored = compute(app, base, new, files_of(items, skipped))
+    uncommitted = sorted(uncommitted_paths(app) & {action.path for action in actions if action.kind in WRITES})
+    if uncommitted:
+        raise Refused(f"{app.name} has uncommitted changes in files this update touches: {', '.join(uncommitted)}")
+
+    staging, records = stage(app, state, origin["commit"], target, actions, ignored, skipped, identity, {item.name: item.marks for item in left})
+    report(app, origin["commit"], target, actions, ignored)
+    if taken:
+        print(f"\nTaken: {', '.join(item.name for item in taken)}")
+    if left:
+        print("\nLeft out. Remove these from the staged files, along with the rest of each upgrade:")
+        for item in left:
+            hits = leftovers(staging / "files", {item.name: item.marks}, records, app)
+            print(f"  {item.name}: {item.title}")
+            for path, mark in hits:
+                print(f"    {path}: {mark}")
     print(f"\nStaged in {staging}")
+
+
+def leftovers(files: Path, marks: dict[str, list[str]], records: list[dict], app: Path) -> list[tuple[str, str]]:
+    """Marks of left-out upgrades in staged files, unless the app's own copy
+    already had that text, which makes it the app's and not the template's."""
+    found = []
+    for record in records:
+        staged = files / record["path"]
+        if record["kind"] not in WRITES or not staged.exists():
+            continue
+        data = staged.read_bytes()
+        own = app / record["path"]
+        ours = own.read_bytes() if own.exists() else b""
+        for mark in (mark for group in marks.values() for mark in group):
+            if mark.encode() in data and mark.encode() not in ours:
+                found.append((record["path"], mark))
+    return found
+
+
+def command_offers(arguments: argparse.Namespace) -> None:
+    app = app_dir(arguments.app)
+    origin = require_origin(app)
+    identity = identify(app)
+    target = resolve_commit(arguments.to)
+    if origin["commit"] == target:
+        print(f"{app.name} is already at {short(target)}.")
+        return
+    earlier = parse_features(origin.get("skipped", ""))
+    base, new, table = render_pair(identity, origin["commit"], target)
+    offers = sort_offers(upgrade_items(target, identity.skill), base, new, read_app(app, new), identity, table, earlier)
+    print(f"{app.name}: {short(origin['commit'])} -> {short(target)}")
+    print("\nAsk about:" if offers.ask else "\nNothing to ask about.")
+    for item in offers.ask:
+        print(f"  {item.name}: {item.title}")
+    if offers.off:
+        print("\nLeft out without asking, because a feature it needs is off:")
+        for item, missing in offers.off:
+            print(f"  {item.name}: {item.title} (needs {', '.join(missing)})")
+    if offers.earlier:
+        print(f"\nLeft out by an earlier update: {', '.join(offers.earlier)}")
+
+
+def command_render(arguments: argparse.Namespace) -> None:
+    app = app_dir(arguments.app)
+    origin = require_origin(app)
+    out = Path(arguments.out).expanduser().resolve()
+    if out.is_relative_to(app) or (out.exists() and any(out.iterdir())):
+        raise Refused(f"{out} must be empty and outside the app.")
+    commit = resolve_commit(arguments.commit) if arguments.commit else origin["commit"]
+    files, _ = render(commit, identify(app))
+    for path, item in files.items():
+        target = out / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(item.data)
+    print(f"Wrote {len(files)} file(s) to {out}, the template at {short(commit)}.")
 
 
 def command_apply(arguments: argparse.Namespace) -> None:
@@ -762,9 +1064,9 @@ def command_apply(arguments: argparse.Namespace) -> None:
     if git(app, "rev-parse", "HEAD").decode().strip() != plan["head"]:
         raise Refused(f"{app.name} has new commits since `prepare`. Run `prepare` again.")
     writes = [record for record in plan["actions"] if record["kind"] in WRITES]
-    dirty = sorted(dirty_paths(app) & {record["path"] for record in writes})
-    if dirty:
-        raise Refused(f"{app.name} changed since `prepare`: {', '.join(dirty)}")
+    uncommitted = sorted(uncommitted_paths(app) & {record["path"] for record in writes})
+    if uncommitted:
+        raise Refused(f"{app.name} changed since `prepare`: {', '.join(uncommitted)}")
     unresolved = []
     for record in writes:
         staged = staging / "files" / record["path"]
@@ -772,6 +1074,10 @@ def command_apply(arguments: argparse.Namespace) -> None:
             unresolved.append(record["path"])
     if unresolved:
         raise Refused("Conflict markers remain in: " + ", ".join(unresolved))
+    remaining = leftovers(staging / "files", plan.get("marks", {}), plan["actions"], app)
+    if remaining:
+        listed = ", ".join(f"{mark} in {path}" for path, mark in remaining)
+        raise Refused(f"Left-out upgrades are still in the staged files: {listed}")
 
     journal = state / "journal" / time.strftime("%Y%m%d-%H%M%S")
     (journal / "files").mkdir(parents=True)
@@ -809,7 +1115,15 @@ def command_apply(arguments: argparse.Namespace) -> None:
     keep(ORIGIN_FILE)
     recorded["written"].append(ORIGIN_FILE)
     text = origin_path.read_text(encoding="utf-8")
-    origin_path.write_text(re.sub(r"^commit: .*$", f"commit: {plan['to']}", text, flags=re.MULTILINE), encoding="utf-8")
+    text = re.sub(r"^commit: .*$", f"commit: {plan['to']}", text, flags=re.MULTILINE)
+    text = re.sub(r"^features: .*$", f"features: [{', '.join(plan['features'])}]", text, flags=re.MULTILINE)
+    text = re.sub(r"^pruned: .*\n", "", text, flags=re.MULTILINE)
+    if plan.get("pruned"):
+        text = text.rstrip("\n") + f"\npruned: [{', '.join(plan['pruned'])}]\n"
+    text = re.sub(r"^skipped: .*\n", "", text, flags=re.MULTILINE)
+    if plan["skipped"]:
+        text = text.rstrip("\n") + f"\nskipped: [{', '.join(plan['skipped'])}]\n"
+    origin_path.write_text(text, encoding="utf-8")
     recorded["after"][ORIGIN_FILE] = sha256(origin_path.read_bytes())
 
     (journal / "journal.json").write_text(json.dumps(recorded, indent=2) + "\n", encoding="utf-8")
@@ -871,7 +1185,24 @@ def main() -> None:
     prepare = commands.add_parser("prepare")
     prepare.add_argument("app")
     prepare.add_argument("--to", default="HEAD")
+    prepare.add_argument("--skip", help="upgrades to leave out, comma-separated, or none")
     prepare.set_defaults(run=command_prepare)
+
+    add_feature = commands.add_parser("add-feature")
+    add_feature.add_argument("app")
+    add_feature.add_argument("features", help="what to add, comma-separated")
+    add_feature.set_defaults(run=command_add_feature)
+
+    offers = commands.add_parser("offers")
+    offers.add_argument("app")
+    offers.add_argument("--to", default="HEAD")
+    offers.set_defaults(run=command_offers)
+
+    rendered = commands.add_parser("render")
+    rendered.add_argument("app")
+    rendered.add_argument("--out", required=True)
+    rendered.add_argument("--commit", help="defaults to the commit the app is on")
+    rendered.set_defaults(run=command_render)
 
     apply = commands.add_parser("apply")
     apply.add_argument("app")

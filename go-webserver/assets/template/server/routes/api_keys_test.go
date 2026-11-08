@@ -1,3 +1,4 @@
+// whole-file feature:api_keys
 package routes
 
 import (
@@ -100,4 +101,116 @@ func TestAShellStillMintsForTheOwner( t *testing.T ) {
 	_ , key , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "script" , models.RoleAdmin , time.Hour )
 	if err != nil { t.Fatal( err ) }
 	if key.CreatedBy != 0 { t.Fatalf( "%d" , key.CreatedBy ) }
+}
+
+// issued is a key for user_id, straight from the model.
+func issued( t *testing.T , fixture *authFixture , user_id uint64 , ttl time.Duration ) ( key *models.APIKey ) {
+	t.Helper()
+	_ , key , err := models.IssueAPIKey( fixture.store , user_id , "deploy" , models.RoleUser , ttl )
+	if err != nil { t.Fatal( err ) }
+	return
+}
+
+func TestRenamingAKey( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	second , _ := models.CreateUser( fixture.store , "Second admin" , models.RoleAdmin )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	admin := fixture.signIn( t , second.ID )
+	key := issued( t , fixture , fixture.alice.ID , time.Hour )
+	path := "/api/keys/" + key.ID + "/rename"
+
+	status , reply := send( t , alice , path , fiber.Map{ "name": "  bot  " } )
+	if status != fiber.StatusOK || reply[ "name" ] != "bot" { t.Fatalf( "%d %v" , status , reply ) }
+
+	// Someone else's key is not there, even for an admin on the own-keys route.
+	if status , _ = send( t , admin , path , fiber.Map{ "name": "x" } ); status != fiber.StatusNotFound { t.Fatalf( "%d" , status ) }
+	if status , _ = send( t , alice , path , fiber.Map{ "name": "   " } ); status != fiber.StatusBadRequest { t.Fatalf( "%d" , status ) }
+
+	// An undo that finds a different name leaves it alone, and says what is there.
+	status , reply = send( t , alice , path , fiber.Map{ "name": "old" , "expect": "stale" } )
+	if status != fiber.StatusConflict || reply[ "name" ] != "bot" { t.Fatalf( "%d %v" , status , reply ) }
+
+	status , _ = send( t , admin , "/api/admin/keys/" + key.ID + "/rename" , fiber.Map{ "name": "by admin" , "expect": "bot" } )
+	if status != fiber.StatusOK { t.Fatalf( "%d" , status ) }
+	if stored , _ := models.GetAPIKey( fixture.store , key.ID ); stored.Name != "by admin" { t.Fatalf( "%v" , stored.Name ) }
+
+	// A dead key keeps its history readable, so it can be tidied; a deleted one is gone.
+	models.RevokeAPIKey( fixture.store , key.ID )
+	if status , _ = send( t , alice , path , fiber.Map{ "name": "retired" } ); status != fiber.StatusOK { t.Fatalf( "%d" , status ) }
+	models.DeleteAPIKey( fixture.store , key.ID , fixture.alice.ID )
+	if status , _ = send( t , alice , path , fiber.Map{ "name": "gone" } ); status != fiber.StatusNotFound { t.Fatalf( "%d" , status ) }
+}
+
+func TestWhoMayChangeAKeysExpiry( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	second , _ := models.CreateUser( fixture.store , "Second admin" , models.RoleAdmin )
+	third , _ := models.CreateUser( fixture.store , "Third admin" , models.RoleAdmin )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	admin := fixture.signIn( t , second.ID )
+	alice := fixture.signIn( t , fixture.alice.ID )
+
+	cases := []struct {
+		name   string
+		client *browser
+		holder uint64
+		prefix string
+		status int
+	}{
+		{ "your own" , alice , fixture.alice.ID , "/api/keys/" , fiber.StatusOK },
+		{ "an admin's own, as an admin" , admin , second.ID , "/api/admin/keys/" , fiber.StatusOK },
+		{ "an admin for a user" , admin , fixture.alice.ID , "/api/admin/keys/" , fiber.StatusOK },
+		{ "the owner for an admin" , owner , second.ID , "/api/admin/keys/" , fiber.StatusOK },
+		{ "an admin for another admin" , admin , third.ID , "/api/admin/keys/" , fiber.StatusForbidden },
+		{ "an admin for the owner" , admin , fixture.owner.ID , "/api/admin/keys/" , fiber.StatusForbidden },
+		{ "a user on the admin route" , alice , second.ID , "/api/admin/keys/" , fiber.StatusForbidden },
+		{ "someone else's on the own route" , alice , second.ID , "/api/keys/" , fiber.StatusNotFound },
+	}
+	for _ , item := range cases {
+		key := issued( t , fixture , item.holder , time.Hour )
+		status , reply := send( t , item.client , item.prefix + key.ID + "/expiry" , fiber.Map{ "expires_in_days": 30 } )
+		if status != item.status { t.Fatalf( "%s: %d %v" , item.name , status , reply ) }
+		stored , _ := models.GetAPIKey( fixture.store , key.ID )
+		changed := stored.ExpiresAt.After( time.Now().Add( 24 * time.Hour ) )
+		if changed != ( item.status == fiber.StatusOK ) { t.Fatalf( "%s: expires %v" , item.name , stored.ExpiresAt ) }
+	}
+}
+
+func TestChangingAKeysExpiry( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	key := issued( t , fixture , fixture.alice.ID , time.Hour )
+	path := "/api/keys/" + key.ID + "/expiry"
+
+	for _ , bad := range []fiber.Map{ {} , { "expires_in_days": -1 } , { "expires_in_days": 3651 } } {
+		if status , _ := send( t , alice , path , bad ); status != fiber.StatusBadRequest { t.Fatalf( "%v: %d" , bad , status ) }
+	}
+
+	status , reply := send( t , alice , path , fiber.Map{ "expires_in_days": 0 } )
+	if status != fiber.StatusOK { t.Fatalf( "%d %v" , status , reply ) }
+	if _ , set := reply[ "expires_at" ]; set { t.Fatalf( "%v" , reply ) }
+
+	// Revoking is final, so an edit cannot be the way back.
+	models.RevokeAPIKey( fixture.store , key.ID )
+	if status , _ = send( t , alice , path , fiber.Map{ "expires_in_days": 30 } ); status != fiber.StatusBadRequest { t.Fatalf( "%d" , status ) }
+
+	// Nor round an expiry.
+	expired := issued( t , fixture , fixture.alice.ID , time.Nanosecond )
+	time.Sleep( time.Millisecond )
+	status , _ = send( t , alice , "/api/keys/" + expired.ID + "/expiry" , fiber.Map{ "expires_in_days": 30 } )
+	if status != fiber.StatusBadRequest { t.Fatalf( "%d" , status ) }
+}
+
+func TestAKeyCannotExtendItself( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	credential , key , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "script" , models.RoleAdmin , time.Hour )
+	if err != nil { t.Fatal( err ) }
+	for _ , path := range []string{ "/api/keys/" , "/api/admin/keys/" } {
+		request , _ := http.NewRequest( http.MethodPost , path + key.ID + "/expiry" , strings.NewReader( `{"expires_in_days":0}` ) )
+		request.Header.Set( "Content-Type" , "application/json" )
+		request.Header.Set( "Authorization" , "Bearer " + credential )
+		response , test_err := fixture.app.Test( request , fiber.TestConfig{ Timeout: 10 * time.Second } )
+		if test_err != nil { t.Fatal( test_err ) }
+		if response.StatusCode != fiber.StatusForbidden { t.Fatalf( "%s: %d" , path , response.StatusCode ) }
+	}
+	if stored , _ := models.GetAPIKey( fixture.store , key.ID ); stored.ExpiresAt == nil { t.Fatal( "it extended itself" ) }
 }

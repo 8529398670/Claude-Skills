@@ -1,3 +1,4 @@
+# whole-file feature:logs
 """Server-sent events: the event format, a hub of connected clients, and the
 response that streams to one of them. server/stream/stream.go is the same
 thing for the Go template.

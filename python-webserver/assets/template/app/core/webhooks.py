@@ -1,3 +1,4 @@
+# whole-file feature:webhooks
 """Telling other systems that something happened. Go's twin is server/webhooks.
 
 emit writes one delivery per interested endpoint to the outbox and returns;

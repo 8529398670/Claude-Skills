@@ -1,3 +1,4 @@
+// whole-file feature:api_keys
 // The API keys screen: what has standing, non-browser access to this app.
 //
 // Its own file with its own init(), per the convention in the frontend
@@ -31,6 +32,9 @@ const Keys = {
     Dom.show( Dom.get( "key-role-field" ) , me.role === "admin" );
     Dom.onSubmit( Dom.get( "create-key-form" ) , this.onCreate.bind( this ) );
     Dom.get( "copy-key-button" ).addEventListener( "click" , this.onCopy.bind( this ) );
+    Pager.sortable( "keys-table" , () => this.refresh() );
+    Pager.search( "keys-table" , "keys-search" , () => this.refresh() );
+    Pager.filter( "keys-table" , "keys-live-only" , { live: true } , () => this.refresh() );
     await this.refresh();
 
     if ( me.role !== "admin" ) return;
@@ -38,6 +42,9 @@ const Keys = {
     Dom.onSubmit( Dom.get( "create-user-key-form" ) , this.onCreateFor.bind( this ) );
     Dom.get( "user-key-user" ).addEventListener( "change" , this.onTargetChange.bind( this ) );
     Dom.get( "copy-user-key-button" ).addEventListener( "click" , () => Dom.copy( Dom.get( "user-key-secret-value" ) ) );
+    Pager.sortable( "admin-keys-table" , () => this.refreshAll() );
+    Pager.search( "admin-keys-table" , "admin-keys-search" , () => this.refreshAll() );
+    Pager.filter( "admin-keys-table" , "admin-keys-live-only" , { live: true } , () => this.refreshAll() );
     await this.refreshAll();
   },
 
@@ -68,6 +75,7 @@ const Keys = {
       const created = await Api.createKey( name , role , expiresInDays );
       this.showSecret( created.credential );
       Dom.get( "key-name" ).value = "";
+      Dom.get( "key-days" ).value = "";
       await this.refresh();
       if ( this.me.role === "admin" ) await this.refreshAll();
     } catch ( error ) {
@@ -125,15 +133,38 @@ const Keys = {
       Dom.text( Dom.get( "user-key-secret-value" ) , created.credential );
       Dom.show( Dom.get( "user-key-secret-box" ) , true );
       Dom.get( "user-key-name" ).value = "";
+      Dom.get( "user-key-days" ).value = "";
       await this.refreshAll();
     } catch ( error ) {
       App.showError( error.message );
     }
   },
 
-  // The name cell: a key someone else made says so under its name.
-  nameCell( key ) {
-    const cell = Dom.el( "td" , { text: key.name } );
+  // The name cell: the name edits in place, and a key someone else made says so
+  // under it. rename is the endpoint, as in revokeButton; refreshOther is the
+  // table this one is not. This table keeps its row, so the name being edited
+  // does not vanish from under the keyboard; the other shows the same key.
+  nameCell( key , rename , refreshOther ) {
+    const cell = Dom.el( "td" , { children: [ Dom.editable( key.name , {
+      label: I18n.get( "api_keys.table_name" ),
+      maxLength: 80,
+      save: async function ( name ) {
+        const previous = key.name;
+        await rename( key.id , name , previous );
+        key.name = name;
+        Undo.record( {
+          label: I18n.get( "undo.rename_key" ),
+          toast: true,
+          undo: async () => { await rename( key.id , previous , name ); await Keys.refreshBoth(); },
+          redo: async () => { await rename( key.id , name , previous ); await Keys.refreshBoth(); },
+        } );
+        refreshOther().catch( ( error ) => App.showError( error.message ) );
+      },
+    } ) ] } );
+    cell.appendChild( Dom.el( "div" , {
+      class: "small text-body-secondary",
+      children: [ Dom.el( "span" , { text: I18n.get( "api_keys.created" ) + " " } ) , Dom.when( key.created_at ) ],
+    } ) );
     if ( key.created_by ) {
       cell.appendChild( Dom.el( "div" , {
         class: "small text-body-secondary",
@@ -183,6 +214,45 @@ const Keys = {
     } );
   },
 
+  // Changing when a key expires. Only on a live key, since the server will not
+  // revive a dead one, and with no undo: it counts from today, so there is no
+  // exact old date to go back to, and the dialog already asked.
+  expiryButton( key , setExpiry ) {
+    const text = I18n.get( "api_keys.expiry_button" );
+    if ( !key.live || text === "" ) return null;
+    return Dom.el( "button" , {
+      class: "btn btn-sm btn-outline-secondary",
+      text: text,
+      on: { click: async function () {
+        const saved = await Dom.form( {
+          title: I18n.get( "api_keys.expiry_heading" ).replace( "{name}" , () => key.name ),
+          fields: [ {
+            name: "days",
+            label: I18n.get( "api_keys.days_label" ),
+            type: "number",
+            min: 0,
+            max: 3650,
+            required: true,
+            help: I18n.get( "api_keys.expiry_help" ),
+          } ],
+          save: ( values ) => setExpiry( key.id , values.days ),
+        } );
+        if ( saved === null ) return;
+        try {
+          await Keys.refreshBoth();
+        } catch ( error ) { App.showError( error.message ); }
+        Dom.toast( I18n.get( "api_keys.expiry_changed" ) , "ok" );
+      } },
+    } );
+  },
+
+  // Whether the server would let this admin change a key's expiry: their own, or
+  // one they could have minted, which is the same rule. refreshAll loads the
+  // accounts this looks at first.
+  mayExtend( key ) {
+    return key.user_id === this.me.id || this.targets.has( String( key.user_id ) );
+  },
+
   deleteButton( key , remove , restore ) {
     return Dom.el( "button" , {
       class: "btn btn-sm btn-outline-danger",
@@ -212,20 +282,22 @@ const Keys = {
 
   async refresh() {
     const body = Dom.get( "keys-table" ).querySelector( "tbody" );
-    await Pager.load( "keys-table" , "keys" , ( offset ) => Api.listKeys( offset ) , function ( key ) {
+    await Pager.load( "keys-table" , "keys" , ( offset ) => Api.listKeys( offset , Pager.params( "keys-table" ) ) , function ( key ) {
       // createElement + textContent throughout: a key's name is free text its
       // owner typed. See the note at the top of dom.js.
       body.appendChild( Dom.el( "tr" , { children: [
-        Keys.nameCell( key ),
+        Keys.nameCell( key , ( id , name , expect ) => Api.renameKey( id , name , expect ) ,
+          async () => { if ( Keys.me.role === "admin" ) await Keys.refreshAll(); } ),
         Dom.el( "td" , { text: key.role } ),
         Dom.el( "td" , { children: [ Keys.statusBadge( key ) ] } ),
         Dom.el( "td" , { children: [ Dom.when( key.last_used_at , I18n.get( "api_keys.never" ) ) ] } ),
         Dom.el( "td" , { children: [ Dom.when( key.expires_at , I18n.get( "api_keys.never" ) ) ] } ),
         Dom.el( "td" , { children: [
-          Dom.el( "div" , { class: "row-actions" , children: [
+          Dom.rowActions( key.name , [
+            Keys.expiryButton( key , function ( id , days ) { return Api.setKeyExpiry( id , days ); } ),
             Keys.revokeButton( key , function ( id ) { return Api.revokeKey( id ); } ),
             Keys.deleteButton( key , function ( id ) { return Api.deleteKey( id ); } , function ( id ) { return Api.restoreKey( id ); } ),
-          ].filter( Boolean ) } ),
+          ] ),
         ] } ),
       ] } ) );
     } );
@@ -234,18 +306,20 @@ const Keys = {
   async refreshAll() {
     await this.loadTargets();
     const body = Dom.get( "admin-keys-table" ).querySelector( "tbody" );
-    await Pager.load( "admin-keys-table" , "keys" , ( offset ) => Api.listAllKeys( offset ) , function ( key ) {
+    await Pager.load( "admin-keys-table" , "keys" , ( offset ) => Api.listAllKeys( offset , Pager.params( "admin-keys-table" ) ) , function ( key ) {
       body.appendChild( Dom.el( "tr" , { children: [
         Dom.el( "td" , { text: key.display_name || ( "#" + key.user_id ) } ),
-        Keys.nameCell( key ),
+        Keys.nameCell( key , ( id , name , expect ) => Api.renameAnyKey( id , name , expect ) , () => Keys.refresh() ),
         Dom.el( "td" , { text: key.role } ),
         Dom.el( "td" , { children: [ Keys.statusBadge( key ) ] } ),
         Dom.el( "td" , { children: [ Dom.when( key.last_used_at , I18n.get( "api_keys.never" ) ) ] } ),
+        Dom.el( "td" , { children: [ Dom.when( key.expires_at , I18n.get( "api_keys.never" ) ) ] } ),
         Dom.el( "td" , { children: [
-          Dom.el( "div" , { class: "row-actions" , children: [
+          Dom.rowActions( key.name , [
+            Keys.mayExtend( key ) ? Keys.expiryButton( key , function ( id , days ) { return Api.setAnyKeyExpiry( id , days ); } ) : null,
             Keys.revokeButton( key , function ( id ) { return Api.revokeAnyKey( id ); } ),
             Keys.deleteButton( key , function ( id ) { return Api.deleteAnyKey( id ); } , function ( id ) { return Api.restoreAnyKey( id ); } ),
-          ].filter( Boolean ) } ),
+          ] ),
         ] } ),
       ] } ) );
     } );

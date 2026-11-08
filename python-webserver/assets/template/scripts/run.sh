@@ -6,7 +6,8 @@
 #                                     fresh one
 #   scripts/run.sh stop               stop the copy this checkout started
 #                                     (in this terminal, another, or the
-#                                     background one scripts/login.sh starts)
+#                                     background one login.sh --background
+#                                     starts)
 #   scripts/run.sh manage <command>   run an admin command against it
 #   scripts/run.sh <anything else>    same: passed straight to `python -m app`
 #
@@ -22,8 +23,8 @@
 #   scripts/login.sh                                    owner's login link
 #   scripts/run.sh manage list-users
 #   scripts/run.sh manage create-login --name "Grace" --role user
-#   scripts/run.sh manage create-invite --user-id 1 --label "Book club"
-#   scripts/run.sh manage create-key --user-id 1 --name "CI"
+#   scripts/run.sh manage create-invite --user-id 1 --label "Book club"  # feature:invite_links
+#   scripts/run.sh manage create-key --user-id 1 --name "CI"  # feature:api_keys
 #   scripts/run.sh manage paths                         where the state lives
 #   scripts/run.sh config check
 #   scripts/run.sh config shell server                  every resolved value

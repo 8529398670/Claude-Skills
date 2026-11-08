@@ -105,7 +105,7 @@ def main() -> None:
         # scaffold.py's "next steps" are for a person scaffolding a real
         # project, not for this, so they are only shown if it fails.
         result = subprocess.run(
-            [sys.executable, str(SCRIPTS_DIR / "scaffold.py"), str(fresh), DEMO_NAME],
+            [sys.executable, str(SCRIPTS_DIR / "scaffold.py"), str(fresh), DEMO_NAME, "--prune", "none"],
             capture_output=True,
             text=True,
         )

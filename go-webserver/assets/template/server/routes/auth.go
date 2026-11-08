@@ -41,7 +41,10 @@ func ( handlers *Handlers ) ShowLoginPage( c fiber.Ctx ) ( err error ) {
 // configuration.
 func ( handlers *Handlers ) signInRules() ( rules models.SignInRules ) {
 	cfg := handlers.cfg()
-	rules = models.SignInRules{ SessionTTL: cfg.SessionTTL , TwoFactor: cfg.TwoFactorEnabled }
+	rules = models.SignInRules{
+		SessionTTL: cfg.SessionTTL,
+		TwoFactor:  cfg.TwoFactorEnabled, // feature:two_factor
+	}
 	return
 }
 
@@ -50,16 +53,18 @@ func ( handlers *Handlers ) signInRules() ( rules models.SignInRules ) {
 // Otherwise this browser switches to the new session: the one it had is ended
 // server-side, not merely replaced in the cookie jar.
 func ( handlers *Handlers ) signInResponse( c fiber.Ctx , signed *models.SignIn , payload fiber.Map , status int ) ( err error ) {
+	// >>> feature:two_factor
 	if signed.Challenge != "" {
 		err = c.JSON( fiber.Map{ "two_factor": true , "challenge": signed.Challenge } )
 		return
 	}
+	// <<< feature:two_factor
 	handlers.destroyCookieSession( c )
 	if cookie_err := handlers.Guard.SetSessionCookie( c , signed.SessionCredential ); cookie_err != nil {
 		err = serverError( c , cookie_err )
 		return
 	}
-	models.RecordSessionDevice( handlers.Store , signed.SessionCredential , c.IP() , logs.Truncate( c.Get( fiber.HeaderUserAgent ) , models.SessionUserAgentMax ) )
+	models.RecordSessionDevice( handlers.Store , signed.SessionCredential , c.IP() , logs.Truncate( c.Get( fiber.HeaderUserAgent ) , models.SessionUserAgentMax ) ) // feature:sessions
 	err = c.Status( status ).JSON( payload )
 	return
 }
@@ -104,7 +109,7 @@ func ( handlers *Handlers ) RedeemLoginLink( c fiber.Ctx ) ( err error ) {
 	}
 
 	message := "signed in with a login link"
-	if signed.Challenge != "" { message = "login link accepted, waiting for a code" }
+	if signed.Challenge != "" { message = "login link accepted, waiting for a code" } // feature:two_factor
 	handlers.auditAs( c , handlers.logUser( signed.UserID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , nil )
 	err = handlers.signInResponse( c , signed , fiber.Map{ "ok": true } , fiber.StatusOK )
 	return

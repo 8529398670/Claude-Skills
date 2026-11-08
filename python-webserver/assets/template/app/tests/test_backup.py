@@ -16,7 +16,8 @@ from pathlib import Path
 from unittest import mock
 
 from app.core import backup, config, db, encryption, server_lock
-from app.models import two_factor, users
+from app.models import users
+from app.models import two_factor  # feature:two_factor
 from app.tests.support import new_holder
 
 
@@ -26,7 +27,8 @@ class BackupTestCase(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         holder, _ = new_holder(self, app_dir=str(self.root / "data"))
-        self.cfg = replace(holder.boot(), backups=replace(holder.boot().backups, enabled=True, keep=2))
+        self.cfg = replace(holder.boot(), backups=replace(holder.boot().backups, enabled=True, keep=2))  # feature:backups
+        self.cfg = holder.boot()  # feature:!backups
         self.cfg.app_dir.mkdir(parents=True, exist_ok=True)
         (self.cfg.storage_dir / "photos").mkdir(parents=True)
         (self.cfg.storage_dir / "photos" / "a.txt").write_text("original")
@@ -117,6 +119,7 @@ class RestoreTest(BackupTestCase):
         left = [name for name in os.listdir(self.cfg.app_dir) if "before-restore" in name or name.startswith(".restore-")]
         self.assertEqual(left, [])
 
+    # >>> feature:two_factor
     def test_moves_an_old_backup_onto_the_current_key(self) -> None:
         """Two-factor secret included, so secret.key itself never changes."""
         user = users.create_user(self.store, "Second factor", users.ROLE_USER)
@@ -132,6 +135,7 @@ class RestoreTest(BackupTestCase):
         record = store.get(db.BUCKET_USERS, user.id)
         self.assertEqual(encryption.xchacha_decrypt_string(current.secret_key, record["totp_pending"]), secret)
 
+    # <<< feature:two_factor
     def without_bucket(self, made: Path, bucket: str) -> Path:
         """A backup as code from before bucket existed made it: the same file
         with that table gone, as the Python template's every backup would be
@@ -220,6 +224,7 @@ class RestoreTest(BackupTestCase):
             backup._read_manifest(staging)
 
 
+# >>> feature:backups
 class ScheduleTest(BackupTestCase):
     def test_follows_the_settings(self) -> None:
         clock = [datetime(2026, 11, 5, 3, 0, 0, tzinfo=timezone.utc)]
@@ -237,6 +242,7 @@ class ScheduleTest(BackupTestCase):
         self.assertEqual(len(names), self.cfg.backups.keep)
         self.assertEqual(names[0], "auto-20261108-030000.tar.gz")
         self.assertTrue(manual.path.is_file(), "a backup made by hand was pruned")
+# <<< feature:backups
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+// whole-file feature:files
 // The Files screen: your uploads, and for an admin, everyone's.
 //
 // A file goes up in pieces, one at a time, the size the server says. The server
@@ -20,6 +21,8 @@ const Files = {
     Dom.get( "file-input" ).addEventListener( "change" , this.onPick.bind( this ) );
     Dom.get( "file-cancel" ).addEventListener( "click" , () => { this.cancelled = true; } );
     this.watchDrops( Dom.get( "files-panel" ) );
+    Pager.sortable( "files-table" , () => this.refresh() );
+    Pager.search( "files-table" , "files-search" , () => this.refresh() );
     window.addEventListener( "beforeunload" , ( event ) => {
       if ( this.uploading ) event.preventDefault();
     } );
@@ -33,6 +36,8 @@ const Files = {
   async onEveryone( event ) {
     this.everyone = event.target.checked;
     Dom.show( Dom.get( "files-owner-column" ) , this.everyone );
+    // Your own list has no owner to sort by.
+    if ( Pager.sortOf( "files-table" ).sort === "user_name" ) Pager.clearSort( "files-table" );
     await this.refresh();
   },
 
@@ -77,7 +82,8 @@ const Files = {
       if ( !carriesFiles( event ) ) return;
       event.preventDefault();
       mark( false );
-      if ( !this.uploading ) this.uploadAll( Array.from( event.dataTransfer.files ) );
+      if ( this.uploading ) Dom.toast( I18n.get( "files.drop_busy" ) , "error" );
+      else this.uploadAll( Array.from( event.dataTransfer.files ) );
     } );
   },
 
@@ -95,10 +101,12 @@ const Files = {
     this.cancelled = false;
     const failed = [];
     let reason = "";
+    let uploaded = 0;
     for ( const file of picked ) {
       if ( this.cancelled ) break;
       try {
         await this.upload( file );
+        uploaded += 1;
       } catch ( error ) {
         if ( this.cancelled ) break;
         failed.push( file.name );
@@ -115,6 +123,7 @@ const Files = {
         .replace( "{reason}" , I18n.get( "errors." + reason ) || reason ) );
     }
     await this.refresh();
+    if ( uploaded > 0 ) Dom.toast( I18n.get( "files.uploaded" ).replace( "{count}" , uploaded ) , "ok" );
   },
 
   showProgress( file , sent ) {
@@ -194,33 +203,63 @@ const Files = {
     } );
   },
 
+  // The name edits in place, with undo. The server cleans it as it does an
+  // upload's, so what it answers is what the row shows. It is someone's own
+  // text, and Dom.editable builds with textContent.
+  nameCell( file , link ) {
+    const mine = !this.everyone;
+    const rename = ( name , expect ) => mine ? Api.renameFile( file.id , name , expect ) : Api.renameAnyFile( file.id , name , expect );
+    return Dom.editable( file.name , {
+      label: I18n.get( "files.table_name" ),
+      maxLength: 255,
+      save: async ( value ) => {
+        const previous = file.name;
+        const renamed = await rename( value , previous );
+        if ( renamed.name === previous ) return previous;
+        file.name = renamed.name;
+        link.download = renamed.name;
+        Undo.record( {
+          label: I18n.get( "undo.rename_file" ),
+          toast: true,
+          undo: async () => { await rename( previous , renamed.name ); await this.refresh(); },
+          redo: async () => { await rename( renamed.name , previous ); await this.refresh(); },
+        } );
+        return renamed.name;
+      },
+    } );
+  },
+
   renderRow( file ) {
     const path = this.everyone ? Api.anyFileDownloadPath( file.id ) : Api.fileDownloadPath( file.id );
+    const download = Dom.el( "a" , {
+      class: "btn btn-sm btn-outline-secondary",
+      text: I18n.get( "files.download_button" ),
+      attrs: { href: path , download: file.name },
+    } );
+    // What the uploader said it is: shown, and never served. See the server.
+    const type = file.type ? Dom.el( "div" , { class: "small text-body-secondary" , text: file.type } ) : null;
     const cells = [
-      Dom.el( "td" , { class: "text-break" , text: file.name } ),
+      Dom.el( "td" , { class: "text-break" , children: [ this.nameCell( file , download ) , type ].filter( Boolean ) } ),
       Dom.el( "td" , { class: "text-nowrap" , text: this.size( file.size ) } ),
       Dom.el( "td" , { class: "text-nowrap" , children: [ Dom.when( file.created_at ) ] } ),
-      Dom.el( "td" , { class: "text-nowrap" , children: [
-        Dom.el( "a" , {
-          class: "btn btn-sm btn-outline-secondary me-1",
-          text: I18n.get( "files.download_button" ),
-          attrs: { href: path , download: file.name },
-        } ),
+      Dom.el( "td" , { class: "text-nowrap" , children: [ Dom.rowActions( file.name , [
+        download,
         Dom.el( "button" , {
           class: "btn btn-sm btn-outline-danger",
           text: I18n.get( "files.delete_button" ),
           on: { click: () => this.remove( file ) },
         } ),
-      ] } ),
+      ] ) ] } ),
     ];
     if ( this.everyone ) cells.splice( 1 , 0 , Dom.el( "td" , { text: file.user_name || ( "#" + file.user_id ) } ) );
     Dom.get( "files-table" ).querySelector( "tbody" ).appendChild( Dom.el( "tr" , { children: cells } ) );
   },
 
   async refresh() {
-    const fetchPage = ( offset ) => this.everyone ? Api.allFiles( offset ) : Api.files( offset );
+    const params = Pager.params( "files-table" );
+    const fetchPage = ( offset ) => this.everyone ? Api.allFiles( offset , params ) : Api.files( offset , params );
     const page = await Pager.load( "files-table" , "files" , fetchPage , this.renderRow.bind( this ) );
-    if ( page ) Dom.show( Dom.get( "files-empty" ) , page.total === 0 );
+    if ( page ) Dom.show( Dom.get( "files-empty" ) , page.total === 0 && !Pager.narrowed( "files-table" ) );
     await this.refreshUsage();
   },
 };

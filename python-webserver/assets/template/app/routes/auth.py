@@ -19,9 +19,10 @@ from starlette.responses import JSONResponse, Response
 
 from app.core.config import Config
 from app.core.logs import KIND_AUTH, LEVEL_INFO, LEVEL_WARN, anonymous
-from app.core.middleware import client_ip, trusted_for
+from app.core.middleware import client_ip, trusted_for  # feature:sessions
 from app.core.security import set_session_cookie
-from app.models import login_tokens, sessions
+from app.models import login_tokens
+from app.models import sessions  # feature:sessions
 from app.models.sign_in import SignIn, SignInRules
 from app.routes.account import destroy_cookie_session
 from app.routes.helpers import bad_request, forbidden, get_config, get_store, read_json, run
@@ -38,7 +39,8 @@ def same_origin_json(request: Request) -> bool:
 
 
 def sign_in_rules(cfg: Config) -> SignInRules:
-    return SignInRules(session_ttl_seconds=cfg.session_ttl_seconds, two_factor=cfg.two_factor_enabled)
+    return SignInRules(session_ttl_seconds=cfg.session_ttl_seconds, two_factor=cfg.two_factor_enabled)  # feature:two_factor
+    return SignInRules(session_ttl_seconds=cfg.session_ttl_seconds)  # feature:!two_factor
 
 
 async def sign_in_response(request: Request, signed: SignIn, payload: dict[str, Any], status: int) -> Response:
@@ -46,15 +48,18 @@ async def sign_in_response(request: Request, signed: SignIn, payload: dict[str, 
     which asks for the code, and nothing changes in this browser yet.
     Otherwise this browser switches to the new session: the one it had is
     ended server-side, not merely replaced in the cookie jar."""
+    # >>> feature:two_factor
     if signed.challenge:
         return JSONResponse({"two_factor": True, "challenge": signed.challenge})
+    # <<< feature:two_factor
     await destroy_cookie_session(request)
     response = JSONResponse(payload, status_code=status)
     set_session_cookie(response, get_config(request), signed.session_credential)
-    await _remember_client(request, signed.session_credential)
+    await _remember_client(request, signed.session_credential)  # feature:sessions
     return response
 
 
+# >>> feature:sessions
 async def _remember_client(request: Request, credential: str) -> None:
     """Best effort: the person is signed in by now, and a sign-in is not worth
     failing over what the Account screen will show about it."""
@@ -69,6 +74,7 @@ async def _remember_client(request: Request, credential: str) -> None:
         print(f"[sessions] could not note where a sign-in came from: {error}", flush=True)
 
 
+# <<< feature:sessions
 async def redeem_login_link(request: Request) -> Response:
     """The one state-changing route with no CSRF token -- there is no session
     yet to hold one -- so it is guarded differently. A forged login signs a
@@ -94,6 +100,7 @@ async def redeem_login_link(request: Request) -> Response:
     if signed is None:
         audit_as(request, anonymous(), KIND_AUTH, LEVEL_WARN, "login link refused")
         return bad_request("invalid login link")
-    message = "login link accepted, waiting for a code" if signed.challenge else "signed in with a login link"
+    message = "login link accepted, waiting for a code" if signed.challenge else "signed in with a login link"  # feature:two_factor
+    message = "signed in with a login link"  # feature:!two_factor
     audit_as(request, await run(user_actor, store, signed.user_id, "session"), KIND_AUTH, LEVEL_INFO, message)
     return await sign_in_response(request, signed, {"ok": True}, 200)

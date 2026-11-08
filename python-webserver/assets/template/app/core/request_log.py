@@ -1,3 +1,4 @@
+# whole-file feature:logs
 """One activity-log entry per request: who (LoadActor has run by the time
 this does -- it sits inside it in main.build_app), from where, what was
 asked, how it ended and how long it took. A 5xx is logged as kind "error"

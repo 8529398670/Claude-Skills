@@ -1,3 +1,4 @@
+// whole-file feature:logs
 package logs
 
 import (
@@ -20,13 +21,29 @@ import (
 //	status  a status code, or a class: 5xx, 4xx
 //	method  GET, POST, ...
 //	path    the start of the request path
-//	ip      the start of the address
+//	ip      the start of the address, or part of what the owner calls it
 //	action  a page action: click nav submit undo redo error fetch_fail session_start
 //	screen  the screen a page action happened on
 //
 // An unknown key is free text, so pasting "a:b" from an entry still finds it.
 type Query struct {
 	terms []term
+	names func( ip string ) string
+}
+
+// WithNames is the same search, also matching what the owner calls an address:
+// free text and ip: both find it. Names are not in the log, so the search has to
+// be told them.
+func ( query Query ) WithNames( names func( ip string ) string ) ( named Query ) {
+	named = query
+	named.names = names
+	return
+}
+
+// name is what an address is called, or "" with no names to ask.
+func ( query Query ) name( ip string ) ( result string ) {
+	if query.names != nil { result = query.names( ip ) }
+	return
 }
 
 type term struct {
@@ -100,7 +117,7 @@ func ( query Query ) Empty() ( result bool ) {
 func ( query Query ) Match( entry *Entry , text []byte ) ( result bool ) {
 	lowered := string( text )
 	for _ , item := range query.terms {
-		if item.holds( entry , lowered ) == item.negate {
+		if item.holds( entry , lowered , strings.ToLower( query.name( entry.IP ) ) ) == item.negate {
 			return
 		}
 	}
@@ -108,9 +125,9 @@ func ( query Query ) Match( entry *Entry , text []byte ) ( result bool ) {
 	return
 }
 
-func ( item term ) holds( entry *Entry , text string ) ( result bool ) {
+func ( item term ) holds( entry *Entry , text string , name string ) ( result bool ) {
 	for _ , value := range item.values {
-		if item.matches( entry , text , value ) {
+		if item.matches( entry , text , name , value ) {
 			result = true
 			return
 		}
@@ -118,10 +135,10 @@ func ( item term ) holds( entry *Entry , text string ) ( result bool ) {
 	return
 }
 
-func ( item term ) matches( entry *Entry , text string , value string ) ( result bool ) {
+func ( item term ) matches( entry *Entry , text string , name string , value string ) ( result bool ) {
 	switch item.key {
 	case "":
-		result = strings.Contains( text , value )
+		result = strings.Contains( text , value ) || strings.Contains( name , value )
 	case "kind":
 		result = strings.ToLower( entry.Kind ) == value
 	case "level":
@@ -143,7 +160,7 @@ func ( item term ) matches( entry *Entry , text string , value string ) ( result
 	case "path":
 		result = entry.Request != nil && strings.HasPrefix( strings.ToLower( entry.Request.Path ) , value )
 	case "ip":
-		result = strings.HasPrefix( strings.ToLower( entry.IP ) , value )
+		result = strings.HasPrefix( strings.ToLower( entry.IP ) , value ) || strings.Contains( name , value )
 	case "action":
 		result = entry.UI != nil && strings.ToLower( entry.UI.Action ) == value
 	case "screen":

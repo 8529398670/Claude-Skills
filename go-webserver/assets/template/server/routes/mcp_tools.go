@@ -1,10 +1,11 @@
+// whole-file feature:mcp
 package routes
 
 import (
 	fiber "github.com/gofiber/fiber/v3"
 
 	mcp "{{MODULE_PATH}}/server/mcp"
-	models "{{MODULE_PATH}}/server/models"
+	models "{{MODULE_PATH}}/server/models" // feature:invite_links
 )
 
 // The tools /mcp offers (see server/mcp for the protocol and the rules a tool
@@ -62,7 +63,7 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 	server.Register( &mcp.Tool{
 		Name:        "admin_set_user_disabled",
 		Title:       "Disable or enable a user (admin)",
-		Description: "Switch an account off (disabled: true) or back on (false). Disabling signs it out everywhere and voids its unused login links; its API keys stop working while it is off. Reversible. The owner and your own account cannot be disabled.",
+		Description: "Switch an account off (disabled: true) or back on (false). Disabling signs it out everywhere and voids its live login link; its API keys stop working while it is off. Reversible. The owner and your own account cannot be disabled.",
 		AdminOnly:   true,
 		InputSchema: fiber.Map{
 			"type": "object",
@@ -95,7 +96,7 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 	server.Register( &mcp.Tool{
 		Name:        "admin_revoke_access",
 		Title:       "Revoke a user's access (admin)",
-		Description: "For an account that may be compromised: ends every session and voids every unused login link and API key it holds, at once. The account stays enabled; someone with a browser session must issue a new login link to let its owner back in. The owner and your own account cannot be revoked.",
+		Description: "For an account that may be compromised: ends every session and voids its live login link and every API key it holds, at once. The account stays enabled; someone with a browser session must issue a new login link to let its owner back in. The owner and your own account cannot be revoked.",
 		Destructive: true,
 		AdminOnly:   true,
 		InputSchema: fiber.Map{
@@ -123,6 +124,7 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 		},
 	} )
 
+	// >>> feature:invite_links
 	server.Register( &mcp.Tool{
 		Name:        "admin_list_invite_links",
 		Title:       "List invite links (admin)",
@@ -161,11 +163,12 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 				err = mcp.Refuse( "no such invite link" )
 				return
 			}
-			handlers.Webhooks.Emit( models.EventInviteLinkRevoked , map[string]any{ "link_id": args.LinkID } )
+			handlers.Webhooks.Emit( models.EventInviteLinkRevoked , map[string]any{ "link_id": args.LinkID } ) // feature:webhooks
 			result = fiber.Map{ "ok": true }
 			return
 		},
 	} )
+	// <<< feature:invite_links
 }
 
 // refusalError hands a shared rule's refusal to MCP in the same words the

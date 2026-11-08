@@ -1,3 +1,4 @@
+# whole-file feature:sessions
 """A person's own sessions: which devices are signed in, and signing them out
 (app/models/sessions.py). A session is required, so an API key gets 403, and
 every id is checked against the account asking: someone else's session and one
@@ -15,7 +16,8 @@ from app.core.db import Store
 from app.core.logs import KIND_ADMIN, KIND_AUTH
 from app.core.security import actor_from, check_csrf
 from app.models import sessions, to_iso, users
-from app.routes.helpers import bad_request, error, forbidden, get_store, not_found, parse_id, read_json, run, send_page
+from app.models import ip_names  # feature:logs
+from app.routes.helpers import bad_request, conflict, error, forbidden, get_store, not_found, parse_id, read_json, run, send_page
 from app.routes.logs import audit
 
 
@@ -34,15 +36,34 @@ def session_row(session: sessions.Session, current_id: str) -> dict[str, Any]:
         row["ip"] = session.ip
     if session.user_agent:
         row["user_agent"] = session.user_agent
+    if session.label:
+        row["label"] = session.label
     return row
 
 
 async def list_my_sessions(request: Request) -> Response:
-    actor = actor_from(request)
-    found = await run(sessions.list_sessions, get_store(request), actor.user.id)
-    return send_page(request, "sessions", [session_row(session, actor.session.id) for session in found])
+    store, actor = get_store(request), actor_from(request)
+    found = await run(sessions.list_sessions, store, actor.user.id)
+    rows = [session_row(session, actor.session.id) for session in found]
+    # >>> feature:logs
+    if actor.user.id == await run(users.get_owner_id, store):
+        await _name_rows(store, rows)
+    # <<< feature:logs
+    return send_page(request, "sessions", rows)
 
 
+# >>> feature:logs
+async def _name_rows(store: Store, rows: list[dict[str, Any]]) -> None:
+    """Adds what the owner calls each address. Names are the owner's own notes
+    about people, so they go to the owner and nobody else."""
+    namer = await run(ip_names.load_namer, store)
+    for row in rows:
+        name = namer(row.get("ip", ""))
+        if name:
+            row["ip_name"] = name
+
+
+# <<< feature:logs
 def _target_of(store: Store, self_id: int, raw_id: str) -> tuple[int, bool] | Response:
     """Whose sessions an admin route is asking about, and whether the owner is
     asking. Nobody but the owner reaches the owner's, the same rule as revoking
@@ -69,9 +90,18 @@ async def list_user_sessions(request: Request) -> Response:
         return target
     user_id, by_owner = target
     rows = [session_row(session, actor.session.id) for session in await run(sessions.list_sessions, store, user_id)]
+    # >>> feature:logs
+    if by_owner:
+        await _name_rows(store, rows)
+    else:
+        for row in rows:
+            row.pop("ip", None)
+    # <<< feature:logs
+    # >>> feature:!logs
     if not by_owner:
         for row in rows:
             row.pop("ip", None)
+    # <<< feature:!logs
     return send_page(request, "sessions", rows)
 
 
@@ -94,6 +124,32 @@ async def revoke_user_session(request: Request) -> Response:
         return not_found("not found")
     audit(request, KIND_ADMIN, "session revoked", {"user_id": user_id})
     return JSONResponse({"ok": True})
+
+
+async def label_one(request: Request) -> Response:
+    """Name one of your own devices, this one included. An empty label clears
+    the name. Admins see a label but cannot set one: it is what the person
+    calls their own device."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    label, expect = body.get("label"), body.get("expect")
+    if not sessions.valid_session_label(label):
+        return bad_request("a device name can be at most 80 characters")
+    if expect is not None and not isinstance(expect, str):
+        return bad_request("expect must be a string")
+    actor = actor_from(request)
+    try:
+        found = await run(sessions.label_session, get_store(request), actor.user.id, request.path_params["session_id"], label, expect)
+    except users.RenameConflictError as stale:
+        return conflict(str(stale), label=stale.current)
+    if not found:
+        return not_found("not found")
+    # Not the label: it is the person's own words about where they are.
+    audit(request, KIND_AUTH, "session_labelled", {})
+    return JSONResponse({"ok": True, "label": label.strip()})
 
 
 async def revoke_one(request: Request) -> Response:

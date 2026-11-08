@@ -39,14 +39,14 @@ import (
 	language "{{MODULE_PATH}}/server/language"
 	logs "{{MODULE_PATH}}/server/logs"
 	manage "{{MODULE_PATH}}/server/manage"
-	metrics "{{MODULE_PATH}}/server/metrics"
-	models "{{MODULE_PATH}}/server/models"
+	metrics "{{MODULE_PATH}}/server/metrics" // feature:metrics
+	models "{{MODULE_PATH}}/server/models" // feature:webhooks
 	middleware "{{MODULE_PATH}}/server/middleware"
 	routes "{{MODULE_PATH}}/server/routes"
 	security "{{MODULE_PATH}}/server/security"
 	static "{{MODULE_PATH}}/server/static"
-	webhooks "{{MODULE_PATH}}/server/webhooks"
-	stream "{{MODULE_PATH}}/server/stream"
+	webhooks "{{MODULE_PATH}}/server/webhooks" // feature:webhooks
+	stream "{{MODULE_PATH}}/server/stream" // feature:logs
 )
 
 // How long a shutdown waits, first for requests to finish and then for
@@ -56,8 +56,8 @@ import (
 const (
 	drainWait   = 10 * time.Second
 	jobStopWait = 5 * time.Second
-	// A few browsers with the Logs screen open is all there should ever be.
-	logStreamLimit = 8
+	// A few browsers with the Logs screen open is all there should ever be. // feature:logs
+	logStreamLimit = 8 // feature:logs
 )
 
 // The frontend and every shipped YAML file, compiled into the binary.
@@ -78,10 +78,12 @@ var (
 	//go:embed config/language.yaml
 	embeddedLanguage []byte
 
+	// >>> feature:openapi
 	// Embedded only, unlike language.yaml: it describes the routes compiled
 	// into this binary, so a copy on disk could only disagree with them.
 	//go:embed config/openapi.json
 	embeddedOpenAPI []byte
+	// <<< feature:openapi
 
 	//go:embed config/defaults.yaml
 	embeddedDefaults []byte
@@ -205,11 +207,14 @@ func run() ( err error ) {
 
 	// The activity log writes from its own goroutine; Close, deferred here,
 	// runs after the server has stopped, so the last requests make it to disk.
+	// >>> feature:logs
 	logger := logs.New( cfg.Logs , cfg.SecretKey , cfg.EncryptAtRest )
 	log_stream := stream.NewHub( logStreamLimit )
 	logger.OnFlushed( func() { log_stream.Publish( "changed" , "1" ) } )
 	logger.Start()
 	defer logger.Close()
+	// <<< feature:logs
+	var logger *logs.Logger // feature:!logs
 	logger.System( logs.LevelInfo , "server started" , map[string]any{ "version": version } )
 	defer logger.System( logs.LevelInfo , "server stopped" , nil )
 	if cfg.SecretMigrated {
@@ -218,9 +223,11 @@ func run() ( err error ) {
 
 	// A change to config.yaml reaches the activity log's own settings, and
 	// is reported on stdout and in the log itself.
+	// >>> feature:logs
 	settings.OnChange( func( _ *config.Config , next *config.Config ) {
 		logger.Apply( next.Logs )
 	} )
+	// <<< feature:logs
 	settings.Report = func( level string , message string , detail map[string]any ) {
 		log.Printf( "[config] %s" , message )
 		logger.System( level , message , detail )
@@ -230,10 +237,11 @@ func run() ( err error ) {
 
 	guard := security.New( store , settings )
 	handlers := routes.New( store , settings , guard , lang , static_server , version )
-	handlers.Logs = logger
+	handlers.Logs = logger // feature:logs
 	registry := jobs.New( store , logger )
 	jobs.Housekeeping( registry , store , logger , settings )
-	handlers.Jobs = registry
+	handlers.Jobs = registry // feature:jobs|metrics
+	// >>> feature:webhooks
 	dispatcher := webhooks.New( store , settings )
 	registry.Register( webhooks.JobName , webhooks.JobInterval , dispatcher.Run )
 	dispatcher.Nudge = func() { registry.RunNow( webhooks.JobName ) }
@@ -245,11 +253,12 @@ func run() ( err error ) {
 		}
 	}
 	handlers.Webhooks = dispatcher
-	recorder := metrics.New()
-	handlers.Metrics = recorder
-	handlers.ErrorPages = error_pages
-	handlers.OpenAPI = embeddedOpenAPI
-	handlers.LogStream = log_stream
+	// <<< feature:webhooks
+	recorder := metrics.New() // feature:metrics
+	handlers.Metrics = recorder // feature:metrics
+	handlers.ErrorPages = error_pages // feature:maintenance
+	handlers.OpenAPI = embeddedOpenAPI // feature:openapi
+	handlers.LogStream = log_stream // feature:logs
 
 	app := fiber.New( fiber.Config{
 		AppName: cfg.ProjectName,
@@ -276,11 +285,11 @@ func run() ( err error ) {
 	// carry a reference and be counted, and neither depends on the activity
 	// log being on.
 	app.Use( middleware.RequestID() )
-	app.Use( middleware.Metrics( recorder ) )
+	app.Use( middleware.Metrics( recorder ) ) // feature:metrics
 	app.Use( middleware.Recover( settings ) )
 	app.Use( middleware.SecurityHeaders( settings ) )
 	app.Use( middleware.RateLimit( settings ) )
-	app.Use( middleware.RequestLog( logger ) )
+	app.Use( middleware.RequestLog( logger ) ) // feature:logs
 
 	handlers.Register( app )
 
@@ -306,9 +315,9 @@ func run() ( err error ) {
 		// come through, and letting a manage command start against a
 		// database that is about to close would fail confusingly.
 		control_server.Close()
-		// Streams never finish by themselves, so the drain would wait out its
-		// whole timeout for any page left open.
-		log_stream.Close()
+		// Streams never finish by themselves, so the drain would wait out its // feature:logs
+		// whole timeout for any page left open. // feature:logs
+		log_stream.Close() // feature:logs
 		drain()
 	}()
 
@@ -336,9 +345,11 @@ func run() ( err error ) {
 		log.Printf( "[config] warning: %s" , cfg.ConfigWarning )
 	}
 	log.Printf( "[state]  %s" , cfg.AppDir )
+	// >>> feature:logs
 	if logger.Enabled() {
 		log.Printf( "[logs]   %s (keeping %d days, up to %d MB)" , cfg.Logs.Dir , cfg.Logs.RetentionDays , cfg.Logs.MaxTotalBytes / 1024 / 1024 )
 	}
+	// <<< feature:logs
 	log.Printf( "[assets] %s" , bundle.Source )
 	log.Printf( "[control] %s" , control_server.Path() )
 	err = app.Listen( cfg.ListenAddress() , fiber.ListenConfig{

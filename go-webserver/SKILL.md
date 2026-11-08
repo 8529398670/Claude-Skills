@@ -1,6 +1,6 @@
 ---
 name: go-webserver
-description: Scaffold a new security-hardened Go + Fiber v3 web server with bolt (bbolt) storage, link-based login (no open signup -- admins hand out one-time login links, or one multi-use invite link a whole group chat can join through), optional password login the owner switches on, optional two-factor sign-in, encrypted file uploads, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + docker/run.sh with no docker-compose, a scripts/build.sh that cross-compiles single-file portable binaries with the whole frontend embedded, scripts/run.sh and scripts/login.sh that report the real URL, paths and state, one config/config.yaml that configures the server, Docker, and the build (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. It copies every feature but switches on only the ones the app needs, working that out from what the app does, so the rest stay one setting away. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Go -- trigger on "build me a Go webserver", "new Fiber app", "golang backend with logins", "scaffold a Go web project with Docker", "I need a small internal tool in Go", or any Go web project that needs auth and static file serving rather than a bare HTTP handler. Also trigger when someone wants a Go web app shipped as one self-contained executable with no Docker and no runtime dependencies -- "single binary web app", "embed the frontend with go:embed", "cross-compile for linux and windows", "one file I can just hand someone", "where should the app keep its database and config". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, bolt storage, or Docker packaging to a Go web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Go API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my Fiber app", "service account for CI", "add an MCP server/endpoint", "let Claude (Code) use my app", "add password login", or "add 2FA / two-factor / TOTP". This is the Go counterpart to the `python-webserver` skill -- pick this one whenever Go, golang, or Fiber is mentioned, and that one for Python/Starlette.
+description: Scaffold a new security-hardened Go + Fiber v3 web server with bolt (bbolt) storage, link-based login (no open signup -- admins hand out login links -- one-time by default, or reusable a set number of times or until they expire -- or one multi-use invite link a whole group chat can join through), optional password login the owner switches on, optional two-factor sign-in, encrypted file uploads, always-fresh gzip'd static assets, all UI text in a language.yaml file, a hardened Alpine Dockerfile + docker/run.sh with no docker-compose, a scripts/build.sh that cross-compiles single-file portable binaries with the whole frontend embedded, scripts/run.sh and scripts/login.sh that report the real URL, paths and state, one config/config.yaml that configures the server, Docker, and the build (nothing reads environment variables), and one state directory convention (~/.config/APP/) holding the database and app storage. It copies only the features the app needs, working that out from what the app does; the rest can be added later with the webserver-upgrade skill. Use this whenever the user wants to start a website, web app, internal tool, dashboard, or API from scratch in Go -- trigger on "build me a Go webserver", "new Fiber app", "golang backend with logins", "scaffold a Go web project with Docker", "I need a small internal tool in Go", or any Go web project that needs auth and static file serving rather than a bare HTTP handler. Also trigger when someone wants a Go web app shipped as one self-contained executable with no Docker and no runtime dependencies -- "single binary web app", "embed the frontend with go:embed", "cross-compile for linux and windows", "one file I can just hand someone", "where should the app keep its database and config". Also use it when asked to add a login system, an admin panel, invite links, API keys or programmatic/machine access, bolt storage, or Docker packaging to a Go web project that has none -- trigger on "a link I can drop in our group chat so everyone can join", "let a script call my Go API", "API tokens with admin and read-only levels", "how do I authenticate a cron job against my Fiber app", "service account for CI", "add an MCP server/endpoint", "let Claude (Code) use my app", "add password login", or "add 2FA / two-factor / TOTP". This is the Go counterpart to the `python-webserver` skill -- pick this one whenever Go, golang, or Fiber is mentioned, and that one for Python/Starlette.
 ---
 
 # Go webserver scaffolder
@@ -19,7 +19,9 @@ project.
   secure cookie (opening alone spends nothing, so link previews cannot burn
   it). Admins mint more links for more people, and anyone signed in can
   mint a fresh one for their own account to sign in on another device.
-  That, plus the invite links below, is how every account starts.
+  A link works once by default; whoever makes it can let it work up to N
+  times or any number of times, until a chosen expiry or never, and cancel
+  it later. That, plus the invite links below, is how every account starts.
 - **Passwords are an option, off by default.** With `auth.passwords` on,
   someone already signed in can set a username and password. The owner
   switches it on in Settings and can block one account. The browser hashes
@@ -93,10 +95,13 @@ project.
   server alone (`scripts/run.sh manage list-users`). **`scripts/login.sh`**
   prints a clickable login link for the owner (user 1) from whichever
   deployment is live -- the local server or the docker container -- and says
-  which. With neither running it starts the local server in the background
-  (log in `.run/server.log`, `scripts/run.sh stop` stops it) and waits until
-  it answers, so the link works the moment it is printed; `--no-start` writes
-  it into the database offline instead. `run.bat` / `login.bat` are the same
+  which, then exits. With neither running it prints the link and starts the
+  local server right there in the foreground, so Ctrl-C stops it; on a first
+  start the server prints the owner's link itself. `--no-start` only writes
+  the link into the database, and `--background` starts the server detached
+  (log in `.run/server.log`, `scripts/run.sh stop` stops it) and exits, which
+  is the one to use from a non-interactive shell, where the foreground start
+  would never return. `run.bat` / `login.bat` are the same
   on Windows. Run inside the skill's own `assets/template/`, they stamp a demo project
   into `~/.cache/go-webserver-demo/` (via `scripts/demo.py`) and runs
   that, so the template can be tried without scaffolding anything.
@@ -205,10 +210,10 @@ a real `github.com/...` path.
 
 ## Step 1b: Choose the features
 
-Every feature's code goes into every project. What you choose is which ones
-start **switched on**: an unused one has no screen, its routes answer 404, and
-it sits there until someone turns it on in Settings. So a wrong call is cheap,
-and the point is a project that shows only what it needs.
+A project gets only the features it uses. One left off is **cut out**: no code,
+no screen, no routes, no settings. Adding it later is one `add-feature` run of the
+`webserver-upgrade` skill, which brings its code in and switches it on. So a wrong
+call is cheap, and the point is a project that holds only what it needs.
 
 Work it out from what the app does. Do not interview the user about this.
 Pass exactly the features with a reason to be on:
@@ -223,22 +228,26 @@ Pass exactly the features with a reason to be on:
 | `passwords` | has people who want to come back without asking for a new link |
 | `two_factor` | has real accounts: anyone besides the owner, or anything reachable from the internet |
 | `metrics` | is watched by Prometheus, Grafana, or similar (brings `api_keys`) |
-| `backups` | holds data worth keeping in a long-lived deployment |
+| `backups` | holds data worth keeping in a long-lived deployment and should back itself up on a schedule |
 
 A feature the description gives no reason for stays off. `two_factor` is the
 one exception: it stays on unless the app is plainly a one-person tool on the
 owner's own machine (that is `--features none`), because it costs people nothing
 until they choose it. If it is unclear who will use the app, it stays on.
 
-Sign-in links, sessions, users, the activity log, background jobs, Settings, and
-maintenance mode are the core: always on, and not on this list.
+Sign-in links, session cookies, users, and `manage backup` and `manage restore` are
+the core, in every project: `backups` is only the schedule, because a project should
+never be without a way to back up by hand. The
+activity log (`logs`), the devices list (`sessions`), the Jobs screen (`jobs`),
+`maintenance`, the Settings screen (`settings`), `appearance`, `shortcuts` and the
+API spec (`openapi`) come with every project too, unless the user asks for a smaller
+app or the app plainly has no use for one. Then name them with `--without`.
 
 Say what you chose in one line, with the reason for anything unusual, and go
 straight on to scaffolding. For example: "Features: files and two_factor, since
-it is a shared document store with real accounts; everything else stays off, one
-switch away in Settings." The user can correct you at any point, and doing so
-needs no rescaffold. Only if they asked for "everything" do you leave `--features`
-out, which keeps the template's own defaults.
+it is a shared document store with real accounts; the rest are left out, and one
+`add-feature` run brings any of them in." The user can correct you at any point, and
+doing so needs no rescaffold. If they asked for "everything", list all nine.
 
 ## Step 2: Scaffold
 
@@ -266,8 +275,15 @@ When you change `assets/template/`, add an entry to `UPGRADING.md` in this skill
 
 `--features` is the exact list from Step 1b, comma-separated, or `none`. It sets
 those switches in `config/defaults.yaml`, so `config.yaml`, the example, and a fresh
-clone all agree. A feature that needs another brings it along and says so, an unknown
-name stops before anything is written, and the summary prints what is on and off.
+clone all agree, and cuts the rest out with `scripts/prune.py`. `--without` cuts other
+parts too. A feature that needs another brings it along and says so, an unknown name
+stops before anything is written, and the summary prints what is on and what was left
+out. What was cut is recorded under `pruned:` in `.skill-origin.yaml`.
+
+The template carries markers saying which code belongs to which part: the top of
+`scripts/prune.py` explains them. New code that belongs to one part needs one, and
+`webserver-upgrade/scripts/check_features.py` proves the template still builds and
+passes its tests with every part alone and every part removed.
 
 Each project also gets **its own port and its own session cookie name**:
 `scaffold.py` picks a random free port in 20000-39999 for `server.port` and
@@ -359,12 +375,14 @@ ports they ran on. Do not reset either to a shared value.
     js/theme.js               # light/dark/preset themes, applied before first paint
     js/nav.js                 # sidebar: shows the screen the URL hash names
     js/undo.js                # Ctrl+Z / Ctrl+Y history every screen records into
+    js/shortcuts.js           # every shortcut; the per-user Shortcuts screen
     js/track.js               # sends what people do on the page to the log
     js/logs.js                # the owner's Logs screen
     js/jobs.js                # the owner's Jobs screen
     js/sessions.js            # "where you're signed in" on the Account screen
     js/fresh.js               # asks the server again on coming back to a tab
     js/qr.js                  # QR codes for 2FA and for login and invite links
+    js/login_links.js         # how often and how long a login link works
     js/dom.js, i18n.js, api.js, app.js, keys.js, files.js,
       join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
       password.js, two_factor.js    # password form and panel; 2FA step and panel
@@ -372,7 +390,7 @@ ports they ran on. Do not reset either to a shared value.
   scripts/
     run.sh, run.bat           # local run: (re)starts the server; with args, the CLI
     login.sh, login.bat       # the owner's login link, from whatever is live
-                              # (starts the server in the background if nothing is)
+                              # (starts the server right there if nothing is)
     build.sh                  # cross-compiles single-file portable binaries
     lib.sh                    # shared by run.sh and login.sh (sourced)
   docker/
@@ -534,8 +552,9 @@ scripts/run.sh
 scripts/login.sh   # from another terminal: a fresh owner login link
 ```
 
-(`scripts/login.sh` on its own also works: with no server running it starts
-one in the background and prints a link that is ready to click.)
+(`scripts/login.sh` on its own also works: with no server running it prints
+a link and starts one in that terminal, where Ctrl-C stops it. Add
+`--background` to detach it instead.)
 
 `scaffold.py` already wrote `config/config.yaml` and `config/secret.key`, and
 `scripts/run.sh` builds `./<slug>` (Go's build cache makes an unchanged tree a
@@ -561,6 +580,9 @@ actually doing it:
 - the admin panel creates a user and produces a working link for them,
 - using the first link a second time fails (single-use), and so does a link
   replaced by "New link",
+- a link made with **Works: 3 times** signs in three times and refuses the
+  fourth; the user's row shows "Link: 2 of 3 used" in between, and
+  **Cancel link** stops one made with **Any number of times / Never**,
 - a POST without a `csrf_token` is rejected with 403 -- logout included.
 
 Then exercise the API keys, because the interesting property is the ceiling
@@ -649,9 +671,10 @@ Then the features an admin and the owner lean on:
 - with two sessions signed in, ending one from the other and then clicking
   anything in the ended one lands on the signed-out page saying why, not on a
   banner reading "not authenticated",
-- the navbar's button switches light and dark, signed in and signed out; a fresh
-  browser opens light whatever the system is set to, and a choice survives a
-  reload,
+- the Appearance screen switches the theme (without `appearance`, the navbar's
+  button switches light and dark, signed in and signed out, and with it there is
+  no navbar button); a fresh browser opens light whatever the system is set to,
+  and a choice survives a reload,
 - double-clicking **Create login link** makes one account,
 - **QR code** beside a login or invite link shows a code that scans to that link,
   and a new link hides the old code,

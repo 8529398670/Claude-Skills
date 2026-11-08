@@ -1,3 +1,4 @@
+# whole-file feature:webhooks
 """Webhooks: endpoints that want to hear about things, and the outbox of what
 is on its way to them. app/core/webhooks.py does the sending. Go's twin is
 server/models/webhook.go.
@@ -10,7 +11,7 @@ subscribers.
 
 A webhook's secret signs what is sent to it, so unlike a key's secret it has
 to come back: it is sealed with the secret key on its own, the way a TOTP
-secret is, because records may be stored unencrypted. two_factor.rekey_record
+secret is, because records may be stored unencrypted. sealed.rekey_record
 carries it across a rotation.
 """
 from __future__ import annotations
@@ -23,6 +24,7 @@ from typing import Any
 from app.core import encryption
 from app.core.db import BUCKET_WEBHOOK_DELIVERIES, BUCKET_WEBHOOKS, Record, Store
 from app.models import RestoreGoneError, deleted_long_ago, from_iso, mark_deleted, to_iso, unmark_deleted, utc_now
+from app.models.users import RenameConflictError
 
 EVENT_USER_CREATED = "user.created"
 EVENT_USER_DISABLED = "user.disabled"
@@ -68,11 +70,21 @@ URL_MAX = 2000
 BACKOFF = (timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=30), timedelta(hours=2), timedelta(hours=12))
 
 BAD_WEBHOOK_MESSAGE = "name must be 1-80 characters, the url at most 2000, and at least one known event picked"
+BAD_NAME_MESSAGE = "name must be 1-80 characters"
+BAD_TARGET_MESSAGE = "the url must be at most 2000 characters, with at least one known event picked"
 
 
 class BadWebhookError(ValueError):
     def __init__(self) -> None:
         super().__init__(BAD_WEBHOOK_MESSAGE)
+
+
+class WebhookChangedError(Exception):
+    """The address or events were not what the caller expected, so an undo
+    cannot overwrite a later edit."""
+
+    def __init__(self) -> None:
+        super().__init__("the webhook was changed somewhere else in the meantime")
 
 
 @dataclass
@@ -175,9 +187,20 @@ class Delivery:
 def valid_webhook(name: object, url: object, events: object) -> bool:
     """Everything but the address, which is app.core.webhooks.check_url's job:
     that depends on the running config."""
-    if not isinstance(name, str) or not isinstance(url, str) or not isinstance(events, list):
+    return valid_webhook_name(name) and valid_webhook_target(url, events)
+
+
+def valid_webhook_name(name: object) -> bool:
+    """The name half of valid_webhook, for a rename."""
+    return isinstance(name, str) and 1 <= len(name.strip()) <= NAME_MAX
+
+
+def valid_webhook_target(url: object, events: object) -> bool:
+    """The rest of valid_webhook. The address itself is check_url's job here
+    too."""
+    if not isinstance(url, str) or not isinstance(events, list):
         return False
-    if not 1 <= len(name.strip()) <= NAME_MAX or not 1 <= len(url) <= URL_MAX or not events:
+    if not 1 <= len(url) <= URL_MAX or not events:
         return False
     return all(event == ALL_EVENTS or event in EVENTS for event in events)
 
@@ -231,6 +254,72 @@ def set_enabled(store: Store, webhook_id: str, enabled: bool) -> bool:
             record["enabled"] = enabled
 
     return store.update_value(BUCKET_WEBHOOKS, webhook_id, mutate) is not None and found
+
+
+def rename_webhook(store: Store, webhook_id: str, name: str, expect: str | None = None) -> bool:
+    """Change an endpoint's name. False when there is none or it is deleted.
+
+    expect, when given, is the name the caller believes is stored, as in
+    users.rename_user: RenameConflictError if it is not."""
+    found = False
+
+    def mutate(record: Record) -> None:
+        nonlocal found
+        if record.get("deleted_at") is not None:
+            return
+        found = True
+        if expect is not None and record["name"] != expect.strip():
+            raise RenameConflictError(record["name"])
+        record["name"] = name.strip()
+
+    return store.update_value(BUCKET_WEBHOOKS, webhook_id, mutate) is not None and found
+
+
+def set_webhook_target(store: Store, webhook_id: str, url: str, events: list[str], expect: tuple[str, list[str]] | None = None) -> bool:
+    """Change an endpoint's address and events. The sender reads the endpoint
+    at each attempt, so deliveries still waiting go to the new address: that
+    is what fixing a mistyped one needs. Their events were picked when they
+    were queued and stay queued. False when there is no such endpoint or it is
+    deleted.
+
+    expect, when given, is the (url, events) the caller believes is stored:
+    WebhookChangedError if it is not, so an undo cannot overwrite a later
+    edit."""
+    found = False
+
+    def mutate(record: Record) -> None:
+        nonlocal found
+        if record.get("deleted_at") is not None:
+            return
+        found = True
+        if expect is not None and (record["url"], record["events"]) != (expect[0], expect[1]):
+            raise WebhookChangedError()
+        record["url"] = url
+        record["events"] = list(events)
+
+    return store.update_value(BUCKET_WEBHOOKS, webhook_id, mutate) is not None and found
+
+
+def rotate_webhook_secret(store: Store, secret_key: str, webhook_id: str) -> str | None:
+    """Give an endpoint a new signing secret and return it, the only time it
+    is shown, as with create_webhook. The old one stops at once and cannot
+    come back. Each attempt is signed as it is sent, so a receiver that
+    refuses deliveries until it has the new secret gets them on a retry. None
+    when there is no such endpoint or it is deleted."""
+    secret = "whsec_" + encryption.url_token(24)
+    sealed = encryption.xchacha_encrypt_string(secret_key, secret)
+    found = False
+
+    def mutate(record: Record) -> None:
+        nonlocal found
+        if record.get("deleted_at") is not None:
+            return
+        found = True
+        record["secret"] = sealed
+
+    if store.update_value(BUCKET_WEBHOOKS, webhook_id, mutate) is None or not found:
+        return None
+    return secret
 
 
 def delete_webhook(store: Store, webhook_id: str, actor_id: int) -> bool:

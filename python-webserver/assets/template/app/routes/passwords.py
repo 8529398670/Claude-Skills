@@ -1,3 +1,4 @@
+# whole-file feature:passwords
 """Password sign-in (app/models/passwords.py). None of this exists while
 auth.passwords is off -- RequirePasswords answers 404 -- except
 /api/login/options, which is how the signed-out page finds out.
@@ -14,13 +15,14 @@ from app.core.encryption import BadKeyError, CipherTextError
 from app.core.logs import KIND_ADMIN, KIND_AUTH, LEVEL_INFO, LEVEL_WARN, anonymous
 from app.core.middleware import client_ip, trusted_for
 from app.core.security import actor_from, check_csrf, decrypt_cookie
-from app.models import passwords, two_factor
+from app.models import passwords
+from app.models import two_factor  # feature:two_factor
 from app.models.attempts import AttemptGuard
 from app.models.sessions import split_credential
 from app.routes.auth import same_origin_json, sign_in_response, sign_in_rules
 from app.routes.helpers import bad_request, conflict, error, forbidden, get_config, get_store, not_found, parse_id, read_json, run, server_error
 from app.routes.logs import audit, audit_as, user_actor
-from app.routes.two_factor import CODES
+from app.routes.two_factor import CODES  # feature:two_factor
 
 # Per name typed, not per account, so a lockout does not say which names are
 # real. A wrong guess from one address across many names is what the second
@@ -34,7 +36,8 @@ async def login_options(request: Request) -> Response:
     everyone: the salt is not a secret, and there is deliberately nothing here
     that depends on a username."""
     cfg = get_config(request)
-    payload = {"passwords": cfg.passwords_enabled, "two_factor": cfg.two_factor_enabled}
+    payload = {"passwords": cfg.passwords_enabled, "two_factor": cfg.two_factor_enabled}  # feature:two_factor
+    payload = {"passwords": cfg.passwords_enabled, "two_factor": False}  # feature:!two_factor
     if cfg.passwords_enabled:
         payload["salt"] = await run(passwords.install_salt, get_store(request))
     return JSONResponse(payload)
@@ -64,7 +67,8 @@ async def password_login(request: Request) -> Response:
         audit_as(request, anonymous(), KIND_AUTH, LEVEL_WARN, "password refused")
         return bad_request("invalid_login")
     NAMES.record(name, True)
-    message = "password accepted, waiting for a code" if signed.challenge else "signed in with a password"
+    message = "password accepted, waiting for a code" if signed.challenge else "signed in with a password"  # feature:two_factor
+    message = "signed in with a password"  # feature:!two_factor
     audit_as(request, await run(user_actor, store, user.id, "session"), KIND_AUTH, LEVEL_INFO, message)
     return await sign_in_response(request, signed, {"ok": True}, 200)
 
@@ -92,13 +96,15 @@ async def set_password(request: Request) -> Response:
 
     store, cfg = get_store(request), get_config(request)
     user = actor_from(request).user
+    # >>> feature:two_factor
     if CODES.locked(user.id):
         return error(429, "two_factor_locked")
+    # <<< feature:two_factor
     digest = body.get("password_digest")
     try:
         found = await run(
             passwords.set_password, store, user.id, body.get("username"), digest, _session_id(request),
-            body.get("code"), cfg.two_factor_enabled, cfg.secret_key,
+            body.get("code"), cfg.two_factor_enabled, cfg.secret_key,  # feature:two_factor
         )
     except passwords.BadUsernameError:
         return bad_request("bad_username")
@@ -108,9 +114,11 @@ async def set_password(request: Request) -> Response:
         return conflict("username_taken")
     except passwords.PasswordBlockedError:
         return forbidden("password_blocked")
+    # >>> feature:two_factor
     except two_factor.WrongCodeError:
         CODES.record(user.id, False)
         return forbidden("two_factor_wrong")
+    # <<< feature:two_factor
     if not found:
         return server_error(request, "set password: the signed-in account has no record")
     audit(request, KIND_AUTH, "password removed" if digest == "" else "password changed")

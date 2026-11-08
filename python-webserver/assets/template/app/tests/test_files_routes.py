@@ -1,3 +1,4 @@
+# whole-file feature:files
 """Uploads through the real routes: who may reach whose file, what a download
 says about itself, and a client resuming. Go's twin is
 server/routes/files_test.go."""
@@ -7,7 +8,8 @@ from dataclasses import replace
 from typing import Any
 
 from app.core.config import FILE_CHUNK_BYTES as CHUNK
-from app.models import api_keys, users
+from app.models import users
+from app.models import api_keys  # feature:api_keys
 from app.routes.files import content_disposition
 from app.tests.route_support import RoutesTestCase
 
@@ -38,6 +40,41 @@ class FilesRoutes(RoutesTestCase):
         status, finished = self.post(f"/api/files/{reply['id']}/finish", cookie)
         self.assertEqual(status, 200, finished)
         return reply["id"]
+
+    def test_renaming(self) -> None:
+        content = b"the same bytes"
+        file_id = self.uploaded(self.user_cookie, "old.txt", content)
+        path = f"/api/files/{file_id}/rename"
+
+        # Cleaned like an upload's name, and the reply says what was stored.
+        status, reply = self.post(path, self.user_cookie, name="..\\\\dir/new name.txt")
+        self.assertEqual((status, reply["name"]), (200, "new name.txt"))
+        for bad in ("  ", "dir/", "a" * 256, 7):
+            self.assertEqual(self.post(path, self.user_cookie, name=bad)[0], 400, bad)
+
+        # Only the record changed: the download has the new name and the same bytes.
+        response = self.request("GET", f"/api/files/{file_id}/download", cookie=self.user_cookie)
+        self.assertEqual(response.content, content)
+        self.assertIn("new", response.headers["content-disposition"])
+
+        # An undo that finds a different name leaves it alone, and says what is there.
+        status, reply = self.post(path, self.user_cookie, name="old.txt", expect="stale.txt")
+        self.assertEqual((status, reply["name"]), (409, "new name.txt"))
+
+        self.assertEqual(self.post(f"/api/files/{file_id}/delete", self.user_cookie)[0], 200)
+        self.assertEqual(self.post(path, self.user_cookie, name="gone.txt")[0], 404)
+
+    def test_a_file_still_uploading_cannot_be_renamed(self) -> None:
+        status, reply = self.post("/api/files", self.user_cookie, name="big.bin", size=10, type="")
+        self.assertEqual(status, 201, reply)
+        self.assertEqual(self.post(f"/api/files/{reply['id']}/rename", self.user_cookie, name="x")[0], 404)
+
+    def test_who_may_rename_whose_file(self) -> None:
+        file_id = self.uploaded(self.user_cookie, "theirs.txt", b"x")
+        self.assertEqual(self.post(f"/api/files/{file_id}/rename", self.owner_cookie, name="x")[0], 404)
+        self.assertEqual(self.post(f"/api/admin/files/{file_id}/rename", self.user_cookie, name="x")[0], 403)
+        status, reply = self.post(f"/api/admin/files/{file_id}/rename", self.owner_cookie, name="tidied.txt")
+        self.assertEqual((status, reply["name"]), (200, "tidied.txt"))
 
     def test_storage_says_what_is_used_and_what_is_left(self) -> None:
         self.uploaded(self.user_cookie, "a.txt", b"x" * 1000)
@@ -98,6 +135,7 @@ class FilesRoutes(RoutesTestCase):
         self.assertEqual(self.post(f"/api/admin/files/{file_id}/restore", self.admin_cookie)[0], 200)
         self.assertEqual(self.call("GET", f"/api/files/{file_id}", cookie=self.user_cookie)[0], 200)
 
+    # >>> feature:api_keys
     def test_a_key_reaches_its_own_files_but_an_admin_key_cannot_open_others(self) -> None:
         file_id = self.uploaded(self.user_cookie, "a.txt", b"theirs")
         key, _ = api_keys.issue_api_key(self.store, self.user.id, "script", users.ROLE_USER, 3600)
@@ -112,6 +150,7 @@ class FilesRoutes(RoutesTestCase):
         self.assertEqual(self.call("GET", "/api/admin/files", key=self.admin_key)[0], 200)
         self.assertEqual(self.request("GET", f"/api/admin/files/{file_id}/download", key=self.admin_key).status_code, 403)
 
+    # <<< feature:api_keys
     def test_a_piece_needs_its_csrf_token(self) -> None:
         _, created = self.post("/api/files", self.user_cookie, name="a", size=1)
         self.assertEqual(self.piece(created["id"], 0, b"x", cookie=self.user_cookie, csrf=False)[0], 403)

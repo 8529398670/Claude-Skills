@@ -1,3 +1,4 @@
+// whole-file feature:files
 package routes
 
 import (
@@ -142,6 +143,7 @@ func TestAnAdminCanOpenAndRemoveAnyFile( t *testing.T ) {
 	if status , _ := alice.do( t , http.MethodGet , "/api/files/" + file_id , nil ); status != 200 { t.Fatalf( "not back: %d" , status ) }
 }
 
+// >>> feature:api_keys
 func TestAKeyReachesItsOwnFilesButAnAdminKeyCannotOpenOthers( t *testing.T ) {
 	fixture := newFilesFixture( t )
 	alice := fixture.signIn( t , fixture.alice.ID )
@@ -169,6 +171,7 @@ func TestAKeyReachesItsOwnFilesButAnAdminKeyCannotOpenOthers( t *testing.T ) {
 	if response , _ = raw( t , nobody , http.MethodGet , "/api/admin/files" , nil , bearer( admin_key ) ); response.StatusCode != 200 { t.Fatalf( "list: %d" , response.StatusCode ) }
 	if response , _ = raw( t , nobody , http.MethodGet , "/api/admin/files/" + file_id + "/download" , nil , bearer( admin_key ) ); response.StatusCode != 403 { t.Fatalf( "download: %d" , response.StatusCode ) }
 }
+// <<< feature:api_keys
 
 func TestAPieceNeedsItsCSRFToken( t *testing.T ) {
 	fixture := newFilesFixture( t )
@@ -237,6 +240,54 @@ func TestSwitchedOffEveryRouteIsGone( t *testing.T ) {
 	if status , _ := owner.do( t , http.MethodGet , "/api/admin/files" , nil ); status != 404 { t.Fatalf( "%d" , status ) }
 	_ , me := alice.do( t , http.MethodGet , "/api/me" , nil )
 	if me[ "files_enabled" ] != false { t.Fatalf( "%v" , me ) }
+}
+
+func TestRenamingAFile( t *testing.T ) {
+	fixture := newFilesFixture( t )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	content := []byte( "the same bytes" )
+	id := uploaded( t , alice , "old.txt" , content )
+	path := "/api/files/" + id + "/rename"
+
+	// Cleaned like an upload's name, and the reply says what was stored.
+	status , reply := send( t , alice , path , fiber.Map{ "name": `..\\dir/new name.txt` } )
+	if status != fiber.StatusOK || reply[ "name" ] != "new name.txt" { t.Fatalf( "%d %v" , status , reply ) }
+	for _ , bad := range []string{ "  " , "dir/" , strings.Repeat( "a" , 256 ) } {
+		if status , _ = send( t , alice , path , fiber.Map{ "name": bad } ); status != fiber.StatusBadRequest { t.Fatalf( "%q: %d" , bad , status ) }
+	}
+
+	// Only the record changed: the download has the new name and the same bytes.
+	response , got := raw( t , alice , http.MethodGet , "/api/files/"+id+"/download" , nil , nil )
+	if bytes.Equal( got , content ) == false { t.Fatalf( "%q" , got ) }
+	if strings.Contains( response.Header.Get( "Content-Disposition" ) , "new" ) == false { t.Fatalf( "%v" , response.Header ) }
+
+	// An undo that finds a different name leaves it alone, and says what is there.
+	status , reply = send( t , alice , path , fiber.Map{ "name": "old.txt" , "expect": "stale.txt" } )
+	if status != fiber.StatusConflict || reply[ "name" ] != "new name.txt" { t.Fatalf( "%d %v" , status , reply ) }
+
+	models.DeleteFile( fixture.store , id , fixture.alice.ID )
+	if status , _ = send( t , alice , path , fiber.Map{ "name": "gone.txt" } ); status != fiber.StatusNotFound { t.Fatalf( "%d" , status ) }
+}
+
+func TestAFileStillUploadingCannotBeRenamed( t *testing.T ) {
+	fixture := newFilesFixture( t )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	status , reply := send( t , alice , "/api/files" , fiber.Map{ "name": "big.bin" , "size": 10 } )
+	if status != fiber.StatusCreated { t.Fatalf( "%d %v" , status , reply ) }
+	id , _ := reply[ "id" ].( string )
+	if status , _ = send( t , alice , "/api/files/"+id+"/rename" , fiber.Map{ "name": "x" } ); status != fiber.StatusNotFound { t.Fatalf( "%d" , status ) }
+}
+
+func TestWhoMayRenameWhoseFile( t *testing.T ) {
+	fixture := newFilesFixture( t )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	id := uploaded( t , alice , "hers.txt" , []byte( "x" ) )
+
+	if status , _ := send( t , owner , "/api/files/"+id+"/rename" , fiber.Map{ "name": "x" } ); status != fiber.StatusNotFound { t.Fatalf( "%d" , status ) }
+	if status , _ := send( t , alice , "/api/admin/files/"+id+"/rename" , fiber.Map{ "name": "x" } ); status != fiber.StatusForbidden { t.Fatalf( "%d" , status ) }
+	status , reply := send( t , owner , "/api/admin/files/"+id+"/rename" , fiber.Map{ "name": "tidied.txt" } )
+	if status != fiber.StatusOK || reply[ "name" ] != "tidied.txt" { t.Fatalf( "%d %v" , status , reply ) }
 }
 
 func TestDeleteAndUndo( t *testing.T ) {

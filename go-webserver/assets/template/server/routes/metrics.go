@@ -1,3 +1,4 @@
+// whole-file feature:metrics
 package routes
 
 import (
@@ -23,9 +24,11 @@ func ( handlers *Handlers ) RequireMetrics( c fiber.Ctx ) ( err error ) {
 // GetMetrics is what a Prometheus scrape reads. See server/metrics.
 func ( handlers *Handlers ) GetMetrics( c fiber.Ctx ) ( err error ) {
 	extra := metrics.Extra{}
+	// >>> feature:logs
 	if handlers.Logs.Enabled() {
 		extra.LogsDropped = handlers.Logs.Dropped()
 	}
+	// <<< feature:logs
 	if handlers.Jobs != nil {
 		for _ , job := range handlers.Jobs.Status() {
 			extra.Jobs = append( extra.Jobs , metrics.Job{ Name: job.Name , LastSuccess: job.LastSuccess , LastFailure: job.LastFailure } )

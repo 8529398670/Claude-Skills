@@ -1,3 +1,4 @@
+// whole-file feature:logs
 package routes
 
 import (
@@ -5,13 +6,13 @@ import (
 	json "encoding/json"
 	errors "errors"
 	strconv "strconv"
+	strings "strings"
 	sync "sync"
 	time "time"
 
 	fiber "github.com/gofiber/fiber/v3"
 
 	logs "{{MODULE_PATH}}/server/logs"
-	middleware "{{MODULE_PATH}}/server/middleware"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 	stream "{{MODULE_PATH}}/server/stream"
@@ -51,8 +52,22 @@ func ( handlers *Handlers ) logSettings() ( settings fiber.Map ) {
 	return
 }
 
+// logQuery is a search that knows what the owner calls each address, which
+// reading a day, searching and downloading all need.
+func ( handlers *Handlers ) logQuery( text string ) ( query logs.Query , err error ) {
+	namer , err := models.LoadIPNamer( handlers.Store )
+	if err != nil { return }
+	query = logs.ParseQuery( text ).WithNames( namer.Name )
+	return
+}
+
 func ( handlers *Handlers ) ListLogDays( c fiber.Ctx ) ( err error ) {
-	days , total , list_err := handlers.Logs.Days( logs.ParseQuery( c.Query( "q" ) ) )
+	query , query_err := handlers.logQuery( c.Query( "q" ) )
+	if query_err != nil {
+		err = serverError( c , query_err )
+		return
+	}
+	days , total , list_err := handlers.Logs.Days( query )
 	if list_err != nil {
 		err = serverError( c , list_err )
 		return
@@ -90,7 +105,12 @@ func ( handlers *Handlers ) GetLogDay( c fiber.Ctx ) ( err error ) {
 		}
 		limit = parsed
 	}
-	records , next , read_err := handlers.Logs.ReadDay( day , logs.ParseQuery( c.Query( "q" ) ) , before , limit )
+	query , query_err := handlers.logQuery( c.Query( "q" ) )
+	if query_err != nil {
+		err = serverError( c , query_err )
+		return
+	}
+	records , next , read_err := handlers.Logs.ReadDay( day , query , before , limit )
 	if read_err != nil {
 		err = serverError( c , read_err )
 		return
@@ -100,17 +120,23 @@ func ( handlers *Handlers ) GetLogDay( c fiber.Ctx ) ( err error ) {
 }
 
 // DownloadLogDay streams a day as plain JSON lines, decrypted: the file a
-// person can grep, or hand to whatever reads logs.
+// person can grep, or hand to whatever reads logs. Each line has ip_name beside
+// the address, as named when this was asked for.
 func ( handlers *Handlers ) DownloadLogDay( c fiber.Ctx ) ( err error ) {
 	day := c.Params( "date" )
 	if logs.ValidDay( day ) == false {
 		err = badRequest( c , "bad_day" )
 		return
 	}
+	query , query_err := handlers.logQuery( "" )
+	if query_err != nil {
+		err = serverError( c , query_err )
+		return
+	}
 	c.Set( fiber.HeaderContentType , "application/x-ndjson" )
 	c.Set( fiber.HeaderContentDisposition , `attachment; filename="logs-`+day+`.jsonl"` )
 	c.Response().SetBodyStreamWriter( func( writer *bufio.Writer ) {
-		handlers.Logs.Download( day , writer )
+		handlers.Logs.Download( day , query , writer )
 		writer.Flush()
 	} )
 	return
@@ -176,6 +202,80 @@ func ( handlers *Handlers ) PruneLogs( c fiber.Ctx ) ( err error ) {
 	}
 	handlers.audit( c , logs.KindAdmin , "logs pruned" , fiber.Map{ "compressed": result.Compressed , "deleted": result.Deleted } )
 	err = c.JSON( result )
+	return
+}
+
+type ipNameRequest struct {
+	Target    string `json:"target"`
+	Name      string `json:"name"`
+	CSRFToken string `json:"csrf_token"`
+}
+
+// ListIPNames is everything the owner has named. It is short by nature, so
+// unlike the lists people's activity grows, it comes whole.
+func ( handlers *Handlers ) ListIPNames( c fiber.Ctx ) ( err error ) {
+	names , list_err := models.ListIPNames( handlers.Store )
+	if list_err != nil {
+		err = serverError( c , list_err )
+		return
+	}
+	err = c.JSON( fiber.Map{ "names": names } )
+	return
+}
+
+// SetIPName names an address or a range, or renames one. The answer gives the
+// target as stored, which may not be how it was typed.
+func ( handlers *Handlers ) SetIPName( c fiber.Ctx ) ( err error ) {
+	var body ipNameRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	target , ok := models.CleanIPTarget( body.Target )
+	if ok == false {
+		err = badRequest( c , "bad_ip_target" )
+		return
+	}
+	if models.ValidIPName( body.Name ) == false {
+		err = badRequest( c , "bad_ip_name" )
+		return
+	}
+	if set_err := models.SetIPName( handlers.Store , target , body.Name ); set_err != nil {
+		err = serverError( c , set_err )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "ip name set" , fiber.Map{ "target": target } )
+	err = c.JSON( fiber.Map{ "target": target , "name": strings.TrimSpace( body.Name ) } )
+	return
+}
+
+// DeleteIPName takes a name away. Its target is in the body, because a range has
+// a slash in it.
+func ( handlers *Handlers ) DeleteIPName( c fiber.Ctx ) ( err error ) {
+	var body ipNameRequest
+	if c.Bind().JSON( &body ) != nil {
+		err = badRequest( c , "malformed request body" )
+		return
+	}
+	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
+		err = forbidden( c , "invalid csrf token" )
+		return
+	}
+	target , ok := models.CleanIPTarget( body.Target )
+	if ok == false {
+		err = badRequest( c , "bad_ip_target" )
+		return
+	}
+	if delete_err := models.DeleteIPName( handlers.Store , target ); delete_err != nil {
+		err = serverError( c , delete_err )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "ip name removed" , fiber.Map{ "target": target } )
+	err = c.JSON( fiber.Map{ "deleted": true } )
 	return
 }
 
@@ -305,37 +405,4 @@ func ( budget *eventBudget ) take( user_id uint64 , wanted int ) ( allowed int )
 		budget.seen[ user_id ] = recent
 	}
 	return
-}
-
-// logUser is the Actor for an account named by id, for an entry made before
-// the request has an actor of its own (a sign-in).
-func ( handlers *Handlers ) logUser( user_id uint64 , method string ) ( actor *logs.Actor ) {
-	actor = &logs.Actor{ UserID: user_id , Method: method }
-	if user , err := models.GetUser( handlers.Store , user_id ); err == nil {
-		actor.Name = user.DisplayName
-		actor.Role = user.Role
-	}
-	return
-}
-
-// audit logs an auth or admin action by whoever made this request. detail
-// says what it touched: ids and names, never a credential.
-func ( handlers *Handlers ) audit( c fiber.Ctx , kind string , message string , detail fiber.Map ) {
-	handlers.auditAs( c , security.LogActor( security.ActorFrom( c ) ) , kind , logs.LevelInfo , message , detail )
-}
-
-// auditAs is audit for a request whose actor is not the signed-in one: a
-// sign-in (nobody yet), or a failed one.
-func ( handlers *Handlers ) auditAs( c fiber.Ctx , actor *logs.Actor , kind string , level string , message string , detail fiber.Map ) {
-	if handlers.Logs.Enabled() == false { return }
-	handlers.Logs.Log( logs.Entry{
-		Kind:   kind,
-		Level:  level,
-		RequestID: middleware.RequestIDFrom( c ),
-		Actor:  actor,
-		IP:     c.IP(),
-		UA:     logs.Truncate( c.Get( fiber.HeaderUserAgent ) , 300 ),
-		Msg:    message,
-		Detail: detail,
-	} )
 }

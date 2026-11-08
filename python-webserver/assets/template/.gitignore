@@ -41,7 +41,7 @@ htmlcov/
 .ipynb_checkpoints/
 
 # scripts/run.sh's pid file, and the log of the background server
-# scripts/login.sh starts.
+# scripts/login.sh --background starts.
 .run/
 
 # Logs and stray temp files.

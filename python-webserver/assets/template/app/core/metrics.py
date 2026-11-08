@@ -1,3 +1,4 @@
+# whole-file feature:metrics
 """What GET /metrics reports, in Prometheus's text format, written by hand: a
 few counters do not need a client library.
 

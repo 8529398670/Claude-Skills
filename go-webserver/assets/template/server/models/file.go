@@ -1,3 +1,4 @@
+// whole-file feature:files
 package models
 
 import (
@@ -52,6 +53,7 @@ const (
 var (
 	// The two that a person sees are codes, worded in language.yaml.
 	ErrBadFile       = errors.New( "a file needs a name and a size" )
+	ErrBadFileName   = errors.New( "a file name must be 1-255 bytes" )
 	ErrFileTooLarge  = errors.New( "file_too_large" )
 	ErrFileQuota     = errors.New( "file_quota" )
 	ErrFileChunkSize = errors.New( "that piece is the wrong size" )
@@ -311,6 +313,36 @@ func FinishFile( store *db.Store , cfg *config.Config , file *File ) ( finished 
 			return
 		} )
 	if err != nil { finished = nil }
+	return
+}
+
+// RenameFile changes the name a file is shown and downloaded under, and answers
+// it as cleaned. Only the record changes: paths on disk use the id, and a piece
+// is sealed to the id too. db.ErrNotFound when there is no such file, it is
+// deleted, or it is still uploading. expect, when not nil, is the name the
+// caller believes is stored, as in RenameUser: a *RenameConflictError if not.
+func RenameFile( store *db.Store , file_id string , name string , expect *string ) ( cleaned string , err error ) {
+	clean := CleanFileName( name )
+	if clean == "" || len( clean ) > fileNameMax {
+		err = ErrBadFileName
+		return
+	}
+	err = store.UpdateValue( db.BucketFiles , []byte( file_id ) ,
+		func() any { return &File{} } ,
+		func( item any ) ( mutate_err error ) {
+			file := item.( *File )
+			if file.Deleted() || file.State != FileReady {
+				mutate_err = db.ErrNotFound
+				return
+			}
+			if expect != nil && file.Name != *expect {
+				mutate_err = &RenameConflictError{ Current: file.Name }
+				return
+			}
+			file.Name = clean
+			return
+		} )
+	if err == nil { cleaned = clean }
 	return
 }
 

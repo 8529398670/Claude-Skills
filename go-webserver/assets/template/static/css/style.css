@@ -9,9 +9,14 @@
   never prefers-color-scheme, so the app looks the same for everyone unless
   they deliberately switch.
 
-  Colours: the --app-* tokens below are the only place to change them. A
-  theme preset overrides them as inline variables on <html> (theme.js), and
-  the block after them hands them on to Bootstrap's own variables. Bootstrap
+  Colours: every theme sets the --app-* tokens as inline variables on <html>,
+  worked out from its two colours in theme.js. The values below are the Light
+  and Dark presets, for a page that loads before or without it. --app-accent is
+  the main colour, for what you can press; --app-second says where you are.
+  --app-bg, --app-surface and --app-nested are the page, a card, and a card
+  inside a card, and --app-chrome the navbar and sidebar.
+
+  The block after them hands them on to Bootstrap's own variables. Bootstrap
   compiles some colours straight into components (.btn-primary, focus rings),
   so those are re-pointed explicitly further down.
 */
@@ -19,9 +24,18 @@
 :root {
   --app-accent: #1f5fd6;
   --app-accent-fg: #ffffff;
-  --app-bg: #f7f8fa;
-  --app-surface: #ffffff;
-  --app-border: #dfe3e8;
+  --app-second: #0b7a75;
+  --app-second-fg: #ffffff;
+  --app-second-text: #0b7a75;
+  --app-link: #1f5fd6;
+  --app-nav-link: #1f5fd6;
+  --app-bg: #eff4f5;
+  --app-surface: #fbfdfd;
+  --app-nested: #eaf3f3;
+  --app-chrome: #e7f2f1;
+  --app-info: #d9ebea;
+  --app-info-border: #8fc2c0;
+  --app-border: #cfd2d3;
   --app-sidebar-width: 15rem;
   --app-navbar-height: 4rem;
 }
@@ -29,23 +43,32 @@
 :root[data-bs-theme="dark"] {
   --app-accent: #6ea0ff;
   --app-accent-fg: #0b0d10;
-  --app-bg: #101215;
-  --app-surface: #191c21;
-  --app-border: #2c3138;
+  --app-second: #5fd3c4;
+  --app-second-fg: #0b0d10;
+  --app-second-text: #5fd3c4;
+  --app-link: #6ea0ff;
+  --app-nav-link: #6ea0ff;
+  --app-bg: #13191b;
+  --app-surface: #1a1f24;
+  --app-nested: #1f2c2f;
+  --app-chrome: #202e31;
+  --app-info: #24383a;
+  --app-info-border: #39706c;
+  --app-border: #41464b;
 }
 
 /* Both selectors, because Bootstrap sets these on [data-bs-theme=dark] too. */
 :root, :root[data-bs-theme="dark"] {
   --bs-primary: var(--app-accent);
-  --bs-link-color: var(--app-accent);
-  --bs-link-hover-color: color-mix(in srgb, var(--app-accent) 80%, var(--bs-body-color));
+  --bs-link-color: var(--app-link);
+  --bs-link-hover-color: color-mix(in srgb, var(--app-link) 80%, var(--bs-body-color));
   --bs-body-bg: var(--app-bg);
   --bs-border-color: var(--app-border);
   --bs-border-color-translucent: var(--app-border);
 }
 
 /* Bootstrap draws links from an -rgb triple, which a hex token cannot fill. */
-a:not([class]) { color: var(--app-accent); }
+a:not([class]) { color: var(--app-link); }
 a:not([class]):hover { color: var(--bs-link-hover-color); }
 
 .btn-primary {
@@ -78,12 +101,51 @@ a:not([class]):hover { color: var(--bs-link-hover-color); }
   box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--app-accent) 25%, transparent);
 }
 .nav-pills {
-  --bs-nav-pills-link-active-bg: var(--app-accent);
-  --bs-nav-pills-link-active-color: var(--app-accent-fg);
+  --bs-nav-pills-link-active-bg: var(--app-second);
+  --bs-nav-pills-link-active-color: var(--app-second-fg);
+  --bs-nav-link-color: var(--app-nav-link);
+  --bs-nav-link-hover-color: var(--app-nav-link);
 }
 .card { --bs-card-bg: var(--app-surface); --bs-card-border-color: var(--app-border); }
-.offcanvas-lg { --bs-offcanvas-bg: var(--app-surface); }
-.app-navbar { background: var(--app-surface); }
+.offcanvas-lg { --bs-offcanvas-bg: var(--app-chrome); }
+.app-navbar { background: var(--app-chrome); }
+/* !important: Bootstrap clears this at wide widths, also with !important. */
+.app-sidebar { background-color: var(--app-chrome) !important; }
+
+/* The second colour: where you are, and what is being said. */
+.card-title, .card h3 { color: var(--app-second-text); }
+progress { accent-color: var(--app-second); }
+.text-bg-info { color: var(--app-second-fg) !important; background-color: var(--app-second) !important; }
+.alert-info {
+  --bs-alert-color: var(--bs-body-color);
+  --bs-alert-bg: var(--app-info);
+  --bs-alert-border-color: var(--app-info-border);
+}
+/* Bootstrap draws this one from an -rgb triple too, so it stayed blue. */
+.text-bg-primary { color: var(--app-accent-fg) !important; background-color: var(--app-accent) !important; }
+/* Bootstrap's grey is too faint on a dark card, and this is most of the row buttons. */
+.btn-outline-secondary {
+  --bs-btn-color: var(--bs-secondary-color);
+  --bs-btn-border-color: color-mix(in srgb, var(--bs-body-color) 40%, transparent);
+  --bs-btn-hover-color: var(--bs-body-bg);
+  --bs-btn-hover-bg: var(--bs-body-color);
+  --bs-btn-hover-border-color: var(--bs-body-color);
+  --bs-btn-active-color: var(--bs-body-bg);
+  --bs-btn-active-bg: var(--bs-body-color);
+  --bs-btn-active-border-color: var(--bs-body-color);
+  --bs-btn-disabled-color: var(--bs-secondary-color);
+  --bs-btn-disabled-border-color: color-mix(in srgb, var(--bs-body-color) 25%, transparent);
+}
+.btn-link { --bs-btn-color: var(--app-link); --bs-btn-hover-color: var(--bs-link-hover-color); --bs-btn-active-color: var(--bs-link-hover-color); }
+.dropdown-menu { --bs-dropdown-bg: var(--app-surface); --bs-dropdown-border-color: var(--app-border); }
+
+/* A panel inside a card, one layer up from it. */
+.app-nested {
+  padding: 0.75rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--bs-border-radius);
+  background: var(--app-nested);
+}
 
 /* The hidden attribute loses to Bootstrap's display utilities (.d-flex and
    friends are !important and come later), so make it win again: app code
@@ -91,9 +153,14 @@ a:not([class]):hover { color: var(--bs-link-hover-color); }
 [hidden] { display: none !important; }
 
 /* Touch: 44px is the usual floor for a reliable tap target, and a 16px input
-   font stops iOS Safari zooming in on focus. Small buttons in table rows are
-   the one exception, or every row would be twice as tall. */
+   font stops iOS Safari zooming in on focus. Small buttons stay small for a
+   mouse. On a touch screen they get the floor too, which a row can afford now
+   that most of its buttons are in a menu. */
 .btn:not(.btn-sm) { min-height: 44px; }
+@media (pointer: coarse), (max-width: 575.98px) {
+  .btn-sm { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; }
+  .dropdown-item { display: flex; align-items: center; min-height: 44px; }
+}
 .form-control, .form-select { font-size: 1rem; min-height: 44px; background-color: var(--app-surface); }
 .app-icon-button { font-size: 1.5rem; line-height: 1; padding: 0.25rem 0.5rem; color: var(--bs-body-color); }
 .app-icon-button:hover, .app-icon-button:focus-visible { color: var(--app-accent); }
@@ -162,9 +229,11 @@ a:not([class]):hover { color: var(--bs-link-hover-color); }
 .link-qr { display: block; max-width: 100%; margin-top: 0.75rem; border-radius: 0.375rem; }
 .modal { --bs-modal-bg: var(--app-surface); }
 
+/* >>> feature:files */
 /* A file held over the Files screen. See Files.watchDrops. */
 .file-drop-active { outline: 2px dashed var(--app-accent); outline-offset: -0.5rem; }
 
+/* <<< feature:files */
 .app-loading { display: flex; justify-content: center; padding: 4rem 0; color: var(--app-accent); }
 .sidebar-version { margin: 1rem 0 0; padding: 0 0.75rem; font-size: 0.75rem; color: var(--bs-secondary-color); }
 
@@ -175,13 +244,76 @@ a:not([class]):hover { color: var(--bs-link-hover-color); }
 .table { --bs-table-bg: transparent; }
 .row-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 td .row-actions { flex-wrap: nowrap; }
+.row-actions .btn { white-space: nowrap; }
+.row-menu-toggle .spinner-border { margin-right: 0 !important; }
+.row-menu-toggle[aria-busy="true"] .bi { display: none; }
+
+/* Tables on a phone: each row becomes a card, each cell a line with its column's
+   name beside it (Pager.label). The header row goes, except the sort buttons.
+   The Logs table is left out: its rows are one line each, and they open. */
+@media (max-width: 575.98px) {
+  .table-responsive > .table:not(.log-table) { display: block; }
+  .table-responsive > .table:not(.log-table) thead,
+  .table-responsive > .table:not(.log-table) tbody { display: block; }
+  .table-responsive > .table:not(.log-table) thead tr { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; margin-bottom: 0.5rem; }
+  .table-responsive > .table:not(.log-table) thead th { display: none; padding: 0; border: 0; }
+  .table-responsive > .table:not(.log-table) thead th[data-sort]:not([hidden]) { display: block; }
+  .table-responsive > .table:not(.log-table) thead th[data-sort] button { min-height: 44px; }
+  .table-responsive > .table:not(.log-table) tbody tr {
+    display: block;
+    margin-bottom: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--app-border);
+    border-radius: var(--bs-border-radius);
+    background: var(--app-nested);
+  }
+  .table-responsive > .table:not(.log-table) tbody td {
+    display: block;
+    position: relative;
+    padding: 0.25rem 0 0.25rem 6.5rem;
+    border: 0;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+  .table-responsive > .table:not(.log-table) tbody td:empty { display: none; }
+  .table-responsive > .table:not(.log-table) tbody td[data-label]::before {
+    content: attr(data-label);
+    position: absolute;
+    left: 0;
+    top: 0.35rem;
+    width: 6rem;
+    color: var(--bs-secondary-color);
+    font-size: 0.8rem;
+  }
+  /* Nothing to name: the empty-table line, and a row's buttons. */
+  .table-responsive > .table:not(.log-table) tbody td:not([data-label]),
+  .table-responsive > .table:not(.log-table) tbody td:has(> .row-actions) { padding-left: 0; }
+  .table-responsive > .table:not(.log-table) tbody td:has(> .row-actions)::before { display: none; }
+  td .row-actions { flex-wrap: wrap; }
+}
+
+/* A value that edits where it sits: see Dom.editable. The pencil stays visible
+   but quiet, because a phone has no hover to reveal it with. */
+.inline-edit { display: inline-flex; align-items: baseline; gap: 0.4rem; max-width: 100%; padding: 0.25rem 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; overflow-wrap: break-word; cursor: text; }
+.inline-edit-icon { font-size: 0.8em; opacity: 0.45; }
+.inline-edit:hover .inline-edit-icon, .inline-edit:focus-visible .inline-edit-icon { opacity: 1; color: var(--app-accent); }
+.inline-edit-input { min-width: 10rem; }
+.inline-edit-input[aria-busy="true"] { opacity: 0.6; }
+/* A button waiting on the question it asked is not working yet. */
+.modal-open .btn[aria-busy="true"]:not(.modal .btn) .spinner-border { display: none; }
 th { color: var(--bs-secondary-color); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; }
+.th-sort { padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; white-space: nowrap; }
+.th-sort:hover { color: var(--bs-body-color); }
+th[aria-sort] .th-sort { color: var(--bs-body-color); }
+th[aria-sort="ascending"] .th-sort::after { content: " \2191"; }
+th[aria-sort="descending"] .th-sort::after { content: " \2193"; }
 
 /* A login link or API key, with its copy button. The value wraps rather
    than widening the page. */
 .link-box { display: flex; align-items: flex-start; gap: 0.5rem; }
 .link-box code { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; color: inherit; font-size: 0.85rem; }
 
+/* >>> feature:appearance */
 /* The Appearance screen's presets, each drawn in its own colours. */
 .theme-picker { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .theme-choice {
@@ -196,17 +328,34 @@ th { color: var(--bs-secondary-color); font-size: 0.8rem; text-transform: upperc
 .theme-swatch {
   --swatch-bg: #f7f8fa;
   --swatch-accent: #1f5fd6;
+  --swatch-second: #0b7a75;
   width: 1.1rem;
   height: 1.1rem;
   border-radius: 50%;
   border: 1px solid var(--app-border);
-  background: linear-gradient(135deg, var(--swatch-bg) 50%, var(--swatch-accent) 50%);
+  background: linear-gradient(135deg, var(--swatch-bg) 34%, var(--swatch-accent) 34% 67%, var(--swatch-second) 67%);
 }
-.theme-swatch-dark { --swatch-bg: #101215; --swatch-accent: #6ea0ff; }
 
+/* <<< feature:appearance */
+/* >>> feature:shortcuts */
+/* The list ? opens, and the Shortcuts screen. */
+.shortcut-list { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem 1rem; align-items: baseline; }
+.shortcut-list dt { font-weight: normal; white-space: nowrap; }
+.shortcut-list dd { margin: 0; }
+/* Keys as key caps: one group per binding, "or" between them. */
+.shortcut-keys { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+.shortcut-combo { display: inline-flex; gap: 0.2rem; }
+.shortcut-combo kbd { min-width: 1.6em; text-align: center; }
+.shortcut-or { color: var(--bs-secondary-color); font-size: 0.875em; }
+.shortcut-actions { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.35rem; }
+/* Waiting for the new keys. */
+.shortcut-capturing { display: inline-block; padding: 0.15rem 0.5rem; border: 1px dashed var(--bs-primary); border-radius: var(--bs-border-radius); color: var(--bs-primary); }
+
+/* <<< feature:shortcuts */
+/* >>> feature:logs */
 /* The Logs screen: one <details> per day, a compact table inside. */
 .log-days { display: flex; flex-direction: column; gap: 0.5rem; }
-.log-day { border: 1px solid var(--app-border); border-radius: var(--bs-border-radius); background: var(--app-surface); }
+.log-day { border: 1px solid var(--app-border); border-radius: var(--bs-border-radius); background: var(--app-nested); }
 .log-day-summary {
   display: flex;
   flex-wrap: wrap;
@@ -223,6 +372,10 @@ th { color: var(--bs-secondary-color); font-size: 0.8rem; text-transform: upperc
 .log-table { font-size: 0.85rem; }
 .log-row { cursor: pointer; }
 .log-what { overflow-wrap: anywhere; font-family: var(--bs-font-monospace); }
+.log-ip { display: inline-flex; flex-direction: column; padding: 0; border: 0; background: none; color: var(--app-link); font: inherit; text-align: left; cursor: pointer; }
+.log-ip > :first-child { text-decoration: underline dotted; text-underline-offset: 0.15em; }
+.log-ip-address { color: var(--bs-secondary-color); font-size: 0.8em; }
+.ip-names-summary { cursor: pointer; font-weight: 500; }
 .log-json {
   margin: 0;
   max-height: 24rem;
@@ -233,6 +386,8 @@ th { color: var(--bs-secondary-color); font-size: 0.8rem; text-transform: upperc
   color: inherit;
 }
 
+/* <<< feature:logs */
+/* >>> feature:settings */
 /* The Settings screen: one fieldset per config.yaml section. The help text
    is defaults.yaml's comments; pre-wrap keeps the indentation of examples. */
 .settings-section { border-top: 1px solid var(--app-border); padding-top: 1rem; margin-bottom: 1.25rem; }
@@ -242,10 +397,20 @@ th { color: var(--bs-secondary-color); font-size: 0.8rem; text-transform: upperc
 .settings-label code { color: inherit; font-size: 0.95rem; }
 .settings-help { white-space: pre-wrap; overflow-wrap: anywhere; }
 .settings-key .form-text code { color: inherit; }
-.settings-dirty { border-color: var(--app-accent); box-shadow: inset 3px 0 0 var(--app-accent); }
-.form-check-input.settings-dirty { box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--app-accent) 35%, transparent); }
-.settings-key .invalid-feedback { display: block; }
-.settings-key .invalid-feedback:empty { display: none; }
+.settings-changed { border-color: var(--app-accent); box-shadow: inset 3px 0 0 var(--app-accent); }
+.form-check-input.settings-changed { box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--app-accent) 35%, transparent); }
+.settings-reset { padding: 0 0 0 0.25rem; vertical-align: baseline; }
+/* On a wide screen these stay in reach while the long list scrolls. */
+.settings-tools { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; padding: 0.5rem 0; background: var(--app-surface); }
+.settings-jump { display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.25rem; }
+.settings-jump .btn { flex: 0 0 auto; font-family: var(--bs-font-monospace); }
+.settings-section:focus { outline: none; }
+@media (min-width: 768px) {
+  .settings-jump { flex-wrap: wrap; }
+}
+@media (min-width: 768px) and (min-height: 700px) {
+  .settings-tools { position: sticky; top: var(--app-navbar-height); z-index: 2; }
+}
 .settings-actions {
   position: sticky;
   bottom: 0;
@@ -255,6 +420,7 @@ th { color: var(--bs-secondary-color); font-size: 0.8rem; text-transform: upperc
   border-top: 1px solid var(--app-border);
 }
 
+/* <<< feature:settings */
 /* Notches and rounded corners, once viewport-fit=cover hands the page the whole
    screen. env() is 0 everywhere else. */
 body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }

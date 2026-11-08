@@ -5,6 +5,7 @@
 package middleware
 
 import (
+	path "path"
 	strings "strings"
 	time "time"
 
@@ -87,7 +88,7 @@ type rateBudget int
 const (
 	budgetGeneral rateBudget = iota
 	budgetSignIn
-	budgetUpload
+	budgetUpload // feature:files
 	budgetNone
 )
 
@@ -95,20 +96,34 @@ const (
 // invite link counts: each of those calls takes a PIN or mints an account.
 var signInPaths = map[string]bool{
 	"/api/login":            true,
-	"/api/login/two-factor": true,
-	"/api/login/password":   true,
-	"/api/join/info":        true,
-	"/api/join/match":       true,
-	"/api/join/claim":       true,
-	"/api/join/create":      true,
+	"/api/login/two-factor": true, // feature:two_factor
+	"/api/login/password":   true, // feature:passwords
+	"/api/join/info":        true, // feature:invite_links
+	"/api/join/match":       true, // feature:invite_links
+	"/api/join/claim":       true, // feature:invite_links
+	"/api/join/create":      true, // feature:invite_links
 }
 
+// >>> feature:files
 // uploadChunk is exactly POST /api/files/<id>/chunks/<index>. A file arrives as
 // many of these, so they have a budget of their own: on the general one a big
 // upload would use up what the page needs and still crawl.
 func uploadChunk( method string , normalised string ) ( result bool ) {
 	parts := strings.Split( normalised , "/" )
 	result = method == fiber.MethodPost && len( parts ) == 6 && parts[ 1 ] == "api" && parts[ 2 ] == "files" && parts[ 4 ] == "chunks"
+	return
+}
+// <<< feature:files
+
+// staticAsset is a file the page loads (/js/app.js, /vendor/...), as opposed
+// to the page itself, an API call, or a login or invite link -- whose
+// credential can contain a dot, which is why those are ruled out first.
+func staticAsset( method string , request_path string ) ( result bool ) {
+	if method != fiber.MethodGet && method != fiber.MethodHead { return }
+	for _ , prefix := range []string{ "/api/" , "/login/" , "/join/" , "/mcp" } {
+		if strings.HasPrefix( request_path , prefix ) { return }
+	}
+	result = path.Ext( request_path ) != ""
 	return
 }
 
@@ -131,8 +146,10 @@ func budgetFor( method string , request_path string ) ( budget rateBudget ) {
 	switch {
 	case method == fiber.MethodPost && signInPaths[ normalised ]:
 		budget = budgetSignIn
+	// >>> feature:files
 	case uploadChunk( method , normalised ):
 		budget = budgetUpload
+	// <<< feature:files
 	case staticAsset( method , normalised ):
 		budget = budgetNone
 	}
@@ -179,7 +196,7 @@ func RateLimit( settings *config.Holder ) ( handler fiber.Handler ) {
 	}
 	general := limited( "general:" , func( cfg *config.Config ) int { return cfg.RateLimitMax } )
 	sign_in := limited( "sign-in:" , func( cfg *config.Config ) int { return cfg.RateLimitSignInMax } )
-	upload := limited( "upload:" , func( cfg *config.Config ) int { return cfg.RateLimitUploadMax } )
+	upload := limited( "upload:" , func( cfg *config.Config ) int { return cfg.RateLimitUploadMax } ) // feature:files
 
 	handler = func( c fiber.Ctx ) ( err error ) {
 		switch budgetFor( c.Method() , c.Path() ) {
@@ -187,8 +204,10 @@ func RateLimit( settings *config.Holder ) ( handler fiber.Handler ) {
 			err = c.Next()
 		case budgetSignIn:
 			err = sign_in( c )
+		// >>> feature:files
 		case budgetUpload:
 			err = upload( c )
+		// <<< feature:files
 		default:
 			err = general( c )
 		}

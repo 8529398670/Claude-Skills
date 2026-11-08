@@ -12,7 +12,11 @@ from app.core.db import Store
 from app.core.encryption import BadKeyError, CipherTextError
 from app.core.logs import KIND_AUTH
 from app.core.security import Actor, actor_from, check_csrf, clear_session_cookie, decrypt_cookie
-from app.models import login_tokens, passwords, pins, sessions, two_factor, users
+from app.models import login_tokens, sessions, users
+from app.models import passwords  # feature:passwords
+from app.models import pins  # feature:invite_links
+from app.models import two_factor  # feature:two_factor
+from app.routes.admin import link_options, link_response
 from app.routes.helpers import bad_request, conflict, forbidden, get_config, get_store, read_json, run, server_error
 from app.routes.logs import audit
 
@@ -44,33 +48,39 @@ def me_row(store: Store, cfg: Config, actor: Actor, version: str) -> dict[str, A
         "role": actor.role,
         "account_role": actor.user.role,
         "is_owner": actor.user.id == owner_id,
-        "maintenance": cfg.maintenance,
+        "login_link": login_tokens.live_login_link(store, actor.user.id),
+        "maintenance": cfg.maintenance,  # feature:maintenance
         "version": version,
         "announcement": cfg.announcement,
-        "has_pin": pins.has_pin(actor.user),
-        "username": actor.user.username,
-        "has_password": passwords.has_password(actor.user),
-        "password_blocked": actor.user.password_blocked,
-        "two_factor": two_factor.is_on(actor.user),
-        "passwords_enabled": cfg.passwords_enabled,
-        "two_factor_enabled": cfg.two_factor_enabled,
+        "shortcuts": actor.user.shortcuts,  # feature:shortcuts
+        "has_pin": pins.has_pin(actor.user),  # feature:invite_links
+        "username": actor.user.username,  # feature:passwords
+        "has_password": passwords.has_password(actor.user),  # feature:passwords
+        "password_blocked": actor.user.password_blocked,  # feature:passwords
+        "two_factor": two_factor.is_on(actor.user),  # feature:two_factor
+        "passwords_enabled": cfg.passwords_enabled,  # feature:passwords
+        "two_factor_enabled": cfg.two_factor_enabled,  # feature:two_factor
         "auth": actor.method,
-        "api_keys_enabled": cfg.api_keys_enabled,
-        "files_enabled": cfg.files.enabled,
-        "invite_links_enabled": cfg.invite_links_enabled,
-        "webhooks_enabled": cfg.webhooks.enabled,
+        "api_keys_enabled": cfg.api_keys_enabled,  # feature:api_keys
+        "files_enabled": cfg.files.enabled,  # feature:files
+        "invite_links_enabled": cfg.invite_links_enabled,  # feature:invite_links
+        "webhooks_enabled": cfg.webhooks.enabled,  # feature:webhooks
+        # >>> feature:logs
         # Whether track.js sends anything, and whether it sends clicks.
         "logs_enabled": cfg.logs.enabled,
         "logs_ui_clicks": cfg.logs.enabled and cfg.logs.ui_clicks,
+        # <<< feature:logs
     }
     # Only a session has a CSRF token. A key-authenticated request has no
     # ambient credential to protect, so there is nothing to hand back -- see
     # check_csrf.
     if actor.session is not None:
         payload["csrf_token"] = actor.session.csrf_token
+    # >>> feature:api_keys
     if actor.api_key is not None:
         payload["api_key_id"] = actor.api_key.id
         payload["api_key_name"] = actor.api_key.name
+    # <<< feature:api_keys
     return payload
 
 
@@ -99,6 +109,7 @@ async def rename(request: Request) -> Response:
     return JSONResponse({"ok": True, "display_name": display_name.strip()})
 
 
+# >>> feature:invite_links
 async def set_pin(request: Request) -> Response:
     """Set, or with an empty pin clear, the PIN asked for when this account
     signs back in through an invite link (see app/models/pins.py)."""
@@ -119,12 +130,13 @@ async def set_pin(request: Request) -> Response:
     return JSONResponse({"ok": True, "has_pin": pin != ""})
 
 
+# <<< feature:invite_links
 async def create_my_login_link(request: Request) -> Response:
-    """Mint a one-time login link for the caller's own account: the way to
-    sign in on another device without asking an admin. It is
-    admin.reissue_login pointed at yourself, so it has the same effect: any
-    unused link the account had stops working, and existing sessions stay
-    signed in.
+    """Mint a login link for the caller's own account: the way to sign in on
+    another device without asking an admin. Once by default, or reusable,
+    like admin.reissue_login -- it is reissue_login pointed at yourself, so it
+    has the same effect: any link the account could still use stops working,
+    and existing sessions stay signed in.
 
     Session only (see routes/__init__.py): a login link becomes a session, so
     an API key that could call this could turn itself into one."""
@@ -133,12 +145,24 @@ async def create_my_login_link(request: Request) -> Response:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    store, cfg = get_store(request), get_config(request)
-    credential = await run(
-        login_tokens.issue_login_token, store, actor_from(request).user.id, cfg.login_token_ttl_seconds
-    )
-    audit(request, KIND_AUTH, "own login link created")
-    return JSONResponse({"login_path": f"/login/{credential}", "expires_in_seconds": cfg.login_token_ttl_seconds})
+    options = link_options(request, body)
+    if options is None:
+        return bad_request(str(login_tokens.BadLoginLinkError()))
+    credential, info = await run(login_tokens.issue_login_link, get_store(request), actor_from(request).user.id, options)
+    audit(request, KIND_AUTH, "own login link created", {"max_uses": info["max_uses"], "expires_at": info["expires_at"]})
+    return JSONResponse(link_response(credential, info))
+
+
+async def cancel_my_login_link(request: Request) -> Response:
+    """Stop the caller's own live login link working."""
+    body = await read_json(request)
+    if body is None:
+        return bad_request("malformed request body")
+    if not check_csrf(request, body.get("csrf_token")):
+        return forbidden("invalid csrf token")
+    removed = await run(login_tokens.cancel_login_link, get_store(request), actor_from(request).user.id)
+    audit(request, KIND_AUTH, "own login link cancelled", {"removed": removed})
+    return JSONResponse({"ok": True, "removed": removed})
 
 
 async def logout(request: Request) -> Response:

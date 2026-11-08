@@ -3,6 +3,440 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After b286bc2
+
+**Navbar light/dark button:** an app with the Appearance screen no longer has
+the navbar's light/dark button, since the screen already picks the theme. In
+`static/index.html` the `#theme-toggle` button, in `static/js/app.js` the
+`Theme.watchToggle` call, in `static/js/theme.js` the `watchToggle` method, and
+in `language.yaml` `nav.theme_toggle` are now `feature:!appearance`. In an app
+with `appearance`, remove all four together. An app without it keeps them.
+
+**Test:** with `appearance`, the navbar has no moon/sun button and the
+Appearance screen still switches themes, with no error in the console.
+
+**Settings highlight class:** the class that marks a changed field on the
+Settings screen is now `.settings-changed`, in `static/css/style.css` and
+`static/js/settings.js`. Take both files' lines together. An app with its own
+CSS for the class needs the same rename.
+
+**Test:** change a field on the Settings screen: it is highlighted until saved
+or changed back.
+
+**`go build` in `scripts/build.sh`, `lib.sh`, `run.bat` and `login.bat`:** these
+now pass `-buildvcs=false`, so Go no longer records the checkout's state in the
+binary. `./app version` still reports the commit, which comes from `-ldflags`.
+
+**`scripts/login.sh` and `login.bat`:** with nothing running they now print the
+link and start the server in the foreground, where Ctrl-C stops it, instead of
+detaching it. A running server still just gets a link. The old behaviour is
+`--background`, so any automation of the app's own that calls `login.sh` with no
+server up needs that flag, or it will not return.
+
+**Test:** `scripts/login.sh` with the server stopped: the link works and Ctrl-C
+stops the server. Run it again with the server up: it prints a link and exits.
+
+**`static/js/pager.js`:** Load more is busy until its page is in, so a double
+click no longer appends the same rows twice.
+
+**Disable on the Users screen (`static/js/app.js`):** it now asks first, and
+Disable and Enable both end with a toast. Add `admin.disable_confirm`,
+`admin.disabled_toast` and `admin.enabled_toast` to the app's `language.yaml`,
+reworded to match the app. An app that left the keys out would get an empty
+question, which skips asking, and no toast.
+
+**Test:** in a list long enough to page, double-click Load more: no row appears
+twice. Disable a user: the question appears, Cancel changes nothing, and
+confirming shows the toast. Enable them: the toast appears with no question.
+
+**Saying when something worked (`static/js/app.js`, `pin.js`, `logs.js`, `files.js`):**
+Revoke access, Reset 2FA, Delete day, Remove PIN and a finished upload now end with
+a toast, and saving an unchanged name says so. Remove PIN and New link now ask
+first, which is a change in behaviour to name in the report. New link's box says
+whose link it is and scrolls into view: `App.showLoginLink` takes the name as a
+second argument, so an app's own calls need it. Add `ui.unchanged`,
+`admin.revoked_toast`, `admin.two_factor_reset_toast`, `admin.reissue_confirm`,
+`admin.link_for`, `pin.clear_confirm`, `pin.cleared`, `files.uploaded` and
+`logs.deleted` to `language.yaml`, reworded to match the app.
+
+**Field errors beside the field (`static/js/dom.js`, `app.js`, `password.js`,
+`pin.js`, `two_factor.js`, `join.js`, `settings.js`):** `Dom.fieldError`,
+`Dom.clearFieldError` and `App.showFieldError` put a refusal about one field under
+that field, with `aria-invalid` and `aria-describedby`, instead of in the banner.
+The Settings screen uses them too, so its old problem text no longer survives a
+failed re-save. `fields[ key ].problem` is gone from `settings.js`.
+
+**Upgrade `reusable-login-links`: Login links that work more than once, with a chosen expiry.**
+Marks: `LiveLoginLinks`, `multi_use_login_token_ttl_seconds`, `cancel-login-link`, `login_links.cancel_button`
+Files: `static/js/login_links.js`, `server/models/login_token_test.go`, `server/routes/login_links_test.go`
+
+A login link can now work once (still the default), up to N times (1-1000) or any
+number of times, until a chosen expiry or never, always for the same account. The
+create-user form gains Works and Expires selects, **New link** and **Sign in on
+another device** open a dialog with the same two, and a user's row and the Account
+screen show the live link with **Cancel link**. Take `server/models/login_token.go`
+whole; its rows gain `max_uses`, `unlimited` and `uses`, and old rows still read as
+once, so there is no migration. The callers move from `IssueLoginToken` to
+`IssueLoginLink`: `server/routes/admin.go` and `account.go` (`login_link` on user
+rows and `/api/me`, `max_uses` and `expires_in_minutes` in, `max_uses`, `unlimited`
+and `expires_at` out), `server/control/control.go` and `client.go`,
+`server/manage/manage.go` (`-uses`, `-expires`) and `server/bootstrap/bootstrap.go`.
+Two new routes, `POST /api/admin/users/:user_id/cancel-login-link` and
+`POST /api/account/login-link/cancel`, in `server/routes/routes.go` and
+`config/openapi.json` (plus the `LoginLink` schema and the new request and response
+fields). New config key `auth.multi_use_login_token_ttl_seconds` (default 604800)
+in `config/defaults.yaml`, `config.example.yaml`, `server/config/config.go` and
+`live.go`. The printed banner now says `LOGIN LINK` rather than `ONE-TIME LOGIN
+LINK`, so take the grep changes in `scripts/login.sh` and `docker/run.sh` with it;
+`scripts/login.sh` and `login.bat` gain `--uses` and `--expires`. On screen,
+`static/index.html` (the selects, `#my-live-link`, `#login-link-notice`,
+`#my-link-notice` and the `login_links.js` script tag), `static/js/app.js` and
+`static/js/api.js` change. In `language.yaml`, add the `login_links:` section and
+`admin.reissue_heading`; `admin.link_notice` and `account.device_link_notice` now
+take `{summary}`, and every string that said "one-time" or "unused login links"
+is reworded (`app.tagline`, `signed_out.*`, `login_confirm.body`,
+`account.device_description`, `admin.description`, `admin.reissue_confirm` and
+the revoke, make-admin and disable confirms). An app that changed those strings
+keeps its wording but must add `{summary}` to the two notices.
+
+Disable, revoke access, promotion to admin and reissue now delete a link that
+could still be used, not only an unused one. Without that, a reusable link that
+had been used once would outlive all four, so do not take the model without it.
+
+**Test:** create a user with Works 3 times: the link signs in three times and the
+fourth is refused, and their row reads "Link: 2 of 3 used" after two. **New link**
+with Any number of times and Never, use it twice, then **Cancel link**: it is
+refused. Use a reusable link once, then disable and re-enable the account: the
+link is refused. `manage reissue-login -user-id 2 -uses unlimited -expires 7d`
+prints a banner saying so, and `scripts/login.sh 2 --uses 5` passes the flag on.
+
+**Upgrade `dismiss-boxes`: Close buttons on shown-once boxes and the error banner.**
+Marks: `data-box-close`, `error-banner-text`
+
+All six shown-once boxes get a close button, which also clears the value from the
+page. The error banner stays until it is closed or replaced, where it used to
+vanish after 12 seconds, and gains a copy button. Take the markup in
+`static/index.html`, the click listener at the end of `static/js/dom.js`,
+`App.showError` in `static/js/app.js`, and `ui.copy` in `language.yaml`. The banner
+is now a `div` holding `#error-banner-text`, so an app's own code that writes to
+`#error-banner` must write there instead.
+
+**Test:** make a user and press New link: it asks, and the box names them. Close
+the box. Remove a PIN: it asks, then a toast. Set a password with two different
+entries: the problem shows under the confirm field and goes as you type. Cause an
+error: the banner stays past 12 seconds, Copy works, and the close button hides it.
+
+**Small fixes (`static/js/webhooks.js`, `sessions.js`, `pager.js`, `files.js`,
+`keys.js`):** the previous endpoint's or person's rows no longer show while the next
+one's load, through the new `Pager.reset`. Webhook deliveries scroll into view. A
+drop during an upload now says so, with `files.drop_busy` in `language.yaml`. The
+days field clears after a key is made. Two leftover comments about delete
+confirmations that don't exist are gone from `language.yaml`.
+
+**Accessibility (`static/index.html`, `static/js/dom.js`, `pager.js`, and every
+screen with row buttons):** headers have `scope="col"`, and both `nav` elements have
+names, from `nav.top_label` and `nav.sidebar_label`. `Dom.rowActions( name , buttons )`
+groups a row's buttons under the row's name, in place of a bare `.row-actions` div.
+In `logs.js` that `div` moves inside an `mb-2` wrapper, and in `files.js` the download
+link loses `me-1`. `Pager.load` now puts the focus back after a redraw, so an app's
+own table through `Pager` gets this for free.
+
+**Upgrade `panel-buttons`: A close button on Webhook deliveries, and Copy on log entries.**
+Marks: `webhook-deliveries-close`, `log-copy`
+
+Take the deliveries heading in `static/index.html`, the listener in
+`static/js/webhooks.js`, and the button in `appendEntry` in `static/js/logs.js`. Copy
+uses `ui.copy`, so it needs `dismiss-boxes`' key if that was left out.
+
+**Upgrade `keyboard-shortcuts`: A Shortcuts screen where each person changes every key, saved to their account, with keys shown for the OS they are on.**
+Marks: `shortcuts-modal`, `Shortcuts.register`, `SetMyShortcuts`
+Files: `static/js/shortcuts.js`, `server/models/shortcuts.go`, `server/routes/shortcuts.go`, `server/routes/shortcuts_test.go`
+
+Take `static/js/shortcuts.js`, its `<script>` tag after `undo.js`, the `#shortcuts`
+sidebar link, the `shortcuts` screen section and the modal in `static/index.html`, the
+`Shortcuts.init()` call in `App.init` and `Shortcuts.signedIn( me )` in
+`renderSignedIn`, `Api.setShortcuts`, the `pressed` helper in `Dom.editable`, the
+`typeof Shortcuts` line in `Undo.onKey`, the `.shortcut-*` rules, `nav.shortcuts`,
+`undo.shortcuts` and the `shortcuts` section of `language.yaml`, the `Shortcuts`
+field on `User` in `server/models/user.go`, `shortcuts` in `meRow`, the
+`/account/shortcuts` route in `routes.go`, and
+`/api/account/shortcuts` plus `Me.shortcuts` in `config/openapi.json`. An app that
+had the earlier version drops its sidebar button (`shortcuts-button`,
+`.sidebar-shortcuts`). An app with its own keys should move them into
+`Shortcuts.register` so people can change them too. Nothing to migrate: an account
+with no `shortcuts` uses the defaults.
+
+**Test:** with two webhooks, open one's deliveries then the other's: the first's rows
+never show under the second's name, and the close button works. Open a log entry and
+Copy it. Press `/` on Users, and `?` anywhere. On Shortcuts, change search to
+⌘K (Ctrl+K off a Mac): it works on Users, `/` no longer does, it is still there after a
+reload and in another browser, and Ctrl+Z puts it back. Give Undo a key Help has and
+accept the swap. Put every key back. Delete a row by keyboard and keep
+tabbing: the focus stays in the table.
+
+**Upgrade `row-menu`: A menu for row buttons, tables that stack on phones, and full-size taps.**
+Marks: `row-menu-toggle`, `ui.more_actions`, `Pager.label`
+
+`Dom.rowActions` keeps a row's first two buttons and puts the rest in a ⋯ menu, on
+every screen width. A row with three keeps all three. Order an app's own rows with the
+most used first. A button in the menu becomes a `.dropdown-item`, so an app that
+restyles a row button through its class must stop. Below 576px each table row turns
+into a card with its column names beside the values, through `Pager.label`, which
+`Pager.load` calls by itself. An app's own table filled without `Pager` should call
+`Pager.label( id )` after it. The Logs table is left alone. On touch screens `.btn-sm`
+and menu items are now 44px, so an app's own layouts with small buttons need a look at
+phone width. Take `static/js/dom.js`, `pager.js`, `jobs.js`, `webhooks.js`,
+`static/css/style.css` and `ui.more_actions` in `language.yaml`.
+
+**Test:** on Users, open the ⋯ menu on a row at the bottom of the table: it is not
+cut off. Use Revoke access from it by keyboard: the focus returns to the ⋯ button.
+At phone width, every table but Logs is cards, sort buttons still work, and no page
+scrolls sideways.
+
+**Upgrade `settings-tools`: A filter, jump links and Use default on the Settings screen.**
+Marks: `settings-filter`, `settings.reset_button`
+
+Take `static/js/settings.js`, the `.settings-tools` block in `static/index.html`, the
+rules after `.settings-help` in `static/css/style.css`, and the new `settings` keys in
+`language.yaml`. Use default fills the field in, and Save writes it, so nothing new
+reaches the server. If a save fails on a field the filter is hiding, the filter clears.
+
+**Test:** type `rate` in the filter: only matching settings and their jump links stay,
+and a change made before filtering still saves. A jump link lands with the section's
+heading in view. Use default appears only on a value that differs, marks the field as
+changed, and writes nothing until Save.
+
+**Brand colours (`static/js/theme.js`):** `ThemePalettes` keeps all ten Wright State
+colours by name, and the two WSU presets now draw from it. Their colours are
+unchanged. Take the block above `Theme`.
+
+**Upgrade `theme-layers`: A second colour, layered cards and tinted chrome in every theme.**
+Marks: `--app-second`, `Theme.colours`, `check_themes.js`
+Files: `scripts/check_themes.js`
+
+Every preset gains `second`, for where you are: the active nav item, headings,
+progress bars, info badges and info boxes. The main colour stays on buttons and links.
+`Theme.colours( preset )` works out the rest, and the page, a card, a nested card
+(`.app-nested`) and the navbar and sidebar each get their own shade. Take
+`static/js/theme.js`, the new rules and the token block in `static/css/style.css`, and
+the two `.app-nested` panels in `static/index.html`. An app's own presets need a
+`second`, and need `accent` even for a plain mode. An app's own CSS using
+`--app-accent` for a heading or the active nav item should move to `--app-second-text`
+or `--app-second`. Forest's main colour darkened a little (`#28843b`) to pass contrast.
+`.text-bg-primary` now follows the theme. It used to stay Bootstrap blue.
+`.btn-outline-secondary` is stronger, because Bootstrap's grey was too faint on dark
+cards, and `--app-border` is now drawn from the card rather than the page.
+`scripts/check_themes.js` holds every preset to 4.5, and the tests run it when Node is
+there.
+
+**Test:** go through every theme on the Appearance screen: the active nav item and
+headings take the second colour, buttons the main one, and a saved dark theme still
+does not flash light. Opening with nothing saved is light.
+
+**Upgrade `ip-names`: Nicknames for addresses and ranges.**
+Marks: `BucketIPNames`, `ip-names-table`
+Files: `server/models/ip_name.go`, `server/routes/ip_names_test.go`, `server/models/ip_name_test.go`
+
+Names an address or a range on the Logs screen, so the log says who is who. Clicking
+an address names it, and a list under the search manages them. The most specific name
+wins, and `ip:` and free text search them. Names are applied as the log is read, so
+the files do not change and old entries get names too. Downloads gain `ip_name` beside
+`ip`. Only the owner sees names, on Logs and on Sessions. No migration: the bucket is
+created at start. Take the model, the three routes under `/api/owner/logs/ip-names`
+and their `config/openapi.json` entries, the `.log-ip` rules, the panel in
+`static/index.html`, the changes to `static/js/logs.js`, `sessions.js` and `api.js`,
+and the `logs.ip_*`, `logs.table_ip_*`, `undo.ip_name`, `errors.bad_ip_*` keys in
+`language.yaml`. `Logger.Download` now takes a `logs.Query`, and `scanRaw` is gone, so an app's own caller needs the extra argument.
+
+**Test:** click an address in the log and name it, then try a range. Search `ip:` with
+part of the name. A narrower range beats a wider one. Download a day: `ip_name` is
+there and the file on disk has none. Sign in as someone else: their Sessions show no
+names.
+
+**Parts can be cut (`scripts/prune.py`, every template file):** the template now carries
+markers saying which code belongs to which part, and `scaffold.py` removes them all, so
+none reach an app. Some code moved so that parts can stand alone, with no change in
+behaviour. An app from before this has no `pruned:` in its stamp, keeps everything it
+has, and goes on getting fixes in all of it. The moves arrive as ordinary changes, so
+expect conflicts where an app edited those files.
+Cutting `backups` removes only the schedule: `manage backup` and `manage restore` stay in
+every app.
+
+**Plumbing `edit-helpers`: Dom.editable and Dom.form.**
+Marks: `Dom.editable`, `inline-edit`
+
+Shared helpers for editing
+something in place or in a dialog. They need the `#form-modal` block from
+`static/index.html`, the `.inline-edit` rules from `static/css/style.css`, and
+`ui.save` and `ui.edit` in `language.yaml`.
+
+**Upgrade `rename-keys`: Renaming API keys and changing their expiry.**
+Needs: `api_keys`, `edit-helpers`.
+Marks: `RenameMyAPIKey`, `undo.rename_key`, `rename_key:`
+
+Four new routes
+(`/api/keys/:id/rename` and `/expiry`, and the same under `/api/admin/keys`), so
+take the key model and route changes and the `config/openapi.json` entries. On
+screen, `static/js/keys.js` and `static/js/api.js` change, and All keys gains an
+Expires column in `static/index.html`. Add `undo.rename_key` and the
+`api_keys.expiry_*` keys to `language.yaml`.
+
+**Test:** rename a key by clicking its name, then Ctrl+Z puts the old name back.
+Press Expiry on a live key and enter 30: the date moves. An expired or revoked
+key has no Expiry button. As a plain admin, the owner's keys have none either.
+
+**Upgrade `edit-invites`: Editing invite links.**
+Needs: `invite_links`, `edit-helpers`.
+Marks: `SwitchOnInviteLink`, `undo.rename_invite`, `rename_invite:`
+Files: `server/routes/invite_links_test.go`
+
+Three new routes under `/api/admin/invite-links/:id`
+(`rename`, `limits`, `switch-on`), so take the invite model and route changes and
+the `config/openapi.json` entries. On screen, `static/js/invites.js` and
+`static/js/api.js` change. Add `undo.rename_invite` and the new `invite_links`
+keys to `language.yaml`. A switched-off link can now be switched back on: an app
+that promised its users otherwise should empty `invite_links.switch_on_button`
+and take the route out.
+
+**Test:** rename a link by clicking its label, then Ctrl+Z puts it back. Press
+Edit, change Places, and leave the days blank: the expiry stays. Places below the
+number joined is refused. Switch a link off, then Switch on: the same link joins
+again.
+
+**Upgrade `edit-webhooks`: Editing webhooks.**
+Needs: `webhooks`, `edit-helpers`.
+Marks: `RotateWebhookSecret`, `undo.rename_webhook`, `rename_webhook:`
+
+Three new routes under `/api/owner/webhooks/:id` (`rename`,
+`target`, `rotate-secret`), so take the webhook model and route changes and the
+`config/openapi.json` entries. On screen, `static/js/webhooks.js` and
+`static/js/api.js` change, and the secret box's notice in `static/index.html` gains
+the id `webhook-secret-notice`. Add `undo.rename_webhook`, `undo.edit_webhook` and
+the new `webhooks` keys to `language.yaml`. An app with its own events needs nothing
+extra: the dialog offers what `/api/owner/webhooks/events` lists.
+
+**Test:** rename a webhook by clicking its name, then Ctrl+Z puts it back. Press
+Edit, change the address and tick one event: the row shows the new address, and
+Undo restores both. An `http://` address is refused in the dialog. Press New secret:
+it asks first, then the box shows a new secret, and the next test delivery is signed
+with it.
+
+**Activity log (`server/logs/entry.go`, `server/logs/writer.go`):** `Logger.Log` now
+copies an entry's strings before queueing it. Lines are written after the request
+ends, and Fiber reuses the buffer those strings view, so a line could hold the
+next request's bytes: a wrong id, or part of its headers. Take both files. An app
+with its own `Entry` fields that hold request strings should copy them in `owned`.
+
+**Test:** `go test ./server/logs`. An app's old log lines cannot be repaired, so an
+odd id or user agent in them may be this.
+
+**Upgrade `rename-files`: Renaming files.**
+Needs: `files`, `edit-helpers`.
+Marks: `RenameMyFile`, `undo.rename_file`, `rename_file:`
+
+Two new routes (`/api/files/:id/rename`, and the same under
+`/api/admin/files`), so take the file model and route changes and the
+`config/openapi.json` entries. On screen, `static/js/files.js` and `static/js/api.js`
+change. Add `undo.rename_file` to `language.yaml`.
+
+**Test:** rename a file by clicking its name, then Ctrl+Z puts it back. Rename it to
+`a/b.txt`: the row shows `b.txt`. Download it: it has the new name and the same
+contents. As an admin, Show everyone's files and rename someone else's.
+
+**Upgrade `edit-users`: Admins editing a user's name and role.**
+Needs: `edit-helpers`.
+Marks: `role_changed_toast`
+Files: `server/routes/admin_test.go`
+
+Two new routes
+(`/api/admin/users/:id/rename` and `/role`), so take the user and credential model
+changes, the admin routes and the `config/openapi.json` entries. On screen,
+`static/js/app.js` and `static/js/api.js` change. Add the `admin.make_*` keys and
+`admin.role_changed_toast` to `language.yaml`. An app whose admin rights mean more
+than the template's should check that "any admin may make an admin" suits it.
+
+**Test:** on the Users screen, click someone's name, rename them, and Ctrl+Z puts it
+back. Press Make admin: it asks first, and that person is signed out. Press Make
+user on them: their next request is an ordinary user's. As a plain admin, another
+admin's row has neither.
+
+**Upgrade `name-sessions`: Naming your sessions.**
+Needs: `edit-helpers`.
+Marks: `LabelMySession`, `undo.rename_session`, `rename_session:`
+
+One new route (`/api/account/sessions/:id/label`), so take
+the session model and route changes and the `config/openapi.json` entry. The record
+gains an optional `label`, and sessions from before it simply have none. On screen,
+`static/js/sessions.js` and `static/js/api.js` change. Add `undo.rename_session` to
+`language.yaml`.
+
+**Test:** on the Account screen, click a device's name, type "Work laptop", and the
+browser and system stay underneath. Ctrl+Z puts it back. Clear the name and the
+worked-out one returns. An admin's Sessions view shows the name but cannot edit it.
+
+**Upgrade `sort-columns`: Sorting table columns.**
+Marks: `Pager.sortable`, `th-sort`, `sendSorted`
+
+List routes take `?sort=` and `?dir=`, so take the paging
+code (the sorting in `server/routes/pagination.go` or `app/routes/helpers.py`), each
+list route's field list, and the `config/openapi.json` parameters. On screen, take
+`static/js/pager.js`, `static/js/api.js`, the sortable `th`s in `static/index.html`,
+the `.th-sort` rules in `static/css/style.css`, and the `Pager.sortable` calls.
+
+**API keys now list newest first,** in the routes and `manage`, like every other
+list. Anything of the app's own that reads the first key as the oldest needs a look.
+
+**Test:** press a column header on Users: up, down, then back to the list's own
+order. Sort All keys by Last used: keys never used stay last both ways. Sort a list
+long enough to page, press Load more: the order carries on.
+
+**Upgrade `search-lists`: Search on keys, invites, files and webhooks.**
+Marks: `Pager.search`, `matchRows`
+
+Those lists take `?q=`, and the key
+lists take `?live=true`, so take the routes, `matchRows` or `match_rows`, and the
+`config/openapi.json` parameters. On screen, take `static/js/pager.js`,
+`static/js/dom.js` (`Dom.typed`), `static/js/api.js`, the search boxes in
+`static/index.html`, and the `Pager.search` and `Pager.filter` calls. `Api.listUsers`
+now takes `Pager.params`, so an app's own call with a search string needs changing.
+Add `ui.no_matches` and the `search_label` keys to `language.yaml`.
+
+**Test:** type in the search box on each screen: the list narrows as you pause, and
+Load more stays inside the search. A search with no matches says so rather than
+"No API keys yet." Tick Hide revoked and expired keys: only working keys stay.
+
+**Upgrade `show-more`: Showing more on each list.**
+Marks: `table_created`, `two_factor_badge`
+
+The Users rows gain `username` and `created_at`, so take
+the row in `server/routes/admin.go` or `app/routes/admin.py` and the `User` schema in
+`config/openapi.json`. An admin key and the MCP `admin_list_users` tool get them too.
+Invite links also search by maker. On screen, `static/js/app.js`, `keys.js`,
+`invites.js`, `files.js` and `webhooks.js` change, and Users gains a Created column
+in `static/index.html`. Add `admin.table_created`, `admin.two_factor_badge`,
+`api_keys.created` and `invite_links.made_by` to `language.yaml`.
+
+**Test:** Users shows a username under a name, a 2FA badge for someone with it on,
+and a Created column that sorts. A key shows when it was made, an invite link who
+made it, a file its type, and a webhook its events.
+
+**Upgrade `busy-buttons`: Buttons show when they are working.**
+Marks: `Dom.onPress`, `.modal-open .btn`
+
+A button made with `Dom.el` now goes busy by itself while an async click handler
+runs, and `Dom.onPress` does the same for a button in the page's HTML. Take
+`static/js/dom.js`, the `.modal-open` rule in `static/css/style.css`, and the
+`Dom.onPress` calls in `app.js`, `two_factor.js`, `pin.js`, `password.js`, `logs.js`,
+`sessions.js` and `settings.js`. An upgrade, though it adds no button, because it
+changes every button: an app's own `Dom.el` button that calls `Dom.busy` on itself
+in its click handler must stop, since the press is already busy and that inner call
+would skip its work. `Dom.busy` no longer sets `disabled`, so check any code of the
+app's that reads it.
+
+**Test:** on a slow connection, press a row button: it shows a spinner and a second
+press does nothing. Press one that asks first: no spinner behind the question, Cancel
+puts the button back and the focus on it. Load more still loads.
+
 ## Since 88bf66f (the oldest commit a managed app is on)
 
 **Switches added:** `auth.passwords`, `auth.two_factor`, `auth.invite_links`,
@@ -17,6 +451,34 @@ background jobs (`server/jobs`), the activity log and Logs screen
 two-factor sign-in, webhooks, file uploads, metrics, backups and key rotation
 (`server/backup`, `server/rotate`, `docker/restore.sh`, `docker/rotate-key.sh`),
 OpenAPI (`config/openapi.json`), sessions, soft delete, pagination, undo.
+
+**Whole features.** Each is its own choice. Everything else in this entry is
+foundation that later fixes are built on, so it always lands.
+
+**Upgrade `passwords`: Password login.**
+Marks: `passwords:`
+Files: `server/models/password.go`, `server/routes/passwords.go`, `server/routes/passwords_test.go`, `static/js/password.js`
+
+**Upgrade `two_factor`: Two-factor sign-in.**
+Marks: `two_factor:`
+Files: `server/models/two_factor.go`, `server/routes/two_factor.go`, `static/js/two_factor.js`
+
+**Upgrade `webhooks`: Webhooks.**
+Marks: `webhooks:`
+Files: `server/models/webhook.go`, `server/models/webhook_test.go`, `server/routes/webhooks.go`, `server/routes/webhooks_test.go`, `server/webhooks/webhook_cases.json`, `server/webhooks/webhooks.go`, `server/webhooks/webhooks_test.go`, `static/js/webhooks.js`
+
+**Upgrade `files`: File uploads.**
+Marks: `files_enabled`
+Files: `server/jobs/files.go`, `server/models/file.go`, `server/models/file_test.go`, `server/routes/files.go`, `server/routes/files_test.go`, `static/js/files.js`
+
+**Upgrade `metrics`: Metrics.**
+Needs: `api_keys`.
+Marks: `metrics:`
+Files: `server/metrics/metrics.go`, `server/middleware/metrics.go`, `server/routes/metrics.go`
+
+**Upgrade `backups`: Backups and key rotation.**
+Marks: `backups:`
+Files: `docker/restore.sh`, `docker/rotate-key.sh`, `server/backup/backup.go`, `server/backup/backup_test.go`, `server/rotate/rotate.go`, `server/rotate/rotate_test.go`
 
 **Secrets:** `server/config/secret.go` moves the key out of `config.yaml` into
 `config/secret.key`. `scripts/run.sh` does this through `config migrate` on the
@@ -37,5 +499,29 @@ the Settings screen, and the app's own features.
 
 Newest first. Each entry says which commits it covers, then only what a merge
 can't tell you: new config, migrations to append, renamed files, what to test.
-Use SHAs, because the numbered commit messages have restarted before. New
-optional features arrive switched off unless the app's stamp lists them.
+Use SHAs, because the numbered commit messages have restarted before.
+
+**Label everything that isn't a fix.** An unlabelled item is a fix and lands in
+every app without asking. Anything that adds a route, screen, setting or button is
+an upgrade, and the user chooses it, so write it like this, with no blank line
+inside the block:
+
+```
+**Upgrade `rename-keys`: Renaming API keys and changing their expiry.**
+Needs: `api_keys`, `edit-helpers`.
+Marks: `RenameMyAPIKey`, `undo.rename_key`
+Files: `server/routes/keys_extra.go`
+```
+
+- `Needs` (optional) is a feature switch or another item. An upgrade whose feature
+  is off is left out without asking.
+- `Marks` are strings found only in that item's code, and in no earlier template.
+  They decide whether the item is new to an app, and `apply` refuses while a
+  left-out item's marks are in the staged files.
+- `Files` (optional) are whole files that exist only for this item.
+- Use `Plumbing` in place of `Upgrade` for shared helpers that nobody would choose
+  on their own. They are never offered, and come with whatever needs them.
+- An upgrade named after a feature switch is that whole feature. Taking it switches
+  it on and adds it to the stamp.
+- `Needs` can also be a part an app can be scaffolded without, such as `logs`. An
+  upgrade to a part cut out of an app is left out without asking.

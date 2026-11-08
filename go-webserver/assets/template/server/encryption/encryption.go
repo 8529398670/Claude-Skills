@@ -112,12 +112,13 @@ func ConstantTimeEqual( a string , b string ) ( result bool ) {
 }
 
 // ---------------------------------------------------------------------------
-// bcrypt -- for one-time login secrets
+// bcrypt -- for login-link secrets
 // ---------------------------------------------------------------------------
 
-// BcryptHash is used on login-link secrets, which are redeemed at most once.
-// The cost is paid on a single redemption rather than on every request, so
-// bcrypt's slowness buys real protection here without hurting throughput.
+// BcryptHash is used on login-link secrets. The cost is paid once per
+// sign-in through a link (a link can allow several) rather than on every
+// request, and sign-ins have their own rate budget, so bcrypt's slowness buys
+// real protection here without hurting throughput.
 func BcryptHash( plain_text string ) ( result string , err error ) {
 	hashed , err := bcrypt.GenerateFromPassword( []byte( plain_text ) , bcrypt.DefaultCost )
 	if err != nil { return }

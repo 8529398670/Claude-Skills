@@ -93,14 +93,15 @@ def constant_time_equal(a: str, b: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# bcrypt -- for one-time login secrets, PINs, and passwords
+# bcrypt -- for login-link secrets, PINs, and passwords
 # ---------------------------------------------------------------------------
 
 
 def bcrypt_hash(plain_text: str) -> str:
-    """Used on login-link secrets, which are redeemed at most once. The cost
-    is paid on a single redemption rather than on every request, so bcrypt's
-    slowness buys real protection here without hurting throughput. Call it off
+    """Used on login-link secrets. The cost is paid once per sign-in through a
+    link (a link can allow several) rather than on every request, and
+    sign-ins have their own rate budget, so bcrypt's slowness buys real
+    protection here without hurting throughput. Call it off
     the event loop -- it takes a noticeable fraction of a second on purpose."""
     return _bcrypt.hashpw(plain_text.encode("utf-8"), _bcrypt.gensalt()).decode("ascii")
 
@@ -112,6 +113,7 @@ def bcrypt_compare(hashed: str, plain_text: str) -> bool:
         return False
 
 
+# >>> feature:two_factor
 # ---------------------------------------------------------------------------
 # TOTP (RFC 6238) -- the codes an authenticator app shows
 #
@@ -157,6 +159,7 @@ def recovery_code() -> str:
     here."""
     text = base64.b32encode(random_bytes(10)).decode("ascii")
     return "-".join(text[index : index + 4] for index in range(0, len(text), 4))
+# <<< feature:two_factor
 
 
 # ---------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+// whole-file feature:passwords
 package models
 
 import (
@@ -103,7 +104,8 @@ func usernameTakenTx( tx *db.Tx , username string , user_id uint64 ) ( taken boo
 //
 // Every other session of the account ends, in case the reason for changing a
 // password is that someone else has it.
-func SetPassword( store *db.Store , user_id uint64 , username string , digest string , keep_session_id string , code string , two_factor_enabled bool , secret_key string ) ( err error ) {
+func SetPassword( store *db.Store , user_id uint64 , username string , digest string , keep_session_id string , code string , two_factor_enabled bool , secret_key string ) ( err error ) { // feature:two_factor
+func SetPassword( store *db.Store , user_id uint64 , username string , digest string , keep_session_id string ) ( err error ) { // feature:!two_factor
 	clearing := digest == ""
 	name := NormalizeUsername( username )
 	password_hash := ""
@@ -129,9 +131,11 @@ func SetPassword( store *db.Store , user_id uint64 , username string , digest st
 			tx_err = ErrPasswordBlocked
 			return
 		}
+		// >>> feature:two_factor
 		if two_factor_enabled && user.TwoFactorOn() {
 			if _ , tx_err = checkCode( user , code , secret_key ); tx_err != nil { return }
 		}
+		// <<< feature:two_factor
 		if clearing == false {
 			taken , taken_err := usernameTakenTx( tx , name , user_id )
 			if taken_err != nil {

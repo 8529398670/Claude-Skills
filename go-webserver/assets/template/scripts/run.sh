@@ -6,7 +6,8 @@
 #                                     a fresh one here
 #   scripts/run.sh stop               stop the copy this checkout started
 #                                     (in this terminal, another, or the
-#                                     background one scripts/login.sh starts)
+#                                     background one login.sh --background
+#                                     starts)
 #   scripts/run.sh manage <command>   run an admin command against it
 #   scripts/run.sh <anything else>    same: passed straight to the binary
 #

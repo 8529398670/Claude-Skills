@@ -1,3 +1,4 @@
+# whole-file feature:jobs
 """The Jobs screen's routes (app/routes/jobs.py). TestClient as a context
 manager, so there is one event loop for a started job to run on."""
 from __future__ import annotations
@@ -6,7 +7,7 @@ import threading
 import time
 import unittest
 
-from app.core import logs
+from app.core import logs  # feature:logs
 from app.models import utc_now
 from app.models.jobs import mark_finished, mark_started
 from app.tests.route_support import RoutesTestCase, TestClient
@@ -23,14 +24,21 @@ class JobsRoutesTest(RoutesTestCase):
     def test_owner_only(self) -> None:
         self.assertEqual(self.call("GET", "/api/owner/jobs")[0], 404)
         self.assertEqual(self.call("GET", "/api/owner/jobs", cookie=self.admin_cookie)[0], 404)
-        self.assertEqual(self.call("GET", "/api/owner/jobs", key=self.admin_key)[0], 404)
+        self.assertEqual(self.call("GET", "/api/owner/jobs", key=self.admin_key)[0], 404)  # feature:api_keys
         status, body = self.call("GET", "/api/owner/jobs", cookie=self.owner_cookie)
         self.assertEqual(status, 200)
-        self.assertEqual([row["name"] for row in body["jobs"]], ["backup", "files", "prune-logs", "purge", "webhooks"])
+        names = ["purge"]
+        names.append("backup")  # feature:backups
+        names.append("files")  # feature:files
+        names.append("prune-logs")  # feature:logs
+        names.append("webhooks")  # feature:webhooks
+        self.assertEqual([row["name"] for row in body["jobs"]], sorted(names))
         self.assertEqual(body["jobs"][0]["interval_seconds"], 3600)
 
+        # >>> feature:api_keys
         status, body = self.call("POST", "/api/owner/jobs/purge/run", key=self.admin_key, body={})
         self.assertEqual(status, 404)
+        # <<< feature:api_keys
 
     def test_run(self) -> None:
         release = threading.Event()
@@ -64,6 +72,7 @@ class JobsRoutesTest(RoutesTestCase):
         self.assertFalse(row["running"])
         self.assertEqual(row["last_note"], "slept")
 
+    # >>> feature:logs
     def test_a_run_is_audited(self) -> None:
         self.register_not_due("quick", lambda: ("", ""))
         token = self.csrf(self.owner_cookie)
@@ -74,16 +83,19 @@ class JobsRoutesTest(RoutesTestCase):
         record = next(entry for entry in entries if entry.get("msg") == "job_run")
         self.assertEqual(record["detail"], {"name": "quick"})
 
+    # <<< feature:logs
     def test_housekeeping_runs_shortly_after_boot(self) -> None:
         def rows() -> dict[str, dict]:
             return {row["name"]: row for row in self.app.state.jobs.rows()}
 
         with TestClient(self.app):
             deadline = time.monotonic() + 5
-            while rows()["backup"].get("last_note") != "off" and time.monotonic() < deadline:
+            watched = "purge"
+            watched = "backup"  # feature:backups
+            while not rows()[watched].get("last_note") and time.monotonic() < deadline:
                 time.sleep(0.01)
         self.assertEqual(rows()["purge"]["runs"], 1)
-        self.assertEqual(rows()["backup"]["last_note"], "off")
+        self.assertEqual(rows()["backup"]["last_note"], "off")  # feature:backups
 
 
 if __name__ == "__main__":
