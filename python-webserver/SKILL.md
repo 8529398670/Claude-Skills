@@ -368,7 +368,8 @@ ports they ran on. Do not reset either to a shared value.
     index.html                # placeholder account + admin UI, fully data-i18n'd;
                               #   Bootstrap navbar + sidebar, one screen per view, toasts
     css/style.css             # overrides on top of Bootstrap: colour tokens, shell
-    js/theme.js               # light/dark/preset themes, applied before first paint
+    js/theme.js               # themes and their worked-out colours, applied before first paint
+    js/themes_editor.js       # Appearance screen: own themes, admin defaults, colour pickers
     js/nav.js                 # sidebar: shows the screen the URL hash names
     js/undo.js                # Ctrl+Z / Ctrl+Y history every screen records into
     js/shortcuts.js           # every shortcut; the per-user Shortcuts screen
@@ -381,7 +382,7 @@ ports they ran on. Do not reset either to a shared value.
     js/login_links.js         # how often and how long a login link works
     js/dom.js, i18n.js, api.js, app.js, keys.js, files.js,
       join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
-      password.js, two_factor.js    # password form and panel; 2FA step and panel
+      password.js, two_factor.js    # password form and card; 2FA step and card
     vendor/                   # self-hosted libs: Bootstrap 5, Bootstrap Icons (see its README)
   scripts/
     run.sh, run.bat           # local run: (re)starts the server; with args, the CLI
@@ -406,8 +407,11 @@ but stay consistent with the patterns already there:
   project. Switch it on (Settings, or `scripts/run.sh config set files.enabled
   true`). Never rebuild something the template has, and never scaffold again to
   get it. Switching one off again keeps its data.
-- **New screens** are a `<section class="card view" data-view="name">` in
-  `index.html` plus a sidebar link to `#name` (see `references/frontend.md`).
+- **New screens** are a `<section class="view" data-view="name">` in
+  `index.html` holding a heading and one card per job, plus a sidebar link to
+  `#name` (see `references/frontend.md`). A form and the list it fills are two
+  cards. Never divide a card with `<hr>`. Settings for your own account are a
+  new card on Account, not a new screen.
   Give each its own file in `static/js/` with its own `init()`, included
   from the HTML. Do not keep appending to `app.js` -- `keys.js` is the
   worked example.
@@ -494,6 +498,11 @@ but stay consistent with the patterns already there:
   function there instead. One file to audit is the entire point.
 - **Never build HTML from strings containing user data.** Use `Dom.el`
   with `text:`, which is why that helper exists.
+- **Nothing moves under the reader.** After a press, the page stays where it
+  was. Build the new content first and put it in with `Dom.swap`; never clear a
+  container and fill it after an `await`. Update the pressed control in place
+  rather than rebuilding it. Scroll only through `Dom.reveal`. See "Nothing moves
+  under the reader" in `references/frontend.md`.
 - **Adding a library?** Run `misc/vendor.sh <url>` and reference
   `/vendor/<file>`. A `<script src>` pointing at a CDN is blocked by the
   Content-Security-Policy -- that is the policy working. Vendor the file
@@ -691,7 +700,11 @@ refusals; these need a real server:
 - the Appearance screen switches the theme (without `appearance`, the navbar's
   button switches light and dark, signed in and signed out, and with it there is
   no navbar button); a fresh browser opens light whatever the system is set to,
-  and a choice survives a reload,
+  and a choice survives a reload and follows the account to another browser;
+  new, duplicate, rename and delete work and undo; a fine-tune colour set
+  unreadable is flagged and Reset brings back the readable one; an admin's
+  change on "Defaults for everyone" reaches a user who has not changed their
+  own list, and not one who has,
 - double-clicking **Create login link** makes one account,
 - **QR code** beside a login or invite link shows a code that scans to that link,
   and a new link hides the old code,

@@ -1,5 +1,5 @@
 // whole-file feature:passwords
-// Password sign-in: the form on the signed-out page, and the panel where a
+// Password sign-in: the form on the signed-out page, and the Account card where a
 // signed-in person sets a password. Both exist only while the owner has
 // auth.passwords on, and the server says so.
 //

@@ -10,8 +10,8 @@
   they deliberately switch.
 
   Colours: every theme sets the --app-* tokens as inline variables on <html>,
-  worked out from its two colours in theme.js. The values below are the Light
-  and Dark presets, for a page that loads before or without it. --app-accent is
+  worked out from its few colours in theme.js, with any it overrides. The values below are the Light
+  and Dark themes, for a page that loads before or without it. --app-accent is
   the main colour, for what you can press; --app-second says where you are.
   --app-bg, --app-surface and --app-nested are the page, a card, and a card
   inside a card, and --app-chrome the navbar and sidebar.
@@ -22,6 +22,7 @@
 */
 
 :root {
+  --app-text: #212529;
   --app-accent: #1f5fd6;
   --app-accent-fg: #ffffff;
   --app-second: #0b7a75;
@@ -41,6 +42,7 @@
 }
 
 :root[data-bs-theme="dark"] {
+  --app-text: #dee2e6;
   --app-accent: #6ea0ff;
   --app-accent-fg: #0b0d10;
   --app-second: #5fd3c4;
@@ -59,6 +61,7 @@
 
 /* Both selectors, because Bootstrap sets these on [data-bs-theme=dark] too. */
 :root, :root[data-bs-theme="dark"] {
+  --bs-body-color: var(--app-text);
   --bs-primary: var(--app-accent);
   --bs-link-color: var(--app-link);
   --bs-link-hover-color: color-mix(in srgb, var(--app-link) 80%, var(--bs-body-color));
@@ -217,6 +220,12 @@ progress { accent-color: var(--app-second); }
   .sidebar-collapsed .app-sidebar { display: none; }
 }
 
+/* Nothing moves under the reader (see Dom.steady in dom.js). The scrollbar
+   keeps its gutter, so a page growing past one screen or shrinking back does
+   not shift everything sideways, and the browser's own scroll anchoring stays
+   on for what script does not cover. */
+html { scrollbar-gutter: stable; overflow-anchor: auto; }
+
 /* The banner sits under the sticky navbar, so scrolling to it stops short. */
 #error-banner { scroll-margin-top: calc(var(--app-navbar-height) + 1rem); }
 
@@ -239,6 +248,46 @@ progress { accent-color: var(--app-second); }
 
 /* One signed-in screen at a time; nav.js marks the one the hash names. */
 .view:not(.view-active) { display: none; }
+
+/* A screen is its heading and a stack of cards, one card per job, so each
+   thing on it has its own edge. */
+.view { display: flex; flex-direction: column; gap: 1rem; }
+.view-title { margin: 0; font-size: 1.5rem; color: var(--app-second-text); }
+.view-description { margin: -0.5rem 0 0; color: var(--bs-secondary-color); }
+.view .card-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.75rem; }
+/* An old link to a card (#two-factor) scrolls to it; clear the sticky navbar. */
+.view > .card { scroll-margin-top: calc(var(--app-navbar-height) + 1rem); }
+
+/* A card that folds away: <details class="card card-collapse"> with a
+   <summary class="card-header">. For a list most visits don't need. */
+.card-collapse > .card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.75rem 1rem;
+  background: transparent;
+  cursor: pointer;
+  list-style: none;
+}
+.card-collapse > .card-header::-webkit-details-marker { display: none; }
+.card-collapse > .card-header .card-title { margin: 0; }
+/* A chevron at the right that turns as the card opens. */
+.card-collapse > .card-header::after {
+  content: "";
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-left: auto;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  opacity: 0.6;
+}
+.card-collapse[open] > .card-header::after { transform: rotate(45deg); }
+.card-collapse:not([open]) > .card-header { border-bottom: 0; border-radius: var(--bs-card-inner-border-radius); }
+@media (prefers-reduced-motion: reduce) { .card-collapse > .card-header::after { transition: none; } }
 
 /* Tables sit on a card, so they take its colour, not the page's. */
 .table { --bs-table-bg: transparent; }
@@ -314,27 +363,60 @@ th[aria-sort="descending"] .th-sort::after { content: " \2193"; }
 .link-box code { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; color: inherit; font-size: 0.85rem; }
 
 /* >>> feature:appearance */
-/* The Appearance screen's presets, each drawn in its own colours. */
-.theme-picker { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.theme-choice {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  --bs-btn-active-bg: transparent;
-  --bs-btn-active-color: var(--app-accent);
-  --bs-btn-active-border-color: var(--app-accent);
-}
-.theme-choice.active { border-width: 2px; }
+/* The Appearance screen: the list of themes beside the one being edited. */
 .theme-swatch {
   --swatch-bg: #f7f8fa;
   --swatch-accent: #1f5fd6;
   --swatch-second: #0b7a75;
-  width: 1.1rem;
-  height: 1.1rem;
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
   border-radius: 50%;
   border: 1px solid var(--app-border);
   background: linear-gradient(135deg, var(--swatch-bg) 34%, var(--swatch-accent) 34% 67%, var(--swatch-second) 67%);
 }
+.theme-layout { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr); gap: 1rem; align-items: start; }
+@media (max-width: 767.98px) { .theme-layout { grid-template-columns: minmax(0, 1fr); } }
+.theme-list { display: flex; flex-direction: column; gap: 0.25rem; }
+.theme-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--bs-border-radius);
+}
+.theme-item.selected { border-color: var(--app-accent); background: var(--app-nested); }
+.theme-item-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.25rem 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: start;
+}
+.theme-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.theme-colours { display: grid; grid-template-columns: minmax(8rem, 1fr) auto; gap: 0.5rem 1rem; align-items: center; }
+.theme-colour-input { display: flex; align-items: center; gap: 0.375rem; flex-wrap: wrap; }
+.theme-colour-input input[type="color"] { width: 2.75rem; height: 2.25rem; padding: 0.15rem; }
+.theme-colour-input .theme-hex { width: 6.5rem; font-family: var(--bs-font-monospace); }
+.theme-colour-row.auto .theme-hex { color: var(--bs-secondary-color); }
+.theme-colour-row.warn > label { color: var(--bs-danger-text-emphasis); }
+@media (max-width: 575.98px) { .theme-colours { grid-template-columns: minmax(0, 1fr); gap: 0.25rem; } .theme-colour-input { margin-bottom: 0.5rem; } }
+/* A small picture of the page in the theme being edited, drawn with its own
+   colours rather than the page's, so it shows a theme that is not in use. */
+.theme-preview { border: 1px solid; border-radius: var(--bs-border-radius); overflow: hidden; display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); font-size: 0.875rem; }
+.theme-preview-side { padding: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.theme-preview-side span { padding: 0.15rem 0.4rem; border-radius: 0.25rem; }
+.theme-preview-page { padding: 0.75rem; }
+.theme-preview-card, .theme-preview-nested, .theme-preview-info { border: 1px solid; border-radius: 0.375rem; padding: 0.5rem 0.75rem; }
+.theme-preview-nested, .theme-preview-info { margin-top: 0.5rem; }
+.theme-preview-button { display: inline-block; margin-top: 0.5rem; padding: 0.2rem 0.6rem; border-radius: 0.375rem; }
+.theme-preview-heading { font-weight: 600; }
 
 /* <<< feature:appearance */
 /* >>> feature:shortcuts */
@@ -353,8 +435,40 @@ th[aria-sort="descending"] .th-sort::after { content: " \2193"; }
 
 /* <<< feature:shortcuts */
 /* >>> feature:logs */
-/* The Logs screen: one <details> per day, a compact table inside. */
-.log-days { display: flex; flex-direction: column; gap: 0.5rem; }
+/* The Logs screen: a month calendar, then the picked day as one <details>
+   with a compact table inside. */
+.log-calendar { max-width: 22rem; margin-bottom: 1rem; }
+.log-cal-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+.log-cal-title { font-weight: 600; min-width: 9rem; text-align: center; }
+.log-cal-grid { display: grid; grid-template-columns: repeat( 7 , minmax( 0 , 1fr ) ); gap: 0.25rem; }
+.log-cal-weekday { text-align: center; font-size: 0.75rem; color: var(--bs-secondary-color); }
+.log-cal-day {
+  position: relative;
+  min-height: 40px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--bs-border-radius);
+  background: none;
+  color: var(--bs-secondary-color);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.log-cal-day:disabled { opacity: 0.45; cursor: default; }
+.log-cal-day.has-logs { background: var(--app-nested); border-color: var(--app-border); color: var(--bs-body-color); font-weight: 500; }
+.log-cal-day.is-today { border-color: var(--bs-primary); }
+.log-cal-day[aria-pressed="true"] { background: var(--bs-primary); border-color: var(--bs-primary); color: var(--app-accent-fg); }
+.log-cal-day:not(:disabled):hover { border-color: var(--bs-primary); }
+.log-cal-day:focus-visible { outline: 2px solid var(--bs-primary); outline-offset: 2px; }
+.log-cal-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bs-danger);
+}
 .log-day { border: 1px solid var(--app-border); border-radius: var(--bs-border-radius); background: var(--app-nested); }
 .log-day-summary {
   display: flex;

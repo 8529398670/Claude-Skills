@@ -97,7 +97,8 @@ Plain scripts, loaded in dependency order, each adding one global:
 
 | File | Responsibility |
 |---|---|
-| `theme.js` | Light, dark, or a preset theme. Loaded in `<head>`; see below. |
+| `theme.js` | Light, dark, or another theme, and the colours worked out from it. Loaded in `<head>`; see below. |
+| `themes_editor.js` | The Appearance screen: your themes, and the admin's defaults. See Themes below. |
 | `dom.js` | Element helpers, `Dom.copy`, `Dom.toast`, `Dom.onSubmit`, `Dom.confirm`, `Dom.editable`, `Dom.form`, `Dom.fieldError`, `Dom.when`. No app logic. |
 | `qr.js` | QR codes, for the authenticator app and for login and invite links. |
 | `login_links.js` | How often and how long a login link works: the choices on the create-user form and the New link and Sign in on another device dialogs, and how a link is described. |
@@ -108,13 +109,13 @@ Plain scripts, loaded in dependency order, each adding one global:
 | `track.js` | Sends the screens and clicks the activity log records. |
 | `nav.js` | The sidebar: which screen the URL hash shows. |
 | `pager.js` | Fills a table from a paged route, with Load more and an empty row. |
-| `keys.js` | The API keys screen. An example of the rule below. |
-| `sessions.js` | Signed-in devices: your own, and an admin's view of an account's. |
+| `keys.js` | Your API keys card on Account, and the admin's All API keys screen. An example of the rule below. |
+| `sessions.js` | Signed-in devices: your own (a folding card on Account), and an admin's view of an account's. |
 | `files.js` | The Files screen: uploads in pieces, with progress, resume and drops. |
 | `join.js` | Joining through an invite link. |
-| `pin.js` | The PIN screen. |
-| `password.js` | Password sign-in, and the Password screen. |
-| `two_factor.js` | The two-factor step at sign-in, and its screen. |
+| `pin.js` | The PIN card on Account. |
+| `password.js` | Password sign-in, and the Password card on Account. |
+| `two_factor.js` | The two-factor step at sign-in, and its card on Account. |
 | `invites.js` | The Invite links screen. |
 | `logs.js` | The owner's Logs screen, and its names for addresses. |
 | `jobs.js` | The owner's Jobs screen. |
@@ -180,8 +181,25 @@ To upgrade, delete the old files from `static/vendor/` and re-run
   collapses and expands the column (`Nav.toggleSidebar`, a `sidebar-collapsed`
   class on `<html>`, remembered in `localStorage`). The content column stays
   centred either way.
-- **A screen is a `<section class="card view" data-view="name">` in `<main>`
+- **A screen is a `<section class="view" data-view="name">` in `<main>`
   plus a sidebar link `<a class="nav-link" href="#name" data-nav="name">`.**
+  The view is not a card itself. It holds an `<h2 class="view-title">`, an
+  optional `<p class="view-description">`, and then a stack of
+  `<section class="card">`s, each with an `<h3 class="card-title">`.
+  **One card per job**: a form that makes something and the list it adds to
+  are two cards ("Add someone" and "People" on Users), and a set of separate
+  settings is one card each (Account: your name, another device, password,
+  PIN, two-factor, API keys, where you're signed in, sign out). Each thing
+  then has its own edge, and a feature that is off takes its whole card
+  with it. A screen that does one thing is one card. Never split one card
+  into parts with `<hr>`; make another card instead. A list that most visits
+  don't need folds away: `<details class="card card-collapse">` with a
+  `<summary class="card-header">` holding the `<h3>`, closed by default,
+  and fetched only when opened (see `sessions.js`).
+  Something about your own account is a card on Account, not a new screen.
+  A hash can name a card (`#two-factor-panel`) and `Nav` opens its screen
+  and scrolls to it; `Nav.moved` keeps the hashes of screens that became
+  cards working.
   `nav.js` shows the one the URL hash names, so back/forward, reload and a
   pasted link all work with no router. The screen's own JS decides whether it
   exists for this user by un-hiding its section; `Nav.init()` (called last in
@@ -303,8 +321,11 @@ straight to `fetch` with `keepalive` so the last batch outlives a closing
 tab. A failed send is dropped, not retried.
 
 `logs.js` is the owner's screen (`Logs.init( me )` returns at once unless
-`me.is_owner`). Days are `<details>` blocks, newest first and the newest open;
-a day's rows load when it is first opened, 200 at a time with "Load more".
+`me.is_owner`). It shows one day at a time as a `<details>` block, today unless
+another date is picked on the month calendar above it (`renderCalendar`, built
+from the days listing: shaded dates have entries, a dot means errors, and while
+searching only matching dates can be picked). A day's rows load when it is
+opened, 200 at a time with "Load more".
 The search box goes to the server as typed (debounced), and the kind buttons
 add a `kind:` term. Rows are built with `Dom.el` like everything else, and a
 row's JSON shows in a `<pre>` via `textContent`. Its text is the `logs:`
@@ -399,21 +420,91 @@ appears without a refresh. Its text is the `settings:` block in
 ### Themes
 
 `static/js/theme.js` is loaded in `<head>`, before the stylesheet paints, and
-applies the saved theme at once, so a dark choice never flashes light.
-`Theme.presets` lists light, dark and ten ready-made themes -- ocean, forest, sepia, grape, pink, WSU, midnight, slate, dark pink, WSU dark (Wright State University green and gold) -- (each a mode, an `accent` for what you can press, a `second` for where you are, and
-optional `background` and `surface`). `Theme.colours( preset )` works out everything
-else: the page, card, nested card (`.app-nested`) and navbar shades, labels that
-read on each fill, and text colours pushed until they reach 4.5. They are set inline
-on `<html>` as the `--app-*` tokens. `ThemePalettes` keeps brand colours by name,
-used or not. `scripts/check_themes.js` holds every preset to the contrast, and the
-tests run it. A dark mode sets Bootstrap's `data-bs-theme="dark"` on
-`<html>`. The Appearance screen is `Theme.render( root )`; names come from
-`theme.preset_<key>` in language.yaml.
+applies the kept theme at once, so a dark choice never flashes light.
+`Theme.builtIn` lists light, dark and ten ready-made themes -- ocean, forest,
+sepia, grape, pink, WSU, midnight, slate, cerise, WSU dark (Wright State
+University green and gold). A theme is `{ id , name , mode , accent , second ,
+background? , surface? , overrides? }`: a mode, an `accent` for what you can
+press, a `second` for where you are, optional page and card colours.
+`Theme.derived( theme )` works out everything else: the page, card, nested card
+(`.app-nested`) and navbar shades, labels that read on each fill, and text
+colours pushed until they reach 4.5. `Theme.colours( theme )` is that with the
+theme's `overrides` on top -- any derived colour replaced by name (`text`,
+`link`, `navLink`, `border`, `info`, ...). They are set inline on `<html>` as
+the `--app-*` tokens (`--app-text` feeds `--bs-body-color`). `Theme.check( theme )`
+lists the pairs in `Theme.pairs` that fall under 4.5; `scripts/check_themes.js`
+holds every built-in theme to none, and the tests run it. `ThemePalettes` keeps
+brand colours by name, used or not. A dark mode sets Bootstrap's
+`data-bs-theme="dark"` on `<html>`.
 
-The choice lives in this browser's `localStorage` only -- no server state.
-To make it follow a person across devices, store the preset key on the
-account and call `Theme.set( key )` after `/api/me`. Whatever you do, first
-load is always light.
+With `appearance`, themes live on the server. There are two lists: the app's
+defaults, which an admin edits (meta key `theme_defaults`; nothing stored means
+`Theme.builtIn`), and each person's own (`themes` on the user; nothing stored
+means they follow the defaults, including later changes). `/api/me` answers
+`themes` (theirs, else the defaults, else null), `themes_custom` and
+`theme_id`. `Theme.load( me )` takes that; `Theme.pick( id )` changes the one
+in use (`POST /api/account/theme`); `Theme.store( list , id )` replaces their
+list (`POST /api/account/themes`, null for "back to the defaults"). Admins use
+`GET`/`POST /api/admin/theme-defaults`. The server checks shape only (ids,
+names, `#rrggbb`, known override names, 1-40 themes); contrast is the screen's
+to warn about. The theme in use is also kept whole in `localStorage`, so the
+first paint and the signed-out pages are already in it; `/api/me` corrects it.
+
+The Appearance screen is `themes_editor.js` (`ThemeEditor.init( me )`): a list
+(use, new, duplicate, rename, delete) beside an editor with a colour picker and
+hex field for the mode's base colours and every derived one, each derived one
+marked Auto until changed and with a Reset back to the worked-out colour, a
+live preview, and a box naming any text that is hard to read. Admins get a
+"Defaults for everyone" tab with the same editor. Every change goes through
+`Undo` and sends the whole list. Names of built-in themes come from
+`theme.preset_<id>` in language.yaml until a list is saved.
+
+Without `appearance` there is no server state: the navbar button switches
+light and dark in this browser's `localStorage`. Whatever you do, first load is
+always light.
+
+### Nothing moves under the reader
+
+A press must never make the page jump: the list someone was reading stays under
+their eyes, whatever the press redraws. This is a rule for every screen, and
+`dom.js` carries most of it for you.
+
+- **Every press is held still.** `Dom.press`, which every `Dom.el` button and
+  every `Dom.onPress` button goes through, runs the handler inside
+  `Dom.steady( button , work )`. When the work is done, the window is scrolled so
+  the button sits where it sat before. If the button was redrawn, its replacement
+  is used: same `id`, or same `data-key`, so give buttons that get rebuilt a
+  `data-key`. Otherwise the nearest of its old ancestors still showing is used.
+  It does nothing if the reader scrolled meanwhile or the screen changed. A button
+  that means to take the reader elsewhere gets `data-scroll="free"`. Call
+  `Dom.steady( anchor , work )` yourself for changes that do not come from a press
+  (Live updates, timers).
+- **Build, then swap.** Never `Dom.clear` a container and fill it after an
+  `await`: for that moment the page is shorter, the browser pulls the scroll
+  position up, and it does not go back down. Fetch first, build the new nodes, then
+  `Dom.swap( holder , ...nodes )`. Clearing and filling in the same synchronous
+  step is fine. If what is left is too short to stay where the reader was,
+  `Dom.steady` gives the page blank room at its foot (`#steady-runway`), which
+  goes away as they scroll up, rather than letting the browser pull the page up. A container that
+  really must wait empty uses `Dom.hold( element )` and calls the `release` it
+  answers (`Pager.reset` does).
+- **Update in place.** A toggle flips its own classes and `aria-pressed`. It does
+  not rebuild its row of buttons (see `Logs.paintKinds`).
+- **Live data adds; it does not rebuild.** A screen that updates by itself adds
+  what is new beside what is there, keeps the row being read where it is, and
+  never throws away pages already loaded (see `Logs.liveRead`).
+- **Scroll only when asked.** `Dom.reveal( element )` brings something the reader
+  just opened into view (a login link, a shown-once secret, the error banner) and
+  tells `Dom.steady` the move is meant. Don't call `scrollIntoView` or
+  `window.scrollTo` directly (`Dom.movedOnPurpose()` first if you must), and a
+  `focus()` after a redraw passes `{ preventScroll: true }`.
+- **The scrollbar keeps its gutter.** `style.css` sets
+  `scrollbar-gutter: stable`, so a page that crosses one screen in height does
+  not shift sideways.
+
+A dev build (version `dev`) prints `[steady] <element> moved Npx` in the console
+whenever `Dom.steady` had to correct. The correction hides the jump, but the
+warning means something on that screen moves the page. Fix it at the source.
 
 ## What every screen gets
 
@@ -528,7 +619,8 @@ someone types and is not a substitute for a label.
 ## Sign-in screens
 
 `password.js` holds the password form on the signed-out page and the Password
-panel; `two_factor.js` holds the code step and the Two-factor panel. Both panels
+card on Account; `two_factor.js` holds the code step and the Two-factor card.
+Both cards
 show themselves only when `/api/me` says their switch is on, so nothing else has
 to know. Any sign-in call can answer `{two_factor: true, challenge}` instead of
 signing in; hand that to `TwoFactor.ask( challenge )`. A password never goes

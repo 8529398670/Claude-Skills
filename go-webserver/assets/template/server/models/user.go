@@ -57,6 +57,12 @@ type User struct {
 	// name. See shortcuts.go.
 	Shortcuts map[string]string `json:"shortcuts,omitempty"`
 	// <<< feature:shortcuts
+	// >>> feature:appearance
+	// Themes is this person's own list on the Appearance screen; nil follows
+	// the app's defaults. ThemeID is the one they use. See themes.go.
+	Themes  []Theme `json:"themes,omitempty"`
+	ThemeID string  `json:"theme_id,omitempty"`
+	// <<< feature:appearance
 }
 
 func ( user *User ) Disabled() ( result bool ) {

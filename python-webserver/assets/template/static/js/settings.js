@@ -163,6 +163,7 @@ const Settings = {
     const sticky = getComputedStyle( tools ).position === "sticky";
     const offset = document.querySelector( ".app-navbar" ).getBoundingClientRect().bottom + ( sticky ? tools.offsetHeight : 0 ) + 8;
     // Instant: the page scrolls smoothly by default, too slowly over this length.
+    Dom.movedOnPurpose();
     window.scrollTo( { top: window.scrollY + block.getBoundingClientRect().top - offset , behavior: "instant" } );
     block.focus( { preventScroll: true } );
   },

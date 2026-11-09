@@ -234,7 +234,7 @@ const Shortcuts = {
     const element = Dom.get( "shortcuts-modal" );
     const returnTo = document.activeElement;
     element.addEventListener( "hidden.bs.modal" , () => {
-      if ( returnTo && returnTo.focus && returnTo.isConnected ) returnTo.focus();
+      if ( returnTo && returnTo.focus && returnTo.isConnected ) returnTo.focus( { preventScroll: true } );
     } , { once: true } );
     bootstrap.Modal.getOrCreateInstance( element ).show();
   },
@@ -310,7 +310,7 @@ const Shortcuts = {
     if ( this.refocus ) {
       const button = document.querySelector( '[data-shortcut="' + this.refocus + '"] button' );
       this.refocus = null;
-      if ( button ) button.focus();
+      if ( button ) button.focus( { preventScroll: true } );
     }
   },
 

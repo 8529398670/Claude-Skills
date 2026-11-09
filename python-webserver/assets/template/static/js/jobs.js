@@ -59,17 +59,14 @@ const Jobs = {
       return;
     }
     const body = Dom.get( "jobs-table" ).querySelector( "tbody" );
-    Dom.clear( body );
-    payload.jobs.forEach( ( job ) => {
-      body.appendChild( Dom.el( "tr" , { children: [
+    Dom.swap( body , ...payload.jobs.map( ( job ) => Dom.el( "tr" , { attrs: { "data-key": "job-" + job.name } , children: [
         Dom.el( "td" , { text: this.label( job ) } ),
         Dom.el( "td" , { children: [ this.status( job ) ] } ),
         Dom.el( "td" , { children: [ Dom.when( job.last_finished || job.last_started , I18n.get( "jobs.never" ) ) ] } ),
         Dom.el( "td" , { children: [ Dom.when( job.next_due , I18n.get( "jobs.never" ) ) ] } ),
         Dom.el( "td" , { class: "small" , text: job.last_error || job.last_note || "" } ),
         Dom.el( "td" , { children: [ this.runButton( job ) ] } ),
-      ] } ) );
-    } );
+      ] } ) ) );
     if ( payload.jobs.length === 0 ) Pager.empty( Dom.get( "jobs-table" ) );
     Pager.label( "jobs-table" );
     const running = payload.jobs.some( function ( job ) { return job.running; } );

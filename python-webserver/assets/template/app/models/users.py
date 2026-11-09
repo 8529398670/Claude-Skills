@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field  # feature:two_factor|shortcuts
 from datetime import datetime
+from typing import Any  # feature:appearance
 
 from app.core.db import BUCKET_META, BUCKET_USERS, Record, Store, Transaction
 from app.models import from_iso, to_iso, utc_now
@@ -83,6 +84,12 @@ class User:
     # app/models/shortcuts.py.
     shortcuts: dict[str, str] = field(default_factory=dict)
     # <<< feature:shortcuts
+    # >>> feature:appearance
+    # This person's own list on the Appearance screen; None follows the app's
+    # defaults. theme_id is the one they use. See app/models/themes.py.
+    themes: list[dict[str, Any]] | None = None
+    theme_id: str = ""
+    # <<< feature:appearance
 
     @property
     def disabled(self) -> bool:
@@ -112,6 +119,8 @@ class User:
             "recovery_hashes": self.recovery_hashes,
             # <<< feature:two_factor
             "shortcuts": self.shortcuts,  # feature:shortcuts
+            "themes": self.themes,  # feature:appearance
+            "theme_id": self.theme_id,  # feature:appearance
         }
 
     @classmethod
@@ -135,6 +144,8 @@ class User:
             recovery_hashes=record.get("recovery_hashes", []),
             # <<< feature:two_factor
             shortcuts=record.get("shortcuts") or {},  # feature:shortcuts
+            themes=record.get("themes"),  # feature:appearance
+            theme_id=record.get("theme_id", ""),  # feature:appearance
         )
 
 

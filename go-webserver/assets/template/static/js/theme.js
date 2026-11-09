@@ -1,19 +1,35 @@
-// How the page looks: light, dark, or one of a few ready-made themes.
+// How the page looks: light, dark, or another theme.
 //
-// Light is the default and stays it -- never the OS setting. Picking another
-// theme is remembered in this browser (localStorage) only; nothing goes to
-// the server. Move it onto the account if a theme should follow a person to
-// every device.
-//
-// Dark is Bootstrap's own dark mode (<html data-bs-theme="dark">). Light is
-// the attribute being absent, and Bootstrap's colour-mode script, which would
+// Light is the default and stays it -- never the OS setting. Dark is
+// Bootstrap's own dark mode (<html data-bs-theme="dark">). Light is the
+// attribute being absent, and Bootstrap's colour-mode script, which would
 // follow prefers-color-scheme, is deliberately not included.
+//
+// A theme is a mode and a few colours. colours() works out everything else
+// the page needs from those -- text, links, borders, tints -- each pushed until
+// it is readable. Its overrides replace any of the worked-out colours by name,
+// and dropping one puts the readable colour back.
+//
+// >>> feature:appearance
+// Which themes there are, and which one someone uses, is kept on their
+// account (models/themes.go): their own list, or until they change something,
+// the defaults an admin set, or until an admin does, the built-in ones below.
+// The Appearance screen (themes_editor.js) edits both lists.
+//
+// The theme in use is also kept in this browser, whole, so the first paint --
+// and the pages before signing in -- are already in it. The account is the
+// authority: load( me ) replaces what was kept as soon as /api/me answers.
+// <<< feature:appearance
+// >>> feature:!appearance
+// Light or dark is switched by the navbar button and remembered in this
+// browser only (localStorage); nothing goes to the server.
+// <<< feature:!appearance
 //
 // This file is loaded in <head>, before the stylesheet's first paint, so a
 // saved dark theme never flashes light on the way in.
 // >>> feature:appearance
 //
-// Brand colours live in ThemePalettes, named, whether a preset uses them or not,
+// Brand colours live in ThemePalettes, named, whether a theme uses them or not,
 // so the rest are there for whoever needs them next.
 const ThemePalettes = {
   // Wright State University. Primary: green and gold. The rest are its accents.
@@ -34,34 +50,35 @@ const ThemePalettes = {
 // <<< feature:appearance
 const Theme = {
   storageKey: "theme",
-  // What redraws when the theme changes: the Appearance picker. // feature:appearance
+  // What redraws when the theme changes: the Appearance screen. // feature:appearance
   // What redraws when the theme changes: the navbar button. // feature:!appearance
   onChange: [],
 
-  // Each preset is a mode and two colours, plus its own page and card colours if
-  // the mode's will not do. accent is the main colour: what you can press. second
-  // says where you are: the active nav item, headings, progress, info. The rest
-  // is worked out in colours() below. Names come from language.yaml
-  // (theme.preset_<key>).
-  presets: [
-    { key: "light" , mode: "light" , accent: "#1f5fd6" , second: "#0b7a75" },
-    { key: "dark" , mode: "dark" , accent: "#6ea0ff" , second: "#5fd3c4" },
+  // The built-in themes: what everyone has until an admin saves defaults. accent
+  // is the main colour: what you can press. second says where you are: the
+  // active nav item, headings, progress, info. background and surface are the
+  // page and the cards, when the mode's will not do. Names come from
+  // language.yaml (theme.preset_<id>) until a list is saved; a saved list keeps
+  // its own names.
+  builtIn: [
+    { id: "light" , mode: "light" , accent: "#1f5fd6" , second: "#0b7a75" },
+    { id: "dark" , mode: "dark" , accent: "#6ea0ff" , second: "#5fd3c4" },
     // >>> feature:appearance
-    { key: "ocean" , mode: "light" , accent: "#0b7285" , second: "#bd5418" , background: "#eef6f8" , surface: "#ffffff" },
-    { key: "forest" , mode: "light" , accent: "#28843b" , second: "#8a6a12" , background: "#f1f6ef" , surface: "#ffffff" },
-    { key: "sepia" , mode: "light" , accent: "#9c5a1c" , second: "#2f6f6a" , background: "#f6f0e4" , surface: "#fbf7ef" },
-    { key: "grape" , mode: "light" , accent: "#7048c8" , second: "#c0267e" , background: "#f5f2fc" , surface: "#ffffff" },
-    { key: "pink" , mode: "light" , accent: "#c2255c" , second: "#6b3fc0" , background: "#fdf0f5" , surface: "#ffffff" },
+    { id: "ocean" , mode: "light" , accent: "#0b7285" , second: "#bd5418" , background: "#eef6f8" , surface: "#ffffff" },
+    { id: "forest" , mode: "light" , accent: "#28843b" , second: "#8a6a12" , background: "#f1f6ef" , surface: "#ffffff" },
+    { id: "sepia" , mode: "light" , accent: "#9c5a1c" , second: "#2f6f6a" , background: "#f6f0e4" , surface: "#fbf7ef" },
+    { id: "grape" , mode: "light" , accent: "#7048c8" , second: "#c0267e" , background: "#f5f2fc" , surface: "#ffffff" },
+    { id: "pink" , mode: "light" , accent: "#c2255c" , second: "#6b3fc0" , background: "#fdf0f5" , surface: "#ffffff" },
     // Wright State University: Green on Off White, and Gold on Black with Dark Green panels.
-    { key: "wsu" , mode: "light" , accent: ThemePalettes.wsu.green , second: ThemePalettes.wsu.gold , background: ThemePalettes.wsu.off_white , surface: "#ffffff" },
-    { key: "midnight" , mode: "dark" , accent: "#8c7cff" , second: "#ffb86b" , background: "#0e1020" , surface: "#171a30" },
-    { key: "slate" , mode: "dark" , accent: "#4fb3a9" , second: "#e6b450" , background: "#15191e" , surface: "#1d232a" },
-    { key: "dark_pink" , mode: "dark" , accent: "#f06595" , second: "#ffa8d0" , background: "#1f0d16" , surface: "#2a1220" },
-    { key: "wsu_dark" , mode: "dark" , accent: ThemePalettes.wsu.gold , second: ThemePalettes.wsu.yellow , background: ThemePalettes.wsu.black , surface: ThemePalettes.wsu.dark_green },
+    { id: "wsu" , mode: "light" , accent: ThemePalettes.wsu.green , second: ThemePalettes.wsu.gold , background: ThemePalettes.wsu.off_white , surface: "#ffffff" },
+    { id: "midnight" , mode: "dark" , accent: "#8c7cff" , second: "#ffb86b" , background: "#0e1020" , surface: "#171a30" },
+    { id: "slate" , mode: "dark" , accent: "#4fb3a9" , second: "#e6b450" , background: "#15191e" , surface: "#1d232a" },
+    { id: "cerise" , mode: "dark" , accent: "#f06595" , second: "#ffa8d0" , background: "#1f0d16" , surface: "#2a1220" },
+    { id: "wsu_dark" , mode: "dark" , accent: ThemePalettes.wsu.gold , second: ThemePalettes.wsu.yellow , background: ThemePalettes.wsu.black , surface: ThemePalettes.wsu.dark_green },
     // <<< feature:appearance
   ],
 
-  // What a preset leaves out.
+  // What a theme leaves out.
   modes: {
     light: { background: "#f7f8fa" , surface: "#ffffff" , text: "#212529" },
     dark: { background: "#101215" , surface: "#191c21" , text: "#dee2e6" },
@@ -72,8 +89,9 @@ const Theme = {
   tints: { page: 3.5 , surface: 1.75 , nested: 8.75 , chrome: 10 , info: 14 , infoBorder: 45 },
 
   // Field of colours() -> custom property in style.css, which hands them on to
-  // Bootstrap.
+  // Bootstrap. Every one of them can be overridden.
   vars: {
+    text: "--app-text",
     accent: "--app-accent",
     accentFg: "--app-accent-fg",
     second: "--app-second",
@@ -90,95 +108,171 @@ const Theme = {
     border: "--app-border",
   },
 
+  // Pairs that must stay readable: [ front , back ] fields of colours(). check()
+  // and scripts/check_themes.js both use them. Names are language.yaml keys
+  // (theme.check_<name>).
+  pairs: {
+    text_card: [ "text" , "surface" ],
+    text_nested: [ "text" , "nested" ],
+    text_info: [ "text" , "info" ],
+    link: [ "link" , "nested" ],
+    button: [ "accentFg" , "accent" ],
+    heading: [ "secondText" , "nested" ],
+    active_nav: [ "secondFg" , "second" ],
+    sidebar_link: [ "navLink" , "chrome" ],
+  },
+
+  // The themes on offer, and the one in use (its id). // feature:appearance
+  list: [], // feature:appearance
+  // Whether list is the person's own rather than the defaults. // feature:appearance
+  custom: false, // feature:appearance
   current: "light",
-  // WCAG AA for text. scripts/check_themes.js holds every preset to it.
+  // WCAG AA for text.
   minContrast: 4.5,
 
-  find( key ) {
-    return this.presets.find( function ( preset ) { return preset.key === key; } ) || this.presets[ 0 ];
+  // A built-in theme with its name filled in, ready to be saved in a list.
+  named( theme ) {
+    const copy = this.copy( theme );
+    if ( !copy.name ) copy.name = ( typeof I18n === "undefined" ? "" : I18n.get( "theme.preset_" + theme.id ) ) || theme.id;
+    return copy;
   },
 
+  copy( theme ) {
+    const copy = Object.assign( {} , theme );
+    copy.overrides = Object.assign( {} , theme.overrides || {} );
+    return copy;
+  },
+
+  // >>> feature:appearance
+  find( id ) {
+    return this.list.find( function ( theme ) { return theme.id === id; } ) || this.list[ 0 ] || this.builtIn[ 0 ];
+  },
+  // <<< feature:appearance
+  // >>> feature:!appearance
+  find( id ) {
+    return this.builtIn.find( function ( theme ) { return theme.id === id; } ) || this.builtIn[ 0 ];
+  },
+  // <<< feature:!appearance
+
+  // What was kept in this browser: a whole theme, or (from before themes could
+  // be edited) a built-in one's id.
   restore() {
-    let saved = "";
+    let saved = null;
     try {
-      saved = window.localStorage.getItem( this.storageKey ) || "";
+      const raw = window.localStorage.getItem( this.storageKey ) || "";
+      if ( raw.charAt( 0 ) === "{" ) saved = JSON.parse( raw );
+      else if ( raw !== "" ) saved = this.builtIn.find( function ( theme ) { return theme.id === raw; } ) || null;
     } catch ( error ) {
-      // Storage blocked (private window, previews): stay light.
+      // Storage blocked (private window, previews) or unreadable: stay light.
     }
-    this.current = this.find( saved ).key;
-    this.apply( this.find( this.current ) );
+    if ( !this.valid( saved ) ) saved = this.builtIn[ 0 ];
+    this.list = this.builtIn.slice(); // feature:appearance
+    this.current = saved.id;
+    this.apply( saved );
   },
 
-  set( key ) {
-    this.current = this.find( key ).key;
+  // Enough of a theme to paint, so a broken stored value never breaks the page.
+  valid( theme ) {
+    const hex = /^#[0-9a-f]{6}$/i;
+    return Boolean( theme && typeof theme === "object" && ( theme.mode === "light" || theme.mode === "dark" )
+      && hex.test( theme.accent || "" ) && hex.test( theme.second || "" ) );
+  },
+
+  // Keeps the theme in use for the next first paint. Plain Light is kept as
+  // nothing at all, which is what a new browser starts with anyway.
+  keep( theme ) {
     try {
-      if ( this.current === "light" ) window.localStorage.removeItem( this.storageKey );
-      else window.localStorage.setItem( this.storageKey , this.current );
+      const plain = theme.id === "light" && JSON.stringify( this.colours( theme ) ) === JSON.stringify( this.colours( this.builtIn[ 0 ] ) );
+      if ( plain ) window.localStorage.removeItem( this.storageKey );
+      else window.localStorage.setItem( this.storageKey , JSON.stringify( theme ) );
     } catch ( error ) {
       // Not remembered for next time, but still applied now.
     }
-    this.apply( this.find( this.current ) );
   },
 
-  apply( preset ) {
+  apply( theme ) {
     const root = document.documentElement;
-    if ( preset.mode === "dark" ) root.setAttribute( "data-bs-theme" , "dark" );
+    if ( theme.mode === "dark" ) root.setAttribute( "data-bs-theme" , "dark" );
     else root.removeAttribute( "data-bs-theme" );
-    const colours = this.colours( preset );
+    const colours = this.colours( theme );
     Object.keys( this.vars ).forEach( ( field ) => root.style.setProperty( this.vars[ field ] , colours[ field ] ) );
   },
 
-  // Every colour the page needs, from a preset's few. Fills keep the colour as
-  // chosen. Anything read as text is pushed until it is readable, on the nested
-  // card, the most tinted place it can land: WSU's gold is gold on a progress bar
-  // and darker in a heading.
-  colours( preset ) {
-    const mode = this.modes[ preset.mode ];
-    const background = preset.background || mode.background;
-    const surface = preset.surface || mode.surface;
-    const second = preset.second;
-    const card = this.mix( second , surface , this.tints.surface );
-    const nested = this.mix( second , surface , this.tints.nested );
-    const chrome = this.mix( second , surface , this.tints.chrome );
-    return {
-      text: mode.text,
-      accent: preset.accent,
-      accentFg: this.readableOn( preset.accent ),
-      second: second,
-      secondFg: this.readableOn( second ),
-      secondText: this.asText( second , nested ),
-      link: this.asText( preset.accent , nested ),
-      navLink: this.asText( preset.accent , chrome ),
-      background: this.mix( second , background , this.tints.page ),
-      surface: card,
-      nested: nested,
-      chrome: chrome,
-      info: this.mix( second , card , this.tints.info ),
-      infoBorder: this.mix( second , card , this.tints.infoBorder ),
-      // From the card, not the page: most borders sit on a card, and a card can be
-      // a long way from its page (WSU dark's green on black).
-      border: this.mix( mode.text , card , 20 ),
-    };
+  changed() {
+    this.onChange.forEach( ( listener ) => listener() );
+  },
+
+  // >>> feature:appearance
+  // The account's themes, from /api/me (or a save's reply). A person who never
+  // picked one on their account keeps what this browser had, if it is on offer.
+  load( me ) {
+    const kept = this.current;
+    this.custom = Boolean( me.themes_custom );
+    this.list = Array.isArray( me.themes ) && me.themes.length > 0
+      ? me.themes.map( ( theme ) => this.copy( theme ) )
+      : this.builtIn.map( ( theme ) => this.named( theme ) );
+    this.current = this.find( me.theme_id || kept ).id;
+    this.show();
+  },
+
+  // Paints the theme in use and keeps it for next time.
+  show() {
+    const theme = this.find( this.current );
+    this.apply( theme );
+    this.keep( theme );
+    this.changed();
   },
 
   // Picking is undoable, and quick picks merge into one step.
-  pick( key ) {
+  pick( id ) {
     const previous = this.current;
-    if ( previous === key ) return;
+    if ( previous === id ) return Promise.resolve();
+    const choose = async ( chosen ) => {
+      this.current = this.find( chosen ).id;
+      this.show();
+      await Api.setTheme( this.current );
+    };
+    return Undo.run( {
+      label: I18n.get( "undo.theme" ),
+      merge: "theme",
+      screen: null,
+      do: () => choose( id ),
+      undo: () => choose( previous ),
+    } );
+  },
+
+  // Saves someone's whole list (null: back to the defaults) and which one they
+  // use, and takes the server's answer as the new state.
+  async store( list , id ) {
+    const reply = await Api.setThemes( list , id );
+    this.load( reply );
+  },
+  // <<< feature:appearance
+  // >>> feature:!appearance
+  set( id ) {
+    const theme = this.find( id );
+    this.current = theme.id;
+    this.apply( theme );
+    this.keep( theme );
+  },
+
+  // Picking is undoable, and quick picks merge into one step.
+  pick( id ) {
+    const previous = this.current;
+    if ( previous === id ) return;
     const choose = ( chosen ) => {
       this.set( chosen );
-      this.onChange.forEach( ( listener ) => listener() );
+      this.changed();
     };
     Undo.run( {
       label: I18n.get( "undo.theme" ),
       merge: "theme",
       screen: null,
-      do: () => choose( key ),
+      do: () => choose( id ),
       undo: () => choose( previous ),
     } );
   },
 
-  // >>> feature:!appearance
   // The button in the navbar, for an app without the Appearance screen: light
   // or dark from anywhere, signed in or not. Dark from any light theme, light
   // from any dark one.
@@ -192,38 +286,61 @@ const Theme = {
     this.onChange.push( update );
     update();
   },
-
   // <<< feature:!appearance
-  // >>> feature:appearance
-  // The picker on the Appearance card: one button per preset, drawn in its
-  // own colours. summary, if given, is kept showing the current theme's name.
-  render( root , summary ) {
-    Dom.clear( root );
-    const update = () => {
-      Dom.all( "button" , root ).forEach( ( button ) => {
-        button.classList.toggle( "active" , button.getAttribute( "data-theme-key" ) === this.current );
-        button.setAttribute( "aria-pressed" , button.getAttribute( "data-theme-key" ) === this.current ? "true" : "false" );
-      } );
-      if ( summary ) Dom.text( summary , I18n.get( "theme.preset_" + this.current ) );
+
+  // Every colour the page needs, from a theme's few, before its overrides.
+  // Fills keep the colour as chosen. Anything read as text is pushed until it
+  // is readable, on the nested card, the most tinted place it can land: WSU's
+  // gold is gold on a progress bar and darker in a heading.
+  derived( theme ) {
+    const mode = this.modes[ theme.mode ] || this.modes.light;
+    const background = theme.background || mode.background;
+    const surface = theme.surface || mode.surface;
+    const second = theme.second;
+    const card = this.mix( second , surface , this.tints.surface );
+    const nested = this.mix( second , surface , this.tints.nested );
+    const chrome = this.mix( second , surface , this.tints.chrome );
+    return {
+      text: mode.text,
+      accent: theme.accent,
+      accentFg: this.readableOn( theme.accent ),
+      second: second,
+      secondFg: this.readableOn( second ),
+      secondText: this.asText( second , nested ),
+      link: this.asText( theme.accent , nested ),
+      navLink: this.asText( theme.accent , chrome ),
+      background: this.mix( second , background , this.tints.page ),
+      surface: card,
+      nested: nested,
+      chrome: chrome,
+      info: this.mix( second , card , this.tints.info ),
+      infoBorder: this.mix( second , card , this.tints.infoBorder ),
+      // From the card, not the page: most borders sit on a card, and a card can be
+      // a long way from its page (WSU dark's green on black).
+      border: this.mix( mode.text , card , 20 ),
     };
-    this.presets.forEach( ( preset ) => {
-      const swatch = Dom.el( "span" , { class: "theme-swatch" } );
-      swatch.style.setProperty( "--swatch-bg" , this.colours( preset ).background );
-      swatch.style.setProperty( "--swatch-accent" , preset.accent );
-      swatch.style.setProperty( "--swatch-second" , preset.second );
-      const button = Dom.el( "button" , {
-        class: "btn btn-outline-secondary theme-choice",
-        attrs: { type: "button" , "data-theme-key": preset.key },
-        children: [ swatch , Dom.el( "span" , { text: I18n.get( "theme.preset_" + preset.key ) } ) ],
-        on: { click: () => this.pick( preset.key ) },
-      } );
-      root.appendChild( button );
-    } );
-    this.onChange.push( update );
-    update();
   },
 
-  // <<< feature:appearance
+  // What the page uses: the worked-out colours, with the theme's overrides on top.
+  colours( theme ) {
+    const colours = this.derived( theme );
+    Object.keys( theme.overrides || {} ).forEach( ( field ) => {
+      if ( field in colours ) colours[ field ] = theme.overrides[ field ];
+    } );
+    return colours;
+  },
+
+  // The pairs that are too hard to read in this theme, worst first:
+  // [ { name , front , back , ratio } ]. Only an override can cause one; the
+  // built-in themes are held to none by scripts/check_themes.js.
+  check( theme ) {
+    const colours = this.colours( theme );
+    return Object.keys( this.pairs ).map( ( name ) => {
+      const [ front , back ] = this.pairs[ name ];
+      return { name: name , front: front , back: back , ratio: this.contrast( colours[ front ] , colours[ back ] ) };
+    } ).filter( ( pair ) => pair.ratio < this.minContrast ).sort( ( a , b ) => a.ratio - b.ratio );
+  },
+
   // percent of over, the rest under.
   mix( over , under , percent ) {
     const channel = function ( color , offset ) { return parseInt( color.slice( offset , offset + 2 ) , 16 ); };

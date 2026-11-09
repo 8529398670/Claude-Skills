@@ -3,6 +3,147 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 3d4ff05
+
+**Upgrade `editable-themes`: Themes are kept on the account, editable, with admin defaults.**
+Marks: `themes_editor.js`, `Theme.builtIn`, `/api/admin/theme-defaults`, `--app-text`
+
+The Appearance screen was a row of fixed presets remembered in one browser.
+Now each person has their own list of themes on their account -- use, new,
+duplicate, rename, delete -- and edits any colour with a colour picker: the
+mode, the four base colours, and every colour worked out from them (text,
+links, borders, tints, sidebar...), each with a Reset back to the readable one
+and a warning for text that falls under 4.5:1. Admins get a "Defaults for
+everyone" tab: the list everyone starts from. People who have not changed
+their own list follow it, later edits included; the first change someone
+makes saves the whole list as theirs, and "Go back to the defaults" undoes
+that. Light is still the first theme and the first-load default.
+
+Server: add `app/models/themes.py`, `app/routes/themes.py` (+ `app/tests/test_theme_routes.py`) whole; add `themes` / `theme_id` on `User` in `app/models/users.py`; in `app/routes/account.py` (`me_row`) answer
+`themes`, `themes_custom` and `theme_id`; in `app/routes/__init__.py` add
+`POST /api/account/themes`, `POST /api/account/theme`, and
+`GET`/`POST /api/admin/theme-defaults` (admin group). `config/openapi.json`:
+take the four paths, the `Theme` schema, and the three new `Me` properties.
+
+Frontend: take `static/js/theme.js` and `static/js/themes_editor.js` whole, and
+`scripts/check_themes.js`. `Theme.presets` is now `Theme.builtIn`, each `key` is
+now `id`, `Theme.render` is gone (`ThemeEditor.init( me )` in `app.js` instead),
+and `localStorage["theme"]` now holds the whole theme as JSON (an old preset
+key is still read). An app that added its own presets moves them into
+`builtIn` with `id` for `key`. In `static/js/api.js` add `setThemes`,
+`setTheme`, `themeDefaults`, `setThemeDefaults`. In `static/index.html` take
+the Appearance section (tabs, `#theme-editor-mine`, `#theme-editor-defaults`)
+and the `themes_editor.js` script tag. In `static/css/style.css` add
+`--app-text` to both `:root` blocks and `--bs-body-color: var(--app-text);` to
+the hand-on block, and take the `feature:appearance` block. In `language.yaml`
+take the `theme:` block and the `theme_*` labels under `undo:`.
+
+**Test:** Pick a theme, reload, and sign in from another browser: it follows.
+Make a new theme, duplicate, rename and delete one, undoing each. Set Links to
+the card colour under Fine-tune: the row and a box flag it, and Reset brings
+back the readable colour. As an admin, duplicate a theme on "Defaults for
+everyone": a user who never changed their list sees it at once; a user who
+did, does not; that user's "Go back to the defaults" brings it. A fresh
+browser still opens light.
+
+**Upgrade `steady-scroll`: Nothing moves under the reader.**
+Marks: `Dom.steady`, `Dom.swap`, `Dom.reveal`, `scrollbar-gutter`
+
+A press no longer makes the page jump. Before, toggling a kind button on Logs
+("System", "Sign-in") cleared the day, waited for the server, and filled it
+again, so the page shrank for a moment and the scroll position was lost. Live did
+the same every two seconds and threw away loaded "Load more" pages.
+
+Now every press goes through `Dom.steady`, which keeps the pressed button (or what
+replaced it) at the same spot on screen. New content is built first and put in
+with `Dom.swap`, which never lets the page shrink. Logs flips its kind buttons in
+place, reads a day's first page before showing it, and Live adds only the new
+rows above the ones being read. Deliberate scrolls (login link box, webhook
+secret, error banner, Settings jump links, changing screen) go through
+`Dom.reveal` / `Dom.movedOnPurpose`, so the guard stands back for them. A dev
+build warns `[steady]` in the console when it had to correct.
+
+Take `static/js/dom.js`, `pager.js` and `logs.js` whole. In `app.js`,
+`sessions.js` and `webhooks.js`, each `scrollIntoView( { block: "nearest" } )`
+becomes `Dom.reveal( element )`. In `nav.js` `render()`, the card scroll is
+`Dom.reveal( card , "start" )` and the `scrollTo( 0 , 0 )` follows
+`Dom.movedOnPurpose()`. In `settings.js` `jumpTo()`, call `Dom.movedOnPurpose()`
+before `window.scrollTo`. In `jobs.js` the rows go in with `Dom.swap`. In
+`shortcuts.js` the two refocus calls pass `{ preventScroll: true }`. In
+`style.css`, add `html { scrollbar-gutter: stable; overflow-anchor: auto; }`
+above `#error-banner`. An app's own screens should follow the rules in
+"Nothing moves under the reader" in `references/frontend.md`: in particular, a
+`Dom.clear` followed by an `await` and a fill becomes fetch, build, `Dom.swap`,
+and its own `scrollIntoView` calls become `Dom.reveal`, or `Dom.steady` will
+undo them.
+
+**Test:** On Logs, scroll partway down a long day and toggle System, Sign-in and
+Request a few times: the kind buttons stay put and nothing jumps. Pick another
+day on the calendar while scrolled: the calendar stays put. With Live on and a
+"Load more" page open, make requests elsewhere: rows being read stay where they
+are and the loaded pages remain. Create a login link from a row far down Users:
+the link box still comes into view. No `[steady]` warnings in a dev build's
+console while doing this.
+
+**Upgrade `logs-calendar`: Logs shows one day and a calendar to pick others.**
+Marks: `logs-calendar`, `log-cal-grid`, `logs.day_empty`
+
+The Logs screen no longer lists every day on disk, which grew without end. Its
+days card shows a month calendar and one day under it: today unless another
+date is picked. Dates with entries are shaded, a red dot marks a day with
+errors, and while searching only matching dates can be picked and the screen
+moves to the newest match. The server is unchanged.
+
+Take `static/js/logs.js` whole. In `static/index.html`, take the inside of the
+Logs days card (the `.log-calendar` block, `#logs-empty`, `#logs-day`; the old
+`#logs-days` is gone). In `static/css/style.css`, take the `feature:logs` block
+(`.log-days` is gone, `.log-cal-*` is new). In `language.yaml` under `logs:`,
+`empty` is gone and `calendar_label`, `prev_month`, `next_month`,
+`today_button`, `day_button`, `day_matches` and `day_empty` are new. An app's
+own code that read `#logs-days` or `details.log-day[open]` must follow.
+
+**Test:** Logs shows only today, open, with today ringed and picked on the
+calendar. Picking a shaded date shows that day; Load more, Download and Delete
+day still work, and deleting returns to today. Searching `status:5xx` leaves
+only matching dates pickable. No horizontal scroll at phone width.
+
+**Upgrade `account-cards`: One Account screen, and a card per job on every screen.**
+Marks: `view-title`, `card-collapse`, `sessions-card`, `sessions-open`, `account.profile_heading`
+
+Password, PIN, Two-factor and API keys are no longer screens. They are cards on
+Account, which now reads: your name, sign in on another device, password, PIN,
+two-factor, API keys, where you're signed in (folded away until opened,
+remembered in this browser, fetched only while open), sign out. Their sidebar
+links and the `nav.pin`, `nav.password`, `nav.two_factor` and `nav.api_keys`
+keys are gone. `#password`, `#pin`, `#two-factor` and `#api-keys` still work:
+`Nav.moved` opens Account and scrolls to the card.
+
+Every screen changes shape. `<section class="card view">` becomes
+`<section class="view">` holding an `<h2 class="view-title">`, an optional
+`<p class="view-description">`, and one `<section class="card">` per job with an
+`<h3 class="card-title">`. Users, Invite links, All API keys and Webhooks split
+their create form from their list. Files splits upload from the list. Logs
+splits search, address names (a folding card) and the days. The user-sessions
+and webhook-deliveries panels become cards. Element ids are unchanged, so screen
+JS only needs the edits listed here.
+
+Take the signed-in `<section>` and the sidebar of `static/index.html` whole. Take
+the `.view` and `.card-collapse` rules in `static/css/style.css`, `moved`,
+`card()` and the scroll in `render()` in `static/js/nav.js`, and `init`,
+`savedOpen`, `saveOpen` and the guard at the top of `refresh` in
+`static/js/sessions.js`. In `language.yaml`, take `account.profile_heading`,
+`account.logout_description`, `admin.create_heading`/`list_heading`,
+`files.upload_heading`/`list_heading`, `invite_links.create_heading`/`list_heading`,
+`admin_keys.list_heading` and `webhooks.create_heading`/`list_heading`, each
+under its feature. An app's own screens become views of cards the same way. Any
+of its own code that styled `.card.view`, or looked for a screen's `h2`, must
+follow the new shape.
+
+**Test:** Account shows the cards in order, and a feature that is off has no
+card. "Where you're signed in" starts shut, loads when opened and stays open
+after a reload. `#two-factor` lands on Account at that card. Users, Webhooks,
+Files and Logs show separate cards, with no horizontal scroll at phone width.
+
 ## After 3f84d17
 
 **`docker/run.sh`, the settings-changed notice:** the `diff … | sed …` line now

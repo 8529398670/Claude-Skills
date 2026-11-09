@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Holds every theme in static/js/theme.js to a readable contrast: the same maths
-// the page runs, so a colour added to a preset cannot quietly fail. Run by the
-// tests, or on its own: node scripts/check_themes.js
+// Holds every built-in theme in static/js/theme.js to a readable contrast: the
+// same maths and pairs the Appearance screen checks (Theme.check), so a colour
+// added to one cannot quietly fail. Run by the tests, or on its own:
+// node scripts/check_themes.js
 const fs = require( "fs" );
 const path = require( "path" );
 const vm = require( "vm" );
@@ -16,24 +17,12 @@ vm.runInContext( source + "\nglobalThis.Theme = Theme;" , page );
 const Theme = page.Theme;
 
 let failed = 0;
-Theme.presets.forEach( ( preset ) => {
-  const c = Theme.colours( preset );
-  const pairs = {
-    "text on a card": [ c.text , c.surface ],
-    "text on a nested card": [ c.text , c.nested ],
-    "text in an info box": [ c.text , c.info ],
-    "link on a nested card": [ c.link , c.nested ],
-    "button label": [ c.accentFg , c.accent ],
-    "heading on a nested card": [ c.secondText , c.nested ],
-    "active nav label": [ c.secondFg , c.second ],
-    "sidebar link": [ c.navLink , c.chrome ],
-  };
-  Object.entries( pairs ).forEach( ( [ name , [ front , back ] ] ) => {
-    const ratio = Theme.contrast( front , back );
-    if ( ratio >= Theme.minContrast ) return;
+Theme.builtIn.forEach( ( theme ) => {
+  Theme.check( theme ).forEach( ( pair ) => {
     failed += 1;
-    console.error( preset.key + ": " + name + " is " + ratio.toFixed( 2 ) + " (" + front + " on " + back + ")" );
+    const colours = Theme.colours( theme );
+    console.error( theme.id + ": " + pair.name + " is " + pair.ratio.toFixed( 2 ) + " (" + colours[ pair.front ] + " on " + colours[ pair.back ] + ")" );
   } );
 } );
 if ( failed > 0 ) process.exit( 1 );
-console.log( "ok: " + Theme.presets.length + " themes" );
+console.log( "ok: " + Theme.builtIn.length + " themes" );

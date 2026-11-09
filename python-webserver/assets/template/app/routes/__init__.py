@@ -48,6 +48,7 @@ from app.routes import (
     settings,  # feature:settings
     shortcuts,  # feature:shortcuts
     team,
+    themes,  # feature:appearance
     two_factor,  # feature:two_factor
     webhooks,  # feature:webhooks
 )
@@ -225,6 +226,8 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         signed_in("/api/me", account.me),
         signed_in("/api/account/rename", account.rename, ["POST"]),
         signed_in("/api/account/shortcuts", shortcuts.set_my_shortcuts, ["POST"]),  # feature:shortcuts
+        signed_in("/api/account/themes", themes.set_my_themes, ["POST"]),  # feature:appearance
+        signed_in("/api/account/theme", themes.set_my_theme, ["POST"]),  # feature:appearance
         # >>> feature:invite_links
         # A session only: a PIN lets its holder sign in through an invite
         # link, so a key that could set one could turn itself into a session.
@@ -288,6 +291,9 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         admin_sessions("/api/admin/users/{user_id}/sessions/{session_id}/revoke", sessions.revoke_user_session, ["POST"]),
         # <<< feature:sessions
         admin_files("/api/admin/storage", files.all_storage),  # feature:files
+        # The themes everyone starts from. Not a credential, so a key may. # feature:appearance
+        admins("/api/admin/theme-defaults", themes.get_theme_defaults),  # feature:appearance
+        admins("/api/admin/theme-defaults", themes.set_theme_defaults, ["POST"]),  # feature:appearance
         # >>> feature:invite_links
         # Invite links: one link for a group, each person who opens it joins
         # as a new user (see invite_links.py). Creating one needs a session for

@@ -423,7 +423,7 @@ out of it. Switching a feature off keeps its data.
 | `api_keys` | `auth.api_keys` | on | Keys stop working, minting answers 404, rows stay |
 | `mcp` | `server.mcp` | on | `/mcp` answers 404. Needs `api_keys` |
 | `webhooks` | `webhooks.enabled` | on | Screen hidden, routes answer 404, no events queued, nothing sent, queued deliveries wait |
-| `invite_links` | `auth.invite_links` | on | Invite and PIN screens hidden, `/join` and every invite route answer 404, MCP invite tools unlisted, links and PINs stay |
+| `invite_links` | `auth.invite_links` | on | Invite links screen and PIN card hidden, `/join` and every invite route answer 404, MCP invite tools unlisted, links and PINs stay |
 | `passwords` | `auth.passwords` | off | Form hidden, no password works, hashes stay |
 | `two_factor` | `auth.two_factor` | on | Not offered or asked for, secrets stay |
 | `metrics` | `metrics.enabled` | off | `/metrics` answers 404. Needs `api_keys` |

@@ -148,6 +148,8 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	account.Get( "/me" , handlers.GetMe )
 	account.Post( "/account/rename" , handlers.RenameAccount )
 	account.Post( "/account/shortcuts" , handlers.SetMyShortcuts ) // feature:shortcuts
+	account.Post( "/account/themes" , handlers.SetMyThemes ) // feature:appearance
+	account.Post( "/account/theme" , handlers.SetMyTheme ) // feature:appearance
 	// >>> feature:invite_links
 	// A session only: a PIN lets its holder sign in through an invite link,
 	// so a key that could set one could turn itself into a session.
@@ -251,6 +253,9 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	admin.Get( "/users/:user_id/sessions" , handlers.Guard.RequireSession , handlers.ListUserSessions ) // feature:sessions
 	admin.Post( "/users/:user_id/sessions/:session_id/revoke" , handlers.Guard.RequireSession , handlers.RevokeUserSession ) // feature:sessions
 	admin.Get( "/storage" , handlers.RequireFiles , handlers.AllStorage ) // feature:files
+	// The themes everyone starts from. Not a credential, so a key may. // feature:appearance
+	admin.Get( "/theme-defaults" , handlers.GetThemeDefaults ) // feature:appearance
+	admin.Post( "/theme-defaults" , handlers.SetThemeDefaults ) // feature:appearance
 
 	// >>> feature:invite_links
 	// Invite links: one link for a group, each person who opens it joins as a

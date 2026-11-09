@@ -58,6 +58,10 @@ func ( handlers *Handlers ) meRow( actor *security.Actor ) ( payload fiber.Map ,
 	login_link , err := models.LiveLoginLink( handlers.Store , user.ID )
 	if err != nil { return }
 
+	// >>> feature:appearance
+	themes , themes_custom , err := handlers.myThemes( user )
+	if err != nil { return }
+	// <<< feature:appearance
 	payload = fiber.Map{
 		"authenticated":    true,
 		"id":               user.ID,
@@ -70,6 +74,9 @@ func ( handlers *Handlers ) meRow( actor *security.Actor ) ( payload fiber.Map ,
 		"version":          handlers.Version,
 		"announcement":     handlers.cfg().Announcement,
 		"shortcuts":        myShortcuts( user ), // feature:shortcuts
+		"themes":           themes, // feature:appearance
+		"themes_custom":    themes_custom, // feature:appearance
+		"theme_id":         user.ThemeID, // feature:appearance
 		"has_pin":          user.HasPin(), // feature:invite_links
 		"username":           user.Username, // feature:passwords
 		"has_password":       user.HasPassword(), // feature:passwords

@@ -132,6 +132,12 @@ const Api = {
   setPin( pin )                { return this.post( "/api/account/pin" , { pin: pin } ); }, // feature:invite_links
   // The whole set of changed keys; {} puts them all back. See shortcuts.js. // feature:shortcuts
   setShortcuts( shortcuts )    { return this.post( "/api/account/shortcuts" , { shortcuts: shortcuts } ); }, // feature:shortcuts
+  // >>> feature:appearance
+  // Your whole list of themes (null: back to the defaults) and the one you
+  // use; or only the one you use. See theme.js.
+  setThemes( themes , id )     { return this.post( "/api/account/themes" , { themes: themes , theme_id: id } ); },
+  setTheme( id )               { return this.post( "/api/account/theme" , { theme_id: id } ); },
+  // <<< feature:appearance
   // >>> feature:passwords
   // digest is what password.js derived; the password itself is never sent.
   // An empty digest removes the password.
@@ -247,6 +253,9 @@ const Api = {
   allFiles( offset , params )  { return this.request( "/api/admin/files" + this.query( { offset: offset , ...params } ) ); },
   storage()                    { return this.request( "/api/account/storage" ); },
   allStorage()                 { return this.request( "/api/admin/storage" ); },
+  // The themes everyone without their own list sees; null is the built-in ones. // feature:appearance
+  themeDefaults()              { return this.request( "/api/admin/theme-defaults" ); }, // feature:appearance
+  setThemeDefaults( themes )   { return this.post( "/api/admin/theme-defaults" , { themes: themes } ); }, // feature:appearance
   createFile( name , size , type ) { return this.post( "/api/files" , { name: name , size: size , type: type } ); },
   sendFileChunk( id , index , piece ) {
     return this.request( "/api/files/" + encodeURIComponent( id ) + "/chunks/" + index , {

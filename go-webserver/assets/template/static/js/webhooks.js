@@ -76,7 +76,7 @@ const Webhooks = {
     Dom.text( Dom.get( "webhook-secret-notice" ) , notice );
     Dom.text( Dom.get( "webhook-secret-value" ) , secret );
     Dom.show( box , true );
-    box.scrollIntoView( { block: "nearest" } );
+    Dom.reveal( box );
   },
 
   async onCopy() {
@@ -247,7 +247,7 @@ const Webhooks = {
         Dom.el( "td" , { children: delivery.status === "failed" ? [ this.resendButton( hook , delivery ) ] : [] } ),
       ] } ) );
     } );
-    Dom.get( "webhook-deliveries" ).scrollIntoView( { block: "nearest" } );
+    Dom.reveal( Dom.get( "webhook-deliveries" ) );
   },
 
   // Once the receiver is fixed. The failed row stays, and a new one appears.
