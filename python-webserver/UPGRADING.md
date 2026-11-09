@@ -3,6 +3,19 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 990d33f
+
+**`static/js/api.js`, the admin theme defaults:** `themeDefaults()` and
+`setThemeDefaults()` sat inside the `feature:files` block, so an app built or
+updated without `files` lost them. Its Appearance screen then failed at sign-in
+with `Api.themeDefaults is not a function`, and the page stayed on the spinner.
+They now sit in the `feature:appearance` block after `setTheme`. An app without
+`files` that took `editable-themes` adds the two lines there by hand, unless it
+already has them. An app with `files` needs nothing.
+
+**Test:** in an app without `files`, sign in: the signed-in screens load, and
+an admin's Appearance screen shows the "Defaults for everyone" tab.
+
 ## After 3d4ff05
 
 **Upgrade `editable-themes`: Themes are kept on the account, editable, with admin defaults.**
@@ -86,7 +99,7 @@ the link box still comes into view. No `[steady]` warnings in a dev build's
 console while doing this.
 
 **Upgrade `logs-calendar`: Logs shows one day and a calendar to pick others.**
-Marks: `logs-calendar`, `log-cal-grid`, `logs.day_empty`
+Marks: `log-calendar`, `log-cal-grid`, `logs.day_empty`
 
 The Logs screen no longer lists every day on disk, which grew without end. Its
 days card shows a month calendar and one day under it: today unless another

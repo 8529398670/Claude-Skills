@@ -32,6 +32,10 @@ LANGUAGE_KEY = re.compile(r"  ([a-z0-9_]+):")
 LITERAL_KEY = re.compile(r'I18n\.get\(\s*"([^"]+)"\s*\)')
 LITERAL_ID = re.compile(r'Dom\.get\(\s*"([^"]+)"\s*\)')
 GLOBAL_OBJECT = re.compile(r"^const ([A-Z]\w*) = \{", re.MULTILINE)
+# A member of the Api object in api.js (a method, or a field like csrfToken),
+# and a use of one anywhere else.
+API_MEMBER = re.compile(r"^  (?:async\s+)?([A-Za-z_]\w*)\s*[(:]", re.MULTILINE)
+API_USE = re.compile(r"\bApi\.([A-Za-z_]\w*)")
 COMMENT = re.compile(r"(?:^|[ \t])//(?:[ \t].*)?$", re.MULTILINE)
 
 
@@ -117,8 +121,21 @@ def frontend_problems(skill: str, project: Path) -> list[str]:
     defined = {name for text in scripts.values() for name in GLOBAL_OBJECT.findall(text)}
     every = {name for path in template.glob("*.js") for name in GLOBAL_OBJECT.findall(path.read_text(encoding="utf-8"))}
     for name in sorted(every - defined):
+        # A line that asks `typeof Name` first is written to work without it.
         reference = re.compile(rf"\b{name}\.")
-        problems += [f"{script}: {name} is gone" for script, text in sorted(scripts.items()) if reference.search(text)]
+        guard = re.compile(rf"\btypeof\s+{name}\b")
+        problems += [
+            f"{script}: {name} is gone"
+            for script, text in sorted(scripts.items())
+            if any(reference.search(line) and not guard.search(line) for line in text.splitlines())
+        ]
+
+    # A call into api.js whose helper went with a feature, such as one left
+    # inside another feature's block by mistake.
+    if "api.js" in scripts:
+        members = set(API_MEMBER.findall(scripts["api.js"]))
+        for script, text in sorted(scripts.items()):
+            problems += [f"{script}: no Api.{member}" for member in sorted(set(API_USE.findall(text)) - members)]
     return problems
 
 
