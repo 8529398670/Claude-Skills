@@ -216,8 +216,9 @@ const ThemeEditor = {
       } );
     };
 
-    // A colour: the picker, its hex code, and Reset where there is something to
-    // go back to. auto: nothing chosen, so the value shown is worked out.
+    // A colour: its label over the picker, its hex code, and Reset where there
+    // is something to go back to. auto: nothing chosen, so the value shown is
+    // worked out. One unit, so the colours can flow into columns on a wide screen.
     const colourRow = ( options ) => {
       const id = root.id + "-" + options.key;
       const picker = Dom.el( "input" , { class: "form-control form-control-color" ,
@@ -253,7 +254,7 @@ const ThemeEditor = {
       const label = Dom.el( "label" , { class: "form-label mb-0" , text: options.label , attrs: { for: id } } );
       const row = Dom.el( "div" , { class: "theme-colour-input" , children: controls } );
       const kind = "theme-colour-row" + ( options.auto ? " auto" : "" ) + ( options.warn ? " warn" : "" );
-      return [ Dom.el( "div" , { class: kind , children: [ label ] } ) , Dom.el( "div" , { class: kind , children: [ row ] } ) ];
+      return Dom.el( "div" , { class: kind , children: [ label , row ] } );
     };
 
     const editPane = ( theme ) => {
@@ -290,7 +291,7 @@ const ThemeEditor = {
       self.baseFields.forEach( ( field ) => {
         const optional = field === "background" || field === "surface";
         const chosen = theme[ field ] || "";
-        colourRow( {
+        base.appendChild( colourRow( {
           key: "base-" + field,
           label: I18n.get( "theme.colour_base_" + field ),
           value: chosen || ( optional ? mode[ field ] : "#000000" ),
@@ -299,13 +300,13 @@ const ThemeEditor = {
           preview: ( value ) => previewWith( ( copy ) => { copy[ field ] = value; } ),
           save: ( value ) => actions.set( theme , field , value ),
           reset: optional && chosen ? () => actions.set( theme , field , null ) : null,
-        } ).forEach( ( cell ) => base.appendChild( cell ) );
+        } ) );
       } );
 
       const fine = Dom.el( "div" , { class: "theme-colours" } );
       self.fineFields.forEach( ( field ) => {
         const overridden = Boolean( theme.overrides && theme.overrides[ field ] );
-        colourRow( {
+        fine.appendChild( colourRow( {
           key: "fine-" + field,
           label: I18n.get( "theme.colour_" + self.labelKeys[ field ] ),
           value: colours[ field ],
@@ -314,16 +315,13 @@ const ThemeEditor = {
           preview: ( value ) => previewWith( ( copy ) => { copy.overrides[ field ] = value; } ),
           save: ( value ) => ( value === derived[ field ] && !overridden ? null : actions.override( theme , field , value ) ),
           reset: overridden ? () => actions.override( theme , field , null ) : null,
-        } ).forEach( ( cell ) => fine.appendChild( cell ) );
+        } ) );
       } );
 
-      const children = [
-        Dom.el( "div" , { class: "d-flex flex-wrap align-items-center gap-2 mb-3" , children: [
-          Dom.el( "h3" , { class: "h5 mb-0" , children: [ name ] } ),
-          modeGroup,
-        ] } ),
-        preview,
-      ];
+      // The preview and anything hard to read sit in an aside: above the
+      // colours on a narrower screen, beside them (and staying in view while
+      // the colours scroll) on a wide one. See .theme-edit-body in style.css.
+      const aside = [ preview ];
       if ( problems.length > 0 ) {
         const items = problems.map( ( problem ) => Dom.el( "li" , {
           text: I18n.get( "theme.check_" + problem.name ) + " — " + I18n.get( "theme.ratio" ).replace( "{ratio}" , problem.ratio.toFixed( 1 ) ),
@@ -333,18 +331,30 @@ const ThemeEditor = {
           box.push( Dom.el( "button" , { class: "btn btn-sm btn-outline-secondary" , text: I18n.get( "theme.reset_all" ) ,
             attrs: { type: "button" , "data-focus": "reset-all" } , on: { click: () => actions.resetFine( theme ) } } ) );
         }
-        children.push( Dom.el( "div" , { class: "alert alert-warning mt-3 mb-0" , attrs: { role: "status" } , children: box } ) );
+        aside.push( Dom.el( "div" , { class: "alert alert-warning mt-3 mb-0" , attrs: { role: "status" } , children: box } ) );
       }
-      children.push( Dom.el( "h4" , { class: "h6 mt-4" , text: I18n.get( "theme.base_heading" ) } ) );
-      children.push( base );
+      const main = [
+        Dom.el( "h4" , { class: "h6 mt-0" , text: I18n.get( "theme.base_heading" ) } ),
+        base,
+      ];
       const fineHeader = [ Dom.el( "h4" , { class: "h6 mb-0" , text: I18n.get( "theme.fine_heading" ) } ) ];
       if ( Object.keys( theme.overrides || {} ).length > 0 && problems.length === 0 ) {
         fineHeader.push( Dom.el( "button" , { class: "btn btn-sm btn-link p-0" , text: I18n.get( "theme.reset_all" ) ,
           attrs: { type: "button" , "data-focus": "reset-all" } , on: { click: () => actions.resetFine( theme ) } } ) );
       }
-      children.push( Dom.el( "div" , { class: "d-flex flex-wrap align-items-baseline gap-3 mt-4 mb-1" , children: fineHeader } ) );
-      children.push( Dom.el( "p" , { class: "small text-body-secondary" , text: I18n.get( "theme.fine_help" ) } ) );
-      children.push( fine );
+      main.push( Dom.el( "div" , { class: "d-flex flex-wrap align-items-baseline gap-3 mt-4 mb-1" , children: fineHeader } ) );
+      main.push( Dom.el( "p" , { class: "small text-body-secondary" , text: I18n.get( "theme.fine_help" ) } ) );
+      main.push( fine );
+      const children = [
+        Dom.el( "div" , { class: "d-flex flex-wrap align-items-center gap-2 mb-3" , children: [
+          Dom.el( "h3" , { class: "h5 mb-0" , children: [ name ] } ),
+          modeGroup,
+        ] } ),
+        Dom.el( "div" , { class: "theme-edit-body" , children: [
+          Dom.el( "div" , { class: "theme-edit-aside" , children: aside } ),
+          Dom.el( "div" , { class: "theme-edit-main" , children: main } ),
+        ] } ),
+      ];
       return Dom.el( "div" , { class: "card" , children: [ Dom.el( "div" , { class: "card-body" , children: children } ) ] } );
     };
 

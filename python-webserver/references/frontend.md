@@ -179,13 +179,16 @@ To upgrade, delete the old files from `static/vendor/` and re-run
   on a phone. The menu button (`bi-list`, far left of the navbar) works at
   every width: on a phone it slides the panel in, on a wide screen it
   collapses and expands the column (`Nav.toggleSidebar`, a `sidebar-collapsed`
-  class on `<html>`, remembered in `localStorage`). The content column stays
-  centred either way.
+  class on `<html>`, remembered in `localStorage`). `<main>` takes all the
+  space beside the sidebar; each screen decides how much of it to use and is
+  centred in it (see [Desktop layout](#desktop-layout)).
 - **A screen is a `<section class="view" data-view="name">` in `<main>`
   plus a sidebar link `<a class="nav-link" href="#name" data-nav="name">`.**
   The view is not a card itself. It holds an `<h2 class="view-title">`, an
-  optional `<p class="view-description">`, and then a stack of
-  `<section class="card">`s, each with an `<h3 class="card-title">`.
+  optional `<p class="view-description">`, and then its
+  `<section class="card">`s, each with an `<h3 class="card-title">` -- one
+  column, unless what the screen is calls for another layout on a desktop
+  ([Desktop layout](#desktop-layout)).
   **One card per job**: a form that makes something and the list it adds to
   are two cards ("Add someone" and "People" on Users), and a set of separate
   settings is one card each (Account: your name, another device, password,
@@ -218,6 +221,113 @@ To upgrade, delete the old files from `static/vendor/` and re-run
   (a key shown once) gets its own `alert` on the screen instead, and
   page-level errors go in `#error-banner` at the top of `<main>`.
 - **Statuses are badges.** `Dom.badge( text , "success" )` for a table cell.
+
+### Desktop layout
+
+A wide screen is room, not an obligation. What decides a screen's desktop
+layout is **what the screen is** -- the shape of its content -- not how many
+pixels are spare. It is specific to each screen, and there is no formula: the
+table below is the record of what has worked and what has not. Width used
+badly is worse than width left empty: a short table stretched across 1100px
+pulls each row's buttons away from its name, a lone input that long reads as
+a banner, unrelated cards of different heights side by side leave ragged
+edges and holes, and a thin column squeezed beside a table looks broken. So
+the default is the width every screen was designed at, and a screen goes
+wider only together with a layout its content calls for. Phones are never
+affected: everything here starts at `lg` (992px).
+
+**Tables get the whole width. This one is a hard rule.** A table is the thing
+people scan across, and it wants every pixel of its screen. Nothing narrow
+sits beside it: no rail, no calendar, no filter column, no form squeezed into
+a strip. A control that picks what a table shows (a date, a filter) is a
+button in the bar above it that opens a popup: the Logs calendar is the worked
+example (`#logs-date-button`, a Bootstrap dropdown with `autoClose: "outside"`,
+closed by `Logs.pick`). A form that adds rows goes above the table, full
+width, as on Users. The one exception has to be earned, and is described in
+2 below.
+
+**First, say what the screen is,** and pick from this table:
+
+| The screen is... | Example | Desktop layout | Width |
+|---|---|---|---|
+| A list of separate settings, read top to bottom | Account, Shortcuts | One column, as on a phone | default |
+| One small form | a sign-in step | One column | `view-narrow` |
+| A table plus the form that adds to it | Users (add someone + people) | Form above, table full width -- as on a phone | default |
+| A short table plus one small tool used beside it | Files (upload + stored files) | `view-split`: the table main, the tool aside | `view-wide` |
+| An editor and what shows its effect | Appearance (colours + preview) | Editor main, preview aside; panes from `xxl` | `view-full` |
+| A big table or log people scan across | Logs | The table gets the width; what picks the rows (date, kinds) sits in the bar above, the calendar in a popup | `view-full` |
+| Several things of the same kind and size | stat tiles, one card per item | `view-cards` | `view-wide` |
+
+If a screen is none of these, or two of them, it stays one column until
+someone decides what it is, and looks at it. That decision is the design
+work; the classes below are only how it is written down.
+
+1. **Width tiers** go on the `<section class="view">`. The shell does not cap
+   the width; the view does.
+
+   | Class | Max width | Use with |
+   |---|---|---|
+   | *(none)* | 60rem | one column -- the width every screen was built at |
+   | `view-narrow` | 48rem | one small form |
+   | `view-wide` | 80rem | a main + aside, or a card grid |
+   | `view-full` | 120rem | an editor with panes, or a table people scan across |
+
+   Never widen a screen without changing its layout: the same column, wider,
+   only stretches it. What sits in `<main>` outside a screen (signed-out, join
+   and confirm cards, banners) keeps 60rem.
+2. **Main + aside** (`<div class="view-split">`) puts a sticky column beside
+   the main part. Use it beside non-table content (an editor beside its
+   preview -- Appearance builds the same idea into its editor card,
+   `.theme-edit-body`). Beside a table it is the one exception to the table
+   rule, and only when all of these hold, checked by eye at 1440 and 1920:
+   - the table's rows are short (a few columns of short values) and still fit
+     on one line with room to spare;
+   - the aside is one small tool used while looking at the list, not a form
+     of several fields;
+   - the aside is not thin next to the table: it reads as a panel, not a strip.
+
+   Files passes (four short columns; Upload is a picker and a quota bar).
+   Users failed: its status text wrapped, its four-field form became a tall
+   strip, and it went back to form-above.
+
+   It holds exactly two children: a `.view-aside` and one main element, in
+   either order. Below 1440px they stack in page order, exactly as the screen
+   was before, so put the one a phone needs first, first (Files puts Upload
+   first). From 1440px the main part is on the left and the aside on the
+   right, 18-24rem, sticky under the navbar. Not sooner: beside the sidebar,
+   a split at 1280 leaves the main side ~34rem and a table wraps and scrolls
+   sideways.
+3. **Card grids** (`<div class="view-cards">`) are only for cards of the same
+   kind and similar size. They sit two or three across (columns of at least
+   26rem), and each row's cards share one height. Unrelated cards never go in
+   a grid: that was tried on Account and read as chaos, so Account stays one
+   column. It is a grid, never CSS columns or masonry, where a card that opens
+   pushes the others into the next column. `card-span` gives a card the whole
+   row. The grid sits outside any `feature:` markers.
+4. **Inside a card, repeated fields wrap.** A run of the same kind of field
+   (colours, toggles) in a wide card is a grid of units,
+   `repeat(auto-fill, minmax(min(100%, 15rem), 1fr))`, each its label over its
+   control (`.theme-colours`). A single input never stretches across a wide
+   card: a search box (`input[type=search]` inside `[role="search"]`) stops at
+   28rem, and a form field in a wide card is `col-md-6 col-xl-4`, not a bare
+   `col-md`.
+5. **Prose keeps its measure.** `.view-description`, `.card-text`, `.form-text`
+   and paragraphs in an alert stop at 70ch.
+6. **Breakpoints, in one place.** Below `lg`: one column. From `lg`: card
+   grids. From `xxl` (1400px): editor panes. From 1440px: main + aside. Each
+   starts where the part that matters most (the table, the colours) still has
+   its room beside the new column, not where the new column first fits.
+
+**Check every new or changed screen** at 1280, 1440, 1600 and 1920 wide, and
+at 375, by looking at it -- the numbers above are where to start, not proof:
+
+- Can you say what the screen is, in the table's terms? Does its layout match?
+- Does a table have the whole width? Is anything narrow sitting beside it?
+- Does any row put its buttons far from the name they act on, or wrap?
+- Is any lone input or line of text stretched past ~40rem / ~90 characters?
+- Do cards side by side leave ragged edges or holes?
+- Does a preview or summary scroll out of view while you edit what it shows?
+- Is the phone layout what it was?
 
 ### Undo and redo
 
@@ -322,9 +432,11 @@ tab. A failed send is dropped, not retried.
 
 `logs.js` is the owner's screen (`Logs.init( me )` returns at once unless
 `me.is_owner`). It shows one day at a time as a `<details>` block, today unless
-another date is picked on the month calendar above it (`renderCalendar`, built
-from the days listing: shaded dates have entries, a dot means errors, and while
-searching only matching dates can be picked). A day's rows load when it is
+another date is picked on the month calendar. The calendar opens from a
+button in the search bar that names the day shown (`#logs-date-button`), so
+the log keeps the whole width; picking a day closes it. It is drawn by
+`renderCalendar`, from the days listing: shaded dates have entries, a dot
+means errors, and while searching only matching dates can be picked. A day's rows load when it is
 opened, 200 at a time with "Load more".
 The search box goes to the server as typed (debounced), and the kind buttons
 add a `kind:` term. Rows are built with `Dom.el` like everything else, and a
@@ -612,6 +724,9 @@ Things worth preserving when editing:
   stack on a phone and line up from `md` up.
 - **Wide content scrolls in its own box** (`.table-responsive`), so a table
   never makes the page itself scroll sideways.
+- **Layout classes are the shell's:** `view-narrow`, `view-wide`, `view-full`,
+  `view-cards`, `card-span`, `view-split`, `view-aside`. A screen uses them rather than
+  writing its own widths; see [Desktop layout](#desktop-layout).
 
 Labels stay visible at every width. A placeholder disappears the moment
 someone types and is not a substitute for a label.

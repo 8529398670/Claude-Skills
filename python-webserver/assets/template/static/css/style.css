@@ -168,20 +168,22 @@ progress { accent-color: var(--app-second); }
 .app-icon-button { font-size: 1.5rem; line-height: 1; padding: 0.25rem 0.5rem; color: var(--bs-body-color); }
 .app-icon-button:hover, .app-icon-button:focus-visible { color: var(--app-accent); }
 
-/* The shell: navbar on top, then sidebar + content. The content column is
-   centred in whatever space is left -- beside the sidebar when signed in, the
-   whole width when signed out. On a phone the sidebar is an offcanvas panel
-   and the content is the whole width. */
+/* The shell: navbar on top, then sidebar + content. <main> takes all the
+   space beside the sidebar (the whole width when signed out); how wide a
+   screen gets is the screen's own choice (.view and its tiers, below), not
+   the shell's. On a phone the sidebar is an offcanvas panel and the content
+   is the whole width. */
 .app-main {
   display: flex;
   flex-direction: column;
   gap: 1rem;
   padding: 1rem;
   width: 100%;
-  max-width: 60rem;
-  margin: 0 auto;
   min-width: 0;
 }
+/* What sits in <main> outside a screen -- the signed-out, join and confirm
+   cards, the banners -- keeps the width it always had, centred. */
+.app-main > :not(#signed-in) { width: 100%; max-width: 60rem; margin-inline: auto; }
 .app-sidebar .nav-link { display: flex; align-items: center; gap: 0.6rem; }
 .app-sidebar .nav-link .bi { font-size: 1.1rem; }
 .nav-link-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
@@ -249,14 +251,57 @@ html { scrollbar-gutter: stable; overflow-anchor: auto; }
 /* One signed-in screen at a time; nav.js marks the one the hash names. */
 .view:not(.view-active) { display: none; }
 
-/* A screen is its heading and a stack of cards, one card per job, so each
-   thing on it has its own edge. */
-.view { display: flex; flex-direction: column; gap: 1rem; }
+/* A screen is its heading and its cards, one card per job, so each thing on
+   it has its own edge. See "Desktop layout" in references/frontend.md.
+   Width follows the content: a screen picks a tier. The default is the width
+   screens were designed at, so a screen nobody has laid out for a desktop
+   looks as it always did -- a wider column only stretches its rows and
+   inputs. A screen goes wider only together with a layout that uses the
+   room: .view-wide for a main + aside or cards side by side, .view-full for
+   an editor with panes. .view-narrow is for one small form. */
+.view { display: flex; flex-direction: column; gap: 1rem; width: 100%; max-width: 60rem; margin-inline: auto; }
+.view.view-narrow { max-width: 48rem; }
+.view.view-wide { max-width: 80rem; }
+.view.view-full { max-width: 120rem; }
 .view-title { margin: 0; font-size: 1.5rem; color: var(--app-second-text); }
 .view-description { margin: -0.5rem 0 0; color: var(--bs-secondary-color); }
 .view .card-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.75rem; }
+/* Prose keeps its measure, however wide the screen: a line past ~70
+   characters is hard to follow back to its start. */
+.view-description, .view .card-text, .view .form-text, .view .alert p { max-width: 70ch; }
 /* An old link to a card (#two-factor) scrolls to it; clear the sticky navbar. */
-.view > .card { scroll-margin-top: calc(var(--app-navbar-height) + 1rem); }
+.view > .card, .view-cards > .card { scroll-margin-top: calc(var(--app-navbar-height) + 1rem); }
+
+/* Cards of the same kind and size -- tiles, summaries, one per item -- sit
+   side by side when there is room. Only those: unrelated cards of different
+   heights in a grid leave ragged edges and holes, and read as chaos (a
+   settings screen like Account stays one column). Each row's cards share one
+   height. A grid, not CSS columns: in columns a card that opens pushes the
+   others into the next column, and the page moves under the reader. A card
+   that needs the width takes the whole row. */
+.view-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: stretch; }
+@media (min-width: 992px) {
+  .view-cards { grid-template-columns: repeat(auto-fill, minmax(min(100%, 26rem), 1fr)); }
+  .view-cards > .card-span { grid-column: 1 / -1; }
+}
+
+/* Main + aside: one thing drives another -- a form beside the list it adds
+   to, an editor beside its preview, a filter beside its results. Two
+   children: the .view-aside and one main element, in either order. Below
+   1440px they stack in page order, exactly as the screen was before (so a
+   form can come first); from 1440px the aside is on the right and stays in
+   view while the main side scrolls. Not sooner: with the sidebar open, a
+   split at 1280 leaves the main side ~34rem and its table wraps and scrolls. */
+.view-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
+@media (min-width: 1440px) {
+  .view-split { grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem); }
+  .view-split > :not(.view-aside) { grid-column: 1; grid-row: 1; }
+  .view-split > .view-aside { grid-column: 2; grid-row: 1; position: sticky; top: calc(var(--app-navbar-height) + 1rem); }
+}
+/* A search box is for a few words; across a wide card it reads as a second
+   heading and pushes the table it filters further from the eye. The box, not
+   its role="search" holder, which may be a whole toolbar (Settings). */
+.view [role="search"] input[type="search"] { max-width: 28rem; }
 
 /* A card that folds away: <details class="card card-collapse"> with a
    <summary class="card-header">. For a list most visits don't need. */
@@ -377,6 +422,17 @@ th[aria-sort="descending"] .th-sort::after { content: " \2193"; }
 }
 .theme-layout { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr); gap: 1rem; align-items: start; }
 @media (max-width: 767.98px) { .theme-layout { grid-template-columns: minmax(0, 1fr); } }
+@media (min-width: 1400px) { .theme-layout { grid-template-columns: 16rem minmax(0, 1fr); } }
+/* Inside the editor: the preview and any warnings (the aside) sit above the
+   colours, and from xxl beside them, staying in view while the colours scroll,
+   so each pick shows its effect where the eye already is. The aside comes
+   first in the page either way, so the keyboard order does not change. */
+.theme-edit-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+@media (min-width: 1400px) {
+  .theme-edit-body { grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem); }
+  .theme-edit-aside { grid-column: 2; grid-row: 1; position: sticky; top: calc(var(--app-navbar-height) + 1rem); }
+  .theme-edit-main { grid-column: 1; grid-row: 1; }
+}
 .theme-list { display: flex; flex-direction: column; gap: 0.25rem; }
 .theme-item {
   display: flex;
@@ -400,13 +456,16 @@ th[aria-sort="descending"] .th-sort::after { content: " \2193"; }
   text-align: start;
 }
 .theme-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.theme-colours { display: grid; grid-template-columns: minmax(8rem, 1fr) auto; gap: 0.5rem 1rem; align-items: center; }
+/* Each colour is one unit, its label over its controls, and the units flow
+   into as many columns as fit: one on a phone, two to four on a desktop,
+   instead of one tall column of fifteen. */
+.theme-colours { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: 0.75rem 1.25rem; align-items: start; }
+.theme-colour-row { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
 .theme-colour-input { display: flex; align-items: center; gap: 0.375rem; flex-wrap: wrap; }
 .theme-colour-input input[type="color"] { width: 2.75rem; height: 2.25rem; padding: 0.15rem; }
 .theme-colour-input .theme-hex { width: 6.5rem; font-family: var(--bs-font-monospace); }
 .theme-colour-row.auto .theme-hex { color: var(--bs-secondary-color); }
 .theme-colour-row.warn > label { color: var(--bs-danger-text-emphasis); }
-@media (max-width: 575.98px) { .theme-colours { grid-template-columns: minmax(0, 1fr); gap: 0.25rem; } .theme-colour-input { margin-bottom: 0.5rem; } }
 /* A small picture of the page in the theme being edited, drawn with its own
    colours rather than the page's, so it shows a theme that is not in use. */
 .theme-preview { border: 1px solid; border-radius: var(--bs-border-radius); overflow: hidden; display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); font-size: 0.875rem; }
@@ -437,7 +496,11 @@ th[aria-sort="descending"] .th-sort::after { content: " \2193"; }
 /* >>> feature:logs */
 /* The Logs screen: a month calendar, then the picked day as one <details>
    with a compact table inside. */
-.log-calendar { max-width: 22rem; margin-bottom: 1rem; }
+/* The day's log is a table, and a table gets the whole width, so the
+   calendar is not a column beside it: it opens from a button in the search
+   bar that names the day shown (Logs.renderCalendar). */
+.log-cal-menu { --bs-dropdown-bg: var(--app-surface); padding: 0.75rem; width: min(22rem, calc(100vw - 2rem)); }
+.log-calendar { max-width: 22rem; }
 .log-cal-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
 .log-cal-title { font-weight: 600; min-width: 9rem; text-align: center; }
 .log-cal-grid { display: grid; grid-template-columns: repeat( 7 , minmax( 0 , 1fr ) ); gap: 0.25rem; }

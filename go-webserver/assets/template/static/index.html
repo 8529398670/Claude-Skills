@@ -225,6 +225,7 @@
         <section class="view" data-view="account" id="account-panel">
           <h2 class="view-title" data-i18n="account.heading"></h2>
 
+
           <section class="card">
             <div class="card-body">
               <h3 class="card-title" data-i18n="account.profile_heading"></h3>
@@ -485,7 +486,7 @@
         <!-- >>> feature:appearance -->
         <!-- Your themes, and for admins the defaults everyone starts from.
              Drawn by themes_editor.js; see theme.js for where they are kept. -->
-        <section class="view" data-view="appearance" id="appearance">
+        <section class="view view-full" data-view="appearance" id="appearance">
           <h2 class="view-title" data-i18n="theme.heading"></h2>
           <ul class="nav nav-tabs mb-3" id="theme-tabs" role="tablist" hidden>
             <li class="nav-item" role="presentation">
@@ -538,11 +539,15 @@
 
         <!-- <<< feature:shortcuts -->
         <!-- >>> feature:files -->
-        <section class="view" data-view="files" id="files-panel" hidden>
+        <section class="view view-wide" data-view="files" id="files-panel" hidden>
           <h2 class="view-title" data-i18n="files.heading"></h2>
           <p class="view-description" data-i18n="files.description"></p>
 
-          <section class="card">
+          <!-- The list beside the upload that adds to it (see "Desktop layout"
+               in references/frontend.md): Upload comes first on a phone, and
+               sits on the right, in view, on a wide screen. -->
+          <div class="view-split">
+          <section class="card view-aside">
             <div class="card-body">
               <h3 class="card-title" data-i18n="files.upload_heading"></h3>
               <label for="file-input" class="form-label" data-i18n="files.upload_label"></label>
@@ -596,6 +601,7 @@
               <p id="files-empty" class="text-body-secondary mb-0" data-i18n="files.empty" hidden></p>
             </div>
           </section>
+          </div>
         </section>
 
         <!-- <<< feature:files -->
@@ -858,19 +864,45 @@
         <!-- >>> feature:logs -->
         <!-- The activity log, owner only; see logs.js. data-no-track keeps
              reading the log from writing to it (track.js). -->
-        <section class="view" data-view="logs" id="logs-panel" data-no-track hidden>
+        <section class="view view-full" data-view="logs" id="logs-panel" data-no-track hidden>
           <h2 class="view-title" data-i18n="logs.heading"></h2>
           <p class="view-description" data-i18n="logs.description"></p>
 
           <section class="card">
             <div class="card-body">
               <form id="logs-search-form" class="row g-2 align-items-end" role="search" autocomplete="off">
-                <div class="col-md">
+                <div class="col-md-6 col-xl-4">
                   <label for="logs-query" class="form-label" data-i18n="logs.search_label"></label>
                   <input id="logs-query" class="form-control" type="search" name="q" maxlength="200"
                          data-i18n-attr="placeholder:logs.search_placeholder" />
                 </div>
                 <div class="col-md-auto row-actions">
+                  <!-- One day at a time; the calendar picks which. It opens from
+                       this button rather than taking a column beside the log:
+                       the log is a table, and a table gets the whole width. See
+                       logs.js, and "Desktop layout" in references/frontend.md. -->
+                  <div class="dropdown log-date-picker">
+                    <button type="button" id="logs-date-button" class="btn btn-outline-secondary dropdown-toggle"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                            data-i18n-attr="title:logs.calendar_label">
+                      <i class="bi bi-calendar3" aria-hidden="true"></i> <span id="logs-date-label"></span>
+                    </button>
+                    <div class="dropdown-menu log-cal-menu">
+                      <div class="log-calendar" role="group" data-i18n-attr="aria-label:logs.calendar_label">
+                        <div class="log-cal-head">
+                          <button type="button" id="logs-cal-prev" class="btn btn-sm btn-outline-secondary" data-i18n-attr="aria-label:logs.prev_month,title:logs.prev_month">
+                            <i class="bi bi-chevron-left" aria-hidden="true"></i>
+                          </button>
+                          <span id="logs-cal-title" class="log-cal-title" aria-live="polite"></span>
+                          <button type="button" id="logs-cal-next" class="btn btn-sm btn-outline-secondary" data-i18n-attr="aria-label:logs.next_month,title:logs.next_month">
+                            <i class="bi bi-chevron-right" aria-hidden="true"></i>
+                          </button>
+                          <button type="button" id="logs-cal-today" class="btn btn-sm btn-outline-secondary ms-auto" data-i18n="logs.today_button"></button>
+                        </div>
+                        <div id="logs-cal-grid" class="log-cal-grid"></div>
+                      </div>
+                    </div>
+                  </div>
                   <button type="button" id="logs-live" class="btn btn-outline-secondary" aria-pressed="false">
                     <i class="bi bi-broadcast" aria-hidden="true"></i> <span data-i18n="logs.live_button"></span>
                   </button>
@@ -905,20 +937,6 @@
 
           <section class="card">
             <div class="card-body">
-              <!-- One day at a time; the calendar picks which. See logs.js. -->
-              <div class="log-calendar" role="group" data-i18n-attr="aria-label:logs.calendar_label">
-                <div class="log-cal-head">
-                  <button type="button" id="logs-cal-prev" class="btn btn-sm btn-outline-secondary" data-i18n-attr="aria-label:logs.prev_month,title:logs.prev_month">
-                    <i class="bi bi-chevron-left" aria-hidden="true"></i>
-                  </button>
-                  <span id="logs-cal-title" class="log-cal-title" aria-live="polite"></span>
-                  <button type="button" id="logs-cal-next" class="btn btn-sm btn-outline-secondary" data-i18n-attr="aria-label:logs.next_month,title:logs.next_month">
-                    <i class="bi bi-chevron-right" aria-hidden="true"></i>
-                  </button>
-                  <button type="button" id="logs-cal-today" class="btn btn-sm btn-outline-secondary ms-auto" data-i18n="logs.today_button"></button>
-                </div>
-                <div id="logs-cal-grid" class="log-cal-grid"></div>
-              </div>
               <p id="logs-empty" class="text-body-secondary mb-0" hidden></p>
               <div id="logs-day"></div>
             </div>

@@ -3,6 +3,79 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 8232d6e
+
+**Upgrade `desktop-layout`: screens lay out for a desktop by what they are.**
+Marks: `.view-split`, `.view-full`, `.theme-edit-body`, `logs-date-button`, `#signed-in) {`
+
+Each screen's desktop layout now follows what the screen is (the table in
+`references/frontend.md`, "Desktop layout"). Tables get the whole width,
+and a screen goes wider only together with a layout that uses the room.
+Screens nobody has laid out keep their 60rem column and look exactly as
+before. Three screens change:
+
+- Appearance (`view-full`) shows the colours in two to four columns, with the
+  preview and the hard-to-read warning beside them, staying in view.
+- Files (`view-wide`) puts the list in the main column and Upload in a sticky
+  aside on the right from 1440px. Below that, it is exactly as before.
+- Logs (`view-full`) gives the day's log the whole width. The month calendar
+  moves into a popup that opens from a date button in the search bar.
+
+Phones look the same as before.
+
+- `static/css/style.css`:
+  - In `.app-main`, drop `max-width: 60rem` and `margin: 0 auto`, and add the
+    `.app-main > :not(#signed-in)` rule after it.
+  - Replace the `.view` block (from "A screen is its heading" to the
+    `[role="search"]` rule) with the template's: the width tiers (default
+    60rem, `view-narrow` 48rem, `view-wide` 80rem, `view-full` 120rem), the
+    70ch prose rule, `.view-cards`, `.card-span`, `.view-split` /
+    `.view-aside` (side by side from 1440px), and the search-input cap.
+  - In `feature:appearance`, take the template's `.theme-layout` media rules,
+    `.theme-edit-body` / `-aside` / `-main`, `.theme-colours` and
+    `.theme-colour-row`, and delete the old under-576px `.theme-colours` rule.
+  - In `feature:logs`, `.log-calendar` loses its `margin-bottom`, and
+    `.log-cal-menu` is added.
+- `static/js/themes_editor.js`: `colourRow` answers one element (label and
+  controls together) instead of two cells, and its two callers append it.
+  `editPane` puts the preview and the warning box in `.theme-edit-aside` and
+  the colour sections in `.theme-edit-main`, both inside `.theme-edit-body`.
+  An app that changed this file merges by hand.
+- `static/js/logs.js`: `init` creates the date button's `bootstrap.Dropdown`
+  (`autoClose: "outside"`, 16px from the window's edges). `pick` closes it and
+  focuses the button for a pick made on the calendar, instead of focusing the
+  picked cell. `renderCalendar` writes the day shown into `#logs-date-label`.
+- `static/index.html`:
+  - Appearance gets `view-full`.
+  - Files gets `view-wide`, and its two cards go in
+    `<div class="view-split">`, with `view-aside` on the Upload card.
+  - Logs gets `view-full`, and the search field's column becomes
+    `col-md-6 col-xl-4`. The `.log-calendar` block moves out of the day card
+    into a `.dropdown.log-date-picker` before `#logs-live`: a
+    `#logs-date-button` toggle (with a `#logs-date-label` span) and a
+    `.dropdown-menu.log-cal-menu` holding the calendar. `#logs-empty` and
+    `#logs-day` stay in the day card.
+
+An app's own screens keep their 60rem column. Each one can be given a
+desktop layout later by deciding what it is, using the guide's table, and
+looking at it.
+
+**Test:** at 1600px wide:
+
+- Appearance shows the theme list, the colours in two or more columns, and
+  the preview beside them, still in view after scrolling down. Changing a
+  colour to something unreadable shows the warning beside the colours, and
+  Ctrl+Z puts it back.
+- Files shows the list on the left and Upload on the right.
+- Logs shows the day's log across the whole card. The date button opens the
+  calendar; the month arrows leave it open; picking a day closes it, shows
+  that day, and puts the new date on the button.
+- Account, Shortcuts and Users are unchanged.
+
+At 1280px, Files looks as it did before. At 375px, every screen is one column
+with no sideways scroll, Files shows Upload first, and the calendar popup
+stays inside the screen.
+
 ## After 990d33f
 
 **`static/js/api.js`, the admin theme defaults:** `themeDefaults()` and
