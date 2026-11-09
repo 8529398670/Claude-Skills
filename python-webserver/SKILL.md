@@ -380,6 +380,7 @@ ports they ran on. Do not reset either to a shared value.
     js/fresh.js               # asks the server again on coming back to a tab
     js/qr.js                  # QR codes for 2FA and for login and invite links
     js/login_links.js         # how often and how long a login link works
+    js/mcp.js                 # the MCP card: a key and setup for Claude and others
     js/dom.js, i18n.js, api.js, app.js, keys.js, files.js,
       join.js, pin.js, invites.js   # invite links: join page, PIN, admin panel
       password.js, two_factor.js    # password form and card; 2FA step and card

@@ -591,6 +591,9 @@ claude mcp add --transport http myapp https://myapp.example/mcp \
   --header "Authorization: Bearer <key>"
 ```
 
+The MCP card on Account (`static/js/mcp.js`) writes that command, or the
+JSON Claude Desktop and other clients want, with a new key filled in.
+
 It is the API keys in another shape, not a new way in:
 
 - **Keys only.** `RequireAPIKey` is `RequireSession` turned around: a browser

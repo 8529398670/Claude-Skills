@@ -446,6 +446,72 @@
           </section>
 
           <!-- <<< feature:api_keys -->
+          <!-- >>> feature:mcp -->
+          <!--
+            MCP: the API keys again, set up for an agent. Pick the client, make
+            a key, and the setup to paste comes back with the key already in
+            it. Nothing here the API keys card cannot do; it saves the reading.
+            See mcp.js.
+          -->
+          <section class="card" id="mcp-panel" hidden>
+            <div class="card-body">
+              <h3 class="card-title" data-i18n="mcp.heading"></h3>
+              <p class="text-body-secondary" data-i18n="mcp.description"></p>
+
+              <p class="mb-1 small fw-semibold" data-i18n="mcp.endpoint_label"></p>
+              <div class="link-box mb-3">
+                <code id="mcp-endpoint"></code>
+                <button id="mcp-endpoint-copy" type="button" class="btn btn-sm btn-outline-secondary" data-i18n="mcp.copy_button"></button>
+              </div>
+
+              <fieldset class="mb-3">
+                <legend class="form-label fs-6 mb-2" data-i18n="mcp.client_label"></legend>
+                <div id="mcp-clients" class="mcp-clients" role="radiogroup">
+                  <input type="radio" class="btn-check" name="mcp-client" id="mcp-client-claude_code" value="claude_code" checked />
+                  <label class="btn btn-sm btn-outline-primary" for="mcp-client-claude_code" data-i18n="mcp.client_claude_code"></label>
+                  <input type="radio" class="btn-check" name="mcp-client" id="mcp-client-claude_desktop" value="claude_desktop" />
+                  <label class="btn btn-sm btn-outline-primary" for="mcp-client-claude_desktop" data-i18n="mcp.client_claude_desktop"></label>
+                  <input type="radio" class="btn-check" name="mcp-client" id="mcp-client-json" value="json" />
+                  <label class="btn btn-sm btn-outline-primary" for="mcp-client-json" data-i18n="mcp.client_json"></label>
+                </div>
+              </fieldset>
+
+              <form id="mcp-key-form" class="row g-3 align-items-end" autocomplete="off">
+                <div class="col-md">
+                  <label for="mcp-key-name" class="form-label" data-i18n="mcp.name_label"></label>
+                  <input id="mcp-key-name" class="form-control" name="name" maxlength="80" required />
+                </div>
+                <div class="col-md" id="mcp-key-role-field" hidden>
+                  <label for="mcp-key-role" class="form-label" data-i18n="api_keys.role_label"></label>
+                  <select id="mcp-key-role" class="form-select" name="role">
+                    <option value="user" data-i18n="api_keys.role_user"></option>
+                    <option value="admin" data-i18n="api_keys.role_admin"></option>
+                  </select>
+                </div>
+                <div class="col-md">
+                  <label for="mcp-key-days" class="form-label" data-i18n="api_keys.days_label"></label>
+                  <input id="mcp-key-days" class="form-control" name="expires_in_days" type="number" min="0" max="3650" inputmode="numeric"
+                         data-i18n-attr="placeholder:api_keys.days_placeholder" />
+                </div>
+                <div class="col-md-auto">
+                  <button type="submit" class="btn btn-primary" data-i18n="mcp.create_button"></button>
+                </div>
+              </form>
+
+              <div id="mcp-key-notice" class="alert alert-info alert-dismissible mt-3 mb-0" hidden>
+                <button id="mcp-key-forget" type="button" class="btn-close" data-i18n-attr="aria-label:mcp.forget_label"></button>
+                <span id="mcp-key-notice-text"></span>
+              </div>
+
+              <p id="mcp-hint" class="small text-body-secondary mt-3 mb-1"></p>
+              <div class="link-box">
+                <pre class="mcp-snippet"><code id="mcp-snippet"></code></pre>
+                <button id="mcp-snippet-copy" type="button" class="btn btn-sm btn-outline-secondary" data-i18n="mcp.copy_button"></button>
+              </div>
+            </div>
+          </section>
+
+          <!-- <<< feature:mcp -->
           <!-- >>> feature:sessions -->
           <!-- Every device with a live session on this account; see sessions.js.
                Folded away until opened, and remembered open or shut in this
@@ -1196,6 +1262,7 @@
   <script src="/js/nav.js"></script>
   <script src="/js/pager.js"></script>
   <script src="/js/keys.js"></script> <!-- feature:api_keys -->
+  <script src="/js/mcp.js"></script> <!-- feature:mcp -->
   <script src="/js/sessions.js"></script> <!-- feature:sessions -->
   <script src="/js/files.js"></script> <!-- feature:files -->
   <script src="/js/join.js"></script> <!-- feature:invite_links -->

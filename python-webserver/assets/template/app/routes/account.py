@@ -67,6 +67,7 @@ def me_row(store: Store, cfg: Config, actor: Actor, version: str) -> dict[str, A
         "two_factor_enabled": cfg.two_factor_enabled,  # feature:two_factor
         "auth": actor.method,
         "api_keys_enabled": cfg.api_keys_enabled,  # feature:api_keys
+        "mcp_enabled": cfg.mcp_enabled,  # feature:mcp
         "files_enabled": cfg.files.enabled,  # feature:files
         "invite_links_enabled": cfg.invite_links_enabled,  # feature:invite_links
         "webhooks_enabled": cfg.webhooks.enabled,  # feature:webhooks

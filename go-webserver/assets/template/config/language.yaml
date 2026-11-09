@@ -523,6 +523,30 @@ api_keys:
   created: "Created"
 
 # <<< feature:api_keys
+# >>> feature:mcp
+# The MCP card on Account (static/js/mcp.js): an API key set up for an agent.
+mcp:
+  heading: "MCP: Claude and other agents"
+  description: "Connect Claude Code, Claude Desktop or any other MCP client to this app. It signs in with an API key, so the agent can do what your account can and no more."
+  endpoint_label: "Endpoint"
+  client_label: "Set up for"
+  # Also the name a new key is given, until someone types another.
+  client_claude_code: "Claude Code"
+  client_claude_desktop: "Claude Desktop"
+  client_json: "Other"
+  hint_claude_code: "Run this in a terminal. Add --scope user to have it in every project."
+  hint_claude_desktop: "Add this to claude_desktop_config.json (Settings, Developer, Edit Config), then restart Claude Desktop. It needs Node.js, for npx."
+  hint_json: "The usual shape for any other client (Cursor, VS Code, ...): an HTTP server with one Authorization header. Claude Code also reads it from .mcp.json in a project."
+  name_label: "Key name"
+  create_button: "Create key"
+  # Stands in for the key in the setup until one is made here.
+  placeholder_key: "YOUR_API_KEY"
+  # {name} is the key's name.
+  key_notice: "Your new key is in the setup below. Copy it now: the key is shown once. It is in your API keys as {name}, to revoke there."
+  forget_label: "Forget the key"
+  copy_button: "Copy"
+
+# <<< feature:mcp
 # >>> feature:files
 # The Files screen (static/js/files.js). {name} is the file's name, {percent} how
 # much has gone up, and {count} a number.

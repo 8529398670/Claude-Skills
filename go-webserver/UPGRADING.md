@@ -3,6 +3,43 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After b132ece
+
+**Upgrade `mcp-card`: an MCP card on Account sets up Claude and other agents.**
+Marks: `mcp-panel`, `mcp_enabled`, `Mcp.init`
+
+A new card on Account, right after API keys, for connecting an agent to
+`/mcp`. It shows the endpoint, lets you pick the client (Claude Code, Claude
+Desktop, Other), makes an API key with the API keys card's
+own create call, and shows the setup to paste for that client with the key
+already in it: the `claude mcp add` command, Claude Desktop's config through
+`mcp-remote`, or the plain JSON other clients read. Until a key is made there
+the setup shows `YOUR_API_KEY`. The key is shown once, held only in the page,
+and is listed under API keys like any other. Nothing new on the server beyond
+one flag; the card is all `feature:mcp`, so an app without MCP gets none of it.
+
+- `server/routes/account.go`: `/api/me` gains `"mcp_enabled": handlers.cfg().MCPEnabled, // feature:mcp`, after
+  `api_keys_enabled`.
+- `config/openapi.json`: the `/api/me` schema gains `mcp_enabled` (boolean).
+- `static/js/mcp.js`: new, whole file.
+- `static/index.html`: the `feature:mcp` `#mcp-panel` section after the API
+  keys card, and `<script src="/js/mcp.js">` after `keys.js`.
+- `static/js/app.js`: `Mcp.init( me ); // feature:mcp` after `Keys.init`.
+- `static/css/style.css`: the `feature:mcp` block (`.mcp-clients`,
+  `.mcp-snippet`) after `.link-box code`.
+- `config/language.yaml`: the `feature:mcp` `mcp:` section after `api_keys:`.
+  An app that renamed itself in `app.title` gets that name, as a slug, as the
+  server name in the setup.
+
+**Test:** on Account, the MCP card sits under API keys and shows
+`<origin>/mcp`. Each client button changes the hint and the setup, and the
+key name follows until you type your own. Create key fills the real key into
+the setup, shows the notice, and the key appears in the API keys table;
+closing the notice puts `YOUR_API_KEY` back. The Claude Code command, run as
+shown, lets `claude` list the app's tools. With `server.mcp: false` (or
+`auth.api_keys: false`) the card is gone. At 375px the client buttons wrap
+and nothing scrolls sideways.
+
 ## After 8232d6e
 
 **Upgrade `desktop-layout`: screens lay out for a desktop by what they are.**

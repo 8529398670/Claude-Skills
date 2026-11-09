@@ -86,6 +86,7 @@ func ( handlers *Handlers ) meRow( actor *security.Actor ) ( payload fiber.Map ,
 		"two_factor_enabled": handlers.cfg().TwoFactorEnabled, // feature:two_factor
 		"auth":             actor.Method(),
 		"api_keys_enabled": handlers.cfg().APIKeysEnabled, // feature:api_keys
+		"mcp_enabled": handlers.cfg().MCPEnabled, // feature:mcp
 		"files_enabled": handlers.cfg().Files.Enabled, // feature:files
 		"invite_links_enabled": handlers.inviteLinksOn(), // feature:invite_links
 		"webhooks_enabled": handlers.cfg().Webhooks.Enabled, // feature:webhooks

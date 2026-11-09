@@ -110,6 +110,7 @@ Plain scripts, loaded in dependency order, each adding one global:
 | `nav.js` | The sidebar: which screen the URL hash shows. |
 | `pager.js` | Fills a table from a paged route, with Load more and an empty row. |
 | `keys.js` | Your API keys card on Account, and the admin's All API keys screen. An example of the rule below. |
+| `mcp.js` | The MCP card on Account: an API key and the setup to paste for Claude Code, Claude Desktop or another client. |
 | `sessions.js` | Signed-in devices: your own (a folding card on Account), and an admin's view of an account's. |
 | `files.js` | The Files screen: uploads in pieces, with progress, resume and drops. |
 | `join.js` | Joining through an invite link. |

@@ -9421,6 +9421,10 @@
           "api_keys_enabled": {
             "type": "boolean"
           },
+          "mcp_enabled": {
+            "type": "boolean",
+            "description": "server.mcp: whether POST /mcp answers."
+          },
           "logs_enabled": {
             "type": "boolean"
           },

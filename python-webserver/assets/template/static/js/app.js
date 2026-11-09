@@ -197,6 +197,7 @@ const App = {
     // Side by side: the wait is the slowest screen, not all of them added up.
     const loading = [];
     loading.push( Keys.init( me ) ); // feature:api_keys
+    Mcp.init( me ); // feature:mcp
     loading.push( Sessions.init() ); // feature:sessions
     loading.push( Files.init( me ) ); // feature:files
 
