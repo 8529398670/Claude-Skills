@@ -9451,6 +9451,22 @@
             "type": "string",
             "description": "server.announcement. Empty when there is none."
           },
+          "repo": {
+            "type": "string",
+            "description": "app.repo without a trailing / or .git: where the source lives. Empty when it is not set."
+          },
+          "description": {
+            "type": "string",
+            "description": "app.description. Empty when there is none."
+          },
+          "show_about": {
+            "type": "boolean",
+            "description": "app.show_about: whether the menu has About."
+          },
+          "openapi_url": {
+            "type": "string",
+            "description": "Where to read this API's reference: config/openapi.json in app.repo, or /api/openapi.json when there is no repo."
+          },
           "shortcuts": {
             "type": "object",
             "additionalProperties": {

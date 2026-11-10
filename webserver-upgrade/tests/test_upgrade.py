@@ -136,6 +136,15 @@ class Normalise(unittest.TestCase):
         self.assertIn("enabled: false", text)  # not in features: off, though the template says on
         self.assertEqual(result["config/config.example.yaml"].data, b"# header\n" + text.encode())
 
+    def test_the_apps_own_repo_is_kept(self):
+        defaults = b'app:\n  name: "Thing"\n  repo: ""\n'
+        identity = Identity("go-webserver", "Thing", "thing", "thing", None, None, [], repo="https://github.com/you/thing")
+        text = upgrade.normalise({"config/defaults.yaml": File(defaults)}, identity, {})["config/defaults.yaml"].data.decode()
+        self.assertIn('  repo: "https://github.com/you/thing"', text)
+        # An app with no repo line, from before app.repo, leaves the render alone.
+        text = upgrade.normalise({"config/defaults.yaml": File(defaults)}, IDENTITY, {})["config/defaults.yaml"].data.decode()
+        self.assertIn('  repo: ""', text)
+
     def test_lf_throughout(self):
         self.assertEqual(upgrade.normalise({"a.bat": File(b"x\r\n")}, IDENTITY, {})["a.bat"].data, b"x\n")
 

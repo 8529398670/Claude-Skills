@@ -120,7 +120,10 @@ type File struct {
 }
 
 type AppSection struct {
-	Name string `yaml:"name"`
+	Name        string `yaml:"name"`
+	Repo        string `yaml:"repo"`
+	Description string `yaml:"description"`
+	ShowAbout   bool   `yaml:"show_about"` // feature:about
 }
 
 type ServerSection struct {
@@ -390,6 +393,13 @@ type Config struct {
 	// <<< feature:maintenance
 	// Announcement is server.announcement: shown on every signed-in page.
 	Announcement string
+	// Repo is app.repo with any trailing / or .git cut: where the source
+	// lives. Empty when it is not set. See RepoFile.
+	Repo string
+	// Description is app.description.
+	Description string
+	// ShowAbout is app.show_about: About in the menu. // feature:about
+	ShowAbout bool // feature:about
 
 	// RateLimitSignInMax is the separate budget for signing in and joining.
 	RateLimitSignInMax int
@@ -696,6 +706,9 @@ func ( file *File ) Validate() ( err error ) {
 	}
 
 	check( strings.TrimSpace( file.App.Name ) != "" , "app.name must not be empty" )
+	check( validRepo( file.App.Repo ) ,
+		"app.repo %q must be empty or a repository address like https://github.com/you/app (https, no query)" , file.App.Repo )
+	check( len( file.App.Description ) <= 500 , "app.description must be 500 characters or fewer" )
 
 	server := file.Server
 	check( strings.TrimSpace( server.Host ) != "" , "server.host must not be empty" )
@@ -805,6 +818,33 @@ func validPublicURL( value string ) ( result bool ) {
 	parsed , err := url.Parse( value )
 	result = err == nil && ( parsed.Scheme == "http" || parsed.Scheme == "https" ) && parsed.Host != "" &&
 		( parsed.Path == "" || parsed.Path == "/" ) && parsed.RawQuery == "" && parsed.Fragment == "" && parsed.User == nil
+	return
+}
+
+func validRepo( value string ) ( result bool ) {
+	if value == "" {
+		result = true
+		return
+	}
+	parsed , err := url.Parse( value )
+	result = err == nil && parsed.Scheme == "https" && parsed.Host != "" &&
+		parsed.RawQuery == "" && parsed.Fragment == "" && parsed.User == nil &&
+		strings.ContainsAny( value , " \n\r\t\"<>" ) == false
+	return
+}
+
+// cleanRepo is app.repo as links are built from it: no trailing / or .git.
+func cleanRepo( value string ) ( result string ) {
+	result = strings.TrimRight( strings.TrimSpace( value ) , "/" )
+	result = strings.TrimSuffix( result , ".git" )
+	return
+}
+
+// RepoFile is the address of one file in app.repo, on its default branch
+// (GitHub and GitLab both read HEAD as that), or "" when there is no repo.
+func ( cfg *Config ) RepoFile( path string ) ( result string ) {
+	if cfg.Repo == "" { return }
+	result = cfg.Repo + "/blob/HEAD/" + strings.TrimLeft( path , "/" )
 	return
 }
 
@@ -1065,6 +1105,9 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		MCPEnabled:     file.Server.MCP, // feature:mcp
 		Maintenance:    file.Server.Maintenance, // feature:maintenance
 		Announcement:   file.Server.Announcement,
+		Repo:           cleanRepo( file.App.Repo ),
+		Description:    file.App.Description,
+		ShowAbout:      file.App.ShowAbout, // feature:about
 		MetricsEnabled: file.Metrics.Enabled, // feature:metrics
 
 		SecretKey:     secret_key,

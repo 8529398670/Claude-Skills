@@ -8,6 +8,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.core.config import Config
+from app.core.config import repo_file  # feature:openapi
 from app.core.db import Store
 from app.core.encryption import BadKeyError, CipherTextError
 from app.core.logs import KIND_AUTH
@@ -36,6 +37,15 @@ async def me(request: Request) -> Response:
     return JSONResponse(await run(me_row, get_store(request), get_config(request), actor_from(request), request.app.state.version))
 
 
+# >>> feature:openapi
+def open_api_url(cfg: Config) -> str:
+    """Where the API reference is read: config/openapi.json in app.repo when
+    that is set, so it opens as a page there, else this server's own copy,
+    which needs the same sign-in."""
+    return repo_file(cfg, "config/openapi.json") or "/api/openapi.json"
+
+
+# <<< feature:openapi
 def me_row(store: Store, cfg: Config, actor: Actor, version: str) -> dict[str, Any]:
     """me's answer, shared with the MCP whoami tool so the two cannot describe
     the same caller differently."""
@@ -54,6 +64,10 @@ def me_row(store: Store, cfg: Config, actor: Actor, version: str) -> dict[str, A
         "maintenance": cfg.maintenance,  # feature:maintenance
         "version": version,
         "announcement": cfg.announcement,
+        "repo": cfg.repo,
+        "description": cfg.description,
+        "show_about": cfg.show_about,  # feature:about
+        "openapi_url": open_api_url(cfg),  # feature:openapi
         "shortcuts": actor.user.shortcuts,  # feature:shortcuts
         "themes": my_themes,  # feature:appearance
         "themes_custom": themes_custom,  # feature:appearance

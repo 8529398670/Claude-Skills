@@ -71,6 +71,7 @@
           <a class="nav-link" href="#appearance" data-nav="appearance"><i class="bi bi-palette" aria-hidden="true"></i><span data-i18n="nav.appearance"></span></a> <!-- feature:appearance -->
           <a class="nav-link" href="#shortcuts" data-nav="shortcuts"><i class="bi bi-keyboard" aria-hidden="true"></i><span data-i18n="nav.shortcuts"></span></a> <!-- feature:shortcuts -->
           <a class="nav-link" href="#files" data-nav="files"><i class="bi bi-folder" aria-hidden="true"></i><span data-i18n="nav.files"></span></a> <!-- feature:files -->
+          <a class="nav-link" href="#about" data-nav="about"><i class="bi bi-info-circle" aria-hidden="true"></i><span data-i18n="nav.about"></span></a> <!-- feature:about -->
 
           <div id="sidebar-admin" class="sidebar-group" hidden>
             <h3 class="sidebar-heading" data-i18n="nav.admin_heading"></h3>
@@ -384,6 +385,12 @@
             <div class="card-body">
               <h3 class="card-title" data-i18n="api_keys.heading"></h3>
               <p class="text-body-secondary" data-i18n="api_keys.description"></p>
+              <!-- >>> feature:openapi -->
+              <p id="key-spec-line" class="small" hidden>
+                <span data-i18n="api_keys.spec_text"></span>
+                <a id="key-spec-link" target="_blank" rel="noopener noreferrer" data-i18n="api_keys.spec_link"></a>
+              </p>
+              <!-- <<< feature:openapi -->
 
               <form id="create-key-form" class="row g-3 align-items-end" autocomplete="off">
                 <div class="col-md">
@@ -671,6 +678,28 @@
         </section>
 
         <!-- <<< feature:files -->
+        <!-- >>> feature:about -->
+        <!-- What this app is and where it comes from: app.description, the
+             version, app.repo and the API reference. Shown only when
+             app.show_about is on. See about.js. -->
+        <section class="view" data-view="about" id="about-panel" hidden>
+          <h2 class="view-title" data-i18n="about.heading"></h2>
+          <section class="card">
+            <div class="card-body">
+              <p id="about-description" class="card-text" hidden></p>
+              <dl class="about-facts">
+                <dt data-i18n="about.version"></dt>
+                <dd id="about-version"></dd>
+                <dt id="about-source-term" data-i18n="about.source" hidden></dt>
+                <dd id="about-source-detail" hidden><a id="about-source" target="_blank" rel="noopener noreferrer"></a></dd>
+                <dt id="about-api-term" data-i18n="about.api_reference" hidden></dt> <!-- feature:openapi -->
+                <dd id="about-api-detail" hidden><a id="about-api" target="_blank" rel="noopener noreferrer" data-i18n="about.api_link"></a></dd> <!-- feature:openapi -->
+              </dl>
+            </div>
+          </section>
+        </section>
+
+        <!-- <<< feature:about -->
         <section class="view" data-view="users" id="admin-panel" hidden>
           <h2 class="view-title" data-i18n="admin.heading"></h2>
           <p class="view-description" data-i18n="admin.description"></p>
@@ -1265,6 +1294,7 @@
   <script src="/js/mcp.js"></script> <!-- feature:mcp -->
   <script src="/js/sessions.js"></script> <!-- feature:sessions -->
   <script src="/js/files.js"></script> <!-- feature:files -->
+  <script src="/js/about.js"></script> <!-- feature:about -->
   <script src="/js/join.js"></script> <!-- feature:invite_links -->
   <script src="/js/pin.js"></script> <!-- feature:invite_links -->
   <script src="/js/password.js"></script> <!-- feature:passwords -->

@@ -9,7 +9,7 @@ create any users, so nothing touches the network or the outside world until
 the person running it decides to.
 
 Usage:
-    python3 scaffold.py <target-dir> "<project-name>" [module-path] [--features a,b,c]
+    python3 scaffold.py <target-dir> "<project-name>" [module-path] [--features a,b,c] [--repo URL]
 
 If module-path is omitted it is derived from the project name, which is fine
 for a private app. Pass a real path (github.com/you/thing) if the project will
@@ -154,6 +154,38 @@ def stamp_port(target_dir: Path, port: int) -> None:
     defaults_path.write_text(text, encoding="utf-8")
 
 
+# app.repo, where the project's source lives. Written into defaults.yaml like
+# the port, so config.yaml, the example and a fresh clone agree on it.
+REPO_LINE = re.compile(r'^(  repo:[ \t]*)""[ \t]*$', re.MULTILINE)
+SSH_REMOTE = re.compile(r"^(?:ssh://)?git@([^:/]+)[:/](.+)$")
+
+
+def repo_url(value: str) -> str:
+    """value as app.repo wants it: https, no trailing / or .git. An ssh remote
+    (git@github.com:you/app.git) becomes its https address. "" when value is
+    not something a browser can open."""
+    value = value.strip()
+    found = SSH_REMOTE.match(value)
+    if found:
+        value = f"https://{found.group(1)}/{found.group(2)}"
+    value = value.rstrip("/")
+    if value.endswith(".git"):
+        value = value[: -len(".git")]
+    if not re.fullmatch(r"https://[^\s/?#\"<>]+/[^\s?#\"<>]+", value):
+        return ""
+    return value
+
+
+def stamp_repo(target_dir: Path, repo: str) -> None:
+    """Set app.repo in <target>/config/defaults.yaml."""
+    defaults_path = target_dir / "config" / "defaults.yaml"
+    text = defaults_path.read_text(encoding="utf-8")
+    text, count = REPO_LINE.subn(lambda match: f'{match.group(1)}"{repo}"', text)
+    if count != 1:
+        raise SystemExit(f"defaults.yaml must contain exactly one `repo: \"\"` line, found {count}")
+    defaults_path.write_text(text, encoding="utf-8")
+
+
 # What a project can have switched on: name -> (config.yaml section, key, what
 # it needs). A feature a project does not use is cut out of it (see prune.py), so
 # --features decides what code it gets; the rest come later through
@@ -181,6 +213,7 @@ PIECES: dict[str, tuple[str, ...]] = {
     "appearance": (),
     "shortcuts": (),
     "openapi": (),
+    "about": (),
 }
 # Files that cannot carry a marker, by what they belong to.
 DATA_FILES: dict[str, tuple[str, ...]] = {
@@ -355,6 +388,7 @@ def main() -> None:
     parser.add_argument("module_path", nargs="?")
     parser.add_argument("--features", help=f"comma-separated, or none; leave it out for the template's defaults. Choose from: {', '.join(FEATURES)}")
     parser.add_argument("--without", default="", help=f"parts a project normally has to leave out, comma-separated. Choose from: {', '.join(PIECES)}")
+    parser.add_argument("--repo", help="where the source lives, e.g. https://github.com/you/app (an ssh remote is fine); becomes app.repo. Left out, a github.com/... module path is used")
     parser.add_argument("--prune", help="exactly what to cut, comma-separated, or none, in place of working it out from --features and --without; for webserver-upgrade and demo.py")
     args = parser.parse_args()
     # Before anything is written: a typo should not leave half a project.
@@ -365,6 +399,11 @@ def main() -> None:
     target_dir = Path(args.target_dir).resolve()
     project_name = args.project_name
     module_path = args.module_path or slugify(project_name)
+    repo = repo_url(args.repo) if args.repo else ""
+    if args.repo and not repo:
+        raise SystemExit(f"--repo {args.repo!r} is not a repository address like https://github.com/you/app")
+    if not repo and module_path.startswith("github.com/"):
+        repo = repo_url("https://" + module_path)
 
     # Refusing here rather than merging is the point: scaffolding on top of
     # someone's existing work would silently overwrite files, and the mistake
@@ -406,6 +445,8 @@ def main() -> None:
 
     port = pick_port()
     stamp_port(target_dir, port)
+    if repo:
+        stamp_repo(target_dir, repo)
     if chosen is not None:
         stamp_features(target_dir, chosen)
     on = features_on(target_dir)
@@ -420,6 +461,7 @@ def main() -> None:
     print(f"  module {module_path}")
     print(f"  docker image/container name: {slugify(project_name)}")
     print(f"  port: {port} (random per project, so local projects never collide)")
+    print(f"  repo: {repo or '(none -- set app.repo in Settings or config.yaml)'}")
     print(f"  config: {config_path} (mode 0600, gitignored; editable while the server runs)")
     print(f"  secret: {secret_path} (mode 0600, fresh key, gitignored -- back it up with the database)")
     print(f"  example: {example_path} (commit it -- `cp` it to config/config.yaml on a fresh clone)")

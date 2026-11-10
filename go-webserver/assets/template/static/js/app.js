@@ -200,6 +200,7 @@ const App = {
     Mcp.init( me ); // feature:mcp
     loading.push( Sessions.init() ); // feature:sessions
     loading.push( Files.init( me ) ); // feature:files
+    About.init( me ); // feature:about
 
     if ( me.role === "admin" ) {
       Dom.show( Dom.get( "admin-panel" ) , true );

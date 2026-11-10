@@ -213,6 +213,9 @@ func liveConfig( boot *Config , boot_file *File , file *File ) ( next *Config ) 
 	next.MCPEnabled = file.Server.MCP // feature:mcp
 	next.Maintenance = file.Server.Maintenance // feature:maintenance
 	next.Announcement = file.Server.Announcement
+	next.Repo = cleanRepo( file.App.Repo )
+	next.Description = file.App.Description
+	next.ShowAbout = file.App.ShowAbout // feature:about
 	next.MetricsEnabled = file.Metrics.Enabled // feature:metrics
 
 	next.SessionTTL = seconds( file.Auth.SessionTTLSeconds )

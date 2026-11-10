@@ -3,6 +3,67 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After cce0220
+
+**Upgrade `app-repo`: `app.repo` says where the source lives, and the API keys card links the API reference.**
+Marks: `repo:`, `openapi_url`, `key-spec-link`
+
+Three new `app:` keys in `config/defaults.yaml`, all `[live]`: `repo` (empty, or
+an https repository address; a trailing `/` or `.git` is dropped), `description`
+(one line, 500 characters at most) and `show_about` (see `about` below). The
+API keys card gains one line under its description, "What a key can call: API
+reference (openapi.json)", linking `<repo>/blob/HEAD/config/openapi.json` when
+`app.repo` is set and this server's own `/api/openapi.json` otherwise. `scripts/scaffold.py` takes `--repo`, and without it uses a `github.com/...` module path.
+webserver-upgrade keeps an app's own `app.repo` through its renders, like the port.
+
+- `config/defaults.yaml`: the `repo` and `description` keys after `app.name`,
+  then the `show_about` block in `# >>> feature:about`. Regenerate
+  `config/config.example.yaml`.
+- `server/config/config.go`: `AppSection` gains `Repo`, `Description` and `ShowAbout` (`// feature:about`); validation (`validRepo`), `cleanRepo`, `Config.Repo`/`Description`/`ShowAbout` and `( *Config ) RepoFile`. `server/config/live.go`: `liveConfig` copies the three.
+- `server/routes/account.go`: `/api/me` gains `repo`, `description`, `show_about` (`// feature:about`) and `openapi_url` (`// feature:openapi`, from the new `openAPIURL`), after `announcement`.
+- `config/openapi.json`: the `Me` schema gains `repo`, `description`,
+  `show_about` and `openapi_url` (strings, `show_about` boolean).
+- `static/index.html`: the `feature:openapi` `#key-spec-line` paragraph after
+  `api_keys.description`.
+- `static/js/keys.js`: the `feature:openapi` block in `init` that fills
+  `#key-spec-link` from `me.openapi_url`.
+- `config/language.yaml`: `api_keys.spec_text` and `api_keys.spec_link`, in
+  `# >>> feature:openapi`.
+- Tests: `server/config/live_test.go` (`TestRepoIsLiveAndCleaned`), `server/config/yamledit_test.go` (a valid `app.repo` sample), `server/routes/about_test.go` (new).
+
+**Test:** with `app.repo` empty, the API keys card's link opens
+`/api/openapi.json`. Set `app.repo` to `https://github.com/you/app.git` in
+Settings and reload: the link is
+`https://github.com/you/app/blob/HEAD/config/openapi.json`. `http://...` or
+`github.com/you/app` is refused with a message.
+
+**Upgrade `about`: an About screen in the menu, switched on by `app.show_about`.**
+Needs: `app-repo`
+Marks: `about-panel`, `About.init`, `about-facts`
+
+A new screen, About, in the sidebar after Files, shown only while
+`app.show_about` is on (off by default; the Settings screen has the switch).
+It shows `app.description`, the running version, the repository link and the
+API reference link (`feature:openapi`), each row only when it has a value. It
+is all `feature:about`, a part every project has unless `--without about`.
+
+- `scripts/scaffold.py`: `"about": ()` in `PIECES`.
+- `static/js/about.js`: new, whole file.
+- `static/index.html`: the About sidebar link after Files (`<!-- feature:about -->`),
+  the `feature:about` `#about-panel` section after the Files screen, and
+  `<script src="/js/about.js">` after `files.js`.
+- `static/js/app.js`: `About.init( me ); // feature:about` after `Files.init`.
+- `static/css/style.css`: the `feature:about` `.about-facts` block after
+  `.view-description`.
+- `config/language.yaml`: `nav.about`, and the `feature:about` `about:` section
+  after `mcp:`.
+
+**Test:** turn on Show About in Settings and reload: About appears in the menu
+for every signed-in account, with the description, version, Source and API
+reference rows. With `app.repo` empty the Source row is gone. Off again and
+reloaded, the menu entry is gone and `#about` lands on Account. At 375px a
+long repository address wraps instead of scrolling sideways.
+
 ## After b132ece
 
 **Upgrade `mcp-card`: an MCP card on Account sets up Claude and other agents.**

@@ -118,6 +118,7 @@ func comments( raw []byte ) ( result string ) {
 func sampleValue( key KeySchema ) ( value any ) {
 	special := map[string]any{
 		"server.public_url":      "https://app.example.com",
+		"app.repo":               "https://github.com/you/app",
 		"server.trusted_proxies": []string{ "10.0.0.0/8" },
 		"server.proxy_header":    "X-Real-IP",
 		"server.maintenance":     "read_only", // feature:maintenance

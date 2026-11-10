@@ -78,6 +78,9 @@ PORT_LINES = (
     re.compile(r"^(\s*port:\s*)\d+[ \t]*$", re.MULTILINE),
     re.compile(r"^(\s*host_port:\s*)\d+[ \t]*$", re.MULTILINE),
 )
+# app.repo: scaffold.py writes the app's repository there, so a render takes
+# whatever the app itself has, the way it takes the port.
+REPO_LINE = re.compile(r'^(  repo:[ \t]*)"[^"\n]*"[ \t]*$', re.MULTILINE)
 TOP_LEVEL_KEY = re.compile(r"^[a-z_]+:")
 CONFLICT_LINE = re.compile(rb"^(<<<<<<<|\|\|\|\|\|\|\||>>>>>>>)( |$)", re.MULTILINE)
 ITEM_LINE = re.compile(r"^\*\*(Upgrade|Plumbing) `([a-z0-9_-]+)`: *(.*?)\*\*\s*$")
@@ -107,6 +110,8 @@ class Identity:
     features: list[str]
     # What was cut out of this app when it was scaffolded. See prune.py.
     pruned: list[str] = dataclasses.field(default_factory=list)
+    # app.repo as the app's defaults.yaml has it. None: no such line.
+    repo: str | None = None
 
 
 @dataclasses.dataclass
@@ -353,7 +358,9 @@ def identify(app: Path, features: list[str] | None = None) -> Identity:
 
     if features is None:
         features = parse_features(origin.get("features", ""))
-    return Identity(skill, name, origin.get("slug") or slugify(name), module, number(port), number(host_port), features, parse_features(origin.get("pruned", "")))
+    repo = REPO_LINE.search(defaults)
+    return Identity(skill, name, origin.get("slug") or slugify(name), module, number(port), number(host_port), features, parse_features(origin.get("pruned", "")),
+                    repo.group(0).split('"')[1] if repo else None)
 
 
 # ---------------------------------------------------------------- rendering
@@ -428,6 +435,8 @@ def normalise(files: dict[str, File], identity: Identity, table: dict[str, tuple
         for pattern, value in zip(PORT_LINES, (identity.port, identity.host_port)):
             if value is not None:
                 text = pattern.sub(lambda match: f"{match.group(1)}{value}", text)
+        if identity.repo is not None:
+            text = REPO_LINE.sub(lambda match: f'{match.group(1)}"{identity.repo}"', text, count=1)
         for name, (section, key, *_) in table.items():
             text = set_switch(text, section, key, name in identity.features)
         result[DEFAULTS].data = text.encode("utf-8")

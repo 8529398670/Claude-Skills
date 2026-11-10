@@ -265,6 +265,11 @@ html { scrollbar-gutter: stable; overflow-anchor: auto; }
 .view.view-full { max-width: 120rem; }
 .view-title { margin: 0; font-size: 1.5rem; color: var(--app-second-text); }
 .view-description { margin: -0.5rem 0 0; color: var(--bs-secondary-color); }
+/* >>> feature:about */
+.about-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.5rem 1.5rem; margin: 0; }
+.about-facts dt { font-weight: 600; }
+.about-facts dd { margin: 0; overflow-wrap: anywhere; }
+/* <<< feature:about */
 .view .card-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.75rem; }
 /* Prose keeps its measure, however wide the screen: a line past ~70
    characters is hard to follow back to its start. */

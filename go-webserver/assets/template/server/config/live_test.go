@@ -218,3 +218,35 @@ func TestWriteInPlaceKeepsTheFileAndABackup( t *testing.T ) {
 		t.Fatalf( "mode not kept: %o" , renamed.Mode().Perm() )
 	}
 }
+
+// >>> feature:settings
+// app.repo is live, loses a trailing / or .git, and builds file links; an
+// address that is not https is refused.
+func TestRepoIsLiveAndCleaned( t *testing.T ) {
+	holder , path := newTestHolder( t )
+	// A scaffold given --repo, or a github.com module path, starts with one.
+	if _ , err := holder.Save( currentVersion( t , path ) , map[string]any{ "app.repo": "" } ); err != nil {
+		t.Fatal( err )
+	}
+	if holder.Get().RepoFile( "config/openapi.json" ) != "" {
+		t.Fatal( "no repo should mean no link" )
+	}
+	if _ , err := holder.Save( currentVersion( t , path ) , map[string]any{ "app.repo": "https://github.com/you/app.git/" } ); err != nil {
+		t.Fatal( err )
+	}
+	cfg := holder.Get()
+	if cfg.Repo != "https://github.com/you/app" {
+		t.Fatalf( "repo not cleaned: %q" , cfg.Repo )
+	}
+	if link := cfg.RepoFile( "/config/openapi.json" ); link != "https://github.com/you/app/blob/HEAD/config/openapi.json" {
+		t.Fatalf( "link: %q" , link )
+	}
+	for _ , bad := range []string{ "http://github.com/you/app" , "github.com/you/app" , "https://github.com/you/app?x=1" , "javascript:alert(1)" } {
+		_ , err := holder.Save( currentVersion( t , path ) , map[string]any{ "app.repo": bad } )
+		var validation *ValidationError
+		if errors.As( err , &validation ) == false {
+			t.Fatalf( "%q: expected a validation error, got %v" , bad , err )
+		}
+	}
+}
+// <<< feature:settings

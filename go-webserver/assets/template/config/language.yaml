@@ -34,6 +34,7 @@ nav:
   appearance: "Appearance" # feature:appearance
   shortcuts: "Shortcuts" # feature:shortcuts
   files: "Files" # feature:files
+  about: "About" # feature:about
   admin_heading: "Admin"
   users: "Users"
   invite_links: "Invite links" # feature:invite_links
@@ -492,6 +493,12 @@ api_keys:
   role_label: "Permission"
   role_user: "user"
   role_admin: "admin (can manage accounts)"
+  # >>> feature:openapi
+  # Under the description, with a link to the API reference: openapi.json in
+  # app.repo, or this server's own copy.
+  spec_text: "What a key can call:"
+  spec_link: "API reference (openapi.json)"
+  # <<< feature:openapi
   days_label: "Expires in (days)"
   days_placeholder: "leave blank for the default, 0 for never"
   create_button: "Create key"
@@ -547,6 +554,15 @@ mcp:
   copy_button: "Copy"
 
 # <<< feature:mcp
+# >>> feature:about
+# The About screen (static/js/about.js), in the menu while app.show_about is on.
+about:
+  heading: "About"
+  version: "Version"
+  source: "Source"
+  api_reference: "API reference" # feature:openapi
+  api_link: "openapi.json" # feature:openapi
+# <<< feature:about
 # >>> feature:files
 # The Files screen (static/js/files.js). {name} is the file's name, {percent} how
 # much has gone up, and {count} a number.

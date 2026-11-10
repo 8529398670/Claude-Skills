@@ -117,6 +117,9 @@ def live_config(boot: Config, boot_file: config.File, file: config.File) -> Conf
         mcp_enabled=file.server.mcp,  # feature:mcp
         maintenance=file.server.maintenance,  # feature:maintenance
         announcement=file.server.announcement,
+        repo=config.clean_repo(file.app.repo),
+        description=file.app.description,
+        show_about=file.app.show_about,  # feature:about
         metrics_enabled=file.metrics.enabled,  # feature:metrics
         trust_proxy=file.server.trust_proxy,
         trusted_proxies=tuple(entry.strip() for entry in file.server.trusted_proxies),

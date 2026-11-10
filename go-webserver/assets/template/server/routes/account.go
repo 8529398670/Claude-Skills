@@ -73,6 +73,10 @@ func ( handlers *Handlers ) meRow( actor *security.Actor ) ( payload fiber.Map ,
 		"maintenance":      handlers.cfg().MaintenanceMode(), // feature:maintenance
 		"version":          handlers.Version,
 		"announcement":     handlers.cfg().Announcement,
+		"repo":             handlers.cfg().Repo,
+		"description":      handlers.cfg().Description,
+		"show_about":       handlers.cfg().ShowAbout, // feature:about
+		"openapi_url":      handlers.openAPIURL(), // feature:openapi
 		"shortcuts":        myShortcuts( user ), // feature:shortcuts
 		"themes":           themes, // feature:appearance
 		"themes_custom":    themes_custom, // feature:appearance
@@ -254,3 +258,16 @@ func ( handlers *Handlers ) Logout( c fiber.Ctx ) ( err error ) {
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return
 }
+
+// >>> feature:openapi
+// openAPIURL is where the API reference is read: config/openapi.json in
+// app.repo when that is set, so it opens as a page there, else this server's
+// own copy, which needs the same sign-in.
+func ( handlers *Handlers ) openAPIURL() ( result string ) {
+	result = handlers.cfg().RepoFile( "config/openapi.json" )
+	if result == "" {
+		result = "/api/openapi.json"
+	}
+	return
+}
+// <<< feature:openapi

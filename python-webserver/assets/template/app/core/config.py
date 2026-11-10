@@ -120,6 +120,9 @@ class ValidationError(ConfigError):
 @dataclass
 class AppSection:
     name: str
+    repo: str
+    description: str
+    show_about: bool  # feature:about
 
 
 @dataclass
@@ -436,6 +439,13 @@ class Config:
     # <<< feature:maintenance
     # server.announcement: one line on every signed-in page.
     announcement: str = ""
+    # app.repo without a trailing / or .git: where the source lives. Empty
+    # when it is not set. See repo_file.
+    repo: str = ""
+    # app.description.
+    description: str = ""
+    # app.show_about: About in the menu. # feature:about
+    show_about: bool = False  # feature:about
 
     # >>> feature:mcp
     # Whether POST /mcp exists. It answers only API keys, so with
@@ -704,6 +714,37 @@ _CPUS = re.compile(r"^[0-9]+(\.[0-9]+)?$")
 _SECRET = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
+def _valid_repo(value: str) -> bool:
+    if value == "":
+        return True
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "https"
+        and bool(parts.hostname)
+        and not parts.query
+        and not parts.fragment
+        and parts.username is None
+        and not any(c in value for c in ' \n\r\t"<>')
+    )
+
+
+def clean_repo(value: str) -> str:
+    """app.repo as links are built from it: no trailing / or .git."""
+    value = value.strip().rstrip("/")
+    return value[: -len(".git")] if value.endswith(".git") else value
+
+
+def repo_file(cfg: "Config", path: str) -> str:
+    """The address of one file in app.repo, on its default branch (GitHub and
+    GitLab both read HEAD as that), or "" when there is no repo."""
+    if not cfg.repo:
+        return ""
+    return cfg.repo + "/blob/HEAD/" + path.lstrip("/")
+
+
 def _valid_public_url(value: str) -> bool:
     if value == "":
         return True
@@ -757,6 +798,12 @@ def validate(file: File) -> list[str]:
         return value.strip() != "" and not any(c in value for c in ":\n\r")
 
     check(file.app.name.strip() != "", "app.name must not be empty")
+    check(
+        _valid_repo(file.app.repo),
+        f"app.repo {file.app.repo!r} must be empty or a repository address like "
+        "https://github.com/you/app (https, no query)",
+    )
+    check(len(file.app.description) <= 500, "app.description must be 500 characters or fewer")
 
     server = file.server
     check(server.host.strip() != "", "server.host must not be empty")
@@ -1065,6 +1112,9 @@ def build_config(file: File, path: Path, paths: "Paths", secret_key: str) -> Con
         mcp_enabled=file.server.mcp,  # feature:mcp
         maintenance=file.server.maintenance,  # feature:maintenance
         announcement=file.server.announcement,
+        repo=clean_repo(file.app.repo),
+        description=file.app.description,
+        show_about=file.app.show_about,  # feature:about
         metrics_enabled=file.metrics.enabled,  # feature:metrics
         # >>> feature:logs
         logs=LogsConfig(

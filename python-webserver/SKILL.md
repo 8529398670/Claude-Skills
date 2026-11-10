@@ -238,7 +238,7 @@ the core, in every project: `backups` is only the schedule, because a project sh
 never be without a way to back up by hand. The
 activity log (`logs`), the devices list (`sessions`), the Jobs screen (`jobs`),
 `maintenance`, the Settings screen (`settings`), `appearance`, `shortcuts` and the
-API spec (`openapi`) come with every project too, unless the user asks for a smaller
+API spec (`openapi`) and the About screen (`about`) come with every project too, unless the user asks for a smaller
 app or the app plainly has no use for one. Then name them with `--without`.
 
 Say what you chose in one line, with the reason for anything unusual, and go
@@ -254,8 +254,14 @@ placeholder substitution consistently and will not overwrite a non-empty
 directory:
 
 ```bash
-python3 <skill_dir>/scripts/scaffold.py <target-dir> "<project-name>" --features files,two_factor
+python3 <skill_dir>/scripts/scaffold.py <target-dir> "<project-name>" --features files,two_factor [--repo URL]
 ```
+
+`--repo` is where the source will live, e.g. `https://github.com/you/app` (an ssh
+remote like `git@github.com:you/app.git` works too). Pass it whenever the user names
+a repository or a GitHub account. It becomes `app.repo`, which the API keys card and
+the About screen link to (`<repo>/blob/HEAD/config/openapi.json` for the API
+reference). Left out, it stays empty and can be set later in Settings.
 
 This copies `assets/template/`, replacing `{{PROJECT_NAME}}` and
 `{{PROJECT_SLUG}}`, and writes the project's `config/config.yaml` (the
