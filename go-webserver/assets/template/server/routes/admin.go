@@ -498,6 +498,9 @@ type refusal struct {
 	message string
 	// cause is why a 5xx happened. It goes to the log, never to the caller.
 	cause error
+	// extra is more for the caller beside the message, such as the current
+	// value a 409 was about.
+	extra fiber.Map
 }
 
 func ( refused *refusal ) send( c fiber.Ctx ) ( err error ) {
@@ -505,7 +508,24 @@ func ( refused *refusal ) send( c fiber.Ctx ) ( err error ) {
 		err = serverError( c , refused.cause )
 		return
 	}
-	err = c.Status( refused.status ).JSON( fiber.Map{ "error": refused.message } )
+	body := fiber.Map{ "error": refused.message }
+	for name , value := range refused.extra {
+		body[ name ] = value
+	}
+	err = c.Status( refused.status ).JSON( body )
+	return
+}
+
+// refuse is a refusal with the caller's mistake in it. internalFailure is
+// ours: a 500 whose cause goes to the log.
+func refuse( status int , message string , extra ...fiber.Map ) ( refused *refusal ) {
+	refused = &refusal{ status: status , message: message }
+	if len( extra ) > 0 { refused.extra = extra[ 0 ] }
+	return
+}
+
+func internalFailure( cause error ) ( refused *refusal ) {
+	refused = &refusal{ status: fiber.StatusInternalServerError , message: "internal error" , cause: cause }
 	return
 }
 

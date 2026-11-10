@@ -251,3 +251,85 @@ func itoa( value uint64 ) ( result string ) {
 	result = string( encoded )
 	return
 }
+
+// >>> feature:files
+// A file goes up and comes back the way the tools describe: start and finish
+// through /mcp, the bytes over plain HTTP with the same key.
+func TestMCPFilesTravelOverHTTP( t *testing.T ) {
+	fixture := newMCPFixture( t )
+	directory := t.TempDir()
+	fixture.cfg.Files = config.FilesConfig{
+		Enabled: true , MaxFileBytes: 16 << 20 , QuotaBytesPerUser: 16 << 20 , AbandonedAfter: time.Hour,
+		Dir: filepath.Join( directory , "files" ) , UploadsDir: filepath.Join( directory , "uploads" ),
+	}
+	key := fixture.user_key
+	content := strings.Repeat( "agent upload " , 100 )
+	keyed := func( method string , url string , body string , content_type string ) ( status int , text string ) {
+		request , _ := http.NewRequest( method , url , strings.NewReader( body ) )
+		request.Header.Set( "Authorization" , "Bearer " + key )
+		if content_type != "" { request.Header.Set( "Content-Type" , content_type ) }
+		response , err := fixture.app.Test( request )
+		if err != nil { t.Fatal( err ) }
+		raw , _ := io.ReadAll( response.Body )
+		status , text = response.StatusCode , string( raw )
+		return
+	}
+
+	_ , reply := fixture.post( t , key , callTool( "files_start_upload" , `{"name":"notes.txt","size":`+itoa( uint64( len( content ) ) )+`}` ) )
+	failed , text := toolFailed( t , reply )
+	if failed { t.Fatalf( "start: %s" , text ) }
+	var started struct {
+		ID       string `json:"id"`
+		Chunks   int    `json:"chunks"`
+		ChunkURL string `json:"chunk_url"`
+	}
+	json.Unmarshal( []byte( text ) , &started )
+	if started.Chunks != 1 || strings.Contains( started.ChunkURL , "/api/files/"+started.ID+"/chunks/{index}" ) == false {
+		t.Fatalf( "start answered %s" , text )
+	}
+	chunk_path := strings.Replace( started.ChunkURL[ strings.Index( started.ChunkURL , "/api/" ): ] , "{index}" , "0" , 1 )
+	if status , body := keyed( http.MethodPost , chunk_path , content , "application/octet-stream" ); status != 200 {
+		t.Fatalf( "chunk: %d %s" , status , body )
+	}
+
+	_ , reply = fixture.post( t , key , callTool( "files_finish_upload" , `{"file_id":"`+started.ID+`"}` ) )
+	if failed , text := toolFailed( t , reply ); failed || strings.Contains( text , `"state":"ready"` ) == false {
+		t.Fatalf( "finish: %s" , text )
+	}
+	_ , reply = fixture.post( t , key , callTool( "files_download_url" , `{"file_id":"`+started.ID+`"}` ) )
+	failed , text = toolFailed( t , reply )
+	var where struct {
+		URL string `json:"url"`
+	}
+	json.Unmarshal( []byte( text ) , &where )
+	if failed || strings.HasSuffix( where.URL , "/api/files/"+started.ID+"/download" ) == false {
+		t.Fatalf( "download url: %s" , text )
+	}
+	if status , body := keyed( http.MethodGet , where.URL[ strings.Index( where.URL , "/api/" ): ] , "" , "" ); status != 200 || body != content {
+		t.Fatalf( "download: %d, %d bytes" , status , len( body ) )
+	}
+
+	// The same refusals as the route: someone else's file is no file.
+	member_key , _ , err := models.IssueAPIKey( fixture.store , fixture.member.ID , "member" , models.RoleUser , time.Hour )
+	if err != nil { t.Fatal( err ) }
+	_ , reply = fixture.post( t , member_key , callTool( "files_rename" , `{"file_id":"`+started.ID+`","name":"x.txt"}` ) )
+	if failed , text := toolFailed( t , reply ); failed == false || strings.Contains( text , "no such file" ) == false {
+		t.Fatalf( "renaming another key's file: %s" , text )
+	}
+	_ , reply = fixture.post( t , key , callTool( "files_delete" , `{"file_id":"`+started.ID+`"}` ) )
+	if failed , text := toolFailed( t , reply ); failed {
+		t.Fatalf( "delete: %s" , text )
+	}
+	_ , reply = fixture.post( t , key , callTool( "files_restore" , `{"file_id":"`+started.ID+`"}` ) )
+	if failed , text := toolFailed( t , reply ); failed {
+		t.Fatalf( "restore: %s" , text )
+	}
+
+	// Switched off, the tools are gone like the routes.
+	fixture.cfg.Files.Enabled = false
+	_ , reply = fixture.post( t , key , rpc( "tools/list" , `{}` ) )
+	if strings.Contains( strings.Join( toolNames( reply ) , "," ) , "files_" ) {
+		t.Errorf( "files tools listed with files off: %v" , toolNames( reply ) )
+	}
+}
+// <<< feature:files

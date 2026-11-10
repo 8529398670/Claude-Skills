@@ -28,17 +28,29 @@ func ( handlers *Handlers ) SetMyShortcuts( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	if body.Shortcuts == nil { body.Shortcuts = map[string]string{} }
-	if invalid := models.ValidShortcuts( body.Shortcuts ); invalid != nil {
-		err = badRequest( c , invalid.Error() )
+	payload , refused := handlers.setMyShortcuts( c , body.Shortcuts )
+	if refused != nil {
+		err = refused.send( c )
+		return
+	}
+	err = c.JSON( payload )
+	return
+}
+
+// setMyShortcuts is SetMyShortcuts after the request is read, for it and the
+// MCP set_shortcuts tool.
+func ( handlers *Handlers ) setMyShortcuts( c fiber.Ctx , shortcuts map[string]string ) ( payload fiber.Map , refused *refusal ) {
+	if shortcuts == nil { shortcuts = map[string]string{} }
+	if invalid := models.ValidShortcuts( shortcuts ); invalid != nil {
+		refused = refuse( fiber.StatusBadRequest , invalid.Error() )
 		return
 	}
 	user := security.UserFrom( c )
-	if set_err := models.SetShortcuts( handlers.Store , user.ID , body.Shortcuts ); set_err != nil {
-		err = serverError( c , set_err )
+	if set_err := models.SetShortcuts( handlers.Store , user.ID , shortcuts ); set_err != nil {
+		refused = internalFailure( set_err )
 		return
 	}
-	handlers.audit( c , logs.KindAuth , "changed own shortcuts" , fiber.Map{ "count": len( body.Shortcuts ) } )
-	err = c.JSON( fiber.Map{ "ok": true , "shortcuts": body.Shortcuts } )
+	handlers.audit( c , logs.KindAuth , "changed own shortcuts" , fiber.Map{ "count": len( shortcuts ) } )
+	payload = fiber.Map{ "ok": true , "shortcuts": shortcuts }
 	return
 }

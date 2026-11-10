@@ -77,6 +77,7 @@ func ( handlers *Handlers ) meRow( actor *security.Actor ) ( payload fiber.Map ,
 		"description":      handlers.cfg().Description,
 		"show_about":       handlers.cfg().ShowAbout, // feature:about
 		"openapi_url":      handlers.openAPIURL(), // feature:openapi
+		"mcp_url":          handlers.mcpURL(), // feature:mcp
 		"shortcuts":        myShortcuts( user ), // feature:shortcuts
 		"themes":           themes, // feature:appearance
 		"themes_custom":    themes_custom, // feature:appearance
@@ -132,24 +133,35 @@ func ( handlers *Handlers ) RenameAccount( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	if models.ValidDisplayName( body.DisplayName ) == false {
-		err = badRequest( c , "display name must be 1-80 characters" )
+	payload , refused := handlers.renameAccount( c , body.DisplayName , body.Expect )
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
+	err = c.JSON( payload )
+	return
+}
 
+// renameAccount is RenameAccount after the request is read, for it and the
+// MCP rename_account tool.
+func ( handlers *Handlers ) renameAccount( c fiber.Ctx , display_name string , expect *string ) ( payload fiber.Map , refused *refusal ) {
+	if models.ValidDisplayName( display_name ) == false {
+		refused = refuse( fiber.StatusBadRequest , "display name must be 1-80 characters" )
+		return
+	}
 	user := security.UserFrom( c )
-	rename_err := models.RenameUser( handlers.Store , user.ID , body.DisplayName , body.Expect )
-	var refusal *models.RenameConflictError
-	if errors.As( rename_err , &refusal ) {
-		err = conflict( c , refusal.Error() , fiber.Map{ "display_name": refusal.Current } )
+	rename_err := models.RenameUser( handlers.Store , user.ID , display_name , expect )
+	var conflict_err *models.RenameConflictError
+	if errors.As( rename_err , &conflict_err ) {
+		refused = refuse( fiber.StatusConflict , conflict_err.Error() , fiber.Map{ "display_name": conflict_err.Current } )
 		return
 	}
 	if rename_err != nil {
-		err = serverError( c , rename_err )
+		refused = internalFailure( rename_err )
 		return
 	}
-	handlers.audit( c , logs.KindAuth , "renamed own account" , fiber.Map{ "name": body.DisplayName } )
-	err = c.JSON( fiber.Map{ "ok": true , "display_name": body.DisplayName } )
+	handlers.audit( c , logs.KindAuth , "renamed own account" , fiber.Map{ "name": display_name } )
+	payload = fiber.Map{ "ok": true , "display_name": display_name }
 	return
 }
 
@@ -271,3 +283,15 @@ func ( handlers *Handlers ) openAPIURL() ( result string ) {
 	return
 }
 // <<< feature:openapi
+
+// >>> feature:mcp
+// mcpURL is where the MCP reference is read: config/mcp.json in app.repo when
+// that is set, else this server's own copy, which needs the same sign-in.
+func ( handlers *Handlers ) mcpURL() ( result string ) {
+	result = handlers.cfg().RepoFile( "config/mcp.json" )
+	if result == "" {
+		result = "/api/mcp.json"
+	}
+	return
+}
+// <<< feature:mcp

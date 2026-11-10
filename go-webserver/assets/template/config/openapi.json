@@ -206,7 +206,8 @@
           "503": {
             "$ref": "#/components/responses/E503"
           }
-        }
+        },
+        "x-mcp-http": "Sign-in: managed from a browser, not by agents."
       }
     },
     "/api/account/password": {
@@ -1677,9 +1678,6 @@
         "security": [
           {
             "sessionCookie": []
-          },
-          {
-            "apiKey": []
           }
         ],
         "x-required-role": "admin",
@@ -1768,9 +1766,6 @@
         "security": [
           {
             "sessionCookie": []
-          },
-          {
-            "apiKey": []
           }
         ],
         "x-required-role": "admin",
@@ -1869,9 +1864,6 @@
         "security": [
           {
             "sessionCookie": []
-          },
-          {
-            "apiKey": []
           }
         ],
         "x-required-role": "admin",
@@ -3470,7 +3462,8 @@
           "503": {
             "$ref": "#/components/responses/E503"
           }
-        }
+        },
+        "x-mcp-http": "Sign-in: managed from a browser, not by agents."
       }
     },
     "/api/admin/users/{user_id}/reset-two-factor": {
@@ -4902,7 +4895,8 @@
           "503": {
             "$ref": "#/components/responses/E503"
           }
-        }
+        },
+        "x-mcp-http": "Ends a browser session; a key has none to end."
       }
     },
     "/api/logs/events": {
@@ -4987,7 +4981,8 @@
           "503": {
             "$ref": "#/components/responses/E503"
           }
-        }
+        },
+        "x-mcp-http": "The browser's own activity reports (track.js), not an action."
       }
     },
     "/api/me": {
@@ -5067,7 +5062,51 @@
           "503": {
             "$ref": "#/components/responses/E503"
           }
-        }
+        },
+        "x-mcp-http": "The API reference itself; GET /api/mcp.json is the MCP one."
+      }
+    },
+    "/api/mcp.json": {
+      "x-feature": "mcp",
+      "get": {
+        "summary": "The MCP tools: every tool /mcp has, its arguments, and the route it stands for",
+        "operationId": "get_api_mcp_json",
+        "tags": [
+          "Monitoring"
+        ],
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "503": {
+            "$ref": "#/components/responses/E503"
+          }
+        },
+        "x-mcp-http": "The MCP reference itself; tools/list gives the same list."
       }
     },
     "/api/owner/jobs": {
@@ -6868,7 +6907,8 @@
           "503": {
             "$ref": "#/components/responses/E503"
           }
-        }
+        },
+        "x-mcp-http": "The MCP endpoint itself."
       },
       "get": {
         "summary": "Refused: this server has no stream",
@@ -6985,7 +7025,8 @@
           "503": {
             "$ref": "#/components/responses/E503"
           }
-        }
+        },
+        "x-mcp-http": "Scraped by Prometheus over HTTP."
       }
     },
     "/api/files": {
@@ -7373,7 +7414,8 @@
           "503": {
             "$ref": "#/components/responses/E503"
           }
-        }
+        },
+        "x-mcp-http": "File bytes: MCP messages are JSON, and clients cap their size. files_start_upload says where to send each piece, with the same key."
       }
     },
     "/api/files/{file_id}/finish": {
@@ -9466,6 +9508,10 @@
           "openapi_url": {
             "type": "string",
             "description": "Where to read this API's reference: config/openapi.json in app.repo, or /api/openapi.json when there is no repo."
+          },
+          "mcp_url": {
+            "type": "string",
+            "description": "Where to read the MCP reference: config/mcp.json in app.repo, or /api/mcp.json when there is no repo. Only with server.mcp on."
           },
           "shortcuts": {
             "type": "object",

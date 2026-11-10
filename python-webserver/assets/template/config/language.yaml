@@ -566,6 +566,10 @@ api_keys:
 mcp:
   heading: "MCP: Claude and other agents"
   description: "Connect Claude Code, Claude Desktop or any other MCP client to this app. It signs in with an API key, so the agent can do what your account can and no more."
+  # Under the description, with a link to the MCP reference: config/mcp.json
+  # in app.repo, or this server's own copy.
+  spec_text: "What an agent can call:"
+  spec_link: "MCP reference (mcp.json)"
   endpoint_label: "Endpoint"
   client_label: "Set up for"
   # Also the name a new key is given, until someone types another.
@@ -593,6 +597,8 @@ about:
   source: "Source"
   api_reference: "API reference" # feature:openapi
   api_link: "openapi.json" # feature:openapi
+  mcp_reference: "MCP reference" # feature:mcp
+  mcp_link: "mcp.json" # feature:mcp
 # <<< feature:about
 # >>> feature:files
 # The Files screen (static/js/files.js). {name} is the file's name, {percent} how

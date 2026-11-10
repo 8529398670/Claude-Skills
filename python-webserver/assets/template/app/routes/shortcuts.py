@@ -3,13 +3,15 @@
 (static/js/shortcuts.js). See app/models/shortcuts.py."""
 from __future__ import annotations
 
+from typing import Any
+
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.core.logs import KIND_AUTH
 from app.core.security import actor_from, check_csrf
 from app.models import shortcuts
-from app.routes.helpers import bad_request, forbidden, get_store, read_json, run, server_error
+from app.routes.helpers import Refused, bad_request, forbidden, get_store, read_json, run
 from app.routes.logs import audit
 
 
@@ -23,10 +25,19 @@ async def set_my_shortcuts(request: Request) -> Response:
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
     try:
-        wanted = shortcuts.check(body.get("shortcuts") if body.get("shortcuts") is not None else {})
+        return JSONResponse(await run(set_shortcuts_checked, request, body.get("shortcuts")))
+    except Refused as refused:
+        return refused.response(request)
+
+
+def set_shortcuts_checked(request: Request, wanted: Any) -> dict[str, Any]:
+    """set_my_shortcuts after the request is read, for it and the MCP
+    set_shortcuts tool."""
+    try:
+        wanted = shortcuts.check(wanted if wanted is not None else {})
     except shortcuts.ShortcutsError as invalid:
-        return bad_request(str(invalid))
-    if not await run(shortcuts.set_shortcuts, get_store(request), actor_from(request).user.id, wanted):
-        return server_error(request, "shortcuts: the signed-in account has no record")
+        raise Refused(400, str(invalid)) from None
+    if not shortcuts.set_shortcuts(get_store(request), actor_from(request).user.id, wanted):
+        raise Refused.internal("shortcuts: the signed-in account has no record")
     audit(request, KIND_AUTH, "changed own shortcuts", {"count": len(wanted)})
-    return JSONResponse({"ok": True, "shortcuts": wanted})
+    return {"ok": True, "shortcuts": wanted}

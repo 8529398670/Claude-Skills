@@ -117,12 +117,22 @@ func ( handlers *Handlers ) myFile( c fiber.Ctx , file_id string ) ( file *model
 // MyStorage says how much of the quota an account has used, so it finds out
 // before an upload is refused rather than from the refusal.
 func ( handlers *Handlers ) MyStorage( c fiber.Ctx ) ( err error ) {
-	used , use_err := models.StorageUsed( handlers.Store , security.UserFrom( c ).ID )
-	if use_err != nil {
-		err = serverError( c , use_err )
+	payload , refused := handlers.myStorage( c )
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
-	err = c.JSON( fiber.Map{ "used_bytes": used , "quota_bytes": handlers.cfg().Files.QuotaBytesPerUser } )
+	err = c.JSON( payload )
+	return
+}
+
+func ( handlers *Handlers ) myStorage( c fiber.Ctx ) ( payload fiber.Map , refused *refusal ) {
+	used , use_err := models.StorageUsed( handlers.Store , security.UserFrom( c ).ID )
+	if use_err != nil {
+		refused = internalFailure( use_err )
+		return
+	}
+	payload = fiber.Map{ "used_bytes": used , "quota_bytes": handlers.cfg().Files.QuotaBytesPerUser }
 	return
 }
 
@@ -130,61 +140,83 @@ func ( handlers *Handlers ) MyStorage( c fiber.Ctx ) ( err error ) {
 // left, which no quota looks at. The disk figures are left out where the
 // system will not say.
 func ( handlers *Handlers ) AllStorage( c fiber.Ctx ) ( err error ) {
-	used , use_err := models.StorageUsed( handlers.Store , 0 )
-	if use_err != nil {
-		err = serverError( c , use_err )
+	payload , refused := handlers.allStorage()
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
-	body := fiber.Map{ "used_bytes": used }
-	if free , total , space_err := disk.Space( handlers.cfg().Files.Dir ); space_err == nil {
-		body[ "disk_free_bytes" ] = free
-		body[ "disk_total_bytes" ] = total
+	err = c.JSON( payload )
+	return
+}
+
+func ( handlers *Handlers ) allStorage() ( payload fiber.Map , refused *refusal ) {
+	used , use_err := models.StorageUsed( handlers.Store , 0 )
+	if use_err != nil {
+		refused = internalFailure( use_err )
+		return
 	}
-	err = c.JSON( body )
+	payload = fiber.Map{ "used_bytes": used }
+	if free , total , space_err := disk.Space( handlers.cfg().Files.Dir ); space_err == nil {
+		payload[ "disk_free_bytes" ] = free
+		payload[ "disk_total_bytes" ] = total
+	}
 	return
 }
 
 func ( handlers *Handlers ) ListMyFiles( c fiber.Ctx ) ( err error ) {
-	files , list_err := models.ListFiles( handlers.Store , security.UserFrom( c ).ID )
+	rows , list_err := handlers.myFileRows( c )
 	if list_err != nil {
 		err = serverError( c , list_err )
 		return
-	}
-	rows := []fiber.Map{}
-	for _ , file := range files {
-		rows = append( rows , fileRow( file ) )
 	}
 	rows = matchRows( rows , c.Query( "q" ) , "name" )
 	err = sendSorted( c , "files" , rows , "name" , "size" , "created_at" )
 	return
 }
 
+// myFileRows is the caller's files, for ListMyFiles and the MCP files_list
+// tool.
+func ( handlers *Handlers ) myFileRows( c fiber.Ctx ) ( rows []fiber.Map , err error ) {
+	files , err := models.ListFiles( handlers.Store , security.UserFrom( c ).ID )
+	if err != nil { return }
+	rows = []fiber.Map{}
+	for _ , file := range files {
+		rows = append( rows , fileRow( file ) )
+	}
+	return
+}
+
 // ListAllFiles adds who each file belongs to. The names, sizes and owners are
 // what an admin needs to keep the disk in order.
 func ( handlers *Handlers ) ListAllFiles( c fiber.Ctx ) ( err error ) {
-	files , list_err := models.ListFiles( handlers.Store , 0 )
+	rows , list_err := handlers.allFileRows()
 	if list_err != nil {
 		err = serverError( c , list_err )
 		return
 	}
-	users , users_err := models.ListUsers( handlers.Store )
-	if users_err != nil {
-		err = serverError( c , users_err )
-		return
-	}
+	rows = matchRows( rows , c.Query( "q" ) , "name" , "user_name" )
+	err = sendSorted( c , "files" , rows , "name" , "user_name" , "size" , "created_at" )
+	return
+}
+
+// allFileRows is everyone's files, for ListAllFiles and the MCP
+// admin_list_files tool.
+func ( handlers *Handlers ) allFileRows() ( rows []fiber.Map , err error ) {
+	files , err := models.ListFiles( handlers.Store , 0 )
+	if err != nil { return }
+	users , err := models.ListUsers( handlers.Store )
+	if err != nil { return }
 	names := map[ uint64 ]string{}
 	for _ , user := range users {
 		names[ user.ID ] = user.DisplayName
 	}
-	rows := []fiber.Map{}
+	rows = []fiber.Map{}
 	for _ , file := range files {
 		row := fileRow( file )
 		row[ "user_id" ] = file.UserID
 		row[ "user_name" ] = names[ file.UserID ]
 		rows = append( rows , row )
 	}
-	rows = matchRows( rows , c.Query( "q" ) , "name" , "user_name" )
-	err = sendSorted( c , "files" , rows , "name" , "user_name" , "size" , "created_at" )
 	return
 }
 
@@ -198,34 +230,54 @@ func ( handlers *Handlers ) CreateFile( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	file , create_err := models.CreateFile( handlers.Store , handlers.cfg() , security.UserFrom( c ).ID , body.Name , body.Type , body.Size )
-	switch {
-	case errors.Is( create_err , models.ErrBadFile ):
-		err = badRequest( c , create_err.Error() )
-		return
-	case errors.Is( create_err , models.ErrFileTooLarge ) || errors.Is( create_err , models.ErrFileQuota ):
-		err = conflict( c , create_err.Error() , nil )
-		return
-	case create_err != nil:
-		err = serverError( c , create_err )
+	row , refused := handlers.createFile( c , body.Name , body.Type , body.Size )
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
-	row := fileRow( file )
-	row[ "chunk_bytes" ] = config.FileChunkBytes
 	err = c.Status( fiber.StatusCreated ).JSON( row )
+	return
+}
+
+// createFile starts an upload, for CreateFile and the MCP files_start_upload
+// tool.
+func ( handlers *Handlers ) createFile( c fiber.Ctx , name string , kind string , size int64 ) ( row fiber.Map , refused *refusal ) {
+	file , create_err := models.CreateFile( handlers.Store , handlers.cfg() , security.UserFrom( c ).ID , name , kind , size )
+	switch {
+	case errors.Is( create_err , models.ErrBadFile ):
+		refused = refuse( fiber.StatusBadRequest , create_err.Error() )
+		return
+	case errors.Is( create_err , models.ErrFileTooLarge ) || errors.Is( create_err , models.ErrFileQuota ):
+		refused = refuse( fiber.StatusConflict , create_err.Error() )
+		return
+	case create_err != nil:
+		refused = internalFailure( create_err )
+		return
+	}
+	row = fileRow( file )
+	row[ "chunk_bytes" ] = config.FileChunkBytes
 	return
 }
 
 // GetMyFile is how a client finds out where to resume: see received.
 func ( handlers *Handlers ) GetMyFile( c fiber.Ctx ) ( err error ) {
-	file , get_err := handlers.myFile( c , strings.Clone( c.Params( "file_id" ) ) )
-	if get_err != nil {
-		err = notFound( c , "no such file" )
+	row , refused := handlers.getMyFile( c , strings.Clone( c.Params( "file_id" ) ) )
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
-	row := fileRow( file )
-	row[ "chunk_bytes" ] = config.FileChunkBytes
 	err = c.JSON( row )
+	return
+}
+
+func ( handlers *Handlers ) getMyFile( c fiber.Ctx , file_id string ) ( row fiber.Map , refused *refusal ) {
+	file , get_err := handlers.myFile( c , file_id )
+	if get_err != nil {
+		refused = refuse( fiber.StatusNotFound , "no such file" )
+		return
+	}
+	row = fileRow( file )
+	row[ "chunk_bytes" ] = config.FileChunkBytes
 	return
 }
 
@@ -286,39 +338,50 @@ func ( handlers *Handlers ) FinishFile( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	file_id := strings.Clone( c.Params( "file_id" ) )
+	row , refused := handlers.finishFile( c , strings.Clone( c.Params( "file_id" ) ) )
+	if refused != nil {
+		err = refused.send( c )
+		return
+	}
+	err = c.JSON( row )
+	return
+}
+
+// finishFile seals an upload whose pieces have all arrived, for FinishFile and
+// the MCP files_finish_upload tool.
+func ( handlers *Handlers ) finishFile( c fiber.Ctx , file_id string ) ( row fiber.Map , refused *refusal ) {
 	if handlers.uploads.Hold( file_id ) == false {
-		err = conflict( c , "another request is writing this upload" , nil )
+		refused = refuse( fiber.StatusConflict , "another request is writing this upload" )
 		return
 	}
 	defer handlers.uploads.Release( file_id )
 
 	file , get_err := handlers.myFile( c , file_id )
 	if get_err != nil {
-		err = notFound( c , "no such file" )
+		refused = refuse( fiber.StatusNotFound , "no such file" )
 		return
 	}
 	// Asked twice, the second answer is the same as the first.
 	if file.State == models.FileReady {
-		err = c.JSON( fileRow( file ) )
+		row = fileRow( file )
 		return
 	}
 	if file.Received != file.Chunks {
-		err = conflict( c , "some of the file has not arrived" , fiber.Map{ "received": file.Received } )
+		refused = refuse( fiber.StatusConflict , "some of the file has not arrived" , fiber.Map{ "received": file.Received } )
 		return
 	}
 	finished , finish_err := models.FinishFile( handlers.Store , handlers.cfg() , file )
 	if errors.Is( finish_err , models.ErrFileMissing ) {
-		err = notFound( c , "upload_lost" )
+		refused = refuse( fiber.StatusNotFound , "upload_lost" )
 		return
 	}
 	if finish_err != nil {
-		err = serverError( c , finish_err )
+		refused = internalFailure( finish_err )
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "file uploaded" , fiber.Map{ "file_id": finished.ID , "size": finished.Size } )
 	handlers.Webhooks.Emit( models.EventFileUploaded , map[string]any{ "file_id": finished.ID , "user_id": finished.UserID , "name": finished.Name , "size": finished.Size } ) // feature:webhooks
-	err = c.JSON( fileRow( finished ) )
+	row = fileRow( finished )
 	return
 }
 
@@ -380,18 +443,6 @@ func ( handlers *Handlers ) DownloadAnyFile( c fiber.Ctx ) ( err error ) {
 	return
 }
 
-// removeFile is the two delete routes after each has decided the caller may.
-func ( handlers *Handlers ) removeFile( c fiber.Ctx , file *models.File ) ( err error ) {
-	if models.DeleteFile( handlers.Store , file.ID , security.UserFrom( c ).ID ) != nil {
-		err = notFound( c , "no such file" )
-		return
-	}
-	handlers.audit( c , logs.KindAdmin , "file deleted" , fiber.Map{ "file_id": file.ID , "user_id": file.UserID } )
-	handlers.Webhooks.Emit( models.EventFileDeleted , map[string]any{ "file_id": file.ID , "user_id": file.UserID , "name": file.Name } ) // feature:webhooks
-	err = c.JSON( fiber.Map{ "ok": true } )
-	return
-}
-
 // renameFile is the two rename routes. own_only is the difference: an admin may
 // rename anyone's, as an admin may delete anyone's.
 func ( handlers *Handlers ) renameFile( c fiber.Ctx , own_only bool ) ( err error ) {
@@ -404,7 +455,18 @@ func ( handlers *Handlers ) renameFile( c fiber.Ctx , own_only bool ) ( err erro
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	file_id := strings.Clone( c.Params( "file_id" ) )
+	payload , refused := handlers.renameFileAs( c , strings.Clone( c.Params( "file_id" ) ) , body.Name , body.Expect , own_only )
+	if refused != nil {
+		err = refused.send( c )
+		return
+	}
+	err = c.JSON( payload )
+	return
+}
+
+// renameFileAs is renameFile after the request is read, for it and the MCP
+// files_rename tool.
+func ( handlers *Handlers ) renameFileAs( c fiber.Ctx , file_id string , new_name string , expect *string , own_only bool ) ( payload fiber.Map , refused *refusal ) {
 	var file *models.File
 	var get_err error
 	if own_only {
@@ -413,27 +475,27 @@ func ( handlers *Handlers ) renameFile( c fiber.Ctx , own_only bool ) ( err erro
 		file , get_err = models.GetFile( handlers.Store , file_id )
 	}
 	if get_err != nil {
-		err = notFound( c , "no such file" )
+		refused = refuse( fiber.StatusNotFound , "no such file" )
 		return
 	}
-	name , rename_err := models.RenameFile( handlers.Store , file.ID , body.Name , body.Expect )
-	var refusal *models.RenameConflictError
+	name , rename_err := models.RenameFile( handlers.Store , file.ID , new_name , expect )
+	var conflict_err *models.RenameConflictError
 	switch {
-	case errors.As( rename_err , &refusal ):
-		err = conflict( c , refusal.Error() , fiber.Map{ "name": refusal.Current } )
+	case errors.As( rename_err , &conflict_err ):
+		refused = refuse( fiber.StatusConflict , conflict_err.Error() , fiber.Map{ "name": conflict_err.Current } )
 		return
 	case errors.Is( rename_err , models.ErrBadFileName ):
-		err = badRequest( c , rename_err.Error() )
+		refused = refuse( fiber.StatusBadRequest , rename_err.Error() )
 		return
 	case errors.Is( rename_err , db.ErrNotFound ):
-		err = notFound( c , "no such file" )
+		refused = refuse( fiber.StatusNotFound , "no such file" )
 		return
 	case rename_err != nil:
-		err = serverError( c , rename_err )
+		refused = internalFailure( rename_err )
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "file renamed" , fiber.Map{ "file_id": file.ID , "user_id": file.UserID } )
-	err = c.JSON( fiber.Map{ "ok": true , "name": name } )
+	payload = fiber.Map{ "ok": true , "name": name }
 	return
 }
 
@@ -448,25 +510,16 @@ func ( handlers *Handlers ) RenameAnyFile( c fiber.Ctx ) ( err error ) {
 }
 
 func ( handlers *Handlers ) DeleteMyFile( c fiber.Ctx ) ( err error ) {
-	var body csrfOnlyRequest
-	if c.Bind().JSON( &body ) != nil {
-		err = badRequest( c , "malformed request body" )
-		return
-	}
-	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
-		err = forbidden( c , "invalid csrf token" )
-		return
-	}
-	file , get_err := handlers.myFile( c , strings.Clone( c.Params( "file_id" ) ) )
-	if get_err != nil {
-		err = notFound( c , "no such file" )
-		return
-	}
-	err = handlers.removeFile( c , file )
+	err = handlers.deleteFile( c , true )
 	return
 }
 
 func ( handlers *Handlers ) DeleteAnyFile( c fiber.Ctx ) ( err error ) {
+	err = handlers.deleteFile( c , false )
+	return
+}
+
+func ( handlers *Handlers ) deleteFile( c fiber.Ctx , own_only bool ) ( err error ) {
 	var body csrfOnlyRequest
 	if c.Bind().JSON( &body ) != nil {
 		err = badRequest( c , "malformed request body" )
@@ -476,12 +529,38 @@ func ( handlers *Handlers ) DeleteAnyFile( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	file , get_err := models.GetFile( handlers.Store , strings.Clone( c.Params( "file_id" ) ) )
-	if get_err != nil || file.Deleted() {
-		err = notFound( c , "no such file" )
+	payload , refused := handlers.deleteFileAs( c , strings.Clone( c.Params( "file_id" ) ) , own_only )
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
-	err = handlers.removeFile( c , file )
+	err = c.JSON( payload )
+	return
+}
+
+// deleteFileAs moves a file to the bin, where restore can bring it back, for
+// the two delete routes and the MCP files_delete tool. own_only is the
+// difference between them, as for renaming.
+func ( handlers *Handlers ) deleteFileAs( c fiber.Ctx , file_id string , own_only bool ) ( payload fiber.Map , refused *refusal ) {
+	var file *models.File
+	var get_err error
+	if own_only {
+		file , get_err = handlers.myFile( c , file_id )
+	} else {
+		file , get_err = models.GetFile( handlers.Store , file_id )
+		if get_err == nil && file.Deleted() { get_err = db.ErrNotFound }
+	}
+	if get_err != nil {
+		refused = refuse( fiber.StatusNotFound , "no such file" )
+		return
+	}
+	if models.DeleteFile( handlers.Store , file.ID , security.UserFrom( c ).ID ) != nil {
+		refused = refuse( fiber.StatusNotFound , "no such file" )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "file deleted" , fiber.Map{ "file_id": file.ID , "user_id": file.UserID } )
+	handlers.Webhooks.Emit( models.EventFileDeleted , map[string]any{ "file_id": file.ID , "user_id": file.UserID , "name": file.Name } ) // feature:webhooks
+	payload = fiber.Map{ "ok": true }
 	return
 }
 
@@ -497,26 +576,37 @@ func ( handlers *Handlers ) restoreFile( c fiber.Ctx , as_admin bool ) ( err err
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	file_id := strings.Clone( c.Params( "file_id" ) )
+	row , refused := handlers.restoreFileAs( c , strings.Clone( c.Params( "file_id" ) ) , as_admin )
+	if refused != nil {
+		err = refused.send( c )
+		return
+	}
+	err = c.JSON( row )
+	return
+}
+
+// restoreFileAs is restoreFile after the request is read, for it and the MCP
+// files_restore tool.
+func ( handlers *Handlers ) restoreFileAs( c fiber.Ctx , file_id string , as_admin bool ) ( row fiber.Map , refused *refusal ) {
 	user := security.UserFrom( c )
 	if as_admin == false {
 		existing , get_err := models.GetFile( handlers.Store , file_id )
 		if get_err != nil || existing.UserID != user.ID {
-			err = notFound( c , models.ErrRestoreGone.Error() )
+			refused = refuse( fiber.StatusNotFound , models.ErrRestoreGone.Error() )
 			return
 		}
 	}
 	file , restore_err := models.RestoreFile( handlers.Store , handlers.cfg() , file_id , user.ID , as_admin )
 	if errors.Is( restore_err , models.ErrFileQuota ) {
-		err = conflict( c , restore_err.Error() , nil )
+		refused = refuse( fiber.StatusConflict , restore_err.Error() )
 		return
 	}
 	if restore_err != nil {
-		err = restoreRefused( c , restore_err )
+		refused = restoreRefusal( restore_err )
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "file restored" , fiber.Map{ "file_id": file_id } )
-	err = c.JSON( fileRow( file ) )
+	row = fileRow( file )
 	return
 }
 

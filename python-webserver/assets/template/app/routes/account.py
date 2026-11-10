@@ -8,7 +8,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.core.config import Config
-from app.core.config import repo_file  # feature:openapi
+from app.core.config import repo_file  # feature:openapi|mcp
 from app.core.db import Store
 from app.core.encryption import BadKeyError, CipherTextError
 from app.core.logs import KIND_AUTH
@@ -19,7 +19,7 @@ from app.models import pins  # feature:invite_links
 from app.models import themes  # feature:appearance
 from app.models import two_factor  # feature:two_factor
 from app.routes.admin import link_options, link_response
-from app.routes.helpers import bad_request, conflict, forbidden, get_config, get_store, read_json, run, server_error
+from app.routes.helpers import Refused, bad_request, forbidden, get_config, get_store, read_json, run, server_error
 from app.routes.logs import audit
 
 
@@ -46,6 +46,14 @@ def open_api_url(cfg: Config) -> str:
 
 
 # <<< feature:openapi
+# >>> feature:mcp
+def mcp_url(cfg: Config) -> str:
+    """Where the MCP reference is read: config/mcp.json in app.repo when that
+    is set, else this server's own copy, which needs the same sign-in."""
+    return repo_file(cfg, "config/mcp.json") or "/api/mcp.json"
+
+
+# <<< feature:mcp
 def me_row(store: Store, cfg: Config, actor: Actor, version: str) -> dict[str, Any]:
     """me's answer, shared with the MCP whoami tool so the two cannot describe
     the same caller differently."""
@@ -68,6 +76,7 @@ def me_row(store: Store, cfg: Config, actor: Actor, version: str) -> dict[str, A
         "description": cfg.description,
         "show_about": cfg.show_about,  # feature:about
         "openapi_url": open_api_url(cfg),  # feature:openapi
+        "mcp_url": mcp_url(cfg),  # feature:mcp
         "shortcuts": actor.user.shortcuts,  # feature:shortcuts
         "themes": my_themes,  # feature:appearance
         "themes_custom": themes_custom,  # feature:appearance
@@ -110,23 +119,29 @@ async def rename(request: Request) -> Response:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    display_name = body.get("display_name")
+    try:
+        return JSONResponse(await run(rename_checked, request, body.get("display_name"), body.get("expect")))
+    except Refused as refused:
+        return refused.response(request)
+
+
+def rename_checked(request: Request, display_name: Any, expect: Any) -> dict[str, Any]:
+    """rename after the request is read, for it and the MCP rename_account
+    tool. Synchronous: it runs in a worker thread."""
     if not users.valid_display_name(display_name):
-        return bad_request("display name must be 1-80 characters")
+        raise Refused(400, "display name must be 1-80 characters")
     # Optional: the name the caller expects to replace. The frontend always
     # sends it, so its undo cannot overwrite a rename made elsewhere.
-    expect = body.get("expect")
     if expect is not None and not isinstance(expect, str):
-        return bad_request("expect must be a string")
-
+        raise Refused(400, "expect must be a string")
     try:
-        renamed = await run(users.rename_user, get_store(request), actor_from(request).user.id, display_name, expect)
+        renamed = users.rename_user(get_store(request), actor_from(request).user.id, display_name, expect)
     except users.RenameConflictError as refusal:
-        return conflict(str(refusal), display_name=refusal.current)
+        raise Refused(409, str(refusal), display_name=refusal.current) from None
     if not renamed:
-        return server_error(request, "rename: the signed-in account has no record")
+        raise Refused.internal("rename: the signed-in account has no record")
     audit(request, KIND_AUTH, "renamed own account", {"name": display_name.strip()})
-    return JSONResponse({"ok": True, "display_name": display_name.strip()})
+    return {"ok": True, "display_name": display_name.strip()}
 
 
 # >>> feature:invite_links

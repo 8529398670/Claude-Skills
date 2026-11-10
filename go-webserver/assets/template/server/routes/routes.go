@@ -85,6 +85,12 @@ type Handlers struct {
 	// OpenAPI is config/openapi.json, set by main.go.
 	OpenAPI []byte
 	// <<< feature:openapi
+	// >>> feature:mcp
+	// MCPManifest is config/mcp.json, set by main.go.
+	MCPManifest []byte
+	// MCP is the /mcp server, with every tool registered, set by Register.
+	MCP *mcp.Server
+	// <<< feature:mcp
 
 	uploads       models.UploadLocks // feature:files
 	uiEventBudget eventBudget // feature:logs
@@ -176,6 +182,7 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	account.Post( "/logout" , handlers.Logout )
 	account.Get( "/team" , handlers.ListTeam )
 	account.Get( "/openapi.json" , handlers.GetOpenAPI ) // feature:openapi
+	account.Get( "/mcp.json" , handlers.RequireMCP , handlers.GetMCPManifest ) // feature:mcp
 	// >>> feature:logs
 	// What someone did on the page, sent by track.js. Theirs to send, the
 	// owner's to read (below).
@@ -366,6 +373,7 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// when either is off -- exactly what an unregistered route would say.
 	mcp_server := mcp.New( handlers.Settings.Boot().ProjectName , handlers.Version )
 	handlers.registerMCPTools( mcp_server )
+	handlers.MCP = mcp_server
 	app.Post( "/mcp" , handlers.RequireMCP , handlers.Guard.RequireAPIKey , mcp_server.Handle )
 	app.Get( "/mcp" , handlers.RequireMCP , mcp_server.MethodNotAllowed )
 	app.Delete( "/mcp" , handlers.RequireMCP , mcp_server.MethodNotAllowed )
@@ -448,17 +456,23 @@ func tooMany( c fiber.Ctx , code string ) ( err error ) {
 // >>> feature:api_keys|invite_links|files|webhooks
 // restoreRefused answers each way a restore can be refused.
 func restoreRefused( c fiber.Ctx , refusal error ) ( err error ) {
+	err = restoreRefusal( refusal ).send( c )
+	return
+}
+
+// restoreRefusal is restoreRefused for a helper an MCP tool shares.
+func restoreRefusal( cause error ) ( refused *refusal ) {
 	switch {
-	case errors.Is( refusal , models.ErrRestoreGone ):
-		err = notFound( c , refusal.Error() )
-	case errors.Is( refusal , models.ErrRestoreForbidden ):
-		err = forbidden( c , refusal.Error() )
-	case errors.Is( refusal , models.ErrRestoreExpired ):
-		err = conflict( c , refusal.Error() , nil )
-	case errors.Is( refusal , models.ErrAPIKeyLimit ): // feature:api_keys
-		err = conflict( c , "its owner already has the maximum number of live API keys" , nil ) // feature:api_keys
+	case errors.Is( cause , models.ErrRestoreGone ):
+		refused = refuse( fiber.StatusNotFound , cause.Error() )
+	case errors.Is( cause , models.ErrRestoreForbidden ):
+		refused = refuse( fiber.StatusForbidden , cause.Error() )
+	case errors.Is( cause , models.ErrRestoreExpired ):
+		refused = refuse( fiber.StatusConflict , cause.Error() )
+	case errors.Is( cause , models.ErrAPIKeyLimit ): // feature:api_keys
+		refused = refuse( fiber.StatusConflict , "its owner already has the maximum number of live API keys" ) // feature:api_keys
 	default:
-		err = serverError( c , refusal )
+		refused = internalFailure( cause )
 	}
 	return
 }

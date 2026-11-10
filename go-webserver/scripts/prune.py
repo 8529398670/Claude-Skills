@@ -28,6 +28,9 @@ config/openapi.json has no comments, so a path or schema carries a key instead:
 
     "x-feature": "webhooks"
 
+config/mcp.json is written from the registered tools, so it names no features:
+each tool and http_only entry goes with the openapi.json path its route is on.
+
 Only the standard library is used, because this has to run wherever the skills do.
 """
 from __future__ import annotations
@@ -40,6 +43,7 @@ from pathlib import Path
 SUFFIXES = {".go", ".py", ".js", ".css", ".html", ".yaml", ".yml", ".sh", ".bat", ".md", ".txt"}
 NAMES = {"Dockerfile"}
 OPENAPI = "config/openapi.json"
+MCP_JSON = "config/mcp.json"
 
 EXPRESSION = r"!?[a-z0-9_]+(?:\|!?[a-z0-9_]+)*"
 WHOLE_FILE = re.compile(r"whole-file feature:(" + EXPRESSION + r")")
@@ -125,6 +129,33 @@ def prune_spec(text: str, removed: set[str]) -> str:
     return json.dumps(spec, indent=2, ensure_ascii=False)
 
 
+def route_features(spec_text: str) -> dict[str, str]:
+    """"METHOD /path" -> its path's x-feature, for every operation that has one."""
+    found: dict[str, str] = {}
+    for path, item in json.loads(spec_text).get("paths", {}).items():
+        expression = item.get("x-feature")
+        if expression is None:
+            continue
+        for method in item:
+            if not method.startswith("x-"):
+                found[f"{method.upper()} {path}"] = expression
+    return found
+
+
+def prune_mcp(text: str, removed: set[str], features: dict[str, str]) -> str:
+    """mcp.json without the tools and http_only routes of removed features. Written
+    the way the app's own generator writes it, so a fresh project's test passes."""
+    manifest = json.loads(text)
+    for key in ("tools", "http_only"):
+        kept = []
+        for entry in manifest.get(key, []):
+            expression = features.get(entry.get("route", ""))
+            if expression is None or keeps(expression, removed):
+                kept.append(entry)
+        manifest[key] = kept
+    return json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+
+
 def markers_in(text: str) -> set[str]:
     """Every feature this text names in a marker."""
     found: set[str] = set()
@@ -144,6 +175,10 @@ def prune_tree(root: Path, removed: set[str], data_files: dict[str, tuple[str, .
     """Cut removed features out of the project at root, in place. It runs with an
     empty set too: a project with everything still loses the markers. data_files
     are the files that cannot carry a marker, by feature."""
+    # Read before anything is cut: mcp.json's tools go by the x-feature of
+    # their route, which pruning takes out of openapi.json.
+    spec_path = root / OPENAPI
+    features = route_features(spec_path.read_text(encoding="utf-8")) if spec_path.is_file() else {}
     for name, paths in (data_files or {}).items():
         if name in removed:
             for relative in paths:
@@ -154,6 +189,9 @@ def prune_tree(root: Path, removed: set[str], data_files: dict[str, tuple[str, .
         relative = path.relative_to(root).as_posix()
         if relative == OPENAPI:
             path.write_text(prune_spec(path.read_text(encoding="utf-8"), removed), encoding="utf-8", newline="")
+            continue
+        if relative == MCP_JSON:
+            path.write_text(prune_mcp(path.read_text(encoding="utf-8"), removed, features), encoding="utf-8", newline="")
             continue
         if not prunable(path):
             continue

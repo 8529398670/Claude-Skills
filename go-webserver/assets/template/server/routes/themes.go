@@ -45,23 +45,35 @@ func ( handlers *Handlers ) SetMyThemes( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
+	payload , refused := handlers.setMyThemes( c , body.Themes , body.ThemeID )
+	if refused != nil {
+		err = refused.send( c )
+		return
+	}
+	err = c.JSON( payload )
+	return
+}
+
+// setMyThemes is SetMyThemes after the request is read, for it and the MCP
+// set_themes tool.
+func ( handlers *Handlers ) setMyThemes( c fiber.Ctx , list []models.Theme , theme_id string ) ( payload fiber.Map , refused *refusal ) {
 	user := security.UserFrom( c )
-	if set_err := models.SetUserThemes( handlers.Store , user.ID , body.Themes , body.ThemeID ); set_err != nil {
-		err = badRequest( c , set_err.Error() )
+	if set_err := models.SetUserThemes( handlers.Store , user.ID , list , theme_id ); set_err != nil {
+		refused = refuse( fiber.StatusBadRequest , set_err.Error() )
 		return
 	}
 	user , get_err := models.GetUser( handlers.Store , user.ID )
 	if get_err != nil {
-		err = serverError( c , get_err )
+		refused = internalFailure( get_err )
 		return
 	}
 	themes , custom , themes_err := handlers.myThemes( user )
 	if themes_err != nil {
-		err = serverError( c , themes_err )
+		refused = internalFailure( themes_err )
 		return
 	}
-	handlers.audit( c , logs.KindAuth , "changed own themes" , fiber.Map{ "count": len( body.Themes ) , "custom": custom } )
-	err = c.JSON( fiber.Map{ "ok": true , "themes": themes , "themes_custom": custom , "theme_id": user.ThemeID } )
+	handlers.audit( c , logs.KindAuth , "changed own themes" , fiber.Map{ "count": len( list ) , "custom": custom } )
+	payload = fiber.Map{ "ok": true , "themes": themes , "themes_custom": custom , "theme_id": user.ThemeID }
 	return
 }
 
@@ -76,23 +88,47 @@ func ( handlers *Handlers ) SetMyTheme( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	user := security.UserFrom( c )
-	if set_err := models.SetUserThemeID( handlers.Store , user.ID , body.ThemeID ); set_err != nil {
-		err = badRequest( c , set_err.Error() )
+	payload , refused := handlers.setMyTheme( c , body.ThemeID )
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
-	err = c.JSON( fiber.Map{ "ok": true , "theme_id": body.ThemeID } )
+	err = c.JSON( payload )
+	return
+}
+
+// setMyTheme is SetMyTheme after the request is read, for it and the MCP
+// set_theme tool.
+func ( handlers *Handlers ) setMyTheme( c fiber.Ctx , theme_id string ) ( payload fiber.Map , refused *refusal ) {
+	user := security.UserFrom( c )
+	if set_err := models.SetUserThemeID( handlers.Store , user.ID , theme_id ); set_err != nil {
+		refused = refuse( fiber.StatusBadRequest , set_err.Error() )
+		return
+	}
+	payload = fiber.Map{ "ok": true , "theme_id": theme_id }
 	return
 }
 
 // GetThemeDefaults: themes is null while the built-in ones apply.
 func ( handlers *Handlers ) GetThemeDefaults( c fiber.Ctx ) ( err error ) {
-	themes , get_err := models.ThemeDefaults( handlers.Store )
-	if get_err != nil {
-		err = serverError( c , get_err )
+	payload , refused := handlers.themeDefaults()
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
-	err = c.JSON( fiber.Map{ "themes": themes } )
+	err = c.JSON( payload )
+	return
+}
+
+// themeDefaults is GetThemeDefaults, for it and the MCP
+// admin_get_theme_defaults tool.
+func ( handlers *Handlers ) themeDefaults() ( payload fiber.Map , refused *refusal ) {
+	themes , get_err := models.ThemeDefaults( handlers.Store )
+	if get_err != nil {
+		refused = internalFailure( get_err )
+		return
+	}
+	payload = fiber.Map{ "themes": themes }
 	return
 }
 
@@ -107,16 +143,28 @@ func ( handlers *Handlers ) SetThemeDefaults( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	if set_err := models.SetThemeDefaults( handlers.Store , body.Themes ); set_err != nil {
-		err = badRequest( c , set_err.Error() )
+	payload , refused := handlers.setThemeDefaults( c , body.Themes )
+	if refused != nil {
+		err = refused.send( c )
+		return
+	}
+	err = c.JSON( payload )
+	return
+}
+
+// setThemeDefaults is SetThemeDefaults after the request is read, for it and
+// the MCP admin_set_theme_defaults tool.
+func ( handlers *Handlers ) setThemeDefaults( c fiber.Ctx , list []models.Theme ) ( payload fiber.Map , refused *refusal ) {
+	if set_err := models.SetThemeDefaults( handlers.Store , list ); set_err != nil {
+		refused = refuse( fiber.StatusBadRequest , set_err.Error() )
 		return
 	}
 	themes , get_err := models.ThemeDefaults( handlers.Store )
 	if get_err != nil {
-		err = serverError( c , get_err )
+		refused = internalFailure( get_err )
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "changed the default themes" , fiber.Map{ "count": len( themes ) , "built_in": themes == nil } )
-	err = c.JSON( fiber.Map{ "ok": true , "themes": themes } )
+	payload = fiber.Map{ "ok": true , "themes": themes }
 	return
 }

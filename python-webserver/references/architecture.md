@@ -605,20 +605,26 @@ It is the API keys in another shape, not a new way in:
   against the actor's *effective* role. `tools/list` leaves admin tools out
   for a user-scoped key, and `tools/call` answers "unknown tool" for one, so
   the key is never even told they exist.
-- **No credentials, no deleting.** The built-in tools are the safe half of the
-  REST API: `whoami`, `list_team`, and for admins listing users and invite
-  links, disabling/enabling an account, revoking an account's access, and
-  switching off an invite link. Creating accounts, login links, invite links,
-  PINs or keys, and every delete, need a browser session on the REST side for
-  the reasons in [Why a key cannot create credentials](#why-a-key-cannot-create-credentials);
-  a tool is a key-authenticated route, so the same rule keeps them out.
+- **Every key route, and nothing more.** Whatever a person can do on a
+  screen, a key can do over HTTP and an agent through `/mcp` -- except managing
+  users, keys and sign-in, and erasing anything for good. Those need a browser
+  session on the REST side for the reasons in
+  [Why a key cannot create credentials](#why-a-key-cannot-create-credentials),
+  and a tool is a key-authenticated route, so the same rule keeps them out.
+  Everything else a key may call has a tool naming its route, or an
+  `x-mcp-http` reason in `config/openapi.json` for staying HTTP only (logout,
+  the references themselves, `/metrics`, the browser's own activity reports,
+  and file bytes). `app/tests/test_mcp_parity.py` holds the two lists together, and calls every route
+  with an admin key to check the spec's `security` against the guards.
+- **File bytes travel over HTTP.** An MCP message is JSON, and clients cap its
+  size, so `files_start_upload` reserves the file and answers `chunk_url`, the
+  piece size and a `curl` recipe; the agent POSTs each piece to
+  `/api/files/<id>/chunks/<n>` with the same `Authorization` header, then calls
+  `files_finish_upload`. `files_download_url` answers the address to GET. The
+  same pattern fits any other binary an app adds.
 - **One set of rules.** A tool calls the helper its HTTP handler calls
-  (`me_row`, `user_rows`, `set_disabled_checked`, `revoke_access_checked`,
-  ...), so "you cannot disable yourself" and the owner protection hold
-  through both doors and refuse in the same words.
-- **The threadpool rule holds.** Tools are plain synchronous functions; the
-  protocol runs each one with `run_in_threadpool`, so a tool may use the
-  store directly.
+  (`me_row`, `user_rows`, `set_disabled_checked`, `create_file_checked`, ...), so "you cannot disable yourself", the owner protection and the
+  quota hold through both doors and refuse in the same words.
 
 The transport is the simplest legal form of Streamable HTTP: stateless, one
 JSON-RPC message per POST, a JSON reply. No SSE stream, no `Mcp-Session-Id`,
@@ -637,11 +643,27 @@ OAuth -- see "When this template does not fit" in SKILL.md.
 `server.mcp: false`, or `auth.api_keys: false`, means the route is never
 registered.
 
+### config/mcp.json, the MCP reference
+
+`config/mcp.json` is what `tools/list` says for every tool and any key, plus the
+route each one stands for and the `http_only` routes with their reasons. It is
+generated, not written: `scripts/mcp_json.sh` rebuilds it from the registered
+tools, and a test fails while the committed copy is stale, so it can be linked
+from GitHub (the MCP card's "MCP reference" link goes to `<app.repo>/blob/HEAD/config/mcp.json`,
+or to `GET /api/mcp.json` when `app.repo` is empty) and still be right. It names
+no features: scaffolding cuts a pruned feature's tools out by their route's
+`x-feature` in the template's `openapi.json`. The Go and Python templates write
+it byte for byte the same.
+
+### Where the MCP code is
+
 | Concern | File |
 |---|---|
 | JSON-RPC, version negotiation, the transport rules | `app/mcp/protocol.py` |
 | `Tool`, `Call.bind`, `Refusal`, role filtering | `app/mcp/registry.py` |
 | The built-in tools | `app/routes/mcp_tools.py` |
+| config/mcp.json | `app/mcp/manifest.py`, `scripts/mcp_json.sh` |
+| The parity tests | `app/tests/test_mcp_parity.py` |
 | The guard | `RequireAPIKey` in `app/core/security.py` |
 
 ## The activity log
@@ -1035,6 +1057,11 @@ Hand-written files drift, so `app/tests/test_openapi.py` compares it to the
 route table in both directions and names each route that differs. The pages at
 `/login/*` and `/join/*` and the catch-alls are the only routes left out. Add an
 app's own routes to the same file.
+
+`security` says who may call an operation: `apiKey` listed means a key may, and
+a test calls every route with a key to check that the guards agree. An
+operation a key may call either has an MCP tool or carries `"x-mcp-http"`, one
+line on why it stays HTTP only (see [MCP](#mcp-the-api-keys-for-agents)).
 
 ## Webhooks
 

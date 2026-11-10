@@ -3,6 +3,61 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After ceb3221
+
+**Upgrade `mcp-parity`: every route a key may call has an MCP tool, `config/mcp.json` lists them, and the MCP card links it.**
+Marks: `x-mcp-http`, `mcp_url`, `mcp-spec-link`, `files_start_upload`, `test_every_key_route_is_an_mcp_tool`
+
+The rule is now "whatever a key can do over HTTP, an agent can do through
+`/mcp`": 17 new tools (`rename_account`, `set_shortcuts`, `set_themes`,
+`set_theme`, `admin_get_theme_defaults`, `admin_set_theme_defaults`, and for
+files `files_list`, `files_get`, `files_start_upload`, `files_finish_upload`,
+`files_download_url`, `files_rename`, `files_delete`, `files_restore`,
+`my_storage`, `admin_list_files`, `admin_storage`). File bytes still go over
+`/api/files` with the same key; the tools answer the addresses. Route guards
+are unchanged: nothing a key could not do before.
+
+- `app/mcp/registry.py`: `Tool.route`, `Registry.tools()`; the docstring
+  states the rule. New `app/mcp/manifest.py` (`python -m app.mcp.manifest`).
+- `app/routes/helpers.py`: `Refused` (with `Refused.internal`) and
+  `restore_refusal`, which `restore_refused` now calls.
+- Handlers split into a synchronous helper both doors call, same answers as
+  before: `rename_checked` (account.py), `set_shortcuts_checked`
+  (shortcuts.py), `set_my_themes_checked`, `set_my_theme_checked`,
+  `theme_defaults`, `set_theme_defaults_checked` (themes.py), and in files.py
+  `my_storage_row`, `all_storage_row`, `my_file_rows`, `all_file_rows`,
+  `create_file_checked`, `get_my_file_row`, `finish_file_checked`,
+  `rename_file_checked`, `delete_file_checked`, `restore_file_checked` (and
+  `_remove` is now synchronous). An app that changed one of these handlers
+  keeps its change inside the helper.
+- `app/routes/mcp_tools.py`: `route=` on every tool, the new tools,
+  `_shared()`. An app's own tools need a `route` too, or the parity test
+  fails: add it, or an `x-mcp-http` reason on the operation.
+- `app/routes/account.py`: `mcp_url` in `/api/me` and `mcp_url()`.
+- `app/core/assets.py`: `MCP_MANIFEST`. New `app/routes/mcp_manifest.py`,
+  routed at `GET /api/mcp.json` (`RequireLogin`, `RequireMCP`) in
+  `app/routes/__init__.py`. New `config/mcp.json` (generated) and
+  `scripts/mcp_json.sh`. Run it in the app after merging (its own tools then
+  appear in the file) and commit the result.
+- `config/openapi.json`: `/api/mcp.json`; `x-mcp-http` on logout,
+  `logs/events`, `openapi.json`, `mcp.json`, `/mcp`, `/metrics`, the file
+  chunk route and both login-link cancels; `Me.mcp_url`. Fixed: invite link
+  `rename`, `limits` and `switch-on` listed `apiKey` but need a session.
+- `static/index.html`: `mcp-spec-line` on the MCP card, `about-mcp-*` on
+  About. `static/js/mcp.js` and `about.js` fill them. `language.yaml`:
+  `mcp.spec_text`, `mcp.spec_link`, `about.mcp_reference`, `about.mcp_link`.
+- Tests: new `app/tests/test_mcp_parity.py` (every key route has a tool or a
+  reason; the spec's `security` matches the guards; `config/mcp.json` is
+  current; `/api/mcp.json` signed in only; `mcp_url`; a file up and down
+  through the tools and HTTP).
+
+**Test:** `python -m unittest discover app/tests` passes (an app route with no tool fails
+here, naming it). `scripts/mcp_json.sh` leaves `config/mcp.json` unchanged.
+Account, MCP card: "What an agent can call: MCP reference (mcp.json)" opens
+`<repo>/blob/HEAD/config/mcp.json`, or `/api/mcp.json` with no repo. With an
+MCP client, `files_start_upload`, a curl of the piece to `chunk_url`, then
+`files_finish_upload` makes a file that downloads intact.
+
 ## After 99445cc
 
 **Upgrade `theme-buttons`: every Bootstrap button is drawn in the theme, and each theme has a button style.**

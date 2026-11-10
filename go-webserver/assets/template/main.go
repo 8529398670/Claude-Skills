@@ -85,6 +85,13 @@ var (
 	embeddedOpenAPI []byte
 	// <<< feature:openapi
 
+	// >>> feature:mcp
+	// The tools /mcp offers, written by scripts/mcp_json.sh from the
+	// registered tools; embedded for the same reason as openapi.json.
+	//go:embed config/mcp.json
+	embeddedMCPManifest []byte
+	// <<< feature:mcp
+
 	//go:embed config/defaults.yaml
 	embeddedDefaults []byte
 
@@ -258,6 +265,7 @@ func run() ( err error ) {
 	handlers.Metrics = recorder // feature:metrics
 	handlers.ErrorPages = error_pages // feature:maintenance
 	handlers.OpenAPI = embeddedOpenAPI // feature:openapi
+	handlers.MCPManifest = embeddedMCPManifest // feature:mcp
 	handlers.LogStream = log_stream // feature:logs
 
 	app := fiber.New( fiber.Config{

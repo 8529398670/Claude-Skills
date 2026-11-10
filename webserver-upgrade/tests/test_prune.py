@@ -94,6 +94,25 @@ class TreeTest(unittest.TestCase):
             self.assertEqual((root / "shared.go").read_text(), "keep\n")
             self.assertEqual((root / "off.go").read_text(), "stub\n")
 
+    def test_mcp_json_goes_by_the_route_feature(self) -> None:
+        """mcp.json names no features: a tool goes with its route's x-feature in
+        openapi.json, which pruning takes out of that file afterwards."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config").mkdir()
+            spec = {"paths": {"/api/me": {"get": {}}, "/api/files": {"x-feature": "a", "get": {}, "post": {}}}}
+            (root / "config" / "openapi.json").write_text(json.dumps(spec))
+            manifest = {
+                "http_only": [{"reason": "bytes", "route": "POST /api/files"}, {"reason": "x", "route": "GET /api/me"}],
+                "tools": [{"name": "whoami", "route": "GET /api/me"}, {"name": "files_list", "route": "GET /api/files"}],
+            }
+            (root / "config" / "mcp.json").write_text(json.dumps(manifest))
+            prune.prune_tree(root, {"a"})
+            pruned = json.loads((root / "config" / "mcp.json").read_text())
+            self.assertEqual([tool["name"] for tool in pruned["tools"]], ["whoami"])
+            self.assertEqual([entry["route"] for entry in pruned["http_only"]], ["GET /api/me"])
+            self.assertTrue((root / "config" / "mcp.json").read_text().endswith("}\n"))
+
     def test_nothing_removed_still_clears_the_markers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

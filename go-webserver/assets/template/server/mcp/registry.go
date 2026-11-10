@@ -14,17 +14,23 @@ import (
 // Tool is one thing an agent can do through /mcp.
 //
 // Adding one is the MCP version of adding a route: write it next to the
-// others in server/routes/mcp_tools.go, calling the same model functions the
-// matching HTTP handler calls, so a rule enforced in a model holds whichever
-// door a change comes through. The defaults match the rest of the template:
+// others in server/routes/mcp_tools.go, calling the same helper the matching
+// HTTP handler calls, so a rule enforced there holds whichever door a change
+// comes through. The rules match the rest of the template:
 //
-//   - Any signed-in key, unless the user asked for admin. AdminOnly hides the
+//   - One tool per route an API key may call. Route names it, and
+//     mcp_parity_test.go fails until every key-callable route in
+//     config/openapi.json has a tool, or an "x-mcp-http" reason for staying
+//     HTTP only (file bytes, for one: MCP messages are JSON, and clients cap
+//     their size, so uploads and downloads go over /api/files with the same
+//     key and the tool hands back the addresses).
+//   - Any signed-in key, unless the route is admin only. AdminOnly hides the
 //     tool from user-scoped keys entirely.
-//   - Never create a credential or delete anything. /mcp only accepts API
-//     keys, and those routes need a browser session (see RequireSession) so
-//     that revoking a leaked key really ends it, and so that a key can never
-//     erase what cannot be put back. A tool is a key-authenticated route; the
-//     same rule applies.
+//   - Nothing a key cannot do over HTTP. Managing users, keys and sign-in, and
+//     erasing anything for good, need a browser session (see RequireSession),
+//     so that revoking a leaked key really ends it and a key can never erase
+//     what cannot be put back. A tool is a key-authenticated route; the same
+//     rule keeps those out.
 //   - Mark the hints honestly. ReadOnly and Destructive become the spec's
 //     readOnlyHint / destructiveHint, which a client uses to decide whether to
 //     ask the person before calling. They are advice to the client, not
@@ -39,6 +45,9 @@ type Tool struct {
 	ReadOnly    bool
 	Destructive bool
 	AdminOnly   bool
+	// Route is the HTTP route this tool is the MCP door to, as
+	// "METHOD /path/{param}" the way config/openapi.json writes it.
+	Route string
 	// Enabled, when set, is asked on every call: a tool for a feature that is
 	// switched off answers exactly like one that does not exist. Nil is always.
 	Enabled func() bool
@@ -115,6 +124,36 @@ func ( tool *Tool ) visibleTo( actor *security.Actor ) ( result bool ) {
 	return
 }
 
+// Tools is every registered tool, whoever may call it, in registration
+// order: what config/mcp.json lists.
+func ( server *Server ) Tools() ( tools []*Tool ) {
+	tools = server.tools
+	return
+}
+
+// Listing is the tool as tools/list describes it.
+func ( tool *Tool ) Listing() ( listed fiber.Map ) {
+	schema := tool.InputSchema
+	if schema == nil {
+		schema = fiber.Map{ "type": "object" , "properties": fiber.Map{} , "additionalProperties": false }
+	}
+	listed = fiber.Map{
+		"name":        tool.Name,
+		"title":       tool.Title,
+		"description": tool.Description,
+		"inputSchema": schema,
+		"annotations": fiber.Map{
+			"title":           tool.Title,
+			"readOnlyHint":    tool.ReadOnly,
+			"destructiveHint": tool.Destructive,
+			// Every tool here acts on this server's own records, never
+			// the open internet.
+			"openWorldHint": false,
+		},
+	}
+	return
+}
+
 // visible is tools/list for one actor: the tools its effective role may call,
 // in registration order, so a user-scoped key is never even told the admin
 // tools exist.
@@ -122,24 +161,7 @@ func ( server *Server ) visible( actor *security.Actor ) ( listed []fiber.Map ) 
 	listed = []fiber.Map{}
 	for _ , tool := range server.tools {
 		if tool.visibleTo( actor ) == false { continue }
-		schema := tool.InputSchema
-		if schema == nil {
-			schema = fiber.Map{ "type": "object" , "properties": fiber.Map{} , "additionalProperties": false }
-		}
-		listed = append( listed , fiber.Map{
-			"name":        tool.Name,
-			"title":       tool.Title,
-			"description": tool.Description,
-			"inputSchema": schema,
-			"annotations": fiber.Map{
-				"title":           tool.Title,
-				"readOnlyHint":    tool.ReadOnly,
-				"destructiveHint": tool.Destructive,
-				// Every tool here acts on this server's own records, never
-				// the open internet.
-				"openWorldHint": false,
-			},
-		} )
+		listed = append( listed , tool.Listing() )
 	}
 	return
 }

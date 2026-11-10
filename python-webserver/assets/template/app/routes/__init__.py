@@ -39,6 +39,7 @@ from app.routes import (
     jobs,  # feature:jobs
     join,  # feature:invite_links
     logs,  # feature:logs
+    mcp_manifest,  # feature:mcp
     mcp_tools,  # feature:mcp
     meta,
     metrics,  # feature:metrics
@@ -253,6 +254,7 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         signed_in("/api/logout", account.logout, ["POST"]),
         signed_in("/api/team", team.list_team),
         signed_in("/api/openapi.json", openapi.get_openapi),  # feature:openapi
+        group(RequireLogin, RequireMCP)("/api/mcp.json", mcp_manifest.get_mcp_manifest),  # feature:mcp
         my_keys("/api/keys", api_keys.list_my_keys),  # feature:api_keys
         my_keys("/api/keys", api_keys.create_my_key, ["POST"]),  # feature:api_keys
         my_keys("/api/keys/{key_id}/rename", api_keys.rename_my_key, ["POST"]),  # feature:api_keys

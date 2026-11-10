@@ -25,6 +25,11 @@ const Mcp = {
     if ( me.mcp_enabled !== true || me.api_keys_enabled === false ) return;
 
     Dom.show( Dom.get( "mcp-panel" ) , true );
+    // What an agent can call: mcp.json in app.repo, else the server's own.
+    if ( me.mcp_url ) {
+      Dom.get( "mcp-spec-link" ).setAttribute( "href" , me.mcp_url );
+      Dom.show( Dom.get( "mcp-spec-line" ) , true );
+    }
     Dom.text( Dom.get( "mcp-endpoint" ) , this.endpoint() );
     Dom.show( Dom.get( "mcp-key-role-field" ) , me.role === "admin" );
     Dom.get( "mcp-endpoint-copy" ).addEventListener( "click" , () => Dom.copy( Dom.get( "mcp-endpoint" ) ) );

@@ -54,8 +54,10 @@ project.
   app.
 - **The same keys speak MCP at `/mcp`.** An agent such as Claude Code uses the
   app through a key, at that key's role: admin tools are invisible to a
-  user-scoped key, a browser session is refused, and no tool creates a
-  credential or deletes anything. Stateless JSON-RPC over POST, written by
+  user-scoped key, a browser session is refused, and no tool manages users,
+  keys or sign-in. Every route a key may call has a tool (a test holds them
+  to it), file bytes go over the HTTP routes, and `config/mcp.json` lists the
+  tools for anyone wiring an agent up. Stateless JSON-RPC over POST, written by
   hand -- no SDK, no SSE, no sessions. `server.mcp: false` removes it.
 - **Webhooks tell other systems what happened.** The owner adds endpoints on a
   Webhooks screen. Events go through a durable outbox, signed with HMAC-SHA256 and
@@ -308,6 +310,7 @@ ports they ran on. Do not reset either to a shared value.
     secret.key                # the key that encrypts the database (written by
                               #   scaffold.py; gitignored, 0600) -- back it up
     openapi.json              # the API, by hand; a test keeps it in step
+    mcp.json                  # the MCP tools, written by scripts/mcp_json.sh
     config.example.yaml       # every default -- commit this; a fresh clone
                               #   copies it to config/config.yaml
                               #   (`python -m app config example` regenerates it)
@@ -395,6 +398,7 @@ ports they ran on. Do not reset either to a shared value.
     run.sh, run.bat           # local run: (re)starts the server; with args, the CLI
     login.sh, login.bat       # the owner's login link, from whatever is live
                               # (starts the server right there if nothing is)
+    mcp_json.sh               # rewrites config/mcp.json from the registered tools
     lib.sh                    # shared by run.sh and login.sh (sourced)
   docker/
     Dockerfile                # built with the project root as context
@@ -457,16 +461,26 @@ but stay consistent with the patterns already there:
   deliberately carries less. Add `RequireSession` to a route only when it
   must be browser-only, the way key management, account creation and
   login-link reissue are -- and to any new route that creates a credential.
+- **Every action is an API action and an MCP tool.** Whatever a person can do
+  on a screen, a key can do over HTTP and an agent through `/mcp` -- except
+  managing users, keys and sign-in, and erasing anything for good, which need a
+  browser session (`RequireSession`). So a feature's routes take API keys by
+  default, and each one a key may call gets a tool calling the same helper, with
+  `route` naming the route. A route with no use to an agent (file bytes: MCP
+  messages are JSON, and clients cap their size) gets an `"x-mcp-http": "<why>"`
+  on its operation in `config/openapi.json` instead, and its tool hands back the
+  address -- `files_start_upload` and `files_download_url` are the pattern.
+  `app/tests/test_mcp_parity.py` fails until every key route is covered, and until
+  `config/openapi.json`'s `security` matches what the guards really do. Then run
+  `scripts/mcp_json.sh`, which rewrites `config/mcp.json` (committed, linked
+  from the MCP card as the MCP reference); the same tests fail while it is stale.
 - **New MCP tools** go in `app/routes/mcp_tools_<feature>.py`, registered
   from `build_registry` in `mcp_tools.py`. Pull the HTTP handler's body into
-  a synchronous helper both call (the way `me_row` and `set_disabled_checked`
-  are), so the two doors share one set of rules. Default to any signed-in
-  key; set `admin_only` only when the matching route is admin-only. Read
-  arguments with `call.bind({...})` (strict), return a dict, and say no with
-  `raise Refusal("...")`. Never write a tool that creates a credential or
-  deletes something -- `/mcp` takes only keys, and those routes need a
-  session. Set `read_only`/`destructive` honestly; clients use them to decide
-  when to ask the person first.
+  a helper both call (the way `me_row`, `set_disabled_checked` and `create_file_checked` are), so the two doors share one set of
+  rules and refuse in the same words. Set `admin_only` only when the matching route is
+  admin-only. Read arguments with `call.bind({...})` (strict), return an object, and say no
+  with `raise Refusal("...")`. Set `read_only`/`destructive` honestly; clients use them to decide when to ask the
+  person first.
 - **Log what matters, never what is secret.** Requests and page activity are
   logged for free. A new action worth an audit line (something changed,
   someone was let in or refused) calls
@@ -531,7 +545,8 @@ but stay consistent with the patterns already there:
   `await emit( request , name , data )` where the thing happens. Ids and names only in
   `data`, since it leaves the server, and never rename one once it has shipped.
 - **A new route** goes in `config/openapi.json` too: `app/tests/test_openapi.py` fails
-  until it is. A route that changes something must not be a GET, or `read_only`
+  until it is, and `test_mcp_parity.py` until it has an MCP tool or an `x-mcp-http`
+  reason (see above). A route that changes something must not be a GET, or `read_only`
   maintenance will not stop it.
 - **A new list route** answers with `send_page( request , "rows" , rows )`, and its
   screen uses `Pager.load`: a plain `forEach` would stop at the first page.
