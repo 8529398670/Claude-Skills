@@ -3,6 +3,90 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 981a796
+
+**Upgrade `logs-date-centred`: the Logs date button sits in the middle of the search bar.**
+Marks: `dropdown-center log-date-picker`, `justify-content-md-end`
+
+The search field stays on the left and Live/Prune move to the right end, with
+the date button centred between them; its calendar opens centred under it.
+On a phone the three stack, the buttons centred. Bootstrap columns only, no CSS.
+
+- `static/index.html`: in `#logs-search-form` (still `row g-2
+  align-items-end`) the field's column becomes `col-md`. The
+  `.log-date-picker` dropdown moves out of the `.row-actions` div into its own
+  `col-md-auto text-center` column between them, and gains `dropdown-center`.
+  That div, now holding only `#logs-live` and `#logs-prune`, becomes
+  `col-md row-actions justify-content-center justify-content-md-end`. The two
+  `col-md` columns being equal is what centres the button.
+
+**Test:** at 1400px wide the date button is centred in the Logs card, Live and
+Prune at its right edge; the calendar opens centred under the button. At
+375px the field, the date button and Live/Prune stack, the buttons centred.
+
+**Upgrade `theme-mode-colors`: every theme has light and dark colors, Light and Dark are one theme called Default, and WSU dark is WSU switched to dark.**
+Marks: `setMode(`, `modeFields`, `id: "default"`, `ThemeColors`
+
+The Light/Dark switch on a theme used to change only the mode, leaving its
+light colors on a dark page. Now a theme can keep its colors for the mode not
+in use (a light theme's `dark`, a dark theme's `light`) and the switch swaps
+them in; switching back brings the old ones back. Every built-in carries both,
+so the separate Light, Dark and WSU dark built-ins are gone: Default (first,
+light) and nine others, 10 in all (was 12).
+
+- `static/js/theme.js`: `builtIn` is replaced whole -- `default` first
+  (light, with `dark`), and each of the others with its other mode's colors
+  (`dark` on the light ones, `light` on midnight, slate, cerise); `wsu` takes
+  the old WSU dark colors as its `dark`. `copy()` copies `light`/`dark`; new
+  `modeFields` and `setMode( theme , mode )`; `current` starts `"default"`.
+  `restore()` reads a kept `"light"` or `"dark"` (an id from before) as
+  Default in that mode. `keep()` treats Default in light as plain. Without
+  `appearance`: new `shown`, and `set`/`pick` take a mode and build Default
+  in it; `watchToggle` reads `shown.mode`. Comment tweaks in the header and
+  `derived()`.
+- `static/js/themes_editor.js`: the mode radio calls the new `actions.mode`,
+  which runs `Theme.setMode` on the edited copy.
+- `scripts/check_themes.js`: also checks each built-in switched to its other
+  mode.
+- `server/models/themes.go`: `Theme` gains `Light`, `Dark *ThemeColors` (`json:"light,omitempty"`, `"dark"`); new `ThemeColors` (accent, second, background, surface, overrides) and `cleanThemeColors`, which `CleanThemes` uses for the theme's own colors and for the kept set. The set for the mode in use is dropped. `server/routes/themes_test.go`: two refused shapes and a kept-`dark` case in `TestThemesRefuseBadShapes`.
+- `config/openapi.json`: the `Theme` schema gains `light` and `dark`.
+- `config/language.yaml`: `theme.preset_light`, `preset_dark` and
+  `preset_wsu_dark` go; `theme.preset_default: "Default"` comes in.
+
+**Once, for this app's data (not a template change), only with
+`appearance`:** saved lists keep what they had. Look at the admin's defaults
+(meta `theme_defaults`) and each account's `themes` and `theme_id`. Nothing
+saved anywhere: nothing to do. Otherwise ask the owner, then mend them once --
+by a migration appended to this app's own migrations list, or by hand with the
+server stopped (snapshot the database first). In each saved list:
+
+- `light` and `dark` become one `default`: `light`'s theme (name "Default"
+  unless renamed) with `dark`'s colors (`accent`, `second`, `background`,
+  `surface`, `overrides`) as its `dark`. `wsu` and `wsu_dark` the same way: the
+  gold-on-black colors are `wsu_dark`'s own while its `mode` is `dark`, else
+  its `dark` set if it has one, else its own. Names and button styles stay with
+  the theme that is kept. A pair missing one half is left alone.
+- Each other built-in by id (ocean ... cerise) that keeps no colors for its
+  other mode, or keeps a copy of its own (switched to Dark and back before
+  this), gets the built-in's.
+- An account whose `theme_id` was `dark` or `wsu_dark` gets `default` or
+  `wsu`; if that account has its own list, that theme is also switched to dark
+  (its light colors move to `light`, the dark ones on top), so it looks as it
+  did. `light` becomes `default`.
+
+"Restore the built-in themes" does the same for the defaults, at the cost of
+any edits. Apps without `appearance` keep nothing on the server: a browser's
+kept `"light"`/`"dark"` is read by `restore()`, and a kept whole theme from
+before paints as it was until the button is pressed.
+
+**Test:** `node scripts/check_themes.js` says `ok: 10 themes`; `go test ./server/routes -run Theme`
+passes. On Appearance the list starts with Default and has no Light, Dark or
+WSU dark. Edit WSU and press Dark: gold on black with dark green cards; Light:
+green on off-white again. Do the same on Ocean (dark teal page) and Midnight
+(press Light: purple on pale lavender). Undo after each puts the other back.
+Without `appearance`: a fresh browser opens light; the navbar button goes dark
+and back, and the choice survives a reload.
+
 ## After ceb3221
 
 **Upgrade `mcp-parity`: every route a key may call has an MCP tool, `config/mcp.json` lists them, and the MCP card links it.**

@@ -113,6 +113,8 @@ func TestThemesRefuseBadShapes( t *testing.T ) {
 		func( theme fiber.Map ) []fiber.Map { theme[ "overrides" ] = fiber.Map{ "link": "blue" } ; return []fiber.Map{ theme } },
 		func( theme fiber.Map ) []fiber.Map { theme[ "button" ] = fiber.Map{ "shape": "blob" } ; return []fiber.Map{ theme } },
 		func( theme fiber.Map ) []fiber.Map { theme[ "button" ] = fiber.Map{ "depth": "deep" } ; return []fiber.Map{ theme } },
+		func( theme fiber.Map ) []fiber.Map { theme[ "dark" ] = fiber.Map{ "accent": "gold" , "second": "#ffffff" } ; return []fiber.Map{ theme } },
+		func( theme fiber.Map ) []fiber.Map { theme[ "dark" ] = fiber.Map{ "accent": "#000000" , "second": "#ffffff" , "overrides": fiber.Map{ "glow": "#000000" } } ; return []fiber.Map{ theme } },
 	}
 	for index , build := range cases {
 		themes := build( good() )
@@ -148,4 +150,18 @@ func TestThemesRefuseBadShapes( t *testing.T ) {
 	if button[ "shape" ] != "pill" || button[ "depth" ] != "glossy" || len( button ) != 2 { t.Fatalf( "%v" , button ) }
 	if first[ "overrides" ].( map[string]any )[ "btnDanger" ] != "#aa0000" { t.Fatalf( "%v" , first[ "overrides" ] ) }
 	if _ , there := themes[ 1 ].( map[string]any )[ "button" ]; there { t.Fatalf( "empty button stored: %v" , themes[ 1 ] ) }
+
+	// A light theme keeps its dark colors (switching mode swaps them in); colors
+	// kept for the mode already in use mean nothing and are dropped.
+	theme = good()
+	theme[ "dark" ] = fiber.Map{ "accent": "#CBA052" , "second": "#F8E08E" , "background": "#101820" , "overrides": fiber.Map{ "link": "#FFFFFF" } }
+	theme[ "light" ] = fiber.Map{ "accent": "#000000" , "second": "#000000" }
+	if status , reply := send( t , alice , "/api/account/themes" , fiber.Map{ "themes": []fiber.Map{ theme } } ); status != fiber.StatusOK {
+		t.Fatalf( "%d %v" , status , reply )
+	}
+	themes , _ , _ = meThemes( t , alice )
+	first = themes[ 0 ].( map[string]any )
+	dark := first[ "dark" ].( map[string]any )
+	if dark[ "accent" ] != "#cba052" || dark[ "background" ] != "#101820" || dark[ "overrides" ].( map[string]any )[ "link" ] != "#ffffff" { t.Fatalf( "%v" , dark ) }
+	if _ , there := first[ "light" ]; there { t.Fatalf( "light kept on a light theme: %v" , first ) }
 }

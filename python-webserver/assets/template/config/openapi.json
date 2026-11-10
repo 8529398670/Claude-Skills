@@ -10167,6 +10167,72 @@
                 ]
               }
             }
+          },
+          "light": {
+            "type": "object",
+            "description": "A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in.",
+            "properties": {
+              "accent": {
+                "type": "string",
+                "description": "The main color: what you can press."
+              },
+              "second": {
+                "type": "string",
+                "description": "Says where you are: active nav item, headings, info."
+              },
+              "background": {
+                "type": "string",
+                "description": "The page. Left out: the mode's own."
+              },
+              "surface": {
+                "type": "string",
+                "description": "Cards. Left out: the mode's own."
+              },
+              "overrides": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."
+              }
+            },
+            "required": [
+              "accent",
+              "second"
+            ]
+          },
+          "dark": {
+            "type": "object",
+            "description": "A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped.",
+            "properties": {
+              "accent": {
+                "type": "string",
+                "description": "The main color: what you can press."
+              },
+              "second": {
+                "type": "string",
+                "description": "Says where you are: active nav item, headings, info."
+              },
+              "background": {
+                "type": "string",
+                "description": "The page. Left out: the mode's own."
+              },
+              "surface": {
+                "type": "string",
+                "description": "Cards. Left out: the mode's own."
+              },
+              "overrides": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."
+              }
+            },
+            "required": [
+              "accent",
+              "second"
+            ]
           }
         },
         "required": [

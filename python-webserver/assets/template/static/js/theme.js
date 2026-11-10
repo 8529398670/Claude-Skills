@@ -5,7 +5,9 @@
 // attribute being absent, and Bootstrap's color-mode script, which would
 // follow prefers-color-scheme, is deliberately not included.
 //
-// A theme is a mode and a few colors. colors() works out everything else
+// A theme is a mode and a few colors. It can also carry its colors for the
+// other mode (a light theme's "dark", a dark theme's "light"), so switching
+// it between light and dark swaps them in -- see setMode(). colors() works out everything else
 // the page needs from those -- text, links, borders, tints -- each pushed until
 // it is readable. Its overrides replace any of the worked-out colors by name,
 // and dropping one puts the readable color back.
@@ -21,8 +23,9 @@
 // authority: load( me ) replaces what was kept as soon as /api/me answers.
 // <<< feature:appearance
 // >>> feature:!appearance
-// Light or dark is switched by the navbar button and remembered in this
-// browser only (localStorage); nothing goes to the server.
+// There is one theme, Default. The navbar button switches it between light
+// and dark, remembered in this browser only (localStorage); nothing goes to
+// the server.
 // <<< feature:!appearance
 //
 // This file is loaded in <head>, before the stylesheet's first paint, so a
@@ -60,21 +63,33 @@ const Theme = {
   // page and the cards, when the mode's will not do. Names come from
   // language.yaml (theme.preset_<id>) until a list is saved; a saved list keeps
   // its own names.
+  //
+  // Every one has colors for both modes: the ones it starts in, and the other
+  // mode's under its name, which the Light/Dark switch swaps in (setMode).
+  // Default comes first and starts light: it is what a new browser shows.
   builtIn: [
-    { id: "light" , mode: "light" , accent: "#1f5fd6" , second: "#0b7a75" },
-    { id: "dark" , mode: "dark" , accent: "#6ea0ff" , second: "#5fd3c4" },
+    { id: "default" , mode: "light" , accent: "#1f5fd6" , second: "#0b7a75" ,
+      dark: { accent: "#6ea0ff" , second: "#5fd3c4" } },
     // >>> feature:appearance
-    { id: "ocean" , mode: "light" , accent: "#0b7285" , second: "#bd5418" , background: "#eef6f8" , surface: "#ffffff" },
-    { id: "forest" , mode: "light" , accent: "#28843b" , second: "#8a6a12" , background: "#f1f6ef" , surface: "#ffffff" },
-    { id: "sepia" , mode: "light" , accent: "#9c5a1c" , second: "#2f6f6a" , background: "#f6f0e4" , surface: "#fbf7ef" },
-    { id: "grape" , mode: "light" , accent: "#7048c8" , second: "#c0267e" , background: "#f5f2fc" , surface: "#ffffff" },
-    { id: "pink" , mode: "light" , accent: "#c2255c" , second: "#6b3fc0" , background: "#fdf0f5" , surface: "#ffffff" },
-    // Wright State University: Green on Off White, and Gold on Black with Dark Green panels.
-    { id: "wsu" , mode: "light" , accent: ThemePalettes.wsu.green , second: ThemePalettes.wsu.gold , background: ThemePalettes.wsu.off_white , surface: "#ffffff" },
-    { id: "midnight" , mode: "dark" , accent: "#8c7cff" , second: "#ffb86b" , background: "#0e1020" , surface: "#171a30" },
-    { id: "slate" , mode: "dark" , accent: "#4fb3a9" , second: "#e6b450" , background: "#15191e" , surface: "#1d232a" },
-    { id: "cerise" , mode: "dark" , accent: "#f06595" , second: "#ffa8d0" , background: "#1f0d16" , surface: "#2a1220" },
-    { id: "wsu_dark" , mode: "dark" , accent: ThemePalettes.wsu.gold , second: ThemePalettes.wsu.yellow , background: ThemePalettes.wsu.black , surface: ThemePalettes.wsu.dark_green },
+    { id: "ocean" , mode: "light" , accent: "#0b7285" , second: "#bd5418" , background: "#eef6f8" , surface: "#ffffff" ,
+      dark: { accent: "#3bc9db" , second: "#ff922b" , background: "#0b1a1f" , surface: "#12262d" } },
+    { id: "forest" , mode: "light" , accent: "#28843b" , second: "#8a6a12" , background: "#f1f6ef" , surface: "#ffffff" ,
+      dark: { accent: "#69db7c" , second: "#e0b84c" , background: "#0f1a12" , surface: "#17251a" } },
+    { id: "sepia" , mode: "light" , accent: "#9c5a1c" , second: "#2f6f6a" , background: "#f6f0e4" , surface: "#fbf7ef" ,
+      dark: { accent: "#e0a15e" , second: "#6cc4bb" , background: "#1c1712" , surface: "#262019" } },
+    { id: "grape" , mode: "light" , accent: "#7048c8" , second: "#c0267e" , background: "#f5f2fc" , surface: "#ffffff" ,
+      dark: { accent: "#b197fc" , second: "#f783ac" , background: "#15111f" , surface: "#1e182c" } },
+    { id: "pink" , mode: "light" , accent: "#c2255c" , second: "#6b3fc0" , background: "#fdf0f5" , surface: "#ffffff" ,
+      dark: { accent: "#f783ac" , second: "#b197fc" , background: "#1f1018" , surface: "#2a1621" } },
+    // Wright State University: Green on Off White; switched to dark, Gold on Black with Dark Green panels.
+    { id: "wsu" , mode: "light" , accent: ThemePalettes.wsu.green , second: ThemePalettes.wsu.gold , background: ThemePalettes.wsu.off_white , surface: "#ffffff" ,
+      dark: { accent: ThemePalettes.wsu.gold , second: ThemePalettes.wsu.yellow , background: ThemePalettes.wsu.black , surface: ThemePalettes.wsu.dark_green } },
+    { id: "midnight" , mode: "dark" , accent: "#8c7cff" , second: "#ffb86b" , background: "#0e1020" , surface: "#171a30" ,
+      light: { accent: "#5b4bd6" , second: "#c26a00" , background: "#f3f3fb" , surface: "#ffffff" } },
+    { id: "slate" , mode: "dark" , accent: "#4fb3a9" , second: "#e6b450" , background: "#15191e" , surface: "#1d232a" ,
+      light: { accent: "#2b7a72" , second: "#a0711a" , background: "#f2f4f6" , surface: "#ffffff" } },
+    { id: "cerise" , mode: "dark" , accent: "#f06595" , second: "#ffa8d0" , background: "#1f0d16" , surface: "#2a1220" ,
+      light: { accent: "#b0164c" , second: "#e64980" , background: "#fdf2f6" , surface: "#ffffff" } },
     // <<< feature:appearance
   ],
 
@@ -155,7 +170,7 @@ const Theme = {
   list: [], // feature:appearance
   // Whether list is the person's own rather than the defaults. // feature:appearance
   custom: false, // feature:appearance
-  current: "light",
+  current: "default",
   // WCAG AA for text.
   minContrast: 4.5,
 
@@ -170,7 +185,37 @@ const Theme = {
     const copy = Object.assign( {} , theme );
     copy.overrides = Object.assign( {} , theme.overrides || {} );
     if ( theme.button ) copy.button = Object.assign( {} , theme.button );
+    Object.keys( this.modes ).forEach( ( mode ) => {
+      if ( theme[ mode ] ) copy[ mode ] = Object.assign( {} , theme[ mode ] , { overrides: Object.assign( {} , theme[ mode ].overrides || {} ) } );
+    } );
     return copy;
+  },
+
+  // The fields that belong to one mode. The name and the button style are the
+  // theme's whatever the mode.
+  modeFields: [ "accent" , "second" , "background" , "surface" , "overrides" ],
+
+  // Switches a theme to light or dark, in place. Its colors for the mode it
+  // leaves are kept under that mode's name, and any it has for the mode it
+  // goes to come back, so WSU switched to dark is WSU's dark colors and
+  // switched back is its light ones again. A theme with nothing kept for the
+  // new mode keeps its colors, as before.
+  setMode( theme , mode ) {
+    if ( theme.mode === mode || !( mode in this.modes ) ) return theme;
+    const leaving = {};
+    this.modeFields.forEach( ( field ) => { if ( theme[ field ] !== undefined ) leaving[ field ] = theme[ field ]; } );
+    const coming = theme[ mode ];
+    if ( coming ) {
+      this.modeFields.forEach( ( field ) => {
+        if ( coming[ field ] !== undefined ) theme[ field ] = coming[ field ];
+        else delete theme[ field ];
+      } );
+      theme.overrides = Object.assign( {} , theme.overrides || {} );
+    }
+    delete theme[ mode ];
+    theme[ theme.mode ] = leaving;
+    theme.mode = mode;
+    return theme;
   },
 
   // >>> feature:appearance
@@ -191,6 +236,9 @@ const Theme = {
     try {
       const raw = window.localStorage.getItem( this.storageKey ) || "";
       if ( raw.charAt( 0 ) === "{" ) saved = JSON.parse( raw );
+      // An id, or from before Light and Dark were one theme, "light" or "dark":
+      // Default in that mode.
+      else if ( raw in this.modes ) saved = this.setMode( this.copy( this.builtIn[ 0 ] ) , raw );
       else if ( raw !== "" ) saved = this.builtIn.find( function ( theme ) { return theme.id === raw; } ) || null;
     } catch ( error ) {
       // Storage blocked (private window, previews) or unreadable: stay light.
@@ -198,6 +246,7 @@ const Theme = {
     if ( !this.valid( saved ) ) saved = this.builtIn[ 0 ];
     this.list = this.builtIn.slice(); // feature:appearance
     this.current = saved.id;
+    this.shown = saved; // feature:!appearance
     this.apply( saved );
   },
 
@@ -208,11 +257,12 @@ const Theme = {
       && hex.test( theme.accent || "" ) && hex.test( theme.second || "" ) );
   },
 
-  // Keeps the theme in use for the next first paint. Plain Light is kept as
-  // nothing at all, which is what a new browser starts with anyway.
+  // Keeps the theme in use for the next first paint. Plain Default in light is
+  // kept as nothing at all, which is what a new browser starts with anyway.
   keep( theme ) {
     try {
-      let plain = theme.id === "light" && JSON.stringify( this.colors( theme ) ) === JSON.stringify( this.colors( this.builtIn[ 0 ] ) );
+      let plain = theme.id === this.builtIn[ 0 ].id && theme.mode === "light"
+        && JSON.stringify( this.colors( theme ) ) === JSON.stringify( this.colors( this.builtIn[ 0 ] ) );
       if ( plain && JSON.stringify( this.buttonStyle( theme ) ) !== JSON.stringify( this.buttonStyle( this.builtIn[ 0 ] ) ) ) plain = false;
       if ( plain ) window.localStorage.removeItem( this.storageKey );
       else window.localStorage.setItem( this.storageKey , JSON.stringify( theme ) );
@@ -298,17 +348,22 @@ const Theme = {
   },
   // <<< feature:appearance
   // >>> feature:!appearance
-  set( id ) {
-    const theme = this.find( id );
+  // The theme on the page: Default, light or dark.
+  shown: null,
+
+  // Default in this mode, painted and kept.
+  set( mode ) {
+    const theme = this.setMode( this.copy( this.builtIn[ 0 ] ) , mode );
     this.current = theme.id;
+    this.shown = theme;
     this.apply( theme );
     this.keep( theme );
   },
 
-  // Picking is undoable, and quick picks merge into one step.
-  pick( id ) {
-    const previous = this.current;
-    if ( previous === id ) return;
+  // Light or dark. Picking is undoable, and quick picks merge into one step.
+  pick( mode ) {
+    const previous = this.shown.mode;
+    if ( previous === mode ) return;
     const choose = ( chosen ) => {
       this.set( chosen );
       this.changed();
@@ -317,21 +372,20 @@ const Theme = {
       label: I18n.get( "undo.theme" ),
       merge: "theme",
       screen: null,
-      do: () => choose( id ),
+      do: () => choose( mode ),
       undo: () => choose( previous ),
     } );
   },
 
   // The button in the navbar, for an app without the Appearance screen: light
-  // or dark from anywhere, signed in or not. Dark from any light theme, light
-  // from any dark one.
+  // or dark from anywhere, signed in or not.
   watchToggle( button ) {
     const icon = button.querySelector( "i" );
     const update = () => {
-      const dark = this.find( this.current ).mode === "dark";
+      const dark = this.shown.mode === "dark";
       icon.className = "bi " + ( dark ? "bi-sun" : "bi-moon-stars" );
     };
-    button.addEventListener( "click" , () => this.pick( this.find( this.current ).mode === "dark" ? "light" : "dark" ) );
+    button.addEventListener( "click" , () => this.pick( this.shown.mode === "dark" ? "light" : "dark" ) );
     this.onChange.push( update );
     update();
   },
@@ -365,7 +419,7 @@ const Theme = {
       info: this.mix( second , card , this.tints.info ),
       infoBorder: this.mix( second , card , this.tints.infoBorder ),
       // From the card, not the page: most borders sit on a card, and a card can be
-      // a long way from its page (WSU dark's green on black).
+      // a long way from its page (WSU's dark green panels on black).
       border: this.mix( mode.text , card , 20 ),
     };
     // The other buttons. A fill stays close to its color but is moved until

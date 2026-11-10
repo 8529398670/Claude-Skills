@@ -13,7 +13,9 @@
 // depth, case). Every Bootstrap button color has its own fill, label and
 // outline, worked out from the theme and shown under "Buttons" with the rest.
 //
-// Each theme has a mode and four base colors. Everything else is worked out
+// Each theme has a mode and four base colors, and keeps a set for each mode:
+// switching it to dark and back gets its light colors back, and the WSU
+// built-in switches to its own dark colors. Everything else is worked out
 // by theme.js at readable contrast, and shown under "Fine-tune": any of those
 // can be set by hand, and Reset puts the worked-out color back. A color that
 // leaves text hard to read is flagged where it is, and in a box above.
@@ -188,6 +190,11 @@ const ThemeEditor = {
           else delete copy[ field ];
         } ) , undefined , { label: "undo.theme_color" , merge: "theme:" + theme.id + ":" + field } );
       },
+      // Light or dark: each keeps its own colors (Theme.setMode), so switching
+      // back finds the colors from before.
+      mode( theme , value ) {
+        return save( edited( theme , ( copy ) => { Theme.setMode( copy , value ); } ) , undefined , { label: "undo.theme_color" } );
+      },
       override( theme , field , value ) {
         return save( edited( theme , ( copy ) => {
           if ( value ) copy.overrides[ field ] = value;
@@ -321,7 +328,7 @@ const ThemeEditor = {
         const id = root.id + "-mode-" + value;
         const input = Dom.el( "input" , { class: "btn-check" , attrs: { type: "radio" , name: root.id + "-mode" , id: id , "data-focus": "mode:" + value } } );
         input.checked = theme.mode === value;
-        input.addEventListener( "change" , () => actions.set( theme , "mode" , value ) );
+        input.addEventListener( "change" , () => actions.mode( theme , value ) );
         modeGroup.appendChild( input );
         modeGroup.appendChild( Dom.el( "label" , { class: "btn btn-outline-secondary btn-sm" , text: I18n.get( "theme.mode_" + value ) , attrs: { for: id } } ) );
       } );

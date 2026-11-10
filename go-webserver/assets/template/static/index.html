@@ -971,18 +971,21 @@
 
           <section class="card">
             <div class="card-body">
+              <!-- Three columns: the search field, the date button centred in
+                   the row, and Live/Prune at the right end. The two outer
+                   columns are equal, which is what keeps the button centred. -->
               <form id="logs-search-form" class="row g-2 align-items-end" role="search" autocomplete="off">
-                <div class="col-md-6 col-xl-4">
+                <div class="col-md">
                   <label for="logs-query" class="form-label" data-i18n="logs.search_label"></label>
                   <input id="logs-query" class="form-control" type="search" name="q" maxlength="200"
                          data-i18n-attr="placeholder:logs.search_placeholder" />
                 </div>
-                <div class="col-md-auto row-actions">
-                  <!-- One day at a time; the calendar picks which. It opens from
-                       this button rather than taking a column beside the log:
-                       the log is a table, and a table gets the whole width. See
-                       logs.js, and "Desktop layout" in references/frontend.md. -->
-                  <div class="dropdown log-date-picker">
+                <!-- One day at a time; the calendar picks which. It opens from
+                     this button rather than taking a column beside the log:
+                     the log is a table, and a table gets the whole width. See
+                     logs.js, and "Desktop layout" in references/frontend.md. -->
+                <div class="col-md-auto text-center">
+                  <div class="dropdown dropdown-center log-date-picker">
                     <button type="button" id="logs-date-button" class="btn btn-outline-secondary dropdown-toggle"
                             data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
                             data-i18n-attr="title:logs.calendar_label">
@@ -1004,6 +1007,8 @@
                       </div>
                     </div>
                   </div>
+                </div>
+                <div class="col-md row-actions justify-content-center justify-content-md-end">
                   <button type="button" id="logs-live" class="btn btn-outline-secondary" aria-pressed="false">
                     <i class="bi bi-broadcast" aria-hidden="true"></i> <span data-i18n="logs.live_button"></span>
                   </button>

@@ -43,6 +43,19 @@ type Theme struct {
 	Surface    string            `json:"surface,omitempty"`
 	Overrides  map[string]string `json:"overrides,omitempty"`
 	Button     *ThemeButton      `json:"button,omitempty"`
+	// The colors kept for the mode not in use (Theme.setMode in theme.js): a
+	// light theme's Dark, a dark theme's Light. Switching mode swaps them in.
+	Light *ThemeColors `json:"light,omitempty"`
+	Dark  *ThemeColors `json:"dark,omitempty"`
+}
+
+// ThemeColors is one mode's colors, kept on a theme while the other is in use.
+type ThemeColors struct {
+	Accent     string            `json:"accent"`
+	Second     string            `json:"second"`
+	Background string            `json:"background,omitempty"`
+	Surface    string            `json:"surface,omitempty"`
+	Overrides  map[string]string `json:"overrides,omitempty"`
 }
 
 // ThemeButton is how a theme's buttons look; each choice is one of
@@ -99,6 +112,37 @@ func cleanThemeButton( id string , button *ThemeButton ) ( result *ThemeButton ,
 	return
 }
 
+// cleanThemeColors checks one mode's colors and answers them in lower case.
+func cleanThemeColors( where string , colors ThemeColors ) ( result ThemeColors , err error ) {
+	result = colors
+	fields := map[string]*string{ "accent": &result.Accent , "second": &result.Second , "background": &result.Background , "surface": &result.Surface }
+	for name , color := range fields {
+		*color = strings.ToLower( *color )
+		optional := name == "background" || name == "surface"
+		if optional && *color == "" { continue }
+		if themeColor.MatchString( *color ) == false {
+			err = fmt.Errorf( "%s: %s is not a #rrggbb color" , where , name )
+			return
+		}
+	}
+	overrides := map[string]string{}
+	for field , color := range colors.Overrides {
+		color = strings.ToLower( color )
+		if ThemeOverrideFields[ field ] == false {
+			err = fmt.Errorf( "%s: no color called %q" , where , field )
+			return
+		}
+		if themeColor.MatchString( color ) == false {
+			err = fmt.Errorf( "%s: %s is not a #rrggbb color" , where , field )
+			return
+		}
+		overrides[ field ] = color
+	}
+	result.Overrides = nil
+	if len( overrides ) > 0 { result.Overrides = overrides }
+	return
+}
+
 func ValidThemeID( id string ) ( result bool ) {
 	result = themeID.MatchString( id )
 	return
@@ -136,31 +180,17 @@ func CleanThemes( themes []Theme ) ( result []Theme , err error ) {
 			err = fmt.Errorf( "theme %s: mode is light or dark" , theme.ID )
 			return
 		}
-		colors := map[string]*string{ "accent": &theme.Accent , "second": &theme.Second , "background": &theme.Background , "surface": &theme.Surface }
-		for name , color := range colors {
-			*color = strings.ToLower( *color )
-			optional := name == "background" || name == "surface"
-			if optional && *color == "" { continue }
-			if themeColor.MatchString( *color ) == false {
-				err = fmt.Errorf( "theme %s: %s is not a #rrggbb color" , theme.ID , name )
-				return
-			}
+		colors := ThemeColors{ Accent: theme.Accent , Second: theme.Second , Background: theme.Background , Surface: theme.Surface , Overrides: theme.Overrides }
+		if colors , err = cleanThemeColors( "theme " + theme.ID , colors ); err != nil { return }
+		theme.Accent , theme.Second , theme.Background , theme.Surface , theme.Overrides = colors.Accent , colors.Second , colors.Background , colors.Surface , colors.Overrides
+		// Only the mode not in use is kept; one for the mode in use means nothing.
+		if theme.Mode == "light" { theme.Light = nil } else { theme.Dark = nil }
+		for mode , kept := range map[string]**ThemeColors{ "light": &theme.Light , "dark": &theme.Dark } {
+			if *kept == nil { continue }
+			var cleaned ThemeColors
+			if cleaned , err = cleanThemeColors( "theme " + theme.ID + " " + mode , **kept ); err != nil { return }
+			*kept = &cleaned
 		}
-		overrides := map[string]string{}
-		for field , color := range theme.Overrides {
-			color = strings.ToLower( color )
-			if ThemeOverrideFields[ field ] == false {
-				err = fmt.Errorf( "theme %s: no color called %q" , theme.ID , field )
-				return
-			}
-			if themeColor.MatchString( color ) == false {
-				err = fmt.Errorf( "theme %s: %s is not a #rrggbb color" , theme.ID , field )
-				return
-			}
-			overrides[ field ] = color
-		}
-		theme.Overrides = nil
-		if len( overrides ) > 0 { theme.Overrides = overrides }
 		if theme.Button , err = cleanThemeButton( theme.ID , theme.Button ); err != nil { return }
 		result = append( result , theme )
 	}

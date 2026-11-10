@@ -8,7 +8,9 @@
   browser saves the whole list, and from then on it is theirs.
 
 A theme is a mode and a few colors, from which theme.js works out the rest
-(text, links, borders, tints) at readable contrast. Overrides replace any of
+(text, links, borders, tints) at readable contrast. It can also keep its colors
+for the mode not in use (a light theme's "dark", a dark theme's "light"), which
+switching mode swaps in (Theme.setMode in theme.js). Overrides replace any of
 those worked-out colors by name; dropping one puts the safe color back.
 
 The server checks the shape only. It does not know the list of built-in
@@ -63,6 +65,29 @@ def _color(value: object, where: str, optional: bool = False) -> str:
     return text
 
 
+def _colors(source: dict[str, Any], where: str) -> dict[str, Any]:
+    """One mode's colors, checked and in lower case."""
+    tidy: dict[str, Any] = {
+        "accent": _color(source.get("accent"), f"{where}: accent"),
+        "second": _color(source.get("second"), f"{where}: second"),
+    }
+    for optional in ("background", "surface"):
+        value = _color(source.get(optional), f"{where}: {optional}", optional=True)
+        if value:
+            tidy[optional] = value
+    overrides = source.get("overrides") or {}
+    if not isinstance(overrides, dict):
+        raise ThemesError(f"{where}: overrides must be an object")
+    kept: dict[str, str] = {}
+    for field, value in overrides.items():
+        if field not in OVERRIDE_FIELDS:
+            raise ThemesError(f"{where}: no color called {field!r}")
+        kept[field] = _color(value, f"{where}: {field}")
+    if kept:
+        tidy["overrides"] = kept
+    return tidy
+
+
 def _button(value: object, theme_id: str) -> dict[str, str]:
     """A theme's button choices, checked; empty when none is set."""
     if value is None:
@@ -107,27 +132,14 @@ def check(themes: object) -> list[dict[str, Any]]:
         mode = theme.get("mode")
         if mode not in ("light", "dark"):
             raise ThemesError(f"theme {theme_id}: mode is light or dark")
-        tidy: dict[str, Any] = {
-            "id": theme_id,
-            "name": name,
-            "mode": mode,
-            "accent": _color(theme.get("accent"), f"theme {theme_id}: accent"),
-            "second": _color(theme.get("second"), f"theme {theme_id}: second"),
-        }
-        for optional in ("background", "surface"):
-            value = _color(theme.get(optional), f"theme {theme_id}: {optional}", optional=True)
-            if value:
-                tidy[optional] = value
-        overrides = theme.get("overrides") or {}
-        if not isinstance(overrides, dict):
-            raise ThemesError(f"theme {theme_id}: overrides must be an object")
-        kept: dict[str, str] = {}
-        for field, value in overrides.items():
-            if field not in OVERRIDE_FIELDS:
-                raise ThemesError(f"theme {theme_id}: no color called {field!r}")
-            kept[field] = _color(value, f"theme {theme_id}: {field}")
-        if kept:
-            tidy["overrides"] = kept
+        tidy: dict[str, Any] = {"id": theme_id, "name": name, "mode": mode}
+        tidy.update(_colors(theme, f"theme {theme_id}"))
+        # Only the mode not in use is kept; one for the mode in use means nothing.
+        other = "dark" if mode == "light" else "light"
+        if theme.get(other) is not None:
+            if not isinstance(theme[other], dict):
+                raise ThemesError(f"theme {theme_id}: {other} must be an object")
+            tidy[other] = _colors(theme[other], f"theme {theme_id} {other}")
         button = _button(theme.get("button"), theme_id)
         if button:
             tidy["button"] = button

@@ -720,7 +720,7 @@ refusals; these need a real server:
   anything in the ended one lands on the signed-out page saying why, not on a
   banner reading "not authenticated",
 - the Appearance screen switches the theme (without `appearance`, the navbar's
-  button switches light and dark, signed in and signed out, and with it there is
+  button switches Default between light and dark, signed in and signed out, and with it there is
   no navbar button); a fresh browser opens light whatever the system is set to,
   and a choice survives a reload and follows the account to another browser;
   new, duplicate, rename and delete work and undo; a fine-tune color set

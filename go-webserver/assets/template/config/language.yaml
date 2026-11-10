@@ -251,8 +251,7 @@ theme:
   preview_link: "a link"
   preview_info: "An info box"
   preview_button: "Button"
-  preset_light: "Light"
-  preset_dark: "Dark"
+  preset_default: "Default"
   preset_ocean: "Ocean"
   preset_forest: "Forest"
   preset_sepia: "Sepia"
@@ -262,7 +261,6 @@ theme:
   preset_midnight: "Midnight"
   preset_slate: "Slate"
   preset_cerise: "Cerise"
-  preset_wsu_dark: "WSU dark"
 
 # <<< feature:appearance
 signed_out:

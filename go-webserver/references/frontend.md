@@ -539,11 +539,18 @@ appears without a refresh. Its text is the `settings:` block in
 
 `static/js/theme.js` is loaded in `<head>`, before the stylesheet paints, and
 applies the kept theme at once, so a dark choice never flashes light.
-`Theme.builtIn` lists light, dark and ten ready-made themes -- ocean, forest,
-sepia, grape, pink, WSU, midnight, slate, cerise, WSU dark (Wright State
-University green and gold). A theme is `{ id , name , mode , accent , second ,
-background? , surface? , overrides? }`: a mode, an `accent` for what you can
-press, a `second` for where you are, optional page and card colors.
+`Theme.builtIn` lists Default (first, and light: what a new browser shows) and
+nine ready-made themes -- ocean, forest, sepia, grape, pink, WSU (Wright State
+University green and gold), midnight, slate, cerise. Each has colors for both
+light and dark. A theme is `{ id , name , mode , accent , second , background? ,
+surface? , overrides? , light? , dark? }`: a mode, an `accent` for what you can
+press, a `second` for where you are, optional page and card colors. `light` or
+`dark` keeps the theme's colors for the mode not in use (`{ accent , second ,
+background? , surface? , overrides? }`), and `Theme.setMode( theme , mode )`
+swaps them in, so the Appearance screen's Light/Dark switch turns WSU gold on
+black and back again. A theme with nothing kept for the other mode keeps its
+colors, and from then on remembers them for the mode it left.
+`scripts/check_themes.js` holds every built-in to 4.5 in both modes.
 `Theme.derived( theme )` works out everything else: the page, card, nested card
 (`.app-nested`) and navbar shades, labels that read on each fill, and text
 colors pushed until they reach 4.5. `Theme.colors( theme )` is that with the
@@ -596,8 +603,9 @@ properties and `data-bs-theme`), and a box naming any text that is hard to read.
 `Undo` and sends the whole list. Names of built-in themes come from
 `theme.preset_<id>` in language.yaml until a list is saved.
 
-Without `appearance` there is no server state: the navbar button switches
-light and dark in this browser's `localStorage`. Whatever you do, first load is
+Without `appearance` there is no server state and one theme, Default: the
+navbar button switches it between light and dark, kept in this browser's
+`localStorage`. Whatever you do, first load is
 always light.
 
 ### Nothing moves under the reader

@@ -16,12 +16,22 @@ vm.createContext( page );
 vm.runInContext( source + "\nglobalThis.Theme = Theme;" , page );
 const Theme = page.Theme;
 
-let failed = 0;
+// Each built-in theme as it starts, and switched to the mode it keeps its
+// other colors for (WSU's dark).
+const looks = [];
 Theme.builtIn.forEach( ( theme ) => {
+  looks.push( { label: theme.id , theme: theme } );
+  Object.keys( Theme.modes ).forEach( ( mode ) => {
+    if ( theme[ mode ] ) looks.push( { label: theme.id + " (" + mode + ")" , theme: Theme.setMode( Theme.copy( theme ) , mode ) } );
+  } );
+} );
+
+let failed = 0;
+looks.forEach( ( { label , theme } ) => {
   Theme.check( theme ).forEach( ( pair ) => {
     failed += 1;
     const colors = Theme.colors( theme );
-    console.error( theme.id + ": " + pair.name + " is " + pair.ratio.toFixed( 2 ) + " (" + colors[ pair.front ] + " on " + colors[ pair.back ] + ")" );
+    console.error( label + ": " + pair.name + " is " + pair.ratio.toFixed( 2 ) + " (" + colors[ pair.front ] + " on " + colors[ pair.back ] + ")" );
   } );
 } );
 if ( failed > 0 ) process.exit( 1 );
