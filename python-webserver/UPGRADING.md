@@ -3,6 +3,17 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 2028ee4
+
+The Claude Code command on the MCP card now adds the server with `--scope user`,
+so it is set up for every project, not just the folder it was pasted in.
+
+- `static/js/mcp.js`: in `snippet()`, the `claude_code` case returns
+  `"claude mcp add --scope user --transport http " + ...`.
+
+**Test:** on Account, the MCP card with Claude Code picked shows
+`claude mcp add --scope user --transport http <name> <url> --header ...`.
+
 ## After 981a796
 
 **Upgrade `logs-date-centred`: the Logs date button sits in the middle of the search bar.**

@@ -587,7 +587,7 @@ rename never overwrites one made in another tab since (`users.rename_user`).
 any MCP client that can send a header -- can use the app with an API key:
 
 ```bash
-claude mcp add --transport http myapp https://myapp.example/mcp \
+claude mcp add --scope user --transport http myapp https://myapp.example/mcp \
   --header "Authorization: Bearer <key>"
 ```
 

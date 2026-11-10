@@ -77,7 +77,7 @@ const Mcp = {
     const remote = { [ name ]: { type: "http" , url: url , headers: { Authorization: bearer } } };
     switch ( client ) {
       case "claude_code":
-        return "claude mcp add --transport http " + name + " " + url + " --header \"Authorization: " + bearer + "\"";
+        return "claude mcp add --scope user --transport http " + name + " " + url + " --header \"Authorization: " + bearer + "\"";
       case "claude_desktop":
         return json( { mcpServers: { [ name ]: {
           command: "npx",

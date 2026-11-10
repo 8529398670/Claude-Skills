@@ -647,7 +647,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:<port>/mcp -d '{}'   
 A signed-in browser posting to `/mcp` gets 403, `GET /mcp` gets 405, and
 `admin_set_user_disabled` on your own account or the owner comes back with
 `isError: true`. To use it from Claude Code:
-`claude mcp add --transport http <name> http://localhost:<port>/mcp --header "Authorization: Bearer <key>"`.
+`claude mcp add --scope user --transport http <name> http://localhost:<port>/mcp --header "Authorization: Bearer <key>"`.
 
 Then the delete rules, because they are permission checks that only show up
 when someone is refused. Create a second admin B and a user C, sign B in, and
