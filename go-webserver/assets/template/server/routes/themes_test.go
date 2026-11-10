@@ -49,7 +49,7 @@ func TestThemesFollowTheDefaultsUntilChanged( t *testing.T ) {
 		t.Fatalf( "alice sees %v %v" , themes , custom )
 	}
 
-	// Her own list is hers; colours come back in lower case.
+	// Her own list is hers; colors come back in lower case.
 	status , reply := send( t , alice , "/api/account/themes" , fiber.Map{ "themes": themeList( "mine" ) , "theme_id": "mine" } )
 	if status != fiber.StatusOK { t.Fatalf( "%d %v" , status , reply ) }
 	themes , custom , theme_id := meThemes( t , alice )
@@ -111,6 +111,8 @@ func TestThemesRefuseBadShapes( t *testing.T ) {
 		func( theme fiber.Map ) []fiber.Map { theme[ "surface" ] = "#fff" ; return []fiber.Map{ theme } },
 		func( theme fiber.Map ) []fiber.Map { theme[ "overrides" ] = fiber.Map{ "glow": "#000000" } ; return []fiber.Map{ theme } },
 		func( theme fiber.Map ) []fiber.Map { theme[ "overrides" ] = fiber.Map{ "link": "blue" } ; return []fiber.Map{ theme } },
+		func( theme fiber.Map ) []fiber.Map { theme[ "button" ] = fiber.Map{ "shape": "blob" } ; return []fiber.Map{ theme } },
+		func( theme fiber.Map ) []fiber.Map { theme[ "button" ] = fiber.Map{ "depth": "deep" } ; return []fiber.Map{ theme } },
 	}
 	for index , build := range cases {
 		themes := build( good() )
@@ -129,4 +131,21 @@ func TestThemesRefuseBadShapes( t *testing.T ) {
 	themes , _ , _ := meThemes( t , alice )
 	overrides := themes[ 0 ].( map[string]any )[ "overrides" ].( map[string]any )
 	if overrides[ "link" ] != "#abcdef" || overrides[ "infoBorder" ] != "#000000" { t.Fatalf( "%v" , overrides ) }
+
+	// A button style, and a button variant's color, are kept; an empty button
+	// is the default and is not stored.
+	theme = good()
+	theme[ "overrides" ] = fiber.Map{ "btnDanger": "#AA0000" , "btnWarningFg": "#000000" }
+	theme[ "button" ] = fiber.Map{ "shape": "Pill" , "depth": "glossy" }
+	plain := themeList( "b" )[ 0 ]
+	plain[ "button" ] = fiber.Map{}
+	if status , reply := send( t , alice , "/api/account/themes" , fiber.Map{ "themes": []fiber.Map{ theme , plain } } ); status != fiber.StatusOK {
+		t.Fatalf( "%d %v" , status , reply )
+	}
+	themes , _ , _ = meThemes( t , alice )
+	first := themes[ 0 ].( map[string]any )
+	button := first[ "button" ].( map[string]any )
+	if button[ "shape" ] != "pill" || button[ "depth" ] != "glossy" || len( button ) != 2 { t.Fatalf( "%v" , button ) }
+	if first[ "overrides" ].( map[string]any )[ "btnDanger" ] != "#aa0000" { t.Fatalf( "%v" , first[ "overrides" ] ) }
+	if _ , there := themes[ 1 ].( map[string]any )[ "button" ]; there { t.Fatalf( "empty button stored: %v" , themes[ 1 ] ) }
 }

@@ -10044,7 +10044,7 @@
       "Theme": {
         "x-feature": "appearance",
         "type": "object",
-        "description": "A colour scheme on the Appearance screen. Colours are #rrggbb. Anything not given is worked out by static/js/theme.js at readable contrast.",
+        "description": "A color scheme on the Appearance screen. Colors are #rrggbb. Anything not given is worked out by static/js/theme.js at readable contrast.",
         "properties": {
           "id": {
             "type": "string",
@@ -10063,7 +10063,7 @@
           },
           "accent": {
             "type": "string",
-            "description": "The main colour: what you can press."
+            "description": "The main color: what you can press."
           },
           "second": {
             "type": "string",
@@ -10082,7 +10082,45 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Worked-out colours replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border. Leaving one out puts the readable colour back."
+            "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."
+          },
+          "button": {
+            "type": "object",
+            "description": "How the theme's buttons look. A choice left out is the default (rounded, normal, raised, normal).",
+            "properties": {
+              "shape": {
+                "type": "string",
+                "enum": [
+                  "square",
+                  "soft",
+                  "rounded",
+                  "pill"
+                ]
+              },
+              "weight": {
+                "type": "string",
+                "enum": [
+                  "normal",
+                  "medium",
+                  "bold"
+                ]
+              },
+              "depth": {
+                "type": "string",
+                "enum": [
+                  "flat",
+                  "raised",
+                  "glossy"
+                ]
+              },
+              "case": {
+                "type": "string",
+                "enum": [
+                  "normal",
+                  "upper"
+                ]
+              }
+            }
           }
         },
         "required": [

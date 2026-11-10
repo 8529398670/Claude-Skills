@@ -32,7 +32,7 @@ otherwise cause is invisible.
 Most widgets here are a `viewBox`, a few `<path>` elements and some arithmetic, and that
 version is smaller, has no load order to get wrong, and looks like the rest of the page
 because it is built from the kit's variables. A charting library pulled in for one chart
-usually costs more in fighting its defaults — its own fonts, its own colours, its own dark
+usually costs more in fighting its defaults — its own fonts, its own colors, its own dark
 mode — than the chart was worth.
 
 Good reasons to declare one:

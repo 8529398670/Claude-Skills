@@ -293,19 +293,19 @@ def check(markup, scan, own_style, own_script, declared):
     if re.search(r":root\s*\{", own_style):
         warnings.append(
             "Your <style> defines :root. The kit already ships a full palette -- "
-            "redefining it means two sources of truth for the same colours."
+            "redefining it means two sources of truth for the same colors."
         )
     if "prefers-color-scheme" in own_style:
         warnings.append(
             "Your <style> has a prefers-color-scheme block. These documents render light "
-            "for every reader on purpose, so this makes the page change colour depending "
+            "for every reader on purpose, so this makes the page change color depending "
             "on who opens it."
         )
 
     hexes = sorted(set(re.findall(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b", own_style)))
     if hexes:
         warnings.append(
-            f"Hardcoded colours in your CSS: {', '.join(hexes[:8])}"
+            f"Hardcoded colors in your CSS: {', '.join(hexes[:8])}"
             f"{' ...' if len(hexes) > 8 else ''}. These sit outside the palette and "
             "will not follow a change to the kit. Use var(--kit-*)."
         )
@@ -529,7 +529,7 @@ def build(source, out_path, do_verify=True):
     print(f"built {out_path}  ({size:.0f} KB, {scan.widgets} widgets"
           + (f", level: {scan.level}" if scan.level else "")
           + (f", libraries: {', '.join(resolved)}" if resolved else ", no libraries")
-          + (", maths in accent colour" if scan.math_color == "accent" else "") + ")")
+          + (", maths in accent color" if scan.math_color == "accent" else "") + ")")
     for note in notes:
         print(f"  note   {note}")
 

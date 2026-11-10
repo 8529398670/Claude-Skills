@@ -6,24 +6,24 @@ their own.**
 
 ## Already handled — do not write these
 
-A complete palette, the page background and text colour, a centred reading column, a type
+A complete palette, the page background and text color, a centred reading column, a type
 and spacing scale, 44px controls, focus rings, styled range inputs, `tabular-nums` on
 readouts, scaling SVG, tables, `<pre>` overflow, and reduced-motion.
 
 **Documents render light, whatever the reader's system theme is set to.** These pages get
-printed, projected and screenshotted, and one that changes colour depending on who opens
+printed, projected and screenshotted, and one that changes color depending on who opens
 it is one you cannot hand to anyone. Do not add a `prefers-color-scheme` block to bring
 dark mode back — a document that does is the only thing that can break this.
 
 **Never define your own `:root` palette.** Write CSS only for what your topic actually
 needs — the shape of a diagram, the layout of one widget — and build it from the variables
-below. A hex literal in your CSS is a colour that no longer tracks the palette: it will
+below. A hex literal in your CSS is a color that no longer tracks the palette: it will
 not follow a change to the kit, and it is the one kind of mistake that still looks correct
 on your screen today.
 
 ## Variables
 
-**Colours** — use these, never hardcoded hex:
+**Colors** — use these, never hardcoded hex:
 
 ```
 --kit-bg  --kit-surface  --kit-raised  --kit-border
@@ -33,7 +33,7 @@ on your screen today.
 --kit-math
 ```
 
-Use the accent colour to mean "this is interactive", and nothing else. The moment it also
+Use the accent color to mean "this is interactive", and nothing else. The moment it also
 means "important", the reader stops being able to see what is clickable.
 
 **Spacing**: `--kit-space-1` through `--kit-space-7`.
@@ -122,9 +122,9 @@ does **not** work in prose: outside an expression the backslash is just a backsl
 reader sees it. Inside an expression, `$\$5$` is correct. Anything that must stay verbatim
 belongs in `<code>` or `.no-math`, both of which are skipped entirely.
 
-## Colouring the maths
+## Coloring the maths
 
-Off by default, the maths renders in the body text colour. To set it in its own colour
+Off by default, the maths renders in the body text color. To set it in its own color
 instead, so expressions stand out from the prose around them, declare:
 
 ```html
@@ -133,7 +133,7 @@ instead, so expressions stand out from the prose around them, declare:
 
 The build script turns that into an attribute on the root element and the kit paints every
 KaTeX span `var(--kit-math)`, which is a deep violet in light mode and a pale one in dark.
-Note that this is deliberately **not** `--kit-accent`: the accent colour is reserved to mean
+Note that this is deliberately **not** `--kit-accent`: the accent color is reserved to mean
 "you can operate this", and an equation wearing it reads as a control the reader will hunt
 for a way to click. `content="off"` is the explicit default.
 

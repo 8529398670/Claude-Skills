@@ -373,9 +373,9 @@ ports they ran on. Do not reset either to a shared value.
   static/
     index.html                # placeholder account + admin UI, fully data-i18n'd;
                               #   Bootstrap navbar + sidebar, one screen per view, toasts
-    css/style.css             # overrides on top of Bootstrap: colour tokens, shell
-    js/theme.js               # themes and their worked-out colours, applied before first paint
-    js/themes_editor.js       # Appearance screen: own themes, admin defaults, colour pickers
+    css/style.css             # overrides on top of Bootstrap: color tokens, shell
+    js/theme.js               # themes and their worked-out colors, applied before first paint
+    js/themes_editor.js       # Appearance screen: own themes, admin defaults, color pickers
     js/nav.js                 # sidebar: shows the screen the URL hash names
     js/undo.js                # Ctrl+Z / Ctrl+Y history every screen records into
     js/shortcuts.js           # every shortcut; the per-user Shortcuts screen
@@ -708,7 +708,7 @@ refusals; these need a real server:
   button switches light and dark, signed in and signed out, and with it there is
   no navbar button); a fresh browser opens light whatever the system is set to,
   and a choice survives a reload and follows the account to another browser;
-  new, duplicate, rename and delete work and undo; a fine-tune colour set
+  new, duplicate, rename and delete work and undo; a fine-tune color set
   unreadable is flagged and Reset brings back the readable one; an admin's
   change on "Defaults for everyone" reaches a user who has not changed their
   own list, and not one who has,

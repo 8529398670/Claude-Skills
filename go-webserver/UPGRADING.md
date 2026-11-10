@@ -3,6 +3,62 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 99445cc
+
+**Upgrade `theme-buttons`: every Bootstrap button is drawn in the theme, and each theme has a button style.**
+Marks: `--app-btn-radius`, `btnDanger`, `buttonChoices`, `theme-preview-buttons`
+
+Until now only `btn-primary`, `btn-outline-primary`, `btn-outline-secondary`
+and `btn-link` followed the theme; danger, success, warning, info, secondary,
+light and dark (solid and outline) were stock Bootstrap. Now each has a fill,
+label and outline color worked out per theme (readable, overridable), and a
+theme can carry `button: { shape , weight , depth , case }`. Left out (as
+in every built-in theme) it is `buttonDefault`: rounded corners, normal
+weight, raised, as written -- so buttons change shape in every app that takes
+this, not just their colors. The Appearance editor gains a Buttons
+section and its preview shows every variant as real buttons.
+
+- `static/js/theme.js`: `variants`, `semantic`, `buttonHarmony`,
+  `buttonDefault`, `buttonChoices`; `button`, `buttonStyle`, `buttonField`,
+  `asFill`; `derived()` adds `btn<V>`, `btn<V>Fg`, `btn<V>Text`; `apply()` sets
+  the shape properties; `copy()` copies `button`; `keep()` compares it; a loop
+  after `Theme` adds the new `vars` and `pairs`. Take the file whole if the app has not changed it.
+- `static/css/style.css`: `--app-btn-*` tokens in both `:root` blocks; the
+  token mapping selector gains `.theme-preview[data-bs-theme]`; a
+  `.btn-<v>`/`.btn-outline-<v>` block per variant and the `.btn` shape rules
+  before `.btn { --bs-btn-focus-box-shadow`; `.theme-preview-button` is
+  replaced by `.theme-preview-buttons`, `.theme-choices`, `.theme-choice`.
+- `static/js/themes_editor.js`: `colorLabel`, `checkLabel`, `actions.button`,
+  `choiceGroup`, the Buttons section in `editPane`, and `preview()` drawing
+  real buttons. Take the file whole if the app has not changed it.
+- `server/models/themes.go`: button choices checked (`button`), and `btn<V>`, `btn<V>Fg`,
+  `btn<V>Text` added to the override names.
+- `config/language.yaml`: `undo.theme_button`; under `theme:` the
+  `buttons_*`, `button_*`, `variant_*`, `color_btn_*` and
+  `check_button_variant`/`check_outline_variant` keys.
+- `config/openapi.json`: `Theme` gains `button`; the `overrides` description
+  names the button fields.
+- "Colour" is spelled "color" everywhere, in what people read and in code:
+  `language.yaml` keys `theme.colour_*` -> `theme.color_*` and
+  `undo.theme_colour` -> `undo.theme_color` (and "Colours" -> "Colors" in the
+  text); `Theme.colours()` -> `Theme.colors()`; style.css classes
+  `.theme-colours`, `.theme-colour-row`, `.theme-colour-input` -> `.theme-color*`;
+  `colourRow`, `colourLabel` in themes_editor.js; the model's `themeColour` /
+  `_colour` helpers and error messages. An app's own code or language.yaml
+  that uses the old names needs them renamed too (search the app for
+  `colour`). Older entries below keep the names as they were then.
+- Tests: `server/routes/themes_test.go` (bad button choices refused; a button style and `btnDanger`
+  kept; an empty `button` not stored). `scripts/check_themes.js` is unchanged
+  and now covers the button pairs.
+
+**Test:** `node scripts/check_themes.js` says `ok: 12 themes`. Every screen's
+buttons are rounded and raised. On Appearance, pick WSU: the preview shows
+every variant in WSU colors with Corners Rounded, Weight Normal, Depth Raised,
+Letters As written selected. Switch Corners to Pill and Use the theme: buttons
+on every screen (Users' row buttons, the danger buttons) are pill-shaped. Set
+a danger fill to a pale color: the hard-to-read box names it, and Reset puts
+the worked-out color back.
+
 ## After cce0220
 
 **Upgrade `app-repo`: `app.repo` says where the source lives, and the API keys card links the API reference.**

@@ -2,13 +2,13 @@
 //
 // Light is the default and stays it -- never the OS setting. Dark is
 // Bootstrap's own dark mode (<html data-bs-theme="dark">). Light is the
-// attribute being absent, and Bootstrap's colour-mode script, which would
+// attribute being absent, and Bootstrap's color-mode script, which would
 // follow prefers-color-scheme, is deliberately not included.
 //
-// A theme is a mode and a few colours. colours() works out everything else
+// A theme is a mode and a few colors. colors() works out everything else
 // the page needs from those -- text, links, borders, tints -- each pushed until
-// it is readable. Its overrides replace any of the worked-out colours by name,
-// and dropping one puts the readable colour back.
+// it is readable. Its overrides replace any of the worked-out colors by name,
+// and dropping one puts the readable color back.
 //
 // >>> feature:appearance
 // Which themes there are, and which one someone uses, is kept on their
@@ -29,7 +29,7 @@
 // saved dark theme never flashes light on the way in.
 // >>> feature:appearance
 //
-// Brand colours live in ThemePalettes, named, whether a theme uses them or not,
+// Brand colors live in ThemePalettes, named, whether a theme uses them or not,
 // so the rest are there for whoever needs them next.
 const ThemePalettes = {
   // Wright State University. Primary: green and gold. The rest are its accents.
@@ -55,7 +55,7 @@ const Theme = {
   onChange: [],
 
   // The built-in themes: what everyone has until an admin saves defaults. accent
-  // is the main colour: what you can press. second says where you are: the
+  // is the main color: what you can press. second says where you are: the
   // active nav item, headings, progress, info. background and surface are the
   // page and the cards, when the mode's will not do. Names come from
   // language.yaml (theme.preset_<id>) until a list is saved; a saved list keeps
@@ -84,11 +84,40 @@ const Theme = {
     dark: { background: "#101215" , surface: "#191c21" , text: "#dee2e6" },
   },
 
-  // How much of the second colour goes into each layer, in percent, so a nested
+  // Bootstrap's other button colors, each worked out per theme: a fill, the
+  // label on it (Fg), and the outline version's label and border on a card
+  // (Text). primary is the accent and has its own fields above.
+  variants: [ "secondary" , "success" , "danger" , "warning" , "info" , "light" , "dark" ],
+  // What success, danger and warning start from in each mode, before the
+  // theme's accent is mixed in (buttonHarmony percent) so they belong to it.
+  semantic: {
+    light: { success: "#198754" , danger: "#dc3545" , warning: "#ffc107" },
+    dark: { success: "#3fbf7f" , danger: "#ef6b75" , warning: "#ffcd39" },
+  },
+  buttonHarmony: 12,
+
+  // A theme's button: shape, weight, depth and case. Missing or unknown
+  // choices fall back to buttonDefault: rounded, normal weight, raised, as written.
+  buttonDefault: { shape: "rounded" , weight: "normal" , depth: "raised" , case: "normal" },
+  buttonChoices: {
+    shape: { square: { "--app-btn-radius": "0" } , soft: { "--app-btn-radius": "0.375rem" } ,
+      rounded: { "--app-btn-radius": "0.75rem" } , pill: { "--app-btn-radius": "50rem" } },
+    weight: { normal: { "--app-btn-weight": "400" } , medium: { "--app-btn-weight": "500" } , bold: { "--app-btn-weight": "700" } },
+    depth: {
+      flat: { "--app-btn-shadow": "0 0 0 transparent" , "--app-btn-image": "none" },
+      raised: { "--app-btn-shadow": "0 1px 2px rgba(0, 0, 0, 0.2), 0 3px 8px rgba(0, 0, 0, 0.14)" , "--app-btn-image": "none" },
+      glossy: { "--app-btn-shadow": "inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 1px 3px rgba(0, 0, 0, 0.25)" ,
+        "--app-btn-image": "linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 55%, rgba(0, 0, 0, 0.08))" },
+    },
+    case: { normal: { "--app-btn-transform": "none" , "--app-btn-spacing": "normal" } ,
+      upper: { "--app-btn-transform": "uppercase" , "--app-btn-spacing": "0.06em" } },
+  },
+
+  // How much of the second color goes into each layer, in percent, so a nested
   // card stands off its card and the card off the page.
   tints: { page: 3.5 , surface: 1.75 , nested: 8.75 , chrome: 10 , info: 14 , infoBorder: 45 },
 
-  // Field of colours() -> custom property in style.css, which hands them on to
+  // Field of colors() -> custom property in style.css, which hands them on to
   // Bootstrap. Every one of them can be overridden.
   vars: {
     text: "--app-text",
@@ -108,7 +137,7 @@ const Theme = {
     border: "--app-border",
   },
 
-  // Pairs that must stay readable: [ front , back ] fields of colours(). check()
+  // Pairs that must stay readable: [ front , back ] fields of colors(). check()
   // and scripts/check_themes.js both use them. Names are language.yaml keys
   // (theme.check_<name>).
   pairs: {
@@ -140,6 +169,7 @@ const Theme = {
   copy( theme ) {
     const copy = Object.assign( {} , theme );
     copy.overrides = Object.assign( {} , theme.overrides || {} );
+    if ( theme.button ) copy.button = Object.assign( {} , theme.button );
     return copy;
   },
 
@@ -182,7 +212,8 @@ const Theme = {
   // nothing at all, which is what a new browser starts with anyway.
   keep( theme ) {
     try {
-      const plain = theme.id === "light" && JSON.stringify( this.colours( theme ) ) === JSON.stringify( this.colours( this.builtIn[ 0 ] ) );
+      let plain = theme.id === "light" && JSON.stringify( this.colors( theme ) ) === JSON.stringify( this.colors( this.builtIn[ 0 ] ) );
+      if ( plain && JSON.stringify( this.buttonStyle( theme ) ) !== JSON.stringify( this.buttonStyle( this.builtIn[ 0 ] ) ) ) plain = false;
       if ( plain ) window.localStorage.removeItem( this.storageKey );
       else window.localStorage.setItem( this.storageKey , JSON.stringify( theme ) );
     } catch ( error ) {
@@ -194,8 +225,26 @@ const Theme = {
     const root = document.documentElement;
     if ( theme.mode === "dark" ) root.setAttribute( "data-bs-theme" , "dark" );
     else root.removeAttribute( "data-bs-theme" );
-    const colours = this.colours( theme );
-    Object.keys( this.vars ).forEach( ( field ) => root.style.setProperty( this.vars[ field ] , colours[ field ] ) );
+    const colors = this.colors( theme );
+    Object.keys( this.vars ).forEach( ( field ) => root.style.setProperty( this.vars[ field ] , colors[ field ] ) );
+    const style = this.buttonStyle( theme );
+    Object.keys( style ).forEach( ( name ) => root.style.setProperty( name , style[ name ] ) );
+  },
+
+  // A theme's button choices, each known one or the default.
+  button( theme ) {
+    const chosen = ( theme && theme.button ) || {};
+    const result = {};
+    Object.keys( this.buttonDefault ).forEach( ( key ) => {
+      result[ key ] = chosen[ key ] in this.buttonChoices[ key ] ? chosen[ key ] : this.buttonDefault[ key ];
+    } );
+    return result;
+  },
+
+  // The custom properties style.css reads for every button's shape.
+  buttonStyle( theme ) {
+    const button = this.button( theme );
+    return Object.assign( {} , ...Object.keys( button ).map( ( key ) => this.buttonChoices[ key ][ button[ key ] ] ) );
   },
 
   changed() {
@@ -288,8 +337,8 @@ const Theme = {
   },
   // <<< feature:!appearance
 
-  // Every colour the page needs, from a theme's few, before its overrides.
-  // Fills keep the colour as chosen. Anything read as text is pushed until it
+  // Every color the page needs, from a theme's few, before its overrides.
+  // Fills keep the color as chosen. Anything read as text is pushed until it
   // is readable, on the nested card, the most tinted place it can land: WSU's
   // gold is gold on a progress bar and darker in a heading.
   derived( theme ) {
@@ -300,7 +349,7 @@ const Theme = {
     const card = this.mix( second , surface , this.tints.surface );
     const nested = this.mix( second , surface , this.tints.nested );
     const chrome = this.mix( second , surface , this.tints.chrome );
-    return {
+    const result = {
       text: mode.text,
       accent: theme.accent,
       accentFg: this.readableOn( theme.accent ),
@@ -319,25 +368,61 @@ const Theme = {
       // a long way from its page (WSU dark's green on black).
       border: this.mix( mode.text , card , 20 ),
     };
+    // The other buttons. A fill stays close to its color but is moved until
+    // black or white reads on it; an outline's label is read on the card.
+    const semantic = this.semantic[ theme.mode ] || this.semantic.light;
+    const fills = {
+      secondary: this.mix( second , this.mix( mode.text , card , 58 ) , 15 ),
+      success: this.mix( theme.accent , semantic.success , this.buttonHarmony ),
+      danger: this.mix( theme.accent , semantic.danger , this.buttonHarmony ),
+      warning: this.mix( theme.accent , semantic.warning , this.buttonHarmony ),
+      info: second,
+      light: this.mix( second , "#f8f9fa" , 10 ),
+      dark: this.mix( second , "#212529" , 12 ),
+    };
+    this.variants.forEach( ( variant ) => {
+      const name = this.buttonField( variant );
+      const fill = this.asFill( fills[ variant ] );
+      result[ name ] = fill;
+      result[ name + "Fg" ] = this.readableOn( fill );
+      result[ name + "Text" ] = this.asText( fill , card );
+    } );
+    return result;
   },
 
-  // What the page uses: the worked-out colours, with the theme's overrides on top.
-  colours( theme ) {
-    const colours = this.derived( theme );
+  // "danger" -> "btnDanger", the field of colors() for that button's fill.
+  buttonField( variant ) {
+    return "btn" + variant.charAt( 0 ).toUpperCase() + variant.slice( 1 );
+  },
+
+  // This color, moved darker (or lighter) until black or white reads on it.
+  asFill( color ) {
+    const label = this.readableOn( color );
+    const away = label === "#ffffff" ? "#000000" : "#ffffff";
+    for ( let step = 0 ; step <= 100 ; step += 2 ) {
+      const tried = this.mix( away , color , step );
+      if ( this.contrast( tried , label ) >= this.minContrast ) return tried;
+    }
+    return away;
+  },
+
+  // What the page uses: the worked-out colors, with the theme's overrides on top.
+  colors( theme ) {
+    const colors = this.derived( theme );
     Object.keys( theme.overrides || {} ).forEach( ( field ) => {
-      if ( field in colours ) colours[ field ] = theme.overrides[ field ];
+      if ( field in colors ) colors[ field ] = theme.overrides[ field ];
     } );
-    return colours;
+    return colors;
   },
 
   // The pairs that are too hard to read in this theme, worst first:
   // [ { name , front , back , ratio } ]. Only an override can cause one; the
   // built-in themes are held to none by scripts/check_themes.js.
   check( theme ) {
-    const colours = this.colours( theme );
+    const colors = this.colors( theme );
     return Object.keys( this.pairs ).map( ( name ) => {
       const [ front , back ] = this.pairs[ name ];
-      return { name: name , front: front , back: back , ratio: this.contrast( colours[ front ] , colours[ back ] ) };
+      return { name: name , front: front , back: back , ratio: this.contrast( colors[ front ] , colors[ back ] ) };
     } ).filter( ( pair ) => pair.ratio < this.minContrast ).sort( ( a , b ) => a.ratio - b.ratio );
   },
 
@@ -350,12 +435,12 @@ const Theme = {
     } ).join( "" );
   },
 
-  // Black or white, for a label on this colour.
+  // Black or white, for a label on this color.
   readableOn( color ) {
     return this.contrast( color , "#ffffff" ) >= this.contrast( color , "#0b0d10" ) ? "#ffffff" : "#0b0d10";
   },
 
-  // This colour, moved toward black or white until text in it reads on ground.
+  // This color, moved toward black or white until text in it reads on ground.
   asText( color , ground ) {
     const away = this.luminance( ground ) > 0.4 ? "#000000" : "#ffffff";
     for ( let step = 0 ; step <= 100 ; step += 2 ) {
@@ -379,5 +464,16 @@ const Theme = {
     return ( Math.max( a , b ) + 0.05 ) / ( Math.min( a , b ) + 0.05 );
   },
 };
+
+// Every button variant's three colors are custom properties, and pairs that
+// must read: its label on its fill, and the outline's label on a card.
+Theme.variants.forEach( ( variant ) => {
+  const name = Theme.buttonField( variant );
+  Theme.vars[ name ] = "--app-btn-" + variant;
+  Theme.vars[ name + "Fg" ] = "--app-btn-" + variant + "-fg";
+  Theme.vars[ name + "Text" ] = "--app-btn-" + variant + "-text";
+  Theme.pairs[ "button_" + variant ] = [ name + "Fg" , name ];
+  Theme.pairs[ "outline_" + variant ] = [ name + "Text" , "surface" ];
+} );
 
 Theme.restore();

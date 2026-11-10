@@ -37,7 +37,7 @@ they already did it themselves.
 <title>How tides actually work</title>
 <meta name="level" content="high_school">  <!-- which level you committed to -->
 <meta name="uses" content="d3">            <!-- only if you need a library -->
-<meta name="math-color" content="accent">  <!-- optional: maths in its own colour -->
+<meta name="math-color" content="accent">  <!-- optional: maths in its own color -->
 <style>
   /* only what this topic needs. The kit brings the rest. */
 </style>

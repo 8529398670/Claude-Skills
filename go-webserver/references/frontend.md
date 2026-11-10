@@ -96,7 +96,7 @@ Plain scripts, loaded in dependency order, each adding one global:
 
 | File | Responsibility |
 |---|---|
-| `theme.js` | Light, dark, or another theme, and the colours worked out from it. Loaded in `<head>`; see below. |
+| `theme.js` | Light, dark, or another theme, and the colors worked out from it. Loaded in `<head>`; see below. |
 | `themes_editor.js` | The Appearance screen: your themes, and the admin's defaults. See Themes below. |
 | `dom.js` | Element helpers, `Dom.copy`, `Dom.toast`, `Dom.onSubmit`, `Dom.confirm`, `Dom.editable`, `Dom.form`, `Dom.fieldError`, `Dom.when`. No app logic. |
 | `qr.js` | QR codes, for the authenticator app and for login and invite links. |
@@ -254,7 +254,7 @@ width, as on Users. The one exception has to be earned, and is described in
 | One small form | a sign-in step | One column | `view-narrow` |
 | A table plus the form that adds to it | Users (add someone + people) | Form above, table full width -- as on a phone | default |
 | A short table plus one small tool used beside it | Files (upload + stored files) | `view-split`: the table main, the tool aside | `view-wide` |
-| An editor and what shows its effect | Appearance (colours + preview) | Editor main, preview aside; panes from `xxl` | `view-full` |
+| An editor and what shows its effect | Appearance (colors + preview) | Editor main, preview aside; panes from `xxl` | `view-full` |
 | A big table or log people scan across | Logs | The table gets the width; what picks the rows (date, kinds) sits in the bar above, the calendar in a popup | `view-full` |
 | Several things of the same kind and size | stat tiles, one card per item | `view-cards` | `view-wide` |
 
@@ -305,9 +305,9 @@ work; the classes below are only how it is written down.
    pushes the others into the next column. `card-span` gives a card the whole
    row. The grid sits outside any `feature:` markers.
 4. **Inside a card, repeated fields wrap.** A run of the same kind of field
-   (colours, toggles) in a wide card is a grid of units,
+   (colors, toggles) in a wide card is a grid of units,
    `repeat(auto-fill, minmax(min(100%, 15rem), 1fr))`, each its label over its
-   control (`.theme-colours`). A single input never stretches across a wide
+   control (`.theme-colors`). A single input never stretches across a wide
    card: a search box (`input[type=search]` inside `[role="search"]`) stops at
    28rem, and a form field in a wide card is `col-md-6 col-xl-4`, not a bare
    `col-md`.
@@ -315,7 +315,7 @@ work; the classes below are only how it is written down.
    and paragraphs in an alert stop at 70ch.
 6. **Breakpoints, in one place.** Below `lg`: one column. From `lg`: card
    grids. From `xxl` (1400px): editor panes. From 1440px: main + aside. Each
-   starts where the part that matters most (the table, the colours) still has
+   starts where the part that matters most (the table, the colors) still has
    its room beside the new column, not where the new column first fits.
 
 **Check every new or changed screen** at 1280, 1440, 1600 and 1920 wide, and
@@ -543,17 +543,33 @@ applies the kept theme at once, so a dark choice never flashes light.
 sepia, grape, pink, WSU, midnight, slate, cerise, WSU dark (Wright State
 University green and gold). A theme is `{ id , name , mode , accent , second ,
 background? , surface? , overrides? }`: a mode, an `accent` for what you can
-press, a `second` for where you are, optional page and card colours.
+press, a `second` for where you are, optional page and card colors.
 `Theme.derived( theme )` works out everything else: the page, card, nested card
 (`.app-nested`) and navbar shades, labels that read on each fill, and text
-colours pushed until they reach 4.5. `Theme.colours( theme )` is that with the
-theme's `overrides` on top -- any derived colour replaced by name (`text`,
+colors pushed until they reach 4.5. `Theme.colors( theme )` is that with the
+theme's `overrides` on top -- any derived color replaced by name (`text`,
 `link`, `navLink`, `border`, `info`, ...). They are set inline on `<html>` as
 the `--app-*` tokens (`--app-text` feeds `--bs-body-color`). `Theme.check( theme )`
 lists the pairs in `Theme.pairs` that fall under 4.5; `scripts/check_themes.js`
 holds every built-in theme to none, and the tests run it. `ThemePalettes` keeps
-brand colours by name, used or not. A dark mode sets Bootstrap's
+brand colors by name, used or not. A dark mode sets Bootstrap's
 `data-bs-theme="dark"` on `<html>`.
+
+Every Bootstrap button is in the theme. `primary` is the accent; the others
+(`Theme.variants`: secondary, success, danger, warning, info, light, dark) each
+get three derived colors -- `btnDanger` (the fill: a semantic base per mode
+with `buttonHarmony` percent of the accent, or the second color for info,
+moved until black or white reads on it), `btnDangerFg` (its label) and
+`btnDangerText` (the outline button's label and border, read on a card) --
+as `--app-btn-danger`, `--app-btn-danger-fg` and `--app-btn-danger-text`, held
+to 4.5 by `pairs` (`button_<v>`, `outline_<v>`) like the rest, and overridable
+by name. A theme's optional `button: { shape , weight , depth , case }` picks
+from `Theme.buttonChoices` (square/soft/rounded/pill, normal/medium/bold,
+flat/raised/glossy, normal/upper; missing is `buttonDefault`: rounded,
+normal, raised, as written -- which every built-in theme uses); `Theme.buttonStyle( theme )` turns it into `--app-btn-radius`,
+`-weight`, `-shadow`, `-image`, `-transform` and `-spacing`, which style.css
+puts on every `.btn` (sizes scale the radius; the sheen is for filled buttons
+only).
 
 With `appearance`, themes live on the server. There are two lists: the app's
 defaults, which an admin edits (meta key `theme_defaults`; nothing stored means
@@ -564,15 +580,18 @@ means they follow the defaults, including later changes). `/api/me` answers
 in use (`POST /api/account/theme`); `Theme.store( list , id )` replaces their
 list (`POST /api/account/themes`, null for "back to the defaults"). Admins use
 `GET`/`POST /api/admin/theme-defaults`. The server checks shape only (ids,
-names, `#rrggbb`, known override names, 1-40 themes); contrast is the screen's
+names, `#rrggbb`, known override names, known button choices, 1-40 themes); contrast is the screen's
 to warn about. The theme in use is also kept whole in `localStorage`, so the
 first paint and the signed-out pages are already in it; `/api/me` corrects it.
 
 The Appearance screen is `themes_editor.js` (`ThemeEditor.init( me )`): a list
-(use, new, duplicate, rename, delete) beside an editor with a colour picker and
-hex field for the mode's base colours and every derived one, each derived one
-marked Auto until changed and with a Reset back to the worked-out colour, a
-live preview, and a box naming any text that is hard to read. Admins get a
+(use, new, duplicate, rename, delete) beside an editor with a color picker and
+hex field for the mode's base colors and every derived one, each derived one
+marked Auto until changed and with a Reset back to the worked-out color, a
+Buttons section (toggles for the four button choices, then each variant's
+fill, label and outline color), a live preview drawn with real Bootstrap
+buttons of every variant (the preview carries the theme's own `--app-*`
+properties and `data-bs-theme`), and a box naming any text that is hard to read. Admins get a
 "Defaults for everyone" tab with the same editor. Every change goes through
 `Undo` and sends the whole list. Names of built-in themes come from
 `theme.preset_<id>` in language.yaml until a list is saved.
@@ -707,19 +726,19 @@ read.
 ## CSS structure
 
 `static/css/style.css` loads after Bootstrap and holds only what Bootstrap
-does not: this app's colours, the sidebar shell, and touch rules. If a
+does not: this app's colors, the sidebar shell, and touch rules. If a
 utility class can do it, use the class instead of adding a rule.
 
 Things worth preserving when editing:
 
 - **Light mode is the default and stays it.** Dark is Bootstrap's opt-in
   `<html data-bs-theme="dark">`, set only by `theme.js`. Bootstrap's own
-  colour-mode script, which follows `prefers-color-scheme`, is deliberately
+  color-mode script, which follows `prefers-color-scheme`, is deliberately
   not included, so the app looks the same for everyone unless someone
   chooses otherwise.
 - **Colors are the `--app-*` tokens at the top of `style.css`.** Change a
   token, not a rule. The block under them hands the tokens to Bootstrap's
-  `--bs-*` variables; components Bootstrap compiles colours into
+  `--bs-*` variables; components Bootstrap compiles colors into
   (`.btn-primary`, `.nav-pills`, focus rings) are re-pointed explicitly.
 - **16px input font size.** Smaller makes iOS Safari zoom in on a focused
   input.

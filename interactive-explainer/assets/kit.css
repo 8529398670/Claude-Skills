@@ -55,7 +55,7 @@
 }
 
 /* Light is the default, whatever the reader's system is set to: these documents
- * get printed, projected and screenshotted, and a page that changes colour
+ * get printed, projected and screenshotted, and a page that changes color
  * depending on who opens it is a page you cannot hand to anyone. The dark
  * palette is kept but opted into explicitly, by putting data-theme="dark"
  * on the root element. */
@@ -273,7 +273,7 @@ input[type="range"]::-moz-range-thumb {
 /* Opt-in with <meta name="math-color" content="accent">, which the build script
  * turns into a data-math attribute on the root. Maths gets --kit-math rather
  * than --kit-accent
- * on purpose: the accent colour means "you can operate this", and an equation
+ * on purpose: the accent color means "you can operate this", and an equation
  * wearing it reads as a control the reader cannot find a way to click. */
 :root[data-math="accent"] .katex { color: var(--kit-math); }
 

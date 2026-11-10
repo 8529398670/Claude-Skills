@@ -1,5 +1,5 @@
 # whole-file feature:appearance
-"""Themes: the colour schemes on the Appearance screen. There are two lists:
+"""Themes: the color schemes on the Appearance screen. There are two lists:
 
 - the app's defaults, which an admin edits. Nothing stored means the built-in
   themes in static/js/theme.js.
@@ -7,12 +7,12 @@
   including later changes to them; the first time they change something the
   browser saves the whole list, and from then on it is theirs.
 
-A theme is a mode and a few colours, from which theme.js works out the rest
+A theme is a mode and a few colors, from which theme.js works out the rest
 (text, links, borders, tints) at readable contrast. Overrides replace any of
-those worked-out colours by name; dropping one puts the safe colour back.
+those worked-out colors by name; dropping one puts the safe color back.
 
 The server checks the shape only. It does not know the list of built-in
-themes, and it does not judge contrast -- an unreadable colour is the person's
+themes, and it does not judge contrast -- an unreadable color is the person's
 own choice, and the screen warns them."""
 from __future__ import annotations
 
@@ -26,12 +26,24 @@ MAX_THEME_NAME = 60
 META_THEME_DEFAULTS_KEY = "theme_defaults"
 
 _ID = re.compile(r"[a-z0-9_-]{1,32}")
-_COLOUR = re.compile(r"#[0-9a-f]{6}")
-# The fields of Theme.colours() in theme.js that an override may replace.
+_COLOR = re.compile(r"#[0-9a-f]{6}")
+# The fields of Theme.colors() in theme.js that an override may replace.
 OVERRIDE_FIELDS = frozenset({
     "text", "accent", "accentFg", "second", "secondFg", "secondText", "link", "navLink",
     "background", "surface", "nested", "chrome", "info", "infoBorder", "border",
-})
+}) | frozenset(
+    # Theme.variants: each button variant's fill, label and outline.
+    f"btn{variant}{part}"
+    for variant in ("Secondary", "Success", "Danger", "Warning", "Info", "Light", "Dark")
+    for part in ("", "Fg", "Text")
+)
+# Theme.buttonChoices in theme.js; a choice left out is the default.
+BUTTON_CHOICES = {
+    "shape": frozenset({"square", "soft", "rounded", "pill"}),
+    "weight": frozenset({"normal", "medium", "bold"}),
+    "depth": frozenset({"flat", "raised", "glossy"}),
+    "case": frozenset({"normal", "upper"}),
+}
 
 
 class ThemesError(ValueError):
@@ -42,18 +54,37 @@ def valid_id(theme_id: object) -> bool:
     return isinstance(theme_id, str) and _ID.fullmatch(theme_id) is not None
 
 
-def _colour(value: object, where: str, optional: bool = False) -> str:
+def _color(value: object, where: str, optional: bool = False) -> str:
     text = value.lower() if isinstance(value, str) else None
     if optional and (value is None or text == ""):
         return ""
-    if text is None or _COLOUR.fullmatch(text) is None:
-        raise ThemesError(f"{where} is not a #rrggbb colour")
+    if text is None or _COLOR.fullmatch(text) is None:
+        raise ThemesError(f"{where} is not a #rrggbb color")
     return text
+
+
+def _button(value: object, theme_id: str) -> dict[str, str]:
+    """A theme's button choices, checked; empty when none is set."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ThemesError(f"theme {theme_id}: button must be an object")
+    kept: dict[str, str] = {}
+    for key, choice in value.items():
+        if key not in BUTTON_CHOICES:
+            raise ThemesError(f"theme {theme_id}: no button setting called {key!r}")
+        text = choice.strip().lower() if isinstance(choice, str) else None
+        if text == "":
+            continue
+        if text not in BUTTON_CHOICES[key]:
+            raise ThemesError(f"theme {theme_id}: button {key} {choice!r} is not one of the choices")
+        kept[key] = text
+    return kept
 
 
 def check(themes: object) -> list[dict[str, Any]]:
     """The list, checked before it replaces a stored one, and tidied: names
-    trimmed, colours in lower case. ThemesError if it cannot be stored."""
+    trimmed, colors in lower case. ThemesError if it cannot be stored."""
     if not isinstance(themes, list) or not themes:
         raise ThemesError("at least one theme")
     if len(themes) > MAX_THEMES:
@@ -80,11 +111,11 @@ def check(themes: object) -> list[dict[str, Any]]:
             "id": theme_id,
             "name": name,
             "mode": mode,
-            "accent": _colour(theme.get("accent"), f"theme {theme_id}: accent"),
-            "second": _colour(theme.get("second"), f"theme {theme_id}: second"),
+            "accent": _color(theme.get("accent"), f"theme {theme_id}: accent"),
+            "second": _color(theme.get("second"), f"theme {theme_id}: second"),
         }
         for optional in ("background", "surface"):
-            value = _colour(theme.get(optional), f"theme {theme_id}: {optional}", optional=True)
+            value = _color(theme.get(optional), f"theme {theme_id}: {optional}", optional=True)
             if value:
                 tidy[optional] = value
         overrides = theme.get("overrides") or {}
@@ -93,10 +124,13 @@ def check(themes: object) -> list[dict[str, Any]]:
         kept: dict[str, str] = {}
         for field, value in overrides.items():
             if field not in OVERRIDE_FIELDS:
-                raise ThemesError(f"theme {theme_id}: no colour called {field!r}")
-            kept[field] = _colour(value, f"theme {theme_id}: {field}")
+                raise ThemesError(f"theme {theme_id}: no color called {field!r}")
+            kept[field] = _color(value, f"theme {theme_id}: {field}")
         if kept:
             tidy["overrides"] = kept
+        button = _button(theme.get("button"), theme_id)
+        if button:
+            tidy["button"] = button
         cleaned.append(tidy)
     return cleaned
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Holds every built-in theme in static/js/theme.js to a readable contrast: the
-// same maths and pairs the Appearance screen checks (Theme.check), so a colour
+// same maths and pairs the Appearance screen checks (Theme.check), so a color
 // added to one cannot quietly fail. Run by the tests, or on its own:
 // node scripts/check_themes.js
 const fs = require( "fs" );
@@ -20,8 +20,8 @@ let failed = 0;
 Theme.builtIn.forEach( ( theme ) => {
   Theme.check( theme ).forEach( ( pair ) => {
     failed += 1;
-    const colours = Theme.colours( theme );
-    console.error( theme.id + ": " + pair.name + " is " + pair.ratio.toFixed( 2 ) + " (" + colours[ pair.front ] + " on " + colours[ pair.back ] + ")" );
+    const colors = Theme.colors( theme );
+    console.error( theme.id + ": " + pair.name + " is " + pair.ratio.toFixed( 2 ) + " (" + colors[ pair.front ] + " on " + colors[ pair.back ] + ")" );
   } );
 } );
 if ( failed > 0 ) process.exit( 1 );
