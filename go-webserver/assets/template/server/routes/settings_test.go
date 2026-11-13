@@ -88,6 +88,7 @@ func newSettingsFixture( t *testing.T ) ( fixture *settingsFixture ) {
 	static_server , _ := static.New( fstest.MapFS{ "index.html": { Data: []byte( "index" ) } } )
 	handlers := New( store , settings , security.New( store , settings ) , nil , static_server , "test" )
 	app := fiber.New()
+	app.Use( checkReplies( t ) )
 	handlers.Register( app )
 
 	fixture = &settingsFixture{ app: app , settings: settings , path: path }

@@ -136,23 +136,23 @@ func TestInviteLinkSoftDelete( t *testing.T ) {
 	if links , _ := ListInviteLinks( store ); len( links ) != 0 {
 		t.Fatal( "a deleted link is still listed" )
 	}
-	if _ , err := RestoreInviteLink( store , link.ID , user.ID , false ); !errors.Is( err , ErrRestoreForbidden ) {
+	if _ , err := RestoreInviteLink( store , link.ID , user.ID , false , "" ); !errors.Is( err , ErrRestoreForbidden ) {
 		t.Fatalf( "a non-admin who did not delete it restoring: got %v" , err )
 	}
-	if _ , err := RestoreInviteLink( store , link.ID , admin.ID , true ); err != nil { t.Fatal( err ) }
+	if _ , err := RestoreInviteLink( store , link.ID , admin.ID , true , "" ); err != nil { t.Fatal( err ) }
 	if _ , err := LoadInviteLink( store , credential ); err != nil {
 		t.Fatal( "a restored link does not work" )
 	}
 
 	DeleteInviteLink( store , link.ID , admin.ID )
 	backdate( t , store , db.BucketInviteLinks , link.ID , &InviteLink{} )
-	if _ , err := RestoreInviteLink( store , link.ID , admin.ID , true ); !errors.Is( err , ErrRestoreExpired ) {
+	if _ , err := RestoreInviteLink( store , link.ID , admin.ID , true , "" ); !errors.Is( err , ErrRestoreExpired ) {
 		t.Fatalf( "restore after the window: got %v" , err )
 	}
 	if removed , _ := PurgeDeadInviteLinks( store ); removed != 1 {
 		t.Fatalf( "purge removed %d links, want 1" , removed )
 	}
-	if _ , err := RestoreInviteLink( store , "missing" , admin.ID , true ); !errors.Is( err , ErrRestoreGone ) {
+	if _ , err := RestoreInviteLink( store , "missing" , admin.ID , true , "" ); !errors.Is( err , ErrRestoreGone ) {
 		t.Fatalf( "restoring a missing link: got %v" , err )
 	}
 }

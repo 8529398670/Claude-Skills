@@ -7,8 +7,8 @@ calls, so a rule enforced there holds whichever door a change comes through.
 The rules match the rest of the template:
 
 - One tool per route an API key may call. route names it, and
-  test_mcp_parity.py fails until every key-callable route in
-  config/openapi.json has a tool, or an "x-mcp-http" reason for staying HTTP
+  test_mcp_parity.py fails until every key-callable route in the API docs
+  has a tool, or an mcp_http reason in its doc() for staying HTTP
   only (file bytes, for one: MCP messages are JSON, and clients cap their
   size, so uploads and downloads go over /api/files with the same key and the
   tool hands back the addresses).

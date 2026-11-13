@@ -4,11 +4,8 @@ package routes
 import (
 	bytes "bytes"
 	json "encoding/json"
-	flag "flag"
 	io "io"
 	http "net/http"
-	os "os"
-	filepath "path/filepath" // feature:files
 	regexp "regexp"
 	sort "sort"
 	strings "strings"
@@ -17,21 +14,16 @@ import (
 
 	fiber "github.com/gofiber/fiber/v3"
 
-	config "{{MODULE_PATH}}/server/config" // feature:files
+	apidoc "{{MODULE_PATH}}/server/apidoc"
 	mcp "{{MODULE_PATH}}/server/mcp"
 )
 
 // The rule these hold: everything a person can do in the app, an API key can
-// do over HTTP and an agent can do through /mcp -- except managing users, keys
-// and sign-in, which need a browser session. config/openapi.json says which
+// do over HTTP and an agent can do through /mcp -- except managing API keys,
+// your own password, PIN and two-factor, other people's files and the owner's
+// screens, which need a browser session. config/openapi.json says which
 // routes take a key (their security lists apiKey); each of those has an MCP
 // tool naming it in Route, or an "x-mcp-http" reason for staying HTTP only.
-
-// updateMCPManifest is how scripts/mcp_json.sh rewrites config/mcp.json:
-// go test ./server/routes -run TestMCPManifestIsCurrent -update
-var updateMCPManifest = flag.Bool( "update" , false , "rewrite config/mcp.json from the registered tools" )
-
-const mcpManifestPath = "../../config/mcp.json"
 
 type specOperation struct {
 	Method   string
@@ -47,13 +39,11 @@ func ( operation specOperation ) name() ( result string ) {
 	return
 }
 
-// specOperations is every operation in config/openapi.json. Without the spec
-// (a project scaffolded --without openapi) there is nothing to hold the tools
-// to, and the tests that need it skip.
+// specOperations is every operation the API docs list (see api_docs_test.go).
 func specOperations( t *testing.T ) ( operations map[string]specOperation ) {
 	t.Helper()
-	raw , err := os.ReadFile( "../../config/openapi.json" )
-	if os.IsNotExist( err ) { t.Skip( "no config/openapi.json" ) }
+	spec , _ := apiSpec( t )
+	raw , err := json.Marshal( spec )
 	if err != nil { t.Fatal( err ) }
 	var document struct {
 		Paths map[string]map[string]json.RawMessage `json:"paths"`
@@ -75,22 +65,6 @@ func specOperations( t *testing.T ) ( operations map[string]specOperation ) {
 			operations[ entry.name() ] = entry
 		}
 	}
-	return
-}
-
-// newParityFixture is the app with every switch on, so that no feature's
-// tools hide behind a 404 and every route is there to be called.
-func newParityFixture( t *testing.T ) ( fixture *monitored ) {
-	t.Helper()
-	fixture = newMonitored( t , true )
-	fixture.cfg.MCPEnabled = true
-	// >>> feature:files
-	directory := t.TempDir()
-	fixture.cfg.Files = config.FilesConfig{
-		Enabled: true , MaxFileBytes: 1 << 20 , QuotaBytesPerUser: 1 << 20 , AbandonedAfter: time.Hour,
-		Dir: filepath.Join( directory , "files" ) , UploadsDir: filepath.Join( directory , "uploads" ),
-	}
-	// <<< feature:files
 	return
 }
 
@@ -188,7 +162,7 @@ func mcpManifest( tools []*mcp.Tool , operations map[string]specOperation ) ( ra
 		http_only = append( http_only , fiber.Map{ "route": name , "reason": operations[ name ].HTTPOnly } )
 	}
 	document := fiber.Map{
-		"description": "Every tool POST /mcp offers. Written by scripts/mcp_json.sh from the registered tools; do not edit by hand. A key sees the tools its role allows (adminOnly ones need an admin key), and a tool whose feature is switched off answers like one that does not exist. route is the HTTP route the tool stands for, with the same rules; http_only are the routes a key may call that have no tool, and why.",
+		"description": "Every tool POST /mcp offers. Written by scripts/api_docs.sh from the registered tools; do not edit by hand. A key sees the tools its role allows (adminOnly ones need an admin key), and a tool whose feature is switched off answers like one that does not exist. route is the HTTP route the tool stands for, with the same rules; http_only are the routes a key may call that have no tool, and why.",
 		"endpoint":    "/mcp",
 		"transport":   "Streamable HTTP, stateless: one JSON-RPC message per POST, a JSON reply",
 		"auth":        "Authorization: Bearer <API key>",
@@ -196,29 +170,8 @@ func mcpManifest( tools []*mcp.Tool , operations map[string]specOperation ) ( ra
 		"tools":       listed,
 		"http_only":   http_only,
 	}
-	buffer := &bytes.Buffer{}
-	encoder := json.NewEncoder( buffer )
-	encoder.SetEscapeHTML( false )
-	encoder.SetIndent( "" , "  " )
-	err = encoder.Encode( document )
-	raw = buffer.Bytes()
+	raw , err = apidoc.Encode( document )
 	return
-}
-
-func TestMCPManifestIsCurrent( t *testing.T ) {
-	operations := specOperations( t )
-	fixture := newParityFixture( t )
-	want , err := mcpManifest( fixture.handlers.MCP.Tools() , operations )
-	if err != nil { t.Fatal( err ) }
-	if *updateMCPManifest {
-		if err = os.WriteFile( mcpManifestPath , want , 0o644 ); err != nil { t.Fatal( err ) }
-		return
-	}
-	have , err := os.ReadFile( mcpManifestPath )
-	if err != nil { t.Fatal( err ) }
-	if bytes.Equal( have , want ) == false {
-		t.Fatal( "config/mcp.json is out of date: run scripts/mcp_json.sh" )
-	}
 }
 
 func TestTheMCPManifestIsForSignedInCallers( t *testing.T ) {

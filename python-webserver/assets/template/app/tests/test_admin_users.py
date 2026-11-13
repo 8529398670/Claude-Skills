@@ -8,6 +8,7 @@ from datetime import timedelta  # feature:invite_links
 from typing import Any
 
 from app.models import login_tokens, users
+from app.models import api_keys  # feature:api_keys
 from app.models import invite_links  # feature:invite_links
 from app.models.sign_in import SignInRules
 from app.tests.route_support import RoutesTestCase
@@ -88,10 +89,56 @@ class EditUsersTest(RoutesTestCase):
         self.assertEqual(self.post(self.owner_cookie, 9999, "role", role="admin")[0], 404)
 
     # >>> feature:api_keys
-    def test_an_admin_key_cannot_change_an_account(self) -> None:
-        for verb in ("rename", "role"):
-            status, _ = self.call("POST", f"/api/admin/users/{self.user.id}/{verb}", key=self.admin_key, body={"display_name": "x", "role": "admin"})
-            self.assertEqual(status, 403, verb)
+    def by_key(self, key: str, path: str, **body: Any) -> tuple[int, Any]:
+        return self.call("POST", path, key=key, body=body)
+
+    def signs_in(self, login_path: str) -> bool:
+        credential = login_path.removeprefix("/login/")
+        return self.call("POST", "/api/login", body={"credential": credential})[0] == 200
+
+    def test_an_admin_key_manages_accounts(self) -> None:
+        status, reply = self.by_key(self.admin_key, "/api/admin/users", display_name="Bob", role="user")
+        self.assertEqual(status, 201, reply)
+        self.assertTrue(self.signs_in(reply["login_path"]), "the new account's link did not sign in")
+
+        status, reply = self.by_key(self.admin_key, f"/api/admin/users/{self.user.id}/reissue-login")
+        self.assertEqual(status, 200, reply)
+        self.assertTrue(self.signs_in(reply["login_path"]), "the reissued link did not sign in")
+
+        self.assertEqual(self.by_key(self.admin_key, f"/api/admin/users/{self.user.id}/rename", display_name="Alicia")[0], 200)
+        self.assertEqual(self.by_key(self.admin_key, f"/api/admin/users/{self.user.id}/role", role="admin")[0], 200)
+        # The owner rules hold through a key as through a browser.
+        self.assertEqual(self.by_key(self.admin_key, f"/api/admin/users/{self.owner.id}/delete")[0], 400)
+        self.assertEqual(self.by_key(self.admin_key, f"/api/admin/users/{self.user.id}/delete")[0], 200)
+
+        # A user-scoped key on the same admin account is not an admin.
+        self.assertEqual(self.by_key(self.user_key, "/api/admin/users", display_name="Eve", role="admin")[0], 403)
+
+    def test_only_a_full_role_key_makes_its_own_login_link(self) -> None:
+        """A login link becomes a full-role session, so only a key carrying the
+        account's full role may make one for its own account."""
+        status, reply = self.by_key(self.user_key, "/api/account/login-link")
+        self.assertEqual(status, 403)
+        self.assertIn("less than your account's role", reply["error"])
+        full_key, _ = api_keys.issue_api_key(self.store, self.user.id, "full", users.ROLE_USER, 3600)
+        status, reply = self.by_key(full_key, "/api/account/login-link")
+        self.assertEqual(status, 200, reply)
+        self.assertTrue(self.signs_in(reply["login_path"]))
+
+    def test_revoking_a_key_voids_the_links_it_made(self) -> None:
+        """Revoking or deleting a key voids the login links it made that are
+        still unused; a link a person made in the browser is left alone."""
+        for how in ("revoke", "delete"):
+            with self.subTest(how):
+                credential, key = api_keys.issue_api_key(self.store, self.owner.id, how, users.ROLE_ADMIN, 3600)
+                _, made_by_key = self.by_key(credential, "/api/admin/users", display_name="Bob", role="user")
+                _, made_by_person = self.post(self.owner_cookie, self.user.id, "reissue-login")
+                if how == "revoke":
+                    api_keys.revoke_api_key(self.store, key.id)
+                else:
+                    api_keys.delete_api_key(self.store, key.id, self.owner.id)
+                self.assertFalse(self.signs_in(made_by_key["login_path"]), "the key's link still signs in")
+                self.assertTrue(self.signs_in(made_by_person["login_path"]), "a person's link stopped working")
 
 
     # <<< feature:api_keys

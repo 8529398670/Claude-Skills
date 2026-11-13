@@ -94,7 +94,7 @@ func TestLosingAdminRightsAppliesAtOnce( t *testing.T ) {
 	owner := fixture.signIn( t , fixture.owner.ID )
 	admin := fixture.signIn( t , second.ID )
 	// >>> feature:invite_links
-	link_credential , _ , err := models.IssueInviteLink( fixture.store , "Club" , 5 , time.Hour , second.ID )
+	link_credential , _ , err := models.IssueInviteLink( fixture.store , "Club" , 5 , time.Hour , second.ID , "" )
 	if err != nil { t.Fatal( err ) }
 	// <<< feature:invite_links
 
@@ -138,17 +138,63 @@ func TestWhoMayChangeWhoseRole( t *testing.T ) {
 }
 
 // >>> feature:api_keys
-func TestAnAdminKeyCannotChangeAnAccount( t *testing.T ) {
+func TestAnAdminKeyManagesAccounts( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	key , _ , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "ops" , models.RoleAdmin , time.Hour )
 	if err != nil { t.Fatal( err ) }
-	for _ , verb := range []string{ "rename" , "role" } {
-		request , _ := http.NewRequest( http.MethodPost , userPath( fixture.alice , verb ) , strings.NewReader( `{"display_name":"x","role":"admin"}` ) )
-		request.Header.Set( "Authorization" , "Bearer " + key )
-		request.Header.Set( "Content-Type" , "application/json" )
-		response , test_err := fixture.app.Test( request )
-		if test_err != nil { t.Fatal( test_err ) }
-		if response.StatusCode != fiber.StatusForbidden { t.Fatalf( "%s: %d" , verb , response.StatusCode ) }
+
+	status , reply := fixture.withKey( t , key , http.MethodPost , "/api/admin/users" , fiber.Map{ "display_name": "Bob" , "role": "user" } )
+	if status != fiber.StatusCreated { t.Fatalf( "create: %d %v" , status , reply ) }
+	if fixture.loginWith( t , reply[ "login_path" ].( string ) ) == false { t.Fatal( "the new account's link did not sign in" ) }
+
+	if status , reply = fixture.withKey( t , key , http.MethodPost , userPath( fixture.alice , "reissue-login" ) , fiber.Map{} ); status != fiber.StatusOK { t.Fatalf( "reissue: %d %v" , status , reply ) }
+	if fixture.loginWith( t , reply[ "login_path" ].( string ) ) == false { t.Fatal( "the reissued link did not sign in" ) }
+
+	if status , reply = fixture.withKey( t , key , http.MethodPost , userPath( fixture.alice , "rename" ) , fiber.Map{ "display_name": "Alicia" } ); status != fiber.StatusOK { t.Fatalf( "rename: %d %v" , status , reply ) }
+	if status , reply = fixture.withKey( t , key , http.MethodPost , userPath( fixture.alice , "role" ) , fiber.Map{ "role": "admin" } ); status != fiber.StatusOK { t.Fatalf( "role: %d %v" , status , reply ) }
+	// The owner rules hold through a key as through a browser.
+	if status , _ = fixture.withKey( t , key , http.MethodPost , userPath( fixture.owner , "delete" ) , fiber.Map{} ); status != fiber.StatusBadRequest { t.Fatalf( "deleting yourself: %d" , status ) }
+	if status , reply = fixture.withKey( t , key , http.MethodPost , userPath( fixture.alice , "delete" ) , fiber.Map{} ); status != fiber.StatusOK { t.Fatalf( "delete: %d %v" , status , reply ) }
+
+	// A user-scoped key on the same admin account is not an admin.
+	user_key , _ , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "narrow" , models.RoleUser , time.Hour )
+	if err != nil { t.Fatal( err ) }
+	if status , _ = fixture.withKey( t , user_key , http.MethodPost , "/api/admin/users" , fiber.Map{ "display_name": "Eve" , "role": "admin" } ); status != fiber.StatusForbidden { t.Fatalf( "narrowed key made an account: %d" , status ) }
+}
+
+// A login link becomes a full-role session, so only a key carrying the
+// account's full role may make one for its own account.
+func TestOnlyAFullRoleKeyMakesItsOwnLoginLink( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	narrow , _ , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "narrow" , models.RoleUser , time.Hour )
+	if err != nil { t.Fatal( err ) }
+	if status , reply := fixture.withKey( t , narrow , http.MethodPost , "/api/account/login-link" , fiber.Map{} ); status != fiber.StatusForbidden || strings.Contains( reply[ "error" ].( string ) , "less than your account's role" ) == false {
+		t.Fatalf( "narrowed key: %d %v" , status , reply )
+	}
+	full , _ , err := models.IssueAPIKey( fixture.store , fixture.alice.ID , "full" , models.RoleUser , time.Hour )
+	if err != nil { t.Fatal( err ) }
+	status , reply := fixture.withKey( t , full , http.MethodPost , "/api/account/login-link" , fiber.Map{} )
+	if status != fiber.StatusOK || fixture.loginWith( t , reply[ "login_path" ].( string ) ) == false { t.Fatalf( "full key: %d %v" , status , reply ) }
+}
+
+// Revoking or deleting a key voids the login links it made that are still
+// unused; a link a person made in the browser is left alone.
+func TestRevokingAKeyVoidsTheLinksItMade( t *testing.T ) {
+	for _ , how := range []string{ "revoke" , "delete" } {
+		fixture := newAuthFixture( t )
+		key , record , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "ops" , models.RoleAdmin , time.Hour )
+		if err != nil { t.Fatal( err ) }
+		_ , made_by_key := fixture.withKey( t , key , http.MethodPost , "/api/admin/users" , fiber.Map{ "display_name": "Bob" , "role": "user" } )
+		_ , made_by_person := send( t , fixture.signIn( t , fixture.owner.ID ) , userPath( fixture.alice , "reissue-login" ) , fiber.Map{} )
+
+		if how == "revoke" {
+			err = models.RevokeAPIKey( fixture.store , record.ID )
+		} else {
+			err = models.DeleteAPIKey( fixture.store , record.ID , fixture.owner.ID )
+		}
+		if err != nil { t.Fatal( err ) }
+		if fixture.loginWith( t , made_by_key[ "login_path" ].( string ) ) { t.Fatalf( "%s: the key's link still signs in" , how ) }
+		if fixture.loginWith( t , made_by_person[ "login_path" ].( string ) ) == false { t.Fatalf( "%s: a person's link stopped working" , how ) }
 	}
 }
 // <<< feature:api_keys

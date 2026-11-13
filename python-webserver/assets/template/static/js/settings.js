@@ -194,7 +194,7 @@ const Settings = {
     const field = this.fields[ state.key ] = { input: input , state: state , reset: null };
 
     const tone = { live: "success" , restart: "warning" , scripts: "secondary" }[ state.apply ] || "secondary";
-    const label = Dom.el( "label" , { class: "form-label settings-label" , attrs: { for: id } , children: [
+    const label = Dom.el( "label" , { class: "form-label settings-label d-flex flex-wrap align-items-center gap-2" , attrs: { for: id } , children: [
       Dom.el( "code" , { text: state.name } ),
       Dom.badge( I18n.get( "settings.apply_" + state.apply ) || state.apply , tone ),
     ] } );

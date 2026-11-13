@@ -81,7 +81,7 @@ server:
   host: 127.0.0.1
   # scaffold.py replaces 8000 with a random free port, different per project,
   # so several projects can run on this machine at once. [restart]
-  port: 8000
+  port: 9358
 
   # The address people open this at, e.g. https://app.example.com -- just the
   # origin, no path. Login, invite and API-key links are printed with it.
@@ -294,7 +294,7 @@ docker:
   # from this machine -- put nginx/Caddy/Traefik in front for TLS. The
   # container side is server.port.
   bind_address: 127.0.0.1
-  host_port: 8000
+  host_port: 9358
 
   # Host directory mounted at /app/data: the database and app storage. This
   # file and secret.key are mounted separately (secret.key read-only), so a

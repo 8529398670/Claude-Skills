@@ -19,18 +19,18 @@ import (
 // comes through. The rules match the rest of the template:
 //
 //   - One tool per route an API key may call. Route names it, and
-//     mcp_parity_test.go fails until every key-callable route in
-//     config/openapi.json has a tool, or an "x-mcp-http" reason for staying
+//     mcp_parity_test.go fails until every key-callable route in the API
+//     docs has a tool, or an MCPHTTP reason in its apidoc.Doc for staying
 //     HTTP only (file bytes, for one: MCP messages are JSON, and clients cap
 //     their size, so uploads and downloads go over /api/files with the same
 //     key and the tool hands back the addresses).
 //   - Any signed-in key, unless the route is admin only. AdminOnly hides the
 //     tool from user-scoped keys entirely.
-//   - Nothing a key cannot do over HTTP. Managing users, keys and sign-in, and
-//     erasing anything for good, need a browser session (see RequireSession),
-//     so that revoking a leaked key really ends it and a key can never erase
-//     what cannot be put back. A tool is a key-authenticated route; the same
-//     rule keeps those out.
+//   - Nothing a key cannot do over HTTP. Managing API keys, your own password,
+//     PIN and two-factor, other people's files and the owner's screens need a
+//     browser session (see RequireSession). A tool is a key-authenticated
+//     route; the same rule keeps those out. Accounts, login links, devices and
+//     invite links are open to keys (mcp_tools_accounts.go).
 //   - Mark the hints honestly. ReadOnly and Destructive become the spec's
 //     readOnlyHint / destructiveHint, which a client uses to decide whether to
 //     ask the person before calling. They are advice to the client, not

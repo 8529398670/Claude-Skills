@@ -57,6 +57,10 @@ type InviteLink struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  time.Time  `json:"expires_at"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	// MintedByKey is the API key that made this link, empty when a person
+	// did. Revoking or deleting that key switches the link off (see
+	// VoidLinksMintedByKeyTx).
+	MintedByKey string `json:"minted_by_key,omitempty"`
 	// Set by DeleteInviteLink; restorable for RestoreWindow, like a key.
 	SoftDelete
 }
@@ -106,8 +110,9 @@ func ValidInviteLimits( max_uses int , days *int ) ( result bool ) {
 }
 
 // IssueInviteLink returns the raw credential exactly once, like a login
-// link: only its hash is stored.
-func IssueInviteLink( store *db.Store , label string , max_uses int , ttl time.Duration , created_by uint64 ) ( credential string , link *InviteLink , err error ) {
+// link: only its hash is stored. minted_by_key is the id of the API key
+// asking, or empty.
+func IssueInviteLink( store *db.Store , label string , max_uses int , ttl time.Duration , created_by uint64 , minted_by_key string ) ( credential string , link *InviteLink , err error ) {
 	id := encryption.GenerateURLToken( 12 )
 	secret := encryption.GenerateURLToken( 24 )
 	now := time.Now().UTC()
@@ -120,6 +125,7 @@ func IssueInviteLink( store *db.Store , label string , max_uses int , ttl time.D
 		CreatedBy:  created_by,
 		CreatedAt:  now,
 		ExpiresAt:  now.Add( ttl ),
+		MintedByKey: minted_by_key,
 	}
 	if err = store.Put( db.BucketInviteLinks , []byte( id ) , link ); err != nil {
 		link = nil
@@ -143,7 +149,7 @@ func IssueInviteLinkAs( store *db.Store , created_by uint64 , label string , max
 		err = ErrInviteNotAdmin
 		return
 	}
-	credential , link , err = IssueInviteLink( store , label , max_uses , time.Duration( days )*24*time.Hour , created_by )
+	credential , link , err = IssueInviteLink( store , label , max_uses , time.Duration( days )*24*time.Hour , created_by , "" )
 	return
 }
 
@@ -311,6 +317,27 @@ func RevokeInviteLink( store *db.Store , link_id string ) ( err error ) {
 	return
 }
 
+// revokeInviteLinksMintedByKeyTx switches off, inside the caller's
+// transaction, every live invite link the given API key made.
+func revokeInviteLinksMintedByKeyTx( tx *db.Tx , key_id string ) ( switched_off int , err error ) {
+	minted := map[string]*InviteLink{}
+	err = tx.ForEach( db.BucketInviteLinks ,
+		func() any { return &InviteLink{} } ,
+		func( key []byte , item any ) bool {
+			link := item.( *InviteLink )
+			if link.MintedByKey == key_id && link.RevokedAt == nil { minted[ string( key ) ] = link }
+			return true
+		} )
+	if err != nil { return }
+	now := time.Now().UTC()
+	for id , link := range minted {
+		link.RevokedAt = &now
+		if err = tx.Put( db.BucketInviteLinks , []byte( id ) , link ); err != nil { return }
+		switched_off += 1
+	}
+	return
+}
+
 // RenameInviteLink changes a link's label, on a dead link too. People see it on
 // the join page. db.ErrNotFound when there is no such link or it is deleted.
 //
@@ -340,10 +367,14 @@ func RenameInviteLink( store *db.Store , link_id string , label string , expect 
 // already in (ErrInvitePlaces). db.ErrNotFound when there is no such link or it
 // is deleted.
 //
-// An expired link can be extended, which an API key cannot. A link owns the
-// accounts that joined through it, and it is how they sign back in on a new
-// device, so a replacement would lock them out.
-func SetInviteLinkLimits( store *db.Store , link_id string , max_uses int , ttl time.Duration ) ( link *InviteLink , err error ) {
+// An expired link can be extended. A link owns the accounts that joined
+// through it, and it is how they sign back in on a new device, so a
+// replacement would lock them out.
+//
+// minted_by_key is the id of the API key asking, or empty. A key that widens
+// a link takes it over: revoking that key switches the link off, the same as
+// one it made.
+func SetInviteLinkLimits( store *db.Store , link_id string , max_uses int , ttl time.Duration , minted_by_key string ) ( link *InviteLink , err error ) {
 	err = store.UpdateValue( db.BucketInviteLinks , []byte( link_id ) ,
 		func() any { return &InviteLink{} } ,
 		func( item any ) ( mutate_err error ) {
@@ -358,6 +389,7 @@ func SetInviteLinkLimits( store *db.Store , link_id string , max_uses int , ttl 
 			}
 			stored.MaxUses = max_uses
 			if ttl > 0 { stored.ExpiresAt = time.Now().UTC().Add( ttl ) }
+			if minted_by_key != "" { stored.MintedByKey = minted_by_key }
 			link = stored
 			return
 		} )
@@ -370,7 +402,8 @@ func SetInviteLinkLimits( store *db.Store , link_id string , max_uses int , ttl 
 // device. Anyone still holding the link can use it again, so the caller asks
 // first. It does nothing for a link that has expired or whose maker has lost
 // their rights. db.ErrNotFound when there is no such link or it is deleted.
-func SwitchOnInviteLink( store *db.Store , link_id string ) ( link *InviteLink , err error ) {
+// A key that switches a link on takes it over, as in SetInviteLinkLimits.
+func SwitchOnInviteLink( store *db.Store , link_id string , minted_by_key string ) ( link *InviteLink , err error ) {
 	err = store.UpdateValue( db.BucketInviteLinks , []byte( link_id ) ,
 		func() any { return &InviteLink{} } ,
 		func( item any ) ( mutate_err error ) {
@@ -380,6 +413,7 @@ func SwitchOnInviteLink( store *db.Store , link_id string ) ( link *InviteLink ,
 				return
 			}
 			stored.RevokedAt = nil
+			if minted_by_key != "" { stored.MintedByKey = minted_by_key }
 			link = stored
 			return
 		} )
@@ -409,13 +443,15 @@ func DeleteInviteLink( store *db.Store , link_id string , actor_id uint64 ) ( er
 
 // RestoreInviteLink undoes DeleteInviteLink, or returns ErrRestoreGone,
 // ErrRestoreForbidden or ErrRestoreExpired. Only admins reach it today, so
-// in practice any admin may restore any link.
-func RestoreInviteLink( store *db.Store , link_id string , actor_id uint64 , actor_is_admin bool ) ( link *InviteLink , err error ) {
+// in practice any admin may restore any link. A key that restores a link
+// takes it over, as in SetInviteLinkLimits.
+func RestoreInviteLink( store *db.Store , link_id string , actor_id uint64 , actor_is_admin bool , minted_by_key string ) ( link *InviteLink , err error ) {
 	err = store.UpdateValue( db.BucketInviteLinks , []byte( link_id ) ,
 		func() any { return &InviteLink{} } ,
 		func( item any ) ( mutate_err error ) {
 			link = item.( *InviteLink )
 			mutate_err = link.unmarkDeleted( actor_id , actor_is_admin )
+			if mutate_err == nil && minted_by_key != "" { link.MintedByKey = minted_by_key }
 			return
 		} )
 	if errors.Is( err , db.ErrNotFound ) { err = ErrRestoreGone }

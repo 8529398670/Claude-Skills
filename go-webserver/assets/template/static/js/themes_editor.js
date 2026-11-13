@@ -250,7 +250,9 @@ const ThemeEditor = {
 
     // A color: its label over the picker, its hex code, and Reset where there
     // is something to go back to. auto: nothing chosen, so the value shown is
-    // worked out. One unit, so the colors can flow into columns on a wide screen.
+    // worked out. One unit, so the colors can flow into columns on a wide screen:
+    // each is a cell of colorGrid, a Bootstrap row-cols grid.
+    const colorGrid = "row row-cols-1 row-cols-sm-2 row-cols-xxl-3 g-3";
     const colorRow = ( options ) => {
       const id = root.id + "-" + options.key;
       const picker = Dom.el( "input" , { class: "form-control form-control-color" ,
@@ -300,7 +302,7 @@ const ThemeEditor = {
         group.appendChild( input );
         group.appendChild( Dom.el( "label" , { class: "btn btn-outline-secondary" , text: I18n.get( "theme." + key + "_" + value ) , attrs: { for: id } } ) );
       } );
-      return Dom.el( "div" , { class: "theme-choice" , children: [ Dom.el( "span" , { class: "form-label mb-0" , text: label } ) , group ] } );
+      return Dom.el( "div" , { class: "d-flex flex-column gap-1" , children: [ Dom.el( "span" , { class: "form-label mb-0" , text: label } ) , group ] } );
     };
 
     const editPane = ( theme ) => {
@@ -333,7 +335,7 @@ const ThemeEditor = {
         modeGroup.appendChild( Dom.el( "label" , { class: "btn btn-outline-secondary btn-sm" , text: I18n.get( "theme.mode_" + value ) , attrs: { for: id } } ) );
       } );
 
-      const base = Dom.el( "div" , { class: "theme-colors" } );
+      const base = Dom.el( "div" , { class: colorGrid } );
       self.baseFields.forEach( ( field ) => {
         const optional = field === "background" || field === "surface";
         const chosen = theme[ field ] || "";
@@ -349,7 +351,7 @@ const ThemeEditor = {
         } ) );
       } );
 
-      const fine = Dom.el( "div" , { class: "theme-colors" } );
+      const fine = Dom.el( "div" , { class: colorGrid } );
       self.fineFields.forEach( ( field ) => {
         const overridden = Boolean( theme.overrides && theme.overrides[ field ] );
         fine.appendChild( colorRow( {
@@ -366,7 +368,7 @@ const ThemeEditor = {
 
       // The button's style, then each button color: fill, label, outline.
       const button = Theme.button( theme );
-      const choices = Dom.el( "div" , { class: "theme-choices" } );
+      const choices = Dom.el( "div" , { class: "d-flex flex-wrap row-gap-2 column-gap-4" } );
       Object.keys( Theme.buttonChoices ).forEach( ( key ) => {
         choices.appendChild( choiceGroup( "button_" + key , I18n.get( "theme.button_" + key ) , Object.keys( Theme.buttonChoices[ key ] ) ,
           button[ key ] , ( value ) => {
@@ -374,7 +376,7 @@ const ThemeEditor = {
             actions.button( theme , key , value );
           } ) );
       } );
-      const buttonColors = Dom.el( "div" , { class: "theme-colors mt-3" } );
+      const buttonColors = Dom.el( "div" , { class: colorGrid } );
       Theme.variants.forEach( ( variant ) => {
         const name = Theme.buttonField( variant );
         [ name , name + "Fg" , name + "Text" ].forEach( ( field ) => {
@@ -394,7 +396,9 @@ const ThemeEditor = {
 
       // The preview and anything hard to read sit in an aside: above the
       // colors on a narrower screen, beside them (and staying in view while
-      // the colors scroll) on a wide one. See .theme-edit-body in style.css.
+      // the colors scroll) on a wide one: a Bootstrap row whose aside comes
+      // first in the page, so keyboard order is the same at every width, and
+      // moves to the right from xxl with order-xxl-last.
       const aside = [ preview ];
       if ( problems.length > 0 ) {
         const items = problems.map( ( problem ) => Dom.el( "li" , {
@@ -413,7 +417,7 @@ const ThemeEditor = {
         Dom.el( "h4" , { class: "h6 mt-4 mb-1" , text: I18n.get( "theme.buttons_heading" ) } ),
         Dom.el( "p" , { class: "small text-body-secondary" , text: I18n.get( "theme.buttons_help" ) } ),
         choices,
-        buttonColors,
+        Dom.el( "div" , { class: "mt-3" , children: [ buttonColors ] } ),
       ];
       const fineHeader = [ Dom.el( "h4" , { class: "h6 mb-0" , text: I18n.get( "theme.fine_heading" ) } ) ];
       if ( Object.keys( theme.overrides || {} ).length > 0 && problems.length === 0 ) {
@@ -428,9 +432,9 @@ const ThemeEditor = {
           Dom.el( "h3" , { class: "h5 mb-0" , children: [ name ] } ),
           modeGroup,
         ] } ),
-        Dom.el( "div" , { class: "theme-edit-body" , children: [
-          Dom.el( "div" , { class: "theme-edit-aside" , children: aside } ),
-          Dom.el( "div" , { class: "theme-edit-main" , children: main } ),
+        Dom.el( "div" , { class: "row g-4 align-items-start" , children: [
+          Dom.el( "div" , { class: "col-12 col-xxl-4 order-xxl-last aside-sticky" , children: aside } ),
+          Dom.el( "div" , { class: "col-12 col-xxl-8" , children: main } ),
         ] } ),
       ];
       return Dom.el( "div" , { class: "card" , children: [ Dom.el( "div" , { class: "card-body" , children: children } ) ] } );
@@ -453,14 +457,17 @@ const ThemeEditor = {
           attrs: { type: "button" } , on: { click: () => attempt( restore.run ) } } ) );
       }
       const side = Dom.el( "div" , { class: "card" , children: [ Dom.el( "div" , { class: "card-body" , children: [
-        Dom.el( "div" , { class: "theme-list" , attrs: { role: "list" } , children: items.map( ( item ) => {
+        Dom.el( "div" , { class: "d-flex flex-column gap-1" , attrs: { role: "list" } , children: items.map( ( item ) => {
           item.setAttribute( "role" , "listitem" );
           return item;
         } ) } ),
         Dom.el( "div" , { class: "d-flex flex-wrap gap-2 mt-3" , children: footer } ),
       ] } ) ] } );
       Dom.clear( root );
-      root.appendChild( Dom.el( "div" , { class: "theme-layout" , children: [ side , theme ? editPane( theme ) : Dom.el( "div" ) ] } ) );
+      root.appendChild( Dom.el( "div" , { class: "row g-3 align-items-start" , children: [
+        Dom.el( "div" , { class: "col-12 col-md-4 col-xxl-3" , children: [ side ] } ),
+        Dom.el( "div" , { class: "col-12 col-md-8 col-xxl-9" , children: theme ? [ editPane( theme ) ] : [] } ),
+      ] } ) );
       if ( focus ) {
         const again = root.querySelector( "[data-focus='" + focus + "']" );
         if ( again ) again.focus( { preventScroll: true } );

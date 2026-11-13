@@ -41,6 +41,17 @@ DEMO_SLUG = "python-webserver-demo"
 # demo's database, so losing it would lose every account.
 KEEP = {"config/config.yaml", "config/secret.key", ".run", ".venv", "data"}
 
+# The demo's own port, the same on every run: a re-scaffold would otherwise
+# pick a new random one each time, and the browser tab, its saved theme and
+# its sign-in would be left behind on the old one. Outside scaffold.py's
+# random range, so no scaffolded project lands on it, and different from the
+# other webserver skill's demo so both can run at once.
+DEMO_PORT = 18492
+PORT_LINES = (
+    re.compile(r"^(  port:[ \t]*)\d+[ \t]*$", re.MULTILINE),
+    re.compile(r"^(  host_port:[ \t]*)\d+[ \t]*$", re.MULTILINE),
+)
+
 SECURE_COOKIES_LINE = re.compile(r"^(\s*secure_cookies:\s*)true\b", re.MULTILINE)
 
 
@@ -88,6 +99,21 @@ def sync(fresh: Path, target: Path, relative: Path = Path(".")) -> None:
                 shutil.copymode(entry, out)
 
 
+def pin_port(config: Path) -> None:
+    """Point a demo's config.yaml at DEMO_PORT. A demo made before the port was
+    pinned has whatever port it was first scaffolded with written in there,
+    and config.yaml wins over defaults.yaml."""
+    if not config.is_file():
+        return
+    before = config.read_text(encoding="utf-8")
+    after = before
+    for pattern in PORT_LINES:
+        after = pattern.sub(lambda match: f"{match.group(1)}{DEMO_PORT}", after)
+    if after != before:
+        config.write_text(after, encoding="utf-8")
+        print(f"Demo port is now {DEMO_PORT}", file=sys.stderr)
+
+
 def main() -> None:
     target = demo_dir()
     target.mkdir(parents=True, exist_ok=True)
@@ -106,7 +132,7 @@ def main() -> None:
         # scaffold.py's "next steps" are for a person scaffolding a real
         # project, not for this, so they are only shown if it fails.
         result = subprocess.run(
-            [sys.executable, str(SCRIPTS_DIR / "scaffold.py"), str(fresh), DEMO_NAME, "--prune", "none"],
+            [sys.executable, str(SCRIPTS_DIR / "scaffold.py"), str(fresh), DEMO_NAME, "--prune", "none", "--port", str(DEMO_PORT)],
             capture_output=True,
             text=True,
         )
@@ -124,6 +150,8 @@ def main() -> None:
         # working directory has to stay the same directory for run.sh to
         # recognize and stop it.
         sync(fresh, target)
+
+    pin_port(config)
 
     if first_run:
         text, count = SECURE_COOKIES_LINE.subn(r"\1false", config.read_text(encoding="utf-8"))

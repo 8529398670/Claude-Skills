@@ -3,6 +3,43 @@
 The rules here are what keep the frontend from drifting into a build
 pipeline. They are cheap to follow from the start and expensive to retrofit.
 
+## Hard rules
+
+Every screen, card and dialog follows these. They are not style advice: a
+screen that breaks one is not done.
+
+1. **Bootstrap for everything it has.** Layout is Bootstrap's grid -- `.row`,
+   `.col-*`, `row-cols-*`, `g-*` -- and spacing, flex, display, text and width
+   are its utility classes. Components are Bootstrap components. `style.css`
+   holds only what Bootstrap has no class for: the color tokens, the shell
+   (navbar, sidebar, the `.view` width tiers, `aside-sticky`), touch sizes, and
+   the inside of a few components (the log calendar's seven days, the theme
+   preview, the stacked phone tables). Never write a layout grid or flex row in
+   CSS that a class can say.
+2. **Mobile first.** The base is the phone, at 375px, and it is checked first.
+   Wider screens only add, through Bootstrap's breakpoint classes
+   (`col-lg-6`, `row-cols-xxl-3`, `order-xxl-last`) or `@media (min-width: ...)`.
+   No `max-width` media queries for layout. The one allowed is a phone-only
+   form of a component that cannot be undone from a breakpoint up (the stacked
+   tables), with `phone-only` in the comment right above it.
+3. **A table takes the most room on its screen.** Its card spans the whole row
+   and the table sits right inside a `.table-responsive`, so a wide one scrolls
+   in its own box and never the page. Something beside a table needs a good
+   reason that still looks good when you look at it at 1440 and 1920: two or
+   three small tables of a few short columns, read together, can sit side by
+   side (`row g-3`, each `col-12 col-xl-6`). A form, a filter or a thin tool is
+   never that reason; it goes above the table. On a phone every table is the
+   full width.
+4. **Icons are Bootstrap Icons by default:**
+   `<i class="bi bi-<name>" aria-hidden="true"></i>`. Another icon (another
+   set, an inline SVG) only when Bootstrap Icons has nothing that fits, with a
+   one-line comment saying so. Never emoji as icons.
+
+`server/static/frontend_rules_test.go` fails on a `max-width` query without `phone-only`, a
+`grid-template-columns` outside the components above, and a table not right
+inside a `.table-responsive`. How much room a table gets and which icons are
+used are judgement calls, so those are checked by eye.
+
 ## No build step, ever
 
 No npm, no bundler, no transpiler, no JSX, no TypeScript compile. Files in
@@ -155,8 +192,9 @@ The UI is [Bootstrap 5](https://getbootstrap.com/docs/5.3/) plus [Bootstrap
 Icons](https://icons.getbootstrap.com/), vendored like any other library --
 `static/vendor/README.md` lists the files and versions. Use its components
 and utility classes (`card`, `btn`, `form-control`, `table`, `alert`, `badge`,
-`d-flex`, `gap-2`, `mt-3`, ...) before writing CSS, and an icon is
-`<i class="bi bi-<name>" aria-hidden="true"></i>`.
+`d-flex`, `gap-2`, `mt-3`, `row`, `col-md-6`, ...) before writing CSS, and an
+icon is `<i class="bi bi-<name>" aria-hidden="true"></i>` (see
+[Hard rules](#hard-rules)).
 
 Two things to know when mixing it with this frontend's rules:
 
@@ -234,29 +272,32 @@ a banner, unrelated cards of different heights side by side leave ragged
 edges and holes, and a thin column squeezed beside a table looks broken. So
 the default is the width every screen was designed at, and a screen goes
 wider only together with a layout its content calls for. Phones are never
-affected: everything here starts at `lg` (992px).
+affected: the base is the phone, and everything here only adds from a
+breakpoint up.
 
-**Tables get the whole width. This one is a hard rule.** A table is the thing
-people scan across, and it wants every pixel of its screen. Nothing narrow
-sits beside it: no rail, no calendar, no filter column, no form squeezed into
-a strip. A control that picks what a table shows (a date, a filter) is a
-button in the bar above it that opens a popup: the Logs calendar is the worked
-example (`#logs-date-button`, a Bootstrap dropdown with `autoClose: "outside"`,
-closed by `Logs.pick`). A form that adds rows goes above the table, full
-width, as on Users. The one exception has to be earned, and is described in
-2 below.
+**A table takes the most room** ([Hard rules](#hard-rules), 3). A table is
+the thing people scan across, and it wants the width of its screen. By default
+its card spans the row and nothing sits beside it: no rail, no calendar, no
+filter column, no form squeezed into a strip. A control that picks what a table
+shows (a date, a filter) is a button in the bar above it that opens a popup:
+the Logs calendar is the worked example (`#logs-date-button`, a Bootstrap
+dropdown with `autoClose: "outside"`, closed by `Logs.pick`). A form or tool
+that adds rows goes above the table, full width, as on Users and Files (both
+once had it beside the table; both read better with it above). Tables side by
+side need a good reason and have to look good: a few small tables of a few
+short columns, read together.
 
 **First, say what the screen is,** and pick from this table:
 
-| The screen is... | Example | Desktop layout | Width |
+| The screen is... | Example | Layout from a breakpoint up | Width |
 |---|---|---|---|
 | A list of separate settings, read top to bottom | Account, Shortcuts | One column, as on a phone | default |
 | One small form | a sign-in step | One column | `view-narrow` |
-| A table plus the form that adds to it | Users (add someone + people) | Form above, table full width -- as on a phone | default |
-| A short table plus one small tool used beside it | Files (upload + stored files) | `view-split`: the table main, the tool aside | `view-wide` |
-| An editor and what shows its effect | Appearance (colors + preview) | Editor main, preview aside; panes from `xxl` | `view-full` |
-| A big table or log people scan across | Logs | The table gets the width; what picks the rows (date, kinds) sits in the bar above, the calendar in a popup | `view-full` |
-| Several things of the same kind and size | stat tiles, one card per item | `view-cards` | `view-wide` |
+| A table plus the form or tool that adds to it | Users, Files | Form above, table full width -- as on a phone | default, `view-wide` |
+| A big table or log people scan across | Logs | The table gets the width; what picks the rows sits in the bar above, the calendar in a popup | `view-full` |
+| A few small tables read together | totals by day and by user | `row g-3`, each table's card `col-12 col-xl-6` | `view-wide` |
+| An editor and what shows its effect | Appearance (colors + preview) | `row`: editor `col-xxl-8`, preview `col-xxl-4 order-xxl-last aside-sticky` | `view-full` |
+| Several things of the same kind and size | stat tiles, one card per item | `row row-cols-1 row-cols-lg-2 row-cols-xxl-3 g-3`, each card in a `.col` with `h-100` | `view-wide` |
 
 If a screen is none of these, or two of them, it stays one column until
 someone decides what it is, and looks at it. That decision is the design
@@ -269,65 +310,55 @@ work; the classes below are only how it is written down.
    |---|---|---|
    | *(none)* | 60rem | one column -- the width every screen was built at |
    | `view-narrow` | 48rem | one small form |
-   | `view-wide` | 80rem | a main + aside, or a card grid |
+   | `view-wide` | 80rem | a main + aside, cards or small tables side by side |
    | `view-full` | 120rem | an editor with panes, or a table people scan across |
 
    Never widen a screen without changing its layout: the same column, wider,
    only stretches it. What sits in `<main>` outside a screen (signed-out, join
    and confirm cards, banners) keeps 60rem.
-2. **Main + aside** (`<div class="view-split">`) puts a sticky column beside
-   the main part. Use it beside non-table content (an editor beside its
-   preview -- Appearance builds the same idea into its editor card,
-   `.theme-edit-body`). Beside a table it is the one exception to the table
-   rule, and only when all of these hold, checked by eye at 1440 and 1920:
-   - the table's rows are short (a few columns of short values) and still fit
-     on one line with room to spare;
-   - the aside is one small tool used while looking at the list, not a form
-     of several fields;
-   - the aside is not thin next to the table: it reads as a panel, not a strip.
-
-   Files passes (four short columns; Upload is a picker and a quota bar).
-   Users failed: its status text wrapped, its four-field form became a tall
-   strip, and it went back to form-above.
-
-   It holds exactly two children: a `.view-aside` and one main element, in
-   either order. Below 1440px they stack in page order, exactly as the screen
-   was before, so put the one a phone needs first, first (Files puts Upload
-   first). From 1440px the main part is on the left and the aside on the
-   right, 18-24rem, sticky under the navbar. Not sooner: beside the sidebar,
-   a split at 1280 leaves the main side ~34rem and a table wraps and scrolls
-   sideways.
-3. **Card grids** (`<div class="view-cards">`) are only for cards of the same
-   kind and similar size. They sit two or three across (columns of at least
-   26rem), and each row's cards share one height. Unrelated cards never go in
-   a grid: that was tried on Account and read as chaos, so Account stays one
-   column. It is a grid, never CSS columns or masonry, where a card that opens
-   pushes the others into the next column. `card-span` gives a card the whole
-   row. The grid sits outside any `feature:` markers.
+2. **Main + aside** is a Bootstrap row: `<div class="row g-3
+   align-items-start">` with the main part `col-12 col-xxl-8` and the aside
+   `col-12 col-xxl-4`. Below `xxl` they stack in page order, so put the one a
+   phone needs first, first; if that is the aside, give it `order-xxl-last` to
+   move it right on a wide screen without changing the keyboard order. Add
+   `aside-sticky` to the aside's column to keep it in view under the navbar
+   while the main part scrolls (Appearance does this with its preview). Use it
+   beside an editor or other non-table content, never beside a table (see
+   above).
+3. **Card grids** are Bootstrap `row-cols`: `<div class="row row-cols-1
+   row-cols-lg-2 row-cols-xxl-3 g-3">`, each card inside a `.col` and `h-100`
+   so each row's cards share one height. Only for cards of the same kind and
+   similar size. Unrelated cards never go in a grid: that was tried on Account
+   and read as chaos, so Account stays one column. A card that needs the width
+   is in a `col-12`. The grid sits outside any `feature:` markers.
 4. **Inside a card, repeated fields wrap.** A run of the same kind of field
-   (colors, toggles) in a wide card is a grid of units,
-   `repeat(auto-fill, minmax(min(100%, 15rem), 1fr))`, each its label over its
-   control (`.theme-colors`). A single input never stretches across a wide
+   (colors, toggles) in a wide card is a row-cols grid of units, `row
+   row-cols-1 row-cols-sm-2 row-cols-xxl-3 g-3`, each its label over its
+   control (the theme colors). A single input never stretches across a wide
    card: a search box (`input[type=search]` inside `[role="search"]`) stops at
    28rem, and a form field in a wide card is `col-md-6 col-xl-4`, not a bare
    `col-md`.
 5. **Prose keeps its measure.** `.view-description`, `.card-text`, `.form-text`
    and paragraphs in an alert stop at 70ch.
-6. **Breakpoints, in one place.** Below `lg`: one column. From `lg`: card
-   grids. From `xxl` (1400px): editor panes. From 1440px: main + aside. Each
-   starts where the part that matters most (the table, the colors) still has
-   its room beside the new column, not where the new column first fits.
+6. **Breakpoints are Bootstrap's.** The base is the phone. From `sm`: fields
+   and repeated units go two across. From `lg`: card grids, and the sidebar
+   becomes a column. From `xl`: small tables side by side. From `xxl` (1400px):
+   main + aside and editor panes. Each starts where the part that matters most
+   (the table, the colors) still has its room beside the new column, not where
+   the new column first fits.
 
-**Check every new or changed screen** at 1280, 1440, 1600 and 1920 wide, and
-at 375, by looking at it -- the numbers above are where to start, not proof:
+**Check every new or changed screen** at 375 first, then 768, 1280, 1440 and
+1920 wide, by looking at it -- the numbers above are where to start, not proof:
 
 - Can you say what the screen is, in the table's terms? Does its layout match?
-- Does a table have the whole width? Is anything narrow sitting beside it?
+- Does a table have the most room? If anything sits beside it, is there a good
+  reason, and does it look good?
+- Is everything side by side a Bootstrap `.row`, and one column on a phone?
 - Does any row put its buttons far from the name they act on, or wrap?
 - Is any lone input or line of text stretched past ~40rem / ~90 characters?
 - Do cards side by side leave ragged edges or holes?
 - Does a preview or summary scroll out of view while you edit what it shows?
-- Is the phone layout what it was?
+- Does the page scroll sideways anywhere at 375?
 
 ### Undo and redo
 
@@ -694,7 +725,7 @@ them rather than by writing them again.
   in `dom.js` for the field types.
 - **Editing something after it is made** is a POST verb route, like every other
   change (`/api/keys/:id/rename`), never PUT or PATCH, which the spec test would
-  not see. Add it to `config/openapi.json`, and give it an `expect` so its undo
+  not see. Give it docs (`apidoc.Doc` in its `*_api.go`), and an `expect` so its undo
   can answer 409, as `RenameUser` does.
 - **`Dom.when( value , fallback )`** is a table cell's time: "3 hours ago", or a
   date past a month, with the exact time on hover. `fallback` is what a missing
@@ -752,14 +783,17 @@ Things worth preserving when editing:
   input.
 - **44px minimum button height** -- the usual floor for a reliable touch
   target. `.btn-sm` (table row actions) is the exception.
+- **Mobile first.** Base rules are the phone; wider screens add with
+  `min-width` queries or Bootstrap's breakpoint classes ([Hard rules](#hard-rules)).
 - **Forms are a Bootstrap grid:** `form.row.g-3.align-items-end` with a
   `.col-md` per label+input and a `.col-md-auto` for the button, so fields
   stack on a phone and line up from `md` up.
 - **Wide content scrolls in its own box** (`.table-responsive`), so a table
   never makes the page itself scroll sideways.
-- **Layout classes are the shell's:** `view-narrow`, `view-wide`, `view-full`,
-  `view-cards`, `card-span`, `view-split`, `view-aside`. A screen uses them rather than
-  writing its own widths; see [Desktop layout](#desktop-layout).
+- **Layout is Bootstrap's grid.** The shell adds only the width tiers
+  (`view-narrow`, `view-wide`, `view-full`) and `aside-sticky`. A screen uses
+  them and `.row` / `.col-*` rather than writing its own widths or grids; see
+  [Desktop layout](#desktop-layout).
 
 Labels stay visible at every width. A placeholder disappears the moment
 someone types and is not a substitute for a label.

@@ -155,14 +155,25 @@ def check(skill: str, name: str, cut: set[str], arguments: argparse.Namespace, b
     if arguments.frontend_only:
         shutil.rmtree(project, ignore_errors=True)
         return name, True, ""
+    # A project that lost parts rewrites its API reference (scripts/api_docs.sh)
+    # before its tests, which fail while it is stale. One with every part must
+    # find nothing to rewrite: the template's copies are current.
     if skill == "go-webserver":
-        steps = [["go", "vet", "./..."]] + ([] if arguments.no_tests else [["go", "test", "./..."]])
+        regenerate = ["go", "test", "./server/routes", "-run", "^TestAPIDocsAreCurrent$", "-count=1", "-update"]
+        steps = [["go", "vet", "./..."]] + ([] if arguments.no_tests else [regenerate, ["go", "test", "./..."]])
     else:
-        steps = [[arguments.python, "-m", "compileall", "-q", "app"]] + ([] if arguments.no_tests else [[arguments.python, "-m", "unittest", "discover", "app/tests"]])
+        regenerate = [arguments.python, "-m", "app.apidocs"]
+        steps = [[arguments.python, "-m", "compileall", "-q", "app"]] + ([] if arguments.no_tests else [regenerate, [arguments.python, "-m", "unittest", "discover", "app/tests"]])
+    generated = [project / "config" / file for file in ("openapi.json", "mcp.json", "api.md")]
+    shipped = {path: path.read_bytes() for path in generated if path.is_file()}
     for step in steps:
         ok, output = run(step, project)
         if not ok:
             return name, False, tail(output)
+        if step is regenerate and not cut:
+            stale = [path.name for path in generated if path.is_file() and shipped.get(path) != path.read_bytes()]
+            if stale:
+                return name, False, f"the template's config/{', config/'.join(stale)} out of date: run {skill}/scripts/refresh_api_docs.py"
     shutil.rmtree(project, ignore_errors=True)
     return name, True, ""
 

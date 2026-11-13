@@ -1,8 +1,9 @@
 # whole-file feature:openapi
-"""Hands out config/openapi.json. It is written by hand, so it can say what a
-route takes and returns; app/tests/test_openapi.py fails when it and the route
-table disagree. Signed-in callers only: it maps the admin surface, and nobody
-who cannot sign in has a use for it."""
+"""Hands out config/openapi.json, which scripts/api_docs.sh writes from the
+routes and the docs each handler declares (the *_api.py files);
+app/tests/test_api_docs.py fails while it is out of date. Signed-in callers
+only: it maps the admin surface, and nobody who cannot sign in has a use for
+it."""
 from __future__ import annotations
 
 from functools import cache

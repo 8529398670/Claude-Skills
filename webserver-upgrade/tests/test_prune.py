@@ -70,14 +70,23 @@ class TextTest(unittest.TestCase):
 class SpecTest(unittest.TestCase):
     def test_paths_and_schemas(self) -> None:
         spec_text = json.dumps({
-            "paths": {"/a": {"x-feature": "a", "get": {}}, "/b": {"get": {}}},
-            "components": {"schemas": {"A": {"x-feature": "a"}, "B": {"type": "object"}}},
+            "tags": [{"name": "A"}, {"name": "B"}],
+            "paths": {
+                "/a": {"x-feature": "a", "get": {"tags": ["A"], "responses": {"200": {"$ref": "#/components/schemas/A"}}}},
+                "/b": {"get": {"tags": ["B"], "responses": {"200": {"$ref": "#/components/schemas/B"}}}},
+            },
+            "components": {"schemas": {"A": {"items": {"$ref": "#/components/schemas/Only"}}, "Only": {}, "B": {"type": "object"}}},
         })
+        # Labels stay: the app's own generator writes them too.
         kept = json.loads(prune.prune_spec(spec_text, set()))
-        self.assertEqual(kept["paths"]["/a"], {"get": {}})
+        self.assertEqual(kept["paths"]["/a"]["x-feature"], "a")
+        self.assertEqual(sorted(kept["components"]["schemas"]), ["A", "B", "Only"])
+        # A schema goes when nothing left refers to it, and so does one only it did.
         gone = json.loads(prune.prune_spec(spec_text, {"a"}))
         self.assertEqual(list(gone["paths"]), ["/b"])
         self.assertEqual(list(gone["components"]["schemas"]), ["B"])
+        self.assertEqual(gone["tags"], [{"name": "B"}])
+        self.assertTrue(prune.prune_spec(spec_text, set()).endswith("}\n"))
 
 
 class TreeTest(unittest.TestCase):

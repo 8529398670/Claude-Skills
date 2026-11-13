@@ -161,9 +161,10 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// so a key that could set one could turn itself into a session.
 	account.Post( "/account/pin" , handlers.RequireInviteLinks , handlers.Guard.RequireSession , handlers.SetPin )
 	// <<< feature:invite_links
-	// A session only, for the same reason as every route that hands out a
-	// login link: the link becomes a session. See the admin group below.
-	account.Post( "/account/login-link" , handlers.Guard.RequireSession , handlers.CreateMyLoginLink )
+	// A key may make its owner a login link, but only a key carrying the
+	// account's full role (see CreateMyLoginLink), and revoking the key voids
+	// the link if it is still unused (see models.RevokeAPIKey).
+	account.Post( "/account/login-link" , handlers.CreateMyLoginLink )
 	account.Post( "/account/login-link/cancel" , handlers.CancelMyLoginLink )
 	// Passwords and 2FA change how an account signs in, so setting them needs // feature:passwords|two_factor
 	// a session, like the PIN: a key that could set a password could turn // feature:passwords|two_factor
@@ -172,13 +173,13 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	account.Post( "/account/two-factor/start" , handlers.RequireTwoFactor , handlers.Guard.RequireSession , handlers.StartTwoFactor ) // feature:two_factor
 	account.Post( "/account/two-factor/confirm" , handlers.RequireTwoFactor , handlers.Guard.RequireSession , handlers.ConfirmTwoFactor ) // feature:two_factor
 	account.Post( "/account/two-factor/disable" , handlers.RequireTwoFactor , handlers.Guard.RequireSession , handlers.DisableTwoFactor ) // feature:two_factor
-	// Your own signed-in devices. A session only: a key that could end // feature:sessions
-	// sessions could lock its owner out of the screen that revokes it. // feature:sessions
-	account.Get( "/account/sessions" , handlers.Guard.RequireSession , handlers.ListMySessions ) // feature:sessions
+	// Your own signed-in devices. A key may list and end them too; through // feature:sessions
+	// a key there is no current device, so revoke-others ends them all. // feature:sessions
+	account.Get( "/account/sessions" , handlers.ListMySessions ) // feature:sessions
 	account.Get( "/account/storage" , handlers.RequireFiles , handlers.MyStorage ) // feature:files
-	account.Post( "/account/sessions/revoke-others" , handlers.Guard.RequireSession , handlers.RevokeMyOtherSessions ) // feature:sessions
-	account.Post( "/account/sessions/:session_id/label" , handlers.Guard.RequireSession , handlers.LabelMySession ) // feature:sessions
-	account.Post( "/account/sessions/:session_id/revoke" , handlers.Guard.RequireSession , handlers.RevokeMySession ) // feature:sessions
+	account.Post( "/account/sessions/revoke-others" , handlers.RevokeMyOtherSessions ) // feature:sessions
+	account.Post( "/account/sessions/:session_id/label" , handlers.LabelMySession ) // feature:sessions
+	account.Post( "/account/sessions/:session_id/revoke" , handlers.RevokeMySession ) // feature:sessions
 	account.Post( "/logout" , handlers.Logout )
 	account.Get( "/team" , handlers.ListTeam )
 	account.Get( "/openapi.json" , handlers.GetOpenAPI ) // feature:openapi
@@ -232,33 +233,26 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// rights gate in the base template -- see architecture.md on defaulting
 	// new features to "any signed-in user".
 	//
-	// The two routes that hand out a login link also require a browser
-	// session, attached per route rather than on a group prefix. A login link
-	// becomes a session, and a session can mint API keys -- so if an
-	// admin-scoped key could create accounts or reissue links, a leaked key
-	// could turn itself into a fresh session and a fresh key, and revoking
-	// the leaked one would not end the compromise. The rule is: an API key
-	// may use what an account can do, but it never creates credentials.
-	//
-	// Deleting an account requires a session too, for a different reason: it
-	// cannot be undone. A leaked admin key can disable accounts, which an
-	// admin can reverse; it must not be able to erase them. Who may delete
-	// whom (the owner rules) is enforced in models.DeleteUser.
+	// An admin-scoped key may do all of it, creating accounts and handing out
+	// login links included. Every link records the key that made it, and
+	// revoking or deleting that key voids the links it made that can still be
+	// used (models.RevokeAPIKey), so revoking a leaked key still ends what it
+	// could hand out. Who may delete or demote whom (the owner rules) is
+	// enforced in the models.
 	admin := app.Group( "/api/admin" , handlers.Guard.RequireAdmin )
 	admin.Get( "/users" , handlers.ListUsers )
-	admin.Post( "/users" , handlers.Guard.RequireSession , handlers.CreateUser )
-	admin.Post( "/users/:user_id/reissue-login" , handlers.Guard.RequireSession , handlers.ReissueLogin )
+	admin.Post( "/users" , handlers.CreateUser )
+	admin.Post( "/users/:user_id/reissue-login" , handlers.ReissueLogin )
 	admin.Post( "/users/:user_id/cancel-login-link" , handlers.CancelLoginLink )
-	admin.Post( "/users/:user_id/rename" , handlers.Guard.RequireSession , handlers.RenameUser )
-	admin.Post( "/users/:user_id/role" , handlers.Guard.RequireSession , handlers.SetUserRole )
+	admin.Post( "/users/:user_id/rename" , handlers.RenameUser )
+	admin.Post( "/users/:user_id/role" , handlers.SetUserRole )
 	admin.Post( "/users/:user_id/disabled" , handlers.SetUserDisabled )
 	admin.Post( "/users/:user_id/revoke-access" , handlers.RevokeAccess )
-	admin.Post( "/users/:user_id/delete" , handlers.Guard.RequireSession , handlers.DeleteUser )
-	admin.Post( "/users/:user_id/reset-two-factor" , handlers.Guard.RequireSession , handlers.ResetTwoFactor ) // feature:two_factor
-	// A session only, like your own devices list: a key that could end // feature:sessions
-	// sessions could end the one that would revoke it. // feature:sessions
-	admin.Get( "/users/:user_id/sessions" , handlers.Guard.RequireSession , handlers.ListUserSessions ) // feature:sessions
-	admin.Post( "/users/:user_id/sessions/:session_id/revoke" , handlers.Guard.RequireSession , handlers.RevokeUserSession ) // feature:sessions
+	admin.Post( "/users/:user_id/delete" , handlers.DeleteUser )
+	admin.Post( "/users/:user_id/reset-two-factor" , handlers.ResetTwoFactor ) // feature:two_factor
+	// An account's devices, like your own list above. // feature:sessions
+	admin.Get( "/users/:user_id/sessions" , handlers.ListUserSessions ) // feature:sessions
+	admin.Post( "/users/:user_id/sessions/:session_id/revoke" , handlers.RevokeUserSession ) // feature:sessions
 	admin.Get( "/storage" , handlers.RequireFiles , handlers.AllStorage ) // feature:files
 	// The themes everyone starts from. Not a credential, so a key may. // feature:appearance
 	admin.Get( "/theme-defaults" , handlers.GetThemeDefaults ) // feature:appearance
@@ -266,18 +260,16 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 
 	// >>> feature:invite_links
 	// Invite links: one link for a group, each person who opens it joins as a
-	// new user (see invite_links.go). Creating one needs a session for the
-	// same reason as creating a user -- the link mints accounts and sessions.
-	// Deleting one needs a session like deleting a user. Listing and
-	// switching one off are safe for an admin key.
+	// new user (see invite_links.go). An admin key may manage them; like a
+	// login link, one a key made is switched off when that key is revoked.
 	admin.Get( "/invite-links" , handlers.RequireInviteLinks , handlers.ListInviteLinks )
-	admin.Post( "/invite-links" , handlers.RequireInviteLinks , handlers.Guard.RequireSession , handlers.CreateInviteLink )
-	admin.Post( "/invite-links/:link_id/rename" , handlers.RequireInviteLinks , handlers.Guard.RequireSession , handlers.RenameInviteLink )
-	admin.Post( "/invite-links/:link_id/limits" , handlers.RequireInviteLinks , handlers.Guard.RequireSession , handlers.SetInviteLinkLimits )
-	admin.Post( "/invite-links/:link_id/switch-on" , handlers.RequireInviteLinks , handlers.Guard.RequireSession , handlers.SwitchOnInviteLink )
+	admin.Post( "/invite-links" , handlers.RequireInviteLinks , handlers.CreateInviteLink )
+	admin.Post( "/invite-links/:link_id/rename" , handlers.RequireInviteLinks , handlers.RenameInviteLink )
+	admin.Post( "/invite-links/:link_id/limits" , handlers.RequireInviteLinks , handlers.SetInviteLinkLimits )
+	admin.Post( "/invite-links/:link_id/switch-on" , handlers.RequireInviteLinks , handlers.SwitchOnInviteLink )
 	admin.Post( "/invite-links/:link_id/revoke" , handlers.RequireInviteLinks , handlers.RevokeInviteLink )
-	admin.Post( "/invite-links/:link_id/delete" , handlers.RequireInviteLinks , handlers.Guard.RequireSession , handlers.DeleteInviteLink )
-	admin.Post( "/invite-links/:link_id/restore" , handlers.RequireInviteLinks , handlers.Guard.RequireSession , handlers.RestoreInviteLink )
+	admin.Post( "/invite-links/:link_id/delete" , handlers.RequireInviteLinks , handlers.DeleteInviteLink )
+	admin.Post( "/invite-links/:link_id/restore" , handlers.RequireInviteLinks , handlers.RestoreInviteLink )
 	// <<< feature:invite_links
 
 	// >>> feature:api_keys

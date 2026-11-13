@@ -1,8 +1,8 @@
 # whole-file feature:mcp
 """Hands out config/mcp.json: every tool /mcp has, its arguments, the route it
-stands for, and the routes that stay HTTP only. scripts/mcp_json.sh writes it
+stands for, and the routes that stay HTTP only. scripts/api_docs.sh writes it
 from the registered tools (app/mcp/manifest.py), and
-app/tests/test_mcp_parity.py fails while it is out of date. Signed-in callers
+app/tests/test_api_docs.py fails while it is out of date. Signed-in callers
 only, like openapi.json."""
 from __future__ import annotations
 

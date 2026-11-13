@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 from app.core import encryption
 from app.core.db import BUCKET_API_KEYS, BUCKET_USERS, Record, Store
 from app.models import RestoreGoneError, deleted_long_ago, from_iso, mark_deleted, to_iso, unmark_deleted, utc_now
+from app.models import login_tokens
 from app.models.sessions import split_credential
 from app.models.users import ROLE_ADMIN, ROLE_USER, RenameConflictError, User, get_user, owner_id_tx, valid_role
 
@@ -393,14 +394,20 @@ def revoke_api_key(store: Store, key_id: str) -> APIKey | None:
     other with a stale copy of the row.
 
     The row is marked rather than deleted so a listing can still show the key
-    existed and when it died. The purge removes it later."""
+    existed and when it died. The purge removes it later.
 
-    def mutate(record: Record) -> None:
+    In the same transaction it voids the login links and invite links the key
+    made that could still be used (login_tokens.void_links_minted_by_key), so a
+    leaked key cannot leave a way in behind it."""
+    with store.transaction() as tx:
+        record = tx.get(BUCKET_API_KEYS, key_id)
+        if record is None:
+            return None
         if record.get("revoked_at") is None:
             record["revoked_at"] = to_iso(utc_now())
-
-    record = store.update_value(BUCKET_API_KEYS, key_id, mutate)
-    return None if record is None else APIKey.from_record(record)
+            tx.put(BUCKET_API_KEYS, key_id, record)
+        login_tokens.void_links_minted_by_key(tx, key_id)
+    return APIKey.from_record(record)
 
 
 def rename_api_key(store: Store, key_id: str, name: str, expect: str | None = None) -> bool:
@@ -468,15 +475,19 @@ def delete_api_key(store: Store, key_id: str, actor_id: int | None) -> bool:
     restore_api_key brings it back -- working again -- for RESTORE_WINDOW,
     after which the purge removes it. Revoke is the one-way switch for a key
     that may have leaked; delete is tidying up, and tidying up the wrong row
-    is the mistake an undo exists for. The routes decide who may ask."""
-    found = False
+    is the mistake an undo exists for. The routes decide who may ask.
 
-    def mutate(record: Record) -> None:
-        nonlocal found
-        found = record.get("deleted_at") is None
+    Like revoking, it voids the links the key made
+    (login_tokens.void_links_minted_by_key); restoring the key does not bring
+    them back."""
+    with store.transaction() as tx:
+        record = tx.get(BUCKET_API_KEYS, key_id)
+        if record is None or record.get("deleted_at") is not None:
+            return False
         mark_deleted(record, actor_id)
-
-    return store.update_value(BUCKET_API_KEYS, key_id, mutate) is not None and found
+        tx.put(BUCKET_API_KEYS, key_id, record)
+        login_tokens.void_links_minted_by_key(tx, key_id)
+    return True
 
 
 def restore_api_key(store: Store, key_id: str, actor_id: int, actor_is_admin: bool) -> APIKey:

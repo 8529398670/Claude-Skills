@@ -52,6 +52,7 @@ func newMonitored( t *testing.T , logging bool ) ( fixture *monitored ) {
 	app.Use( middleware.Metrics( handlers.Metrics ) ) // feature:metrics
 	app.Use( middleware.Recover( settings ) )
 	app.Use( middleware.RequestLog( logger ) ) // feature:logs
+	app.Use( checkReplies( t ) )
 	app.Get( "/fail" , func( c fiber.Ctx ) ( err error ) {
 		err = serverError( c , errors.New( "the disk is on fire" ) )
 		return

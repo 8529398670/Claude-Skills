@@ -17,13 +17,16 @@ import (
 // the same way and refuse for the same reasons.
 //
 // The rule: every route an API key may call has a tool here, named in its
-// Route, or an "x-mcp-http" reason in config/openapi.json for staying HTTP
+// Route, or an MCPHTTP reason in its apidoc.Doc for staying HTTP
 // only. mcp_parity_test.go fails until that holds. What a key may not call
-// -- managing users, keys and sign-in, and erasing anything for good -- needs
-// a browser session (see RequireSession), so it has no tool either.
+// -- managing API keys, setting your own password, PIN or two-factor, other
+// people's files, and the owner's screens -- needs a browser session (see
+// RequireSession), so it has no tool either. Accounts, login links, devices
+// and invite links are in mcp_tools_accounts.go.
 //
-// After adding or changing a tool, run scripts/mcp_json.sh to rewrite
-// config/mcp.json; mcp_manifest_test.go fails until it is current.
+// After adding or changing a tool, run scripts/api_docs.sh to rewrite
+// config/mcp.json and config/api.md; api_docs_test.go fails until they are
+// current.
 //
 // An app's own tools go in a new file in this package (mcp_tools_<feature>.go)
 // with a registerXTools function called from registerMCPTools below.
@@ -109,7 +112,7 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 		Name:        "admin_revoke_access",
 		Route:       "POST /api/admin/users/{user_id}/revoke-access",
 		Title:       "Revoke a user's access (admin)",
-		Description: "For an account that may be compromised: ends every session and voids its live login link and every API key it holds, at once. The account stays enabled; someone with a browser session must issue a new login link to let its owner back in. The owner and your own account cannot be revoked.",
+		Description: "For an account that may be compromised: ends every session and voids its live login link and every API key it holds, at once. The account stays enabled; admin_reissue_login lets its owner back in. The owner and your own account cannot be revoked.",
 		Destructive: true,
 		AdminOnly:   true,
 		InputSchema: fiber.Map{
@@ -273,6 +276,7 @@ func ( handlers *Handlers ) registerMCPTools( server *mcp.Server ) {
 	} )
 	// <<< feature:appearance
 
+	handlers.registerAccountTools( server )
 	handlers.registerFileTools( server ) // feature:files
 
 	// >>> feature:invite_links

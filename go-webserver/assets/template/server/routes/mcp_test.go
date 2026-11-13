@@ -66,6 +66,7 @@ func newMCPFixture( t *testing.T ) ( fixture *mcpFixture ) {
 	settings := config.NewStaticHolder( cfg )
 	handlers := New( store , settings , security.New( store , settings ) , nil , static_server , "test" )
 	app := fiber.New()
+	app.Use( checkReplies( t ) )
 	handlers.Register( app )
 
 	fixture = &mcpFixture{ app: app , store: store , cfg: cfg , owner: owner , member: member , admin_key: admin_key , user_key: user_key }
@@ -244,6 +245,34 @@ func TestMCPAdminToolsKeepTheRules( t *testing.T ) {
 	if reply[ "error" ] == nil {
 		t.Errorf( "unknown argument accepted: %v" , reply )
 	}
+}
+
+func TestMCPAccountTools( t *testing.T ) {
+	fixture := newMCPFixture( t )
+
+	// An admin key makes an account and gets a full address to hand over.
+	_ , reply := fixture.post( t , fixture.admin_key , callTool( "admin_create_user" , `{"display_name":"Bob","role":"user","max_uses":2}` ) )
+	failed , text := toolFailed( t , reply )
+	if failed || strings.Contains( text , `"login_url":"http` ) == false || strings.Contains( text , "/login/" ) == false {
+		t.Fatalf( "admin_create_user: %s" , text )
+	}
+
+	// The narrowed key on the owner's admin account may not make itself a
+	// login link: the session would be an admin's.
+	_ , reply = fixture.post( t , fixture.user_key , callTool( "create_my_login_link" , `{}` ) )
+	if failed , text = toolFailed( t , reply ); failed == false || strings.Contains( text , "less than your account's role" ) == false {
+		t.Errorf( "narrowed key's own link: %s" , text )
+	}
+	_ , reply = fixture.post( t , fixture.admin_key , callTool( "create_my_login_link" , `{}` ) )
+	if failed , text = toolFailed( t , reply ); failed || strings.Contains( text , "login_url" ) == false {
+		t.Errorf( "full key's own link: %s" , text )
+	}
+
+	// The owner rules hold through the tools.
+	_ , reply = fixture.post( t , fixture.admin_key , callTool( "admin_set_user_role" , `{"user_id":`+itoa( fixture.owner.ID )+`,"role":"user"}` ) )
+	if failed , _ = toolFailed( t , reply ); failed == false { t.Errorf( "changed your own role" ) }
+	_ , reply = fixture.post( t , fixture.admin_key , callTool( "admin_rename_user" , `{"user_id":`+itoa( fixture.member.ID )+`,"display_name":"Mem"}` ) )
+	if failed , text = toolFailed( t , reply ); failed { t.Errorf( "rename: %s" , text ) }
 }
 
 func itoa( value uint64 ) ( result string ) {

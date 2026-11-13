@@ -52,6 +52,10 @@ type LoginToken struct {
 	MaxUses    int        `json:"max_uses,omitempty"`
 	Unlimited  bool       `json:"unlimited,omitempty"`
 	Uses       int        `json:"uses,omitempty"`
+	// MintedByKey is the API key that asked for this link, empty when a
+	// person did. Revoking or deleting that key voids the link while it can
+	// still be used (VoidLinksMintedByKey).
+	MintedByKey string `json:"minted_by_key,omitempty"`
 }
 
 // LoginLinkOptions says how a new link may be used. MaxUses is ignored when
@@ -60,6 +64,9 @@ type LoginLinkOptions struct {
 	MaxUses   int
 	Unlimited bool
 	TTL       time.Duration
+	// MintedByKey is the id of the API key asking, if one is. See
+	// LoginToken.MintedByKey.
+	MintedByKey string
 }
 
 // OnceLink is the classic one-time link.
@@ -256,6 +263,7 @@ func IssueLoginLink( store *db.Store , user_id uint64 , options LoginLinkOptions
 		CreatedAt:  now,
 		MaxUses:    options.MaxUses,
 		Unlimited:  options.Unlimited,
+		MintedByKey: options.MintedByKey,
 	}
 	if token.Unlimited { token.MaxUses = 0 }
 	if options.TTL > 0 { token.ExpiresAt = now.Add( options.TTL ) }
@@ -373,6 +381,28 @@ func deletePendingLoginTokens( tx *db.Tx , user_id uint64 ) ( removed int , err 
 			token := item.( *LoginToken )
 			return token.UserID == user_id && token.Usable()
 		} )
+	return
+}
+
+// VoidLinksMintedByKeyTx is what keeps revoking a key meaningful now that a key
+// may hand out login links and invite links: inside the caller's transaction
+// (the one revoking or deleting the key), every login link the key made that
+// could still sign someone in is deleted, and every invite link it made is
+// switched off. Sessions already made through them stay; they show in the
+// devices list. Restoring a deleted key does not bring the links back.
+func VoidLinksMintedByKeyTx( tx *db.Tx , key_id string ) ( voided int , err error ) {
+	if key_id == "" { return }
+	voided , err = tx.DeleteWhere( db.BucketLoginTokens ,
+		func() any { return &LoginToken{} } ,
+		func( key []byte , item any ) bool {
+			token := item.( *LoginToken )
+			return token.MintedByKey == key_id && token.Usable()
+		} )
+	if err != nil { return }
+	// >>> feature:invite_links
+	switched_off , err := revokeInviteLinksMintedByKeyTx( tx , key_id )
+	voided += switched_off
+	// <<< feature:invite_links
 	return
 }
 

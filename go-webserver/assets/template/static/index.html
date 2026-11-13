@@ -389,6 +389,9 @@
               <p id="key-spec-line" class="small" hidden>
                 <span data-i18n="api_keys.spec_text"></span>
                 <a id="key-spec-link" target="_blank" rel="noopener noreferrer" data-i18n="api_keys.spec_link"></a>
+                <span id="key-doc-part" hidden>&middot;
+                  <a id="key-doc-link" target="_blank" rel="noopener noreferrer" data-i18n="api_keys.doc_link"></a>
+                </span>
               </p>
               <!-- <<< feature:openapi -->
 
@@ -477,7 +480,7 @@
 
               <fieldset class="mb-3">
                 <legend class="form-label fs-6 mb-2" data-i18n="mcp.client_label"></legend>
-                <div id="mcp-clients" class="mcp-clients" role="radiogroup">
+                <div id="mcp-clients" class="d-flex flex-wrap gap-2" role="radiogroup">
                   <input type="radio" class="btn-check" name="mcp-client" id="mcp-client-claude_code" value="claude_code" checked />
                   <label class="btn btn-sm btn-outline-primary" for="mcp-client-claude_code" data-i18n="mcp.client_claude_code"></label>
                   <input type="radio" class="btn-check" name="mcp-client" id="mcp-client-claude_desktop" value="claude_desktop" />
@@ -620,13 +623,14 @@
           <h2 class="view-title" data-i18n="files.heading"></h2>
           <p class="view-description" data-i18n="files.description"></p>
 
-          <!-- The list beside the upload that adds to it (see "Desktop layout"
-               in references/frontend.md): Upload comes first on a phone, and
-               sits on the right, in view, on a wide screen. -->
-          <div class="view-split">
-          <section class="card view-aside">
+          <!-- Upload above, the list it adds to below at the full width, as on
+               Users: a table takes the most room (see "Hard rules" in
+               references/frontend.md). -->
+          <section class="card">
             <div class="card-body">
               <h3 class="card-title" data-i18n="files.upload_heading"></h3>
+              <!-- One picker and its progress: a column, not the card's width. -->
+              <div class="row"><div class="col-md-8 col-xl-6">
               <label for="file-input" class="form-label" data-i18n="files.upload_label"></label>
               <input id="file-input" class="form-control" type="file" multiple />
               <p class="form-text mb-0" data-i18n="files.drop_hint"></p>
@@ -643,6 +647,7 @@
                 <div id="files-usage-text" class="small text-body-secondary mb-1"></div>
                 <progress id="files-usage-bar" class="w-100" max="1" value="0" aria-labelledby="files-usage-text"></progress>
               </div>
+              </div></div>
             </div>
           </section>
 
@@ -678,7 +683,6 @@
               <p id="files-empty" class="text-body-secondary mb-0" data-i18n="files.empty" hidden></p>
             </div>
           </section>
-          </div>
         </section>
 
         <!-- <<< feature:files -->
@@ -691,15 +695,15 @@
           <section class="card">
             <div class="card-body">
               <p id="about-description" class="card-text" hidden></p>
-              <dl class="about-facts">
-                <dt data-i18n="about.version"></dt>
-                <dd id="about-version"></dd>
-                <dt id="about-source-term" data-i18n="about.source" hidden></dt>
-                <dd id="about-source-detail" hidden><a id="about-source" target="_blank" rel="noopener noreferrer"></a></dd>
-                <dt id="about-api-term" data-i18n="about.api_reference" hidden></dt> <!-- feature:openapi -->
-                <dd id="about-api-detail" hidden><a id="about-api" target="_blank" rel="noopener noreferrer" data-i18n="about.api_link"></a></dd> <!-- feature:openapi -->
-                <dt id="about-mcp-term" data-i18n="about.mcp_reference" hidden></dt> <!-- feature:mcp -->
-                <dd id="about-mcp-detail" hidden><a id="about-mcp" target="_blank" rel="noopener noreferrer" data-i18n="about.mcp_link"></a></dd> <!-- feature:mcp -->
+              <dl class="row mb-0">
+                <dt class="col-sm-4 col-lg-3" data-i18n="about.version"></dt>
+                <dd id="about-version" class="col-sm-8 col-lg-9 text-break"></dd>
+                <dt id="about-source-term" class="col-sm-4 col-lg-3" data-i18n="about.source" hidden></dt>
+                <dd id="about-source-detail" class="col-sm-8 col-lg-9 text-break" hidden><a id="about-source" target="_blank" rel="noopener noreferrer"></a></dd>
+                <dt id="about-api-term" class="col-sm-4 col-lg-3" data-i18n="about.api_reference" hidden></dt> <!-- feature:openapi -->
+                <dd id="about-api-detail" class="col-sm-8 col-lg-9 text-break" hidden><a id="about-api" target="_blank" rel="noopener noreferrer" data-i18n="about.api_link"></a></dd> <!-- feature:openapi -->
+                <dt id="about-mcp-term" class="col-sm-4 col-lg-3" data-i18n="about.mcp_reference" hidden></dt> <!-- feature:mcp -->
+                <dd id="about-mcp-detail" class="col-sm-8 col-lg-9 text-break" hidden><a id="about-mcp" target="_blank" rel="noopener noreferrer" data-i18n="about.mcp_link"></a></dd> <!-- feature:mcp -->
               </dl>
             </div>
           </section>

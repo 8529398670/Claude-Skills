@@ -86,7 +86,7 @@ var (
 	// <<< feature:openapi
 
 	// >>> feature:mcp
-	// The tools /mcp offers, written by scripts/mcp_json.sh from the
+	// The tools /mcp offers, written by scripts/api_docs.sh from the
 	// registered tools; embedded for the same reason as openapi.json.
 	//go:embed config/mcp.json
 	embeddedMCPManifest []byte

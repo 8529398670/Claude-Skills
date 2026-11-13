@@ -3,6 +3,177 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After d943458
+
+**Upgrade `bootstrap-grid`: layout is Bootstrap's grid, mobile first, and a test keeps it that way.**
+Marks: `aside-sticky`, `phone-only`, `app/tests/test_frontend_rules.py`
+
+The hand-written CSS grids are gone; every side-by-side layout is a Bootstrap
+`.row`. Media queries only add from a breakpoint up, except the stacked phone
+tables, now marked `phone-only`. Files puts Upload above its table instead of
+beside it, so the table gets the width. A new test fails on a `max-width` query
+without `phone-only`, a `grid-template-columns` outside the log calendar, the
+theme preview and the shortcut list, or a table not right inside a
+`.table-responsive`. An app with its own screens should run the test after
+taking this and fix what it reports the same way.
+
+- `static/css/style.css`:
+  - The touch block is mobile first: `.btn-sm` and `.dropdown-item` get the
+    44px floor as the base, and `@media (min-width: 576px) and (pointer: fine)`
+    sets them back to `display: inline-block` / `block` with `min-height: 0`
+    (and `min-width: 0` on `.btn-sm`). This replaces
+    `@media (pointer: coarse), (max-width: 575.98px)`.
+  - `.about-facts` (and its `feature:about` markers), `.view-cards`,
+    `.card-span`, `.view-split`, `.view-aside`, `.mcp-clients`,
+    `.theme-layout`, `.theme-edit-body` / `-aside` / `-main`, `.theme-list`,
+    `.theme-colors`, `.theme-choices`, `.theme-choice` and `.settings-label`'s
+    own flex rule are removed. In their place, after `.view .card-title`'s
+    measure rules: `@media (min-width: 1400px) { .aside-sticky { position:
+    sticky; top: calc(var(--app-navbar-height) + 1rem); } }`.
+  - The scroll margin rule is `.view .card { scroll-margin-top: ... }`.
+  - The stacked phone tables comment gains a `phone-only:` paragraph; the query
+    itself is unchanged.
+- `static/index.html`:
+  - Files: the `.view-split` div and the `view-aside` class go; Upload is a
+    plain card above the Files card, its contents after the `h3` wrapped in
+    `<div class="row"><div class="col-md-8 col-xl-6">` so the picker does not
+    stretch across the card.
+  - About: `<dl class="row mb-0">`, each `dt` `col-sm-4 col-lg-3`, each `dd`
+    `col-sm-8 col-lg-9 text-break`.
+  - MCP: `#mcp-clients` is `class="d-flex flex-wrap gap-2"`.
+- `static/js/themes_editor.js`: a `colorGrid` constant (`row row-cols-1
+  row-cols-sm-2 row-cols-xxl-3 g-3`) is the class of the base, fine and button
+  color groups, the button colors wrapped in a `div.mt-3`; the editor body is
+  `row g-4 align-items-start` with the aside `col-12 col-xxl-4 order-xxl-last
+  aside-sticky` and the main `col-12 col-xxl-8`; the theme list and the editor
+  are `row g-3 align-items-start` with `col-12 col-md-4 col-xxl-3` and `col-12
+  col-md-8 col-xxl-9`; the theme list is `d-flex flex-column gap-1`, the
+  choices `d-flex flex-wrap row-gap-2 column-gap-4`, each choice `d-flex
+  flex-column gap-1`.
+- `static/js/settings.js`: the setting label is `form-label settings-label
+  d-flex flex-wrap align-items-center gap-2`.
+- `app/tests/test_frontend_rules.py`: new, copied whole.
+- `references/frontend.md` (skill only): new "Hard rules" section; Desktop
+  layout and CSS structure rewritten in Bootstrap's terms.
+
+**Test:** the new test passes. At 375px every screen is one column with no
+sideways scroll; tables stack as cards. At 1440px Files shows Upload above a
+full-width table; Appearance shows the theme list beside the editor, and from
+1400px the preview to the right of the colors, staying in view while they
+scroll. About lines its facts up in two columns from 576px.
+
+**The API reference is written from the code: `config/openapi.json`, `config/mcp.json` and a new `config/api.md`.**
+
+Nothing in `config/` is edited by hand any more. Each handler declares its docs
+once with `doc()` in an `app/routes/<area>_api.py` beside it, with TypedDicts
+for its body and reply; `scripts/api_docs.sh` (`python -m app.apidocs`) writes
+the three files, byte for byte what the Go template writes. The template's
+`openapi.json` is the old one regenerated: same content, keys sorted, `required`
+lists sorted, nullable numbers as `"type": [T, "null"]`, and `x-feature` kept on
+paths. A few things the old file had wrong are fixed: `Me` gains
+`files_enabled`, `invite_links_enabled` and `webhooks_enabled`; `Session` gains
+`label` and `ip_name`; `SettingsResult`'s lists may be null.
+
+- `app/apidocs/` (`__init__`, `__main__`, schema, generate, markdown, check): new, copied whole.
+- `app/routes/*_api.py` (22 modules, one per area, `schemas_api.py` for the
+  shared shapes): new, copied whole. An app's own routes need a doc() too.
+- `app/tests/test_api_docs.py`: new: every route documented, and the three
+  files current.
+- `app/tests/route_support.py`: `request()` passes each reply to the new
+  `check_reply`, which holds every 2xx JSON reply against its docs.
+- `app/tests/test_mcp_parity.py`: `operations()` takes the spec built from the
+  code; the manifest test moves to `test_api_docs.py`.
+- `app/tests/test_openapi.py`: the route-table test goes (replaced above).
+- `app/mcp/manifest.py`: `main()` and `spec_or_none()` go; the description names `api_docs.sh`.
+- `scripts/api_docs.sh`: new. `scripts/mcp_json.sh`: removed.
+- `config/api.md`: new, generated. `config/openapi.json`, `config/mcp.json`: regenerated.
+- Comments naming `mcp_json.sh` or a hand-written spec: `app/core/assets.py`,
+  `app/routes/openapi.py`, `mcp_manifest.py`, `mcp_tools.py`, `app/mcp/registry.py`.
+
+An app with routes of its own: `test_every_route_is_documented` names each one
+without docs. Write their doc() calls from the app's old `openapi.json` entries
+(same summary, fields and limits), run `scripts/api_docs.sh`, and compare the
+new spec with the old.
+
+**Test:** `scripts/api_docs.sh`, then `python -m unittest discover app/tests`
+passes, and a second `scripts/api_docs.sh` changes nothing.
+
+**Upgrade `keys-manage-accounts`: API keys and MCP agents can make accounts, login links and invite links, and sign devices out; revoking a key voids the links it made.**
+Marks: `void_links_minted_by_key`, `minted_by_key`, `app/routes/mcp_tools_accounts.py`
+
+`RequireSession` comes off the account, login-link, device and invite-link
+routes, so an admin key (and the matching MCP tools) can create, rename,
+re-role and delete accounts, reset two-factor, hand out and cancel login links,
+manage invite links, and list or end an account's sessions; any key can list
+and end its own sessions and make its own account a login link. Key
+management, your own password/PIN/two-factor, other people's files and the
+owner's screens stay browser-only. Two rules keep it contained: a key whose
+role is below its account's may not make its own login link, and every login
+link and invite link records the key that made it (an invite link a key grows,
+switches on or restores becomes that key's), so revoking or deleting the key
+voids the ones still usable. The MCP login-link tools answer with a full
+`login_url`; the HTTP routes still answer with `login_path`.
+
+- `app/models/login_tokens.py`: `LoginToken.minted_by_key` and
+  `LinkOptions.minted_by_key` (default `""`, stored as `minted_by_key`),
+  passed through by `issue_login_link`; new `void_links_minted_by_key(tx,
+  key_id)` before `delete_login_tokens_for_user`, its invite-link half in a
+  `feature:invite_links` block.
+- `app/models/invite_links.py`: `InviteLink.minted_by_key`;
+  `issue_invite_link`, `set_invite_link_limits`, `switch_on_invite_link` and
+  `restore_invite_link` gain a last `minted_by_key: str = ""` and set it when
+  non-empty; new `revoke_invite_links_minted_by_key(tx, key_id)`.
+- `app/models/api_keys.py`: imports `login_tokens`; `revoke_api_key` and
+  `delete_api_key` run in `store.transaction()` and call
+  `login_tokens.void_links_minted_by_key` in it.
+- `app/core/security.py`: new `Actor.key_id`; `RequireSession`'s docstring
+  rewritten.
+- `app/routes/__init__.py`: the `sessions_only`, `admin_sessions` and
+  `admin_invite_sessions` groups go; their routes move to `signed_in`,
+  `admins` and `admin_invites`, and the comments are rewritten.
+- `app/routes/admin.py`, `account.py`, `sessions.py`, `invite_links.py`: each of
+  those handlers keeps only reading the request and calls a new synchronous
+  helper through `run()` that raises `Refused` (`create_user_checked`,
+  `reissue_login_checked`, `cancel_login_link_checked`, `rename_user_checked`,
+  `set_user_role_checked`, `delete_user_checked`, `reset_two_factor_checked`,
+  `create_my_login_link_checked`, `cancel_my_login_link_checked`,
+  `my_session_rows`, `user_session_rows`, `label_one_checked`,
+  `revoke_one_checked`, `revoke_others_checked`, `revoke_user_session_checked`,
+  `create_invite_link_checked`, `rename_invite_link_checked`,
+  `set_invite_link_limits_checked`, `switch_on_invite_link_checked`,
+  `delete_invite_link_checked`, `restore_invite_link_checked`). Webhooks in
+  them go through `request.app.state.webhooks.emit` directly.
+  `admin.link_options` raises `Refused` and sets `minted_by_key` from
+  `actor.key_id`; `create_my_login_link_checked` refuses a key whose
+  `actor.role != actor.user.role`. In `sessions.py`, `_target_of` takes the
+  parsed id and raises `Refused`, `_name_rows` is synchronous, and a new
+  `current_session_id(request)` is `""` through a key.
+- `app/routes/mcp_tools_accounts.py`: new, copied whole; `mcp_tools.build_registry`
+  imports it and calls `mcp_tools_accounts.register(registry)` after the
+  appearance tools, before files. Its header and `admin_revoke_access`'s
+  description change.
+- `app/routes/*_api.py`: those routes lose `access=SESSION_ONLY` (drop the
+  import where unused); `cancel_my_login_link` and `cancel_login_link` lose
+  their `mcp_http`.
+- Tests: `test_an_admin_key_cannot_change_an_account`,
+  `test_a_key_cannot_reopen_or_grow_a_link`, `test_needs_a_session` and
+  `test_a_key_cannot_name_a_device` are replaced by tests that the key can,
+  plus `test_only_a_full_role_key_makes_its_own_login_link`,
+  `test_revoking_a_key_voids_the_links_it_made`,
+  `test_deleting_a_key_switches_off_the_invite_links_it_made` and
+  `test_account_tools`; `AdminSessionTest.test_the_routes_refuse` checks the
+  user-scoped key. An app with its own tests that expect 403 from these routes
+  for a key flips them.
+- `config/`: run `scripts/api_docs.sh`.
+- `SKILL.md`, `references/architecture.md` (skill only): "Why a key cannot
+  create credentials" becomes "Keys and the ways in they hand out".
+
+**Test:** `python -m unittest discover app/tests` passes. With an admin key,
+`POST /api/admin/users` answers 201 and its `login_path` signs in; revoking the
+key, a second such link no longer does. The admin's user-scoped key gets 403
+from `POST /api/account/login-link`. Over `/mcp`, `admin_create_user` answers
+with a `login_url`.
+
 ## After 2028ee4
 
 The Claude Code command on the MCP card now adds the server with `--scope user`,

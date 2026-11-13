@@ -165,7 +165,12 @@ def repo_url(value: str) -> str:
     value = value.strip()
     found = SSH_REMOTE.match(value)
     if found:
-        value = f"https://{found.group(1)}/{found.group(2)}"
+        host = found.group(1)
+        # An ssh-config alias such as github-work (one per GitHub account,
+        # git@github-work:you/app.git) is github.com to a browser.
+        if re.fullmatch(r"github-[\w.-]+", host):
+            host = "github.com"
+        value = f"https://{host}/{found.group(2)}"
     value = value.rstrip("/")
     if value.endswith(".git"):
         value = value[: -len(".git")]
@@ -383,6 +388,7 @@ def main() -> None:
     parser.add_argument("--features", help=f"comma-separated, or none; leave it out for the template's defaults. Choose from: {', '.join(FEATURES)}")
     parser.add_argument("--without", default="", help=f"parts a project normally has to leave out, comma-separated. Choose from: {', '.join(PIECES)}")
     parser.add_argument("--repo", help="where the source lives, e.g. https://github.com/you/app (an ssh remote is fine); becomes app.repo")
+    parser.add_argument("--port", type=int, help="the port to use in place of a random free one; demo.py pins its demo to one so the browser keeps it signed in")
     parser.add_argument("--prune", help="exactly what to cut, comma-separated, or none, in place of working it out from --features and --without; for webserver-upgrade and demo.py")
     args = parser.parse_args()
     # Before anything is written: a typo should not leave half a project.
@@ -437,7 +443,7 @@ def main() -> None:
             if script.name != "lib.sh":
                 script.chmod(0o755)
 
-    port = pick_port()
+    port = args.port or pick_port()
     stamp_port(target_dir, port)
     if repo:
         stamp_repo(target_dir, repo)

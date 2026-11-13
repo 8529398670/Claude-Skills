@@ -117,21 +117,33 @@ func ( handlers *Handlers ) CreateInviteLink( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	if models.ValidInviteLink( body.Label , body.MaxUses , body.Days ) == false {
-		err = badRequest( c , "label must be 1-80 characters, uses 1-1000, days 1-365" )
+	payload , refused := handlers.createInviteLink( c , body.Label , body.MaxUses , body.Days )
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
-	ttl := time.Duration( body.Days ) * 24 * time.Hour
-	credential , link , issue_err := models.IssueInviteLink( handlers.Store , body.Label , body.MaxUses , ttl , security.UserFrom( c ).ID )
+	err = c.Status( fiber.StatusCreated ).JSON( payload )
+	return
+}
+
+// createInviteLink is CreateInviteLink after the request is read, for it and
+// the MCP admin_create_invite_link tool.
+func ( handlers *Handlers ) createInviteLink( c fiber.Ctx , label string , max_uses int , days int ) ( payload fiber.Map , refused *refusal ) {
+	if models.ValidInviteLink( label , max_uses , days ) == false {
+		refused = refuse( fiber.StatusBadRequest , "label must be 1-80 characters, uses 1-1000, days 1-365" )
+		return
+	}
+	ttl := time.Duration( days ) * 24 * time.Hour
+	actor := security.ActorFrom( c )
+	credential , link , issue_err := models.IssueInviteLink( handlers.Store , label , max_uses , ttl , actor.User.ID , actor.KeyID() )
 	if issue_err != nil {
-		err = serverError( c , issue_err )
+		refused = internalFailure( issue_err )
 		return
 	}
-	row := handlers.inviteLinkRow( link )
-	row[ "join_path" ] = "/join/" + credential
+	payload = handlers.inviteLinkRow( link )
+	payload[ "join_path" ] = "/join/" + credential
 	handlers.audit( c , logs.KindAdmin , "invite link created" , fiber.Map{ "link_id": link.ID , "label": link.Label , "max_uses": link.MaxUses } )
 	handlers.Webhooks.Emit( models.EventInviteLinkCreated , map[string]any{ "link_id": link.ID , "label": link.Label } ) // feature:webhooks
-	err = c.Status( fiber.StatusCreated ).JSON( row )
 	return
 }
 
@@ -147,34 +159,44 @@ func ( handlers *Handlers ) RenameInviteLink( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	if models.ValidInviteLabel( body.Label ) == false {
-		err = badRequest( c , "label must be 1-80 characters" )
+	payload , refused := handlers.renameInviteLink( c , strings.Clone( c.Params( "link_id" ) ) , body.Label , body.Expect )
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
-	// Clone: the log entry outlives this request, and fiber reuses the buffer.
-	link_id := strings.Clone( c.Params( "link_id" ) )
-	rename_err := models.RenameInviteLink( handlers.Store , link_id , body.Label , body.Expect )
-	var refusal *models.RenameConflictError
+	err = c.JSON( payload )
+	return
+}
+
+// renameInviteLink is RenameInviteLink after the request is read, for it and
+// the MCP admin_rename_invite_link tool.
+func ( handlers *Handlers ) renameInviteLink( c fiber.Ctx , link_id string , label string , expect *string ) ( payload fiber.Map , refused *refusal ) {
+	if models.ValidInviteLabel( label ) == false {
+		refused = refuse( fiber.StatusBadRequest , "label must be 1-80 characters" )
+		return
+	}
+	rename_err := models.RenameInviteLink( handlers.Store , link_id , label , expect )
+	var stale *models.RenameConflictError
 	switch {
-	case errors.As( rename_err , &refusal ):
-		err = conflict( c , refusal.Error() , fiber.Map{ "label": refusal.Current } )
+	case errors.As( rename_err , &stale ):
+		refused = refuse( fiber.StatusConflict , stale.Error() , fiber.Map{ "label": stale.Current } )
 		return
 	case errors.Is( rename_err , db.ErrNotFound ):
-		err = notFound( c , "no such invite link" )
+		refused = refuse( fiber.StatusNotFound , "no such invite link" )
 		return
 	case rename_err != nil:
-		err = serverError( c , rename_err )
+		refused = internalFailure( rename_err )
 		return
 	}
-	label := strings.TrimSpace( body.Label )
+	label = strings.TrimSpace( label )
 	handlers.audit( c , logs.KindAdmin , "invite link renamed" , fiber.Map{ "link_id": link_id , "label": label } )
-	err = c.JSON( fiber.Map{ "ok": true , "label": label } )
+	payload = fiber.Map{ "ok": true , "label": label }
 	return
 }
 
 // SetInviteLinkLimits changes a link's places, and its expiry when days is given.
-// It needs a session, like making a link: more places is more accounts, so a
-// leaked admin key must not be a way to add them.
+// Through an API key the link becomes that key's: revoking the key switches it
+// off (see models.SetInviteLinkLimits).
 func ( handlers *Handlers ) SetInviteLinkLimits( c fiber.Ctx ) ( err error ) {
 	var body inviteLimitsRequest
 	if c.Bind().JSON( &body ) != nil {
@@ -185,31 +207,43 @@ func ( handlers *Handlers ) SetInviteLinkLimits( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	if models.ValidInviteLimits( body.MaxUses , body.Days ) == false {
-		err = badRequest( c , "uses must be 1-1000 and days 1-365" )
+	payload , refused := handlers.setInviteLinkLimits( c , c.Params( "link_id" ) , body.MaxUses , body.Days )
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
-	var ttl time.Duration
-	if body.Days != nil { ttl = time.Duration( *body.Days ) * 24 * time.Hour }
-	link , set_err := models.SetInviteLinkLimits( handlers.Store , c.Params( "link_id" ) , body.MaxUses , ttl )
-	switch {
-	case errors.Is( set_err , db.ErrNotFound ):
-		err = notFound( c , "no such invite link" )
-		return
-	case errors.Is( set_err , models.ErrInvitePlaces ):
-		err = badRequest( c , set_err.Error() )
-		return
-	case set_err != nil:
-		err = serverError( c , set_err )
-		return
-	}
-	handlers.audit( c , logs.KindAdmin , "invite link limits changed" , fiber.Map{ "link_id": link.ID , "max_uses": link.MaxUses , "expires_at": link.ExpiresAt } )
-	err = c.JSON( handlers.inviteLinkRow( link ) )
+	err = c.JSON( payload )
 	return
 }
 
-// SwitchOnInviteLink undoes RevokeInviteLink. Switching off is safe for an admin
-// key; this needs a session, or a leaked key could reopen a closed link.
+// setInviteLinkLimits is SetInviteLinkLimits after the request is read, for it
+// and the MCP admin_set_invite_link_limits tool.
+func ( handlers *Handlers ) setInviteLinkLimits( c fiber.Ctx , link_id string , max_uses int , days *int ) ( payload fiber.Map , refused *refusal ) {
+	if models.ValidInviteLimits( max_uses , days ) == false {
+		refused = refuse( fiber.StatusBadRequest , "uses must be 1-1000 and days 1-365" )
+		return
+	}
+	var ttl time.Duration
+	if days != nil { ttl = time.Duration( *days ) * 24 * time.Hour }
+	link , set_err := models.SetInviteLinkLimits( handlers.Store , link_id , max_uses , ttl , security.ActorFrom( c ).KeyID() )
+	switch {
+	case errors.Is( set_err , db.ErrNotFound ):
+		refused = refuse( fiber.StatusNotFound , "no such invite link" )
+		return
+	case errors.Is( set_err , models.ErrInvitePlaces ):
+		refused = refuse( fiber.StatusBadRequest , set_err.Error() )
+		return
+	case set_err != nil:
+		refused = internalFailure( set_err )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "invite link limits changed" , fiber.Map{ "link_id": link.ID , "max_uses": link.MaxUses , "expires_at": link.ExpiresAt } )
+	payload = handlers.inviteLinkRow( link )
+	return
+}
+
+// SwitchOnInviteLink undoes RevokeInviteLink. A key that switches a link on
+// takes it over, so revoking that key closes it again.
 func ( handlers *Handlers ) SwitchOnInviteLink( c fiber.Ctx ) ( err error ) {
 	var body csrfOnlyRequest
 	if c.Bind().JSON( &body ) != nil {
@@ -220,17 +254,29 @@ func ( handlers *Handlers ) SwitchOnInviteLink( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	link , switch_err := models.SwitchOnInviteLink( handlers.Store , c.Params( "link_id" ) )
+	payload , refused := handlers.switchOnInviteLink( c , c.Params( "link_id" ) )
+	if refused != nil {
+		err = refused.send( c )
+		return
+	}
+	err = c.JSON( payload )
+	return
+}
+
+// switchOnInviteLink is SwitchOnInviteLink after the request is read, for it
+// and the MCP admin_switch_on_invite_link tool.
+func ( handlers *Handlers ) switchOnInviteLink( c fiber.Ctx , link_id string ) ( payload fiber.Map , refused *refusal ) {
+	link , switch_err := models.SwitchOnInviteLink( handlers.Store , link_id , security.ActorFrom( c ).KeyID() )
 	if errors.Is( switch_err , db.ErrNotFound ) {
-		err = notFound( c , "no such invite link" )
+		refused = refuse( fiber.StatusNotFound , "no such invite link" )
 		return
 	}
 	if switch_err != nil {
-		err = serverError( c , switch_err )
+		refused = internalFailure( switch_err )
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "invite link switched back on" , fiber.Map{ "link_id": link.ID } )
-	err = c.JSON( handlers.inviteLinkRow( link ) )
+	payload = handlers.inviteLinkRow( link )
 	return
 }
 
@@ -267,12 +313,24 @@ func ( handlers *Handlers ) DeleteInviteLink( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	if models.DeleteInviteLink( handlers.Store , c.Params( "link_id" ) , security.UserFrom( c ).ID ) != nil {
-		err = notFound( c , "no such invite link" )
+	payload , refused := handlers.deleteInviteLink( c , strings.Clone( c.Params( "link_id" ) ) )
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
-	handlers.audit( c , logs.KindAdmin , "invite link deleted" , fiber.Map{ "link_id": c.Params( "link_id" ) } )
-	err = c.JSON( fiber.Map{ "ok": true } )
+	err = c.JSON( payload )
+	return
+}
+
+// deleteInviteLink is DeleteInviteLink after the request is read, for it and
+// the MCP admin_delete_invite_link tool.
+func ( handlers *Handlers ) deleteInviteLink( c fiber.Ctx , link_id string ) ( payload fiber.Map , refused *refusal ) {
+	if models.DeleteInviteLink( handlers.Store , link_id , security.UserFrom( c ).ID ) != nil {
+		refused = refuse( fiber.StatusNotFound , "no such invite link" )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "invite link deleted" , fiber.Map{ "link_id": link_id } )
+	payload = fiber.Map{ "ok": true }
 	return
 }
 
@@ -288,13 +346,25 @@ func ( handlers *Handlers ) RestoreInviteLink( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	actor := security.UserFrom( c )
-	link , restore_err := models.RestoreInviteLink( handlers.Store , c.Params( "link_id" ) , actor.ID , actor.IsAdmin() )
-	if restore_err != nil {
-		err = restoreRefused( c , restore_err )
+	payload , refused := handlers.restoreInviteLink( c , strings.Clone( c.Params( "link_id" ) ) )
+	if refused != nil {
+		err = refused.send( c )
 		return
 	}
-	handlers.audit( c , logs.KindAdmin , "invite link restored" , fiber.Map{ "link_id": c.Params( "link_id" ) } )
-	err = c.JSON( handlers.inviteLinkRow( link ) )
+	err = c.JSON( payload )
+	return
+}
+
+// restoreInviteLink is RestoreInviteLink after the request is read, for it and
+// the MCP admin_restore_invite_link tool.
+func ( handlers *Handlers ) restoreInviteLink( c fiber.Ctx , link_id string ) ( payload fiber.Map , refused *refusal ) {
+	actor := security.ActorFrom( c )
+	link , restore_err := models.RestoreInviteLink( handlers.Store , link_id , actor.User.ID , actor.User.IsAdmin() , actor.KeyID() )
+	if restore_err != nil {
+		refused = restoreRefusal( restore_err )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "invite link restored" , fiber.Map{ "link_id": link_id } )
+	payload = handlers.inviteLinkRow( link )
 	return
 }

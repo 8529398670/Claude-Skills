@@ -5,13 +5,16 @@ me_row, team_rows, set_disabled_checked, create_file_checked, ... -- so the two
 doors answer the same way and refuse for the same reasons.
 
 The rule: every route an API key may call has a tool here, named in its route,
-or an "x-mcp-http" reason in config/openapi.json for staying HTTP only.
+or an mcp_http reason in its doc() for staying HTTP only.
 app/tests/test_mcp_parity.py fails until that holds. What a key may not call --
-managing users, keys and sign-in, and erasing anything for good -- needs a
-browser session (see RequireSession), so it has no tool either.
+managing API keys, setting your own password, PIN or two-factor, other people's
+files, and the owner's screens -- needs a browser session (see
+RequireSession), so it has no tool either. Accounts, login links, devices and
+invite links are in mcp_tools_accounts.py.
 
-After adding or changing a tool, run scripts/mcp_json.sh to rewrite
-config/mcp.json; the same test fails until it is current.
+After adding or changing a tool, run scripts/api_docs.sh to rewrite
+config/mcp.json and config/api.md; app/tests/test_api_docs.py fails until
+they are current.
 
 An app's own tools go in a new module in this package (mcp_tools_<feature>.py)
 with a register(registry) function called from build_registry below.
@@ -282,7 +285,7 @@ def build_registry() -> Registry:
         name="admin_revoke_access",
         route="POST /api/admin/users/{user_id}/revoke-access",
         title="Revoke a user's access (admin)",
-        description="For an account that may be compromised: ends every session and voids its live login link and every API key it holds, at once. The account stays enabled; someone with a browser session must issue a new login link to let its owner back in. The owner and your own account cannot be revoked.",
+        description="For an account that may be compromised: ends every session and voids its live login link and every API key it holds, at once. The account stays enabled; admin_reissue_login lets its owner back in. The owner and your own account cannot be revoked.",
         call=admin_revoke_access,
         input_schema=_schema({"user_id": USER_ID_SCHEMA}),
         destructive=True,
@@ -352,6 +355,10 @@ def build_registry() -> Registry:
         admin_only=True,
     ))
     # <<< feature:appearance
+    # Imported here: it builds on this module's helpers.
+    from app.routes import mcp_tools_accounts
+
+    mcp_tools_accounts.register(registry)
     # >>> feature:files
     file_id_only = _schema({"file_id": FILE_ID_SCHEMA})
     registry.register(Tool(

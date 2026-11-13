@@ -199,8 +199,10 @@ func ( handlers *Handlers ) SetPin( c fiber.Ctx ) ( err error ) {
 // has the same effect: any link the account could still use stops working,
 // and existing sessions stay signed in.
 //
-// Session only (see routes.go): a login link becomes a session, so an API
-// key that could call this could turn itself into one.
+// An API key may ask too, but only one that carries the account's full role:
+// the link becomes a session, and a session acts with the account's role, so
+// a key scoped down to "user" on an admin's account would otherwise climb.
+// Revoking the key voids the link while it can still be used.
 func ( handlers *Handlers ) CreateMyLoginLink( c fiber.Ctx ) ( err error ) {
 	var body loginLinkBody
 	if c.Bind().JSON( &body ) != nil {
@@ -211,15 +213,32 @@ func ( handlers *Handlers ) CreateMyLoginLink( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
-	options , ok := handlers.loginLinkOptions( c , body.LoginLinkRequest )
-	if ok == false { return }
-	credential , info , token_err := models.IssueLoginLink( handlers.Store , security.UserFrom( c ).ID , options )
+	payload , refused := handlers.createMyLoginLink( c , body.LoginLinkRequest )
+	if refused != nil {
+		err = refused.send( c )
+		return
+	}
+	err = c.JSON( payload )
+	return
+}
+
+// createMyLoginLink is CreateMyLoginLink after the request is read, for it
+// and the MCP create_my_login_link tool.
+func ( handlers *Handlers ) createMyLoginLink( c fiber.Ctx , request models.LoginLinkRequest ) ( payload fiber.Map , refused *refusal ) {
+	actor := security.ActorFrom( c )
+	if actor.ViaAPIKey() && actor.Role != actor.User.Role {
+		refused = refuse( fiber.StatusForbidden , "this key acts with less than your account's role, so it cannot make a login link" )
+		return
+	}
+	options , refused := handlers.loginLinkOptions( c , request )
+	if refused != nil { return }
+	credential , info , token_err := models.IssueLoginLink( handlers.Store , actor.User.ID , options )
 	if token_err != nil {
-		err = serverError( c , token_err )
+		refused = internalFailure( token_err )
 		return
 	}
 	handlers.audit( c , logs.KindAuth , "own login link created" , fiber.Map{ "max_uses": info.MaxUses , "expires_at": info.ExpiresAt } )
-	err = c.JSON( loginLinkResponse( credential , info ) )
+	payload = loginLinkResponse( credential , info )
 	return
 }
 
@@ -234,13 +253,25 @@ func ( handlers *Handlers ) CancelMyLoginLink( c fiber.Ctx ) ( err error ) {
 		err = forbidden( c , "invalid csrf token" )
 		return
 	}
+	payload , refused := handlers.cancelMyLoginLink( c )
+	if refused != nil {
+		err = refused.send( c )
+		return
+	}
+	err = c.JSON( payload )
+	return
+}
+
+// cancelMyLoginLink is CancelMyLoginLink after the request is read, for it
+// and the MCP cancel_my_login_link tool.
+func ( handlers *Handlers ) cancelMyLoginLink( c fiber.Ctx ) ( payload fiber.Map , refused *refusal ) {
 	removed , cancel_err := models.CancelLoginLink( handlers.Store , security.UserFrom( c ).ID )
 	if cancel_err != nil {
-		err = serverError( c , cancel_err )
+		refused = internalFailure( cancel_err )
 		return
 	}
 	handlers.audit( c , logs.KindAuth , "own login link cancelled" , fiber.Map{ "removed": removed } )
-	err = c.JSON( fiber.Map{ "ok": true , "removed": removed } )
+	payload = fiber.Map{ "ok": true , "removed": removed }
 	return
 }
 

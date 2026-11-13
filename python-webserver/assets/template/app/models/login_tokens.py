@@ -48,6 +48,10 @@ class LoginToken:
     max_uses: int = 1
     unlimited: bool = False
     uses: int = 0
+    # The API key that asked for this link, "" when a person did. Revoking or
+    # deleting that key voids the link while it can still be used
+    # (void_links_minted_by_key).
+    minted_by_key: str = ""
 
     def used_up(self) -> bool:
         return not self.unlimited and self.uses >= self.max_uses
@@ -79,6 +83,7 @@ class LoginToken:
             "max_uses": self.max_uses,
             "unlimited": self.unlimited,
             "uses": self.uses,
+            "minted_by_key": self.minted_by_key,
         }
 
     @classmethod
@@ -94,6 +99,7 @@ class LoginToken:
             max_uses=max(1, record.get("max_uses") or 1),
             unlimited=bool(record.get("unlimited")),
             uses=uses,
+            minted_by_key=record.get("minted_by_key") or "",
         )
 
 
@@ -105,6 +111,8 @@ class LinkOptions:
     max_uses: int = 1
     unlimited: bool = False
     ttl_seconds: int = 0
+    # The id of the API key asking, if one is. See LoginToken.minted_by_key.
+    minted_by_key: str = ""
 
     def valid(self) -> bool:
         uses_ok = self.unlimited or 1 <= self.max_uses <= LOGIN_LINK_MAX_USES
@@ -230,6 +238,7 @@ def issue_login_link(store: Store, user_id: int, options: LinkOptions) -> tuple[
         expires_at=now + timedelta(seconds=options.ttl_seconds) if options.ttl_seconds > 0 else None,
         max_uses=1 if options.unlimited else options.max_uses,
         unlimited=options.unlimited,
+        minted_by_key=options.minted_by_key,
     )
     with store.transaction() as tx:
         if tx.get(BUCKET_USERS, user_id) is None:
@@ -319,6 +328,27 @@ def delete_pending_login_tokens(tx: Transaction, user_id: int) -> int:
         BUCKET_LOGIN_TOKENS,
         lambda _key, record: record["user_id"] == user_id and LoginToken.from_record(record).usable(),
     )
+
+
+def void_links_minted_by_key(tx: Transaction, key_id: str) -> int:
+    """What keeps revoking a key meaningful now that a key may hand out login
+    links and invite links: inside the caller's transaction (the one revoking
+    or deleting the key), every login link the key made that could still sign
+    someone in is deleted, and every invite link it made is switched off.
+    Sessions already made through them stay; they show in the devices list.
+    Restoring a deleted key does not bring the links back."""
+    if not key_id:
+        return 0
+    voided = tx.delete_where(
+        BUCKET_LOGIN_TOKENS,
+        lambda _key, record: record.get("minted_by_key") == key_id and LoginToken.from_record(record).usable(),
+    )
+    # >>> feature:invite_links
+    from app.models import invite_links
+
+    voided += invite_links.revoke_invite_links_minted_by_key(tx, key_id)
+    # <<< feature:invite_links
+    return voided
 
 
 def delete_login_tokens_for_user(tx: Transaction, user_id: int) -> int:

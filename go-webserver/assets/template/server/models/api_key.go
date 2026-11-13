@@ -406,17 +406,22 @@ func CountLiveAPIKeysForUser( store *db.Store , user_id uint64 ) ( count int , e
 //
 // The row is marked rather than deleted so that a listing can still show the
 // key existed and when it died. The `purge` job removes it later.
+//
+// In the same transaction it voids the login links and invite links the key
+// made that could still be used (VoidLinksMintedByKeyTx), so a leaked key
+// cannot leave a way in behind it.
 func RevokeAPIKey( store *db.Store , key_id string ) ( err error ) {
-	err = store.UpdateValue( db.BucketAPIKeys , []byte( key_id ) ,
-		func() any { return &APIKey{} } ,
-		func( item any ) ( mutate_err error ) {
-			key := item.( *APIKey )
-			if key.RevokedAt == nil {
-				now := time.Now().UTC()
-				key.RevokedAt = &now
-			}
-			return
-		} )
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		key := &APIKey{}
+		if tx_err = tx.Get( db.BucketAPIKeys , []byte( key_id ) , key ); tx_err != nil { return }
+		if key.RevokedAt == nil {
+			now := time.Now().UTC()
+			key.RevokedAt = &now
+			if tx_err = tx.Put( db.BucketAPIKeys , []byte( key_id ) , key ); tx_err != nil { return }
+		}
+		_ , tx_err = VoidLinksMintedByKeyTx( tx , key_id )
+		return
+	} )
 	return
 }
 
@@ -507,15 +512,21 @@ func SetAPIKeyExpiry( store *db.Store , key_id string , actor_id uint64 , ttl ti
 // which the purge removes it. Revoke is the one-way switch for a key that
 // may have leaked; delete is tidying up, and tidying up the wrong row is the
 // mistake an undo exists for. The routes decide who may ask.
+//
+// Like revoking, it voids the links the key made (VoidLinksMintedByKeyTx);
+// restoring the key does not bring them back.
 func DeleteAPIKey( store *db.Store , key_id string , actor_id uint64 ) ( err error ) {
-	err = store.UpdateValue( db.BucketAPIKeys , []byte( key_id ) ,
-		func() any { return &APIKey{} } ,
-		func( item any ) ( mutate_err error ) {
-			if item.( *APIKey ).markDeleted( actor_id ) == false {
-				mutate_err = db.ErrNotFound
-			}
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		key := &APIKey{}
+		if tx_err = tx.Get( db.BucketAPIKeys , []byte( key_id ) , key ); tx_err != nil { return }
+		if key.markDeleted( actor_id ) == false {
+			tx_err = db.ErrNotFound
 			return
-		} )
+		}
+		if tx_err = tx.Put( db.BucketAPIKeys , []byte( key_id ) , key ); tx_err != nil { return }
+		_ , tx_err = VoidLinksMintedByKeyTx( tx , key_id )
+		return
+	} )
 	return
 }
 

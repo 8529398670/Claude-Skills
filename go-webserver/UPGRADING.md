@@ -3,6 +3,175 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After d943458
+
+**Upgrade `bootstrap-grid`: layout is Bootstrap's grid, mobile first, and a test keeps it that way.**
+Marks: `aside-sticky`, `phone-only`, `server/static/frontend_rules_test.go`
+
+The hand-written CSS grids are gone; every side-by-side layout is a Bootstrap
+`.row`. Media queries only add from a breakpoint up, except the stacked phone
+tables, now marked `phone-only`. Files puts Upload above its table instead of
+beside it, so the table gets the width. A new test fails on a `max-width` query
+without `phone-only`, a `grid-template-columns` outside the log calendar, the
+theme preview and the shortcut list, or a table not right inside a
+`.table-responsive`. An app with its own screens should run the test after
+taking this and fix what it reports the same way.
+
+- `static/css/style.css`:
+  - The touch block is mobile first: `.btn-sm` and `.dropdown-item` get the
+    44px floor as the base, and `@media (min-width: 576px) and (pointer: fine)`
+    sets them back to `display: inline-block` / `block` with `min-height: 0`
+    (and `min-width: 0` on `.btn-sm`). This replaces
+    `@media (pointer: coarse), (max-width: 575.98px)`.
+  - `.about-facts` (and its `feature:about` markers), `.view-cards`,
+    `.card-span`, `.view-split`, `.view-aside`, `.mcp-clients`,
+    `.theme-layout`, `.theme-edit-body` / `-aside` / `-main`, `.theme-list`,
+    `.theme-colors`, `.theme-choices`, `.theme-choice` and `.settings-label`'s
+    own flex rule are removed. In their place, after `.view .card-title`'s
+    measure rules: `@media (min-width: 1400px) { .aside-sticky { position:
+    sticky; top: calc(var(--app-navbar-height) + 1rem); } }`.
+  - The scroll margin rule is `.view .card { scroll-margin-top: ... }`.
+  - The stacked phone tables comment gains a `phone-only:` paragraph; the query
+    itself is unchanged.
+- `static/index.html`:
+  - Files: the `.view-split` div and the `view-aside` class go; Upload is a
+    plain card above the Files card, its contents after the `h3` wrapped in
+    `<div class="row"><div class="col-md-8 col-xl-6">` so the picker does not
+    stretch across the card.
+  - About: `<dl class="row mb-0">`, each `dt` `col-sm-4 col-lg-3`, each `dd`
+    `col-sm-8 col-lg-9 text-break`.
+  - MCP: `#mcp-clients` is `class="d-flex flex-wrap gap-2"`.
+- `static/js/themes_editor.js`: a `colorGrid` constant (`row row-cols-1
+  row-cols-sm-2 row-cols-xxl-3 g-3`) is the class of the base, fine and button
+  color groups, the button colors wrapped in a `div.mt-3`; the editor body is
+  `row g-4 align-items-start` with the aside `col-12 col-xxl-4 order-xxl-last
+  aside-sticky` and the main `col-12 col-xxl-8`; the theme list and the editor
+  are `row g-3 align-items-start` with `col-12 col-md-4 col-xxl-3` and `col-12
+  col-md-8 col-xxl-9`; the theme list is `d-flex flex-column gap-1`, the
+  choices `d-flex flex-wrap row-gap-2 column-gap-4`, each choice `d-flex
+  flex-column gap-1`.
+- `static/js/settings.js`: the setting label is `form-label settings-label
+  d-flex flex-wrap align-items-center gap-2`.
+- `server/static/frontend_rules_test.go`: new, copied whole.
+- `references/frontend.md` (skill only): new "Hard rules" section; Desktop
+  layout and CSS structure rewritten in Bootstrap's terms.
+
+**Test:** the new test passes. At 375px every screen is one column with no
+sideways scroll; tables stack as cards. At 1440px Files shows Upload above a
+full-width table; Appearance shows the theme list beside the editor, and from
+1400px the preview to the right of the colors, staying in view while they
+scroll. About lines its facts up in two columns from 576px.
+
+**The API reference is written from the code: `config/openapi.json`, `config/mcp.json` and a new `config/api.md`.**
+
+Nothing in `config/` is edited by hand any more. Each handler declares its docs
+once with `apidoc.Doc` in a `server/routes/<area>_api.go` beside it, with Go
+types for its body and reply; `scripts/api_docs.sh` writes the three files. The
+template's `openapi.json` is the old one regenerated: same content, keys sorted,
+`required` lists sorted, nullable numbers as `"type": [T, "null"]`, and
+`x-feature` kept on paths. A few things the old file had wrong are fixed: `Me`
+gains `files_enabled`, `invite_links_enabled` and `webhooks_enabled`; `Session`
+gains `label` and `ip_name`; `SettingsResult`'s lists may be null.
+
+- `server/apidoc/` (apidoc.go, schema.go, encode.go, markdown.go, check.go): new, copied whole.
+- `server/routes/*_api.go` (23 files, one per area, `schemas_api.go` for the
+  shared shapes): new, copied whole. An app's own routes need a Doc too.
+- `server/routes/api_docs_test.go`: new. Holds `newParityFixture` (moved from
+  `mcp_parity_test.go`), `TestEveryRouteIsDocumented`, `TestAPIDocsAreCurrent`
+  with the `-update` flag, and `checkReplies`.
+- `server/routes/mcp_parity_test.go`: `specOperations` builds the spec from the
+  code; the `-update` flag, `TestMCPManifestIsCurrent` and `newParityFixture`
+  move out; `mcpManifest` encodes with `apidoc.Encode`.
+- `server/routes/openapi_test.go`: the route-table test goes (replaced above).
+- `fixture_test.go`, `monitoring_test.go`, `mcp_test.go`, `settings_test.go`:
+  `app.Use( checkReplies( t ) )` before the routes, so every 2xx JSON reply is
+  checked against its docs.
+- `scripts/api_docs.sh`: new. `scripts/mcp_json.sh`: removed.
+- `config/api.md`: new, generated. `config/openapi.json`, `config/mcp.json`: regenerated.
+- Comments naming `mcp_json.sh` or a hand-written spec: `main.go`,
+  `server/routes/openapi.go`, `mcp_manifest.go`, `mcp_tools.go`, `server/mcp/registry.go`.
+
+An app with routes of its own: `TestEveryRouteIsDocumented` names each one
+without docs. Write their Docs from the app's old `openapi.json` entries (same
+summary, fields and limits), run `scripts/api_docs.sh`, and compare the new
+spec with the old.
+
+**Test:** `scripts/api_docs.sh`, then `go test ./...` passes, and a second
+`scripts/api_docs.sh` changes nothing.
+
+**Upgrade `keys-manage-accounts`: API keys and MCP agents can make accounts, login links and invite links, and sign devices out; revoking a key voids the links it made.**
+Marks: `VoidLinksMintedByKeyTx`, `minted_by_key`, `server/routes/mcp_tools_accounts.go`
+
+`RequireSession` comes off the account, login-link, device and invite-link
+routes, so an admin key (and the matching MCP tools) can create, rename,
+re-role and delete accounts, reset two-factor, hand out and cancel login links,
+manage invite links, and list or end an account's sessions; any key can list
+and end its own sessions and make its own account a login link. Key
+management, your own password/PIN/two-factor, other people's files and the
+owner's screens stay browser-only. Two rules keep it contained: a key whose
+role is below its account's may not make its own login link, and every login
+link and invite link records the key that made it (an invite link a key grows,
+switches on or restores becomes that key's), so revoking or deleting the key
+voids the ones still usable. The MCP login-link tools answer with a full
+`login_url`; the HTTP routes still answer with `login_path`.
+
+- `server/models/login_token.go`: `LoginToken.MintedByKey` and
+  `LoginLinkOptions.MintedByKey` (`json:"minted_by_key,omitempty"`), stored by
+  `IssueLoginLink`; new `VoidLinksMintedByKeyTx( tx , key_id )` before
+  `deleteLoginTokensForUser`, its invite-link half in a `feature:invite_links`
+  block.
+- `server/models/invite_link.go`: `InviteLink.MintedByKey`; `IssueInviteLink`
+  gains a last `minted_by_key string` argument (`IssueInviteLinkAs` passes
+  `""`); `SetInviteLinkLimits`, `SwitchOnInviteLink` and `RestoreInviteLink`
+  gain a last `minted_by_key` and set it when non-empty; new
+  `revokeInviteLinksMintedByKeyTx`. Update the app's own callers and tests.
+- `server/models/api_key.go`: `RevokeAPIKey` and `DeleteAPIKey` run in
+  `store.Write` and call `VoidLinksMintedByKeyTx` in the same transaction.
+- `server/security/security.go`: new `Actor.KeyID()`; `RequireSession`'s
+  comment rewritten.
+- `server/routes/routes.go`: `handlers.Guard.RequireSession` removed from
+  `/account/login-link`, the four `/account/sessions` routes, `/users`,
+  `reissue-login`, `rename`, `role`, `delete`, `reset-two-factor`, the two
+  admin `sessions` routes and the six invite-link routes; their comments
+  rewritten.
+- `server/routes/admin.go`, `account.go`, `sessions.go`, `invite_links.go`:
+  each of those handlers keeps only reading the request and calls a new
+  lower-case helper returning `( fiber.Map , *refusal )` (`createUser`,
+  `reissueLogin`, `cancelLoginLink`, `renameUser`, `setUserRole`,
+  `resetTwoFactor`, `deleteUser`, `createMyLoginLink`, `cancelMyLoginLink`,
+  `mySessionRows`, `userSessionRows`, `labelMySession`, `revokeMySession`,
+  `revokeMyOtherSessions`, `revokeUserSession`, `createInviteLink`,
+  `renameInviteLink`, `setInviteLinkLimits`, `switchOnInviteLink`,
+  `deleteInviteLink`, `restoreInviteLink`). `loginLinkOptions` returns a
+  `*refusal` and sets `MintedByKey` from `actor.KeyID()`. `createMyLoginLink`
+  refuses a key whose `actor.Role != actor.User.Role`. `sessionsTarget` takes
+  the user id and returns `( by_owner , refused )`; a new `currentSessionID( c )`
+  is `""` through a key, so no row is current and revoke-others ends them all.
+- `server/routes/mcp_tools_accounts.go`: new, copied whole; `mcp_tools.go`
+  calls `handlers.registerAccountTools( server )` before
+  `registerFileTools`, and its header and `admin_revoke_access`'s description
+  change.
+- `server/routes/*_api.go`: those routes lose `Access: apidoc.SessionOnly`;
+  `CancelMyLoginLink` and `CancelLoginLink` lose their `MCPHTTP`.
+- `server/mcp/registry.go`, `api_keys.go`: comments.
+- Tests: `fixture_test.go` gains `withKey` and `loginWith`;
+  `TestAnAdminKeyCannotChangeAnAccount`, `TestAKeyCannotReopenOrGrowAnInviteLink`,
+  `TestAnAPIKeyCannotManageDevices` and `TestAKeyCannotNameADevice` are
+  replaced by tests that the key can, plus `TestOnlyAFullRoleKeyMakesItsOwnLoginLink`,
+  `TestRevokingAKeyVoidsTheLinksItMade`,
+  `TestDeletingAKeySwitchesOffTheInviteLinksItMade` and `TestMCPAccountTools`.
+  An app with its own tests that expect 403 from these routes for a key flips
+  them.
+- `config/`: run `scripts/api_docs.sh`.
+- `SKILL.md`, `references/architecture.md` (skill only): "Why a key cannot
+  create credentials" becomes "Keys and the ways in they hand out".
+
+**Test:** `go test ./...` passes. With an admin key, `POST /api/admin/users`
+answers 201 and its `login_path` signs in; revoking the key, a second such link
+no longer does. The admin's user-scoped key gets 403 from
+`POST /api/account/login-link`. Over `/mcp`, `admin_create_user` answers with a
+`login_url`.
+
 ## After 2028ee4
 
 The Claude Code command on the MCP card now adds the server with `--scope user`,

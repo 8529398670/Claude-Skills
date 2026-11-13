@@ -527,6 +527,9 @@ api_keys:
   # app.repo, or this server's own copy.
   spec_text: "What a key can call:"
   spec_link: "API reference (openapi.json)"
+  # Beside it when app.repo is set: the same reference as tables, config/api.md,
+  # which the repository's site shows as a readable page.
+  doc_link: "readable version (api.md)"
   # <<< feature:openapi
   days_label: "Expires in (days)"
   days_placeholder: "leave blank for the default, 0 for never"

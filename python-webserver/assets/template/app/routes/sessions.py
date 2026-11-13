@@ -1,7 +1,7 @@
 # whole-file feature:sessions
 """A person's own sessions: which devices are signed in, and signing them out
-(app/models/sessions.py). A session is required, so an API key gets 403, and
-every id is checked against the account asking: someone else's session and one
+(app/models/sessions.py). An API key may do it too; it has no device of its
+own, so nothing is current and revoke-others ends them all. Every id is checked against the account asking: someone else's session and one
 that does not exist get the same 404. Ending the session in use is what signing
 out is for.
 """
@@ -17,7 +17,7 @@ from app.core.logs import KIND_ADMIN, KIND_AUTH
 from app.core.security import actor_from, check_csrf
 from app.models import sessions, to_iso, users
 from app.models import ip_names  # feature:logs
-from app.routes.helpers import bad_request, conflict, error, forbidden, get_store, not_found, parse_id, read_json, run, send_page
+from app.routes.helpers import Refused, bad_request, forbidden, get_store, parse_id, read_json, run, send_page
 from app.routes.logs import audit
 
 
@@ -41,22 +41,35 @@ def session_row(session: sessions.Session, current_id: str) -> dict[str, Any]:
     return row
 
 
+def current_session_id(request: Request) -> str:
+    """The session this request came with, or "" through an API key, which has
+    none: nothing in a list is then "current", and nothing is refused as "this
+    device"."""
+    session = actor_from(request).session
+    return session.id if session is not None else ""
+
+
 async def list_my_sessions(request: Request) -> Response:
+    return send_page(request, "sessions", await run(my_session_rows, request))
+
+
+def my_session_rows(request: Request) -> list[dict[str, Any]]:
+    """list_my_sessions' list, for it and the MCP list_my_sessions tool.
+    Synchronous: it runs in a worker thread."""
     store, actor = get_store(request), actor_from(request)
-    found = await run(sessions.list_sessions, store, actor.user.id)
-    rows = [session_row(session, actor.session.id) for session in found]
+    rows = [session_row(session, current_session_id(request)) for session in sessions.list_sessions(store, actor.user.id)]
     # >>> feature:logs
-    if actor.user.id == await run(users.get_owner_id, store):
-        await _name_rows(store, rows)
+    if actor.user.id == users.get_owner_id(store):
+        _name_rows(store, rows)
     # <<< feature:logs
-    return send_page(request, "sessions", rows)
+    return rows
 
 
 # >>> feature:logs
-async def _name_rows(store: Store, rows: list[dict[str, Any]]) -> None:
+def _name_rows(store: Store, rows: list[dict[str, Any]]) -> None:
     """Adds what the owner calls each address. Names are the owner's own notes
     about people, so they go to the owner and nobody else."""
-    namer = await run(ip_names.load_namer, store)
+    namer = ip_names.load_namer(store)
     for row in rows:
         name = namer(row.get("ip", ""))
         if name:
@@ -64,45 +77,45 @@ async def _name_rows(store: Store, rows: list[dict[str, Any]]) -> None:
 
 
 # <<< feature:logs
-def _target_of(store: Store, self_id: int, raw_id: str) -> tuple[int, bool] | Response:
-    """Whose sessions an admin route is asking about, and whether the owner is
-    asking. Nobody but the owner reaches the owner's, the same rule as revoking
-    the owner's access."""
-    user_id = parse_id(raw_id)
-    if user_id is None:
-        return bad_request("invalid user id")
+def _target_of(store: Store, self_id: int, user_id: int) -> bool:
+    """Whether the owner is asking about an account's sessions, raising
+    Refused when the account may not be reached. Nobody but the owner reaches
+    the owner's, the same rule as revoking the owner's access."""
     if users.get_user(store, user_id) is None:
-        return error(404, "no such user")
+        raise Refused(404, "no such user")
     owner_id = users.get_owner_id(store)
     by_owner = self_id == owner_id
     if user_id == owner_id and not by_owner:
-        return error(403, "the owner account's sessions are the owner's own")
-    return user_id, by_owner
+        raise Refused(403, "the owner account's sessions are the owner's own")
+    return by_owner
 
 
 async def list_user_sessions(request: Request) -> Response:
     """Where an account is signed in, for ending one device rather than
     everything with revoke-access. Addresses are for the owner only, as in the
     activity log, which keeps them from other admins too."""
-    store, actor = get_store(request), actor_from(request)
-    target = await run(_target_of, store, actor.user.id, request.path_params["user_id"])
-    if isinstance(target, Response):
-        return target
-    user_id, by_owner = target
-    rows = [session_row(session, actor.session.id) for session in await run(sessions.list_sessions, store, user_id)]
-    # >>> feature:logs
-    if by_owner:
-        await _name_rows(store, rows)
-    else:
-        for row in rows:
-            row.pop("ip", None)
-    # <<< feature:logs
-    # >>> feature:!logs
+    user_id = parse_id(request.path_params["user_id"])
+    if user_id is None:
+        return bad_request("invalid user id")
+    try:
+        rows = await run(user_session_rows, request, user_id)
+    except Refused as refused:
+        return refused.response(request)
+    return send_page(request, "sessions", rows)
+
+
+def user_session_rows(request: Request, user_id: int) -> list[dict[str, Any]]:
+    """list_user_sessions' list, for it and the MCP admin_list_user_sessions
+    tool."""
+    store = get_store(request)
+    by_owner = _target_of(store, actor_from(request).user.id, user_id)
+    rows = [session_row(session, current_session_id(request)) for session in sessions.list_sessions(store, user_id)]
     if not by_owner:
         for row in rows:
             row.pop("ip", None)
-    # <<< feature:!logs
-    return send_page(request, "sessions", rows)
+    if by_owner:  # feature:logs
+        _name_rows(store, rows)  # feature:logs
+    return rows
 
 
 async def revoke_user_session(request: Request) -> Response:
@@ -112,18 +125,26 @@ async def revoke_user_session(request: Request) -> Response:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    store, actor = get_store(request), actor_from(request)
-    target = await run(_target_of, store, actor.user.id, request.path_params["user_id"])
-    if isinstance(target, Response):
-        return target
-    user_id, _ = target
-    session_id = request.path_params["session_id"]
-    if session_id == actor.session.id:
-        return bad_request("use sign out for this device")
-    if not await run(sessions.revoke_session, store, user_id, session_id):
-        return not_found("not found")
+    user_id = parse_id(request.path_params["user_id"])
+    if user_id is None:
+        return bad_request("invalid user id")
+    try:
+        return JSONResponse(await run(revoke_user_session_checked, request, user_id, request.path_params["session_id"]))
+    except Refused as refused:
+        return refused.response(request)
+
+
+def revoke_user_session_checked(request: Request, user_id: int, session_id: str) -> dict[str, Any]:
+    """revoke_user_session after the request is read, for it and the MCP
+    admin_revoke_user_session tool."""
+    store = get_store(request)
+    _target_of(store, actor_from(request).user.id, user_id)
+    if session_id and session_id == current_session_id(request):
+        raise Refused(400, "use sign out for this device")
+    if not sessions.revoke_session(store, user_id, session_id):
+        raise Refused(404, "not found")
     audit(request, KIND_ADMIN, "session revoked", {"user_id": user_id})
-    return JSONResponse({"ok": True})
+    return {"ok": True}
 
 
 async def label_one(request: Request) -> Response:
@@ -135,46 +156,72 @@ async def label_one(request: Request) -> Response:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    label, expect = body.get("label"), body.get("expect")
-    if not sessions.valid_session_label(label):
-        return bad_request("a device name can be at most 80 characters")
-    if expect is not None and not isinstance(expect, str):
-        return bad_request("expect must be a string")
-    actor = actor_from(request)
     try:
-        found = await run(sessions.label_session, get_store(request), actor.user.id, request.path_params["session_id"], label, expect)
+        return JSONResponse(await run(label_one_checked, request, request.path_params["session_id"], body.get("label"), body.get("expect")))
+    except Refused as refused:
+        return refused.response(request)
+
+
+def label_one_checked(request: Request, session_id: str, label: Any, expect: Any) -> dict[str, Any]:
+    """label_one after the request is read, for it and the MCP label_my_session
+    tool."""
+    if not sessions.valid_session_label(label):
+        raise Refused(400, "a device name can be at most 80 characters")
+    if expect is not None and not isinstance(expect, str):
+        raise Refused(400, "expect must be a string")
+    try:
+        found = sessions.label_session(get_store(request), actor_from(request).user.id, session_id, label, expect)
     except users.RenameConflictError as stale:
-        return conflict(str(stale), label=stale.current)
+        raise Refused(409, str(stale), label=stale.current) from None
     if not found:
-        return not_found("not found")
+        raise Refused(404, "not found")
     # Not the label: it is the person's own words about where they are.
     audit(request, KIND_AUTH, "session_labelled", {})
-    return JSONResponse({"ok": True, "label": label.strip()})
+    return {"ok": True, "label": label.strip()}
 
 
 async def revoke_one(request: Request) -> Response:
+    """Sign out one other device. This device is refused: ending it here would
+    leave the browser holding a dead cookie, and signing out is what the
+    sign-out button is for. Through an API key there is no "this device", so
+    any of them may go."""
     body = await read_json(request)
     if body is None:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    actor = actor_from(request)
-    session_id = request.path_params["session_id"]
-    if session_id == actor.session.id:
-        return bad_request("use sign out for this device")
-    if not await run(sessions.revoke_session, get_store(request), actor.user.id, session_id):
-        return not_found("not found")
+    try:
+        return JSONResponse(await run(revoke_one_checked, request, request.path_params["session_id"]))
+    except Refused as refused:
+        return refused.response(request)
+
+
+def revoke_one_checked(request: Request, session_id: str) -> dict[str, Any]:
+    """revoke_one after the request is read, for it and the MCP
+    revoke_my_session tool."""
+    if session_id and session_id == current_session_id(request):
+        raise Refused(400, "use sign out for this device")
+    if not sessions.revoke_session(get_store(request), actor_from(request).user.id, session_id):
+        raise Refused(404, "not found")
     audit(request, KIND_AUTH, "session_revoked")
-    return JSONResponse({"ok": True})
+    return {"ok": True}
 
 
 async def revoke_others(request: Request) -> Response:
+    """The button for a lost phone or a shared computer: everything but this
+    device. Through an API key, which is no device, that is every session the
+    account has."""
     body = await read_json(request)
     if body is None:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    actor = actor_from(request)
-    removed = await run(sessions.revoke_other_sessions, get_store(request), actor.user.id, actor.session.id)
+    return JSONResponse(await run(revoke_others_checked, request))
+
+
+def revoke_others_checked(request: Request) -> dict[str, Any]:
+    """revoke_others after the request is read, for it and the MCP
+    revoke_my_other_sessions tool."""
+    removed = sessions.revoke_other_sessions(get_store(request), actor_from(request).user.id, current_session_id(request))
     audit(request, KIND_AUTH, "sessions_revoked", {"removed": removed})
-    return JSONResponse({"ok": True, "removed": removed})
+    return {"ok": True, "removed": removed}

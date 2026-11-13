@@ -21,7 +21,7 @@ when you are changing the template itself rather than building features on it.
 - [Paging lists](#paging-lists)
 - [Error pages](#error-pages)
 - [Maintenance mode](#maintenance-mode)
-- [The OpenAPI spec](#the-openapi-spec)
+- [The API reference](#the-api-reference)
 - [Webhooks](#webhooks)
 - [Stopping cleanly](#stopping-cleanly)
 - [File uploads](#file-uploads)
@@ -94,8 +94,10 @@ Anyone already signed in can also mint a fresh link for their own account
 from the account screen ("Sign in on another device",
 `POST /api/account/login-link`), which is how a second device gets in
 without an admin. It is a reissue pointed at yourself, so it behaves exactly
-like one, and like every route that hands out a login link it needs a
-browser session: an API key cannot call it.
+like one. An API key may call it too (and the `create_my_login_link` tool), but
+only a key that carries the account's full role: the link becomes a session at
+the account's role, so an admin's user-scoped key would otherwise climb. See
+[keys and the ways in they hand out](#keys-and-the-ways-in-they-hand-out).
 
 Four operations look alike and are not:
 
@@ -155,8 +157,8 @@ and checks the limits for every door, the CLI included.
 
 The account's live link shows on its row in Users (`login_link`: uses so far,
 limit, expiry, last use) and on its own Account screen (`/api/me`), each with a
-**Cancel link** button. Cancelling only takes the link away, so an admin API
-key may do it, like revoking access; making one still needs a browser session.
+**Cancel link** button. An API key may cancel and make links too; a link a
+key made dies with the key.
 
 A reusable link is a standing credential, the way a password is: anyone who
 holds it is that person until it runs out, expires or is cancelled. Prefer a
@@ -278,8 +280,8 @@ wins.
 | **Disable / revoke access** (any admin) | yes | yes | no | no |
 | **CLI** (the operator) | delete, disable, revoke | delete, disable, revoke | revoke only | -- |
 
-- **Renaming and roles follow the same table,** from the Users screen, with a
-  browser session. Only the owner renames an admin or takes an admin's rights
+- **Renaming and roles follow the same table,** from the Users screen, an
+  admin API key or the MCP tools. Only the owner renames an admin or takes an admin's rights
   away; nobody changes their own role, and the owner is always an admin. The one
   difference: any admin may make another, as any admin can create one.
 - **Becoming an admin ends the account's sessions and live login link.** Whoever
@@ -307,10 +309,10 @@ wins.
 - **Older databases** get an owner on the next boot (or the next `manage`
   command): the lowest-id enabled admin, which is the bootstrap admin on any
   database that started from first run. See `users.ensure_owner`.
-- **Deleting needs a browser session.** `POST /api/admin/users/{id}/delete`
-  is registered behind `RequireSession`, unlike disable and revoke access.
-  Those can be undone, so a leaked admin-scoped key may use them; deleting
-  cannot, so a key may not.
+- **An admin key may delete.** `POST /api/admin/users/{id}/delete` takes keys
+  like disable and revoke access, under the same owner rules. It cannot be
+  undone, so its MCP tool (`admin_delete_user`) is marked destructive and a
+  client asks before calling it; disable is the reversible version.
 - **Ids are never reused.** They come from the `sequences` table, so a
   deleted account's id cannot come back as a different person, and any stale
   reference to it stays a dangling id rather than a wrong one.
@@ -362,11 +364,12 @@ How it works:
   the link's row. Switching it off (`revoke`) keeps the row for the list;
   deleting removes it. Neither touches the accounts it made or their sessions
   -- disable or revoke those per account as usual.
-- **Creating a link, deleting one, and setting a PIN need a browser session.**
-  A link mints accounts and sessions, and a PIN lets its holder sign in through
-  a link, so an API key that could do either could turn itself into a session
-  -- the same rule as "a key never creates credentials". Listing links and
-  switching one off are fine for an admin key.
+- **Setting a PIN needs a browser session; managing links does not.** A PIN
+  is a credential of your own, like a password. An admin key may create,
+  rename, grow, switch on, delete and restore links; a link a key made, grew,
+  switched on or restored is that key's, and revoking or deleting the key
+  switches it off (see
+  [keys and the ways in they hand out](#keys-and-the-ways-in-they-hand-out)).
 
 The secret half is sha256-hashed, not bcrypt: it is 24 random bytes, not
 something a person chose, so there is nothing to slow down.
@@ -383,9 +386,8 @@ expired link can be extended and a switched-off one switched back on, because a
 link owns the accounts that joined through it and is how they sign back in on a
 new device, so a replacement would lock them out. Switching back on asks first,
 since the same link works again for anyone holding it. Places cannot drop below
-the people already in. All three need a browser session: more places is more
-accounts, so a leaked admin key must not be a way to reopen or grow a link.
-Neither edit helps a link whose maker has lost their admin rights.
+the people already in. An admin key may make all three edits, and the link then
+counts as that key's: revoking the key switches it off again. Neither edit helps a link whose maker has lost their admin rights.
 
 ## API keys: the same roles, for callers that are not browsers
 
@@ -437,31 +439,33 @@ is safe, but this one keeps the rule unambiguous: a request that arrives with
 ambient browser credentials is always held to the token check, and cannot opt
 out of it by also carrying a key.
 
-### Why a key cannot create credentials
+### Keys and the ways in they hand out
 
-`RequireSession` guards every route that creates a credential: creating,
-revoking, and deleting keys, creating an account, and reissuing a login link.
-Those need a browser session even with a correctly scoped admin key. Deleting
-an account needs one too, for a different reason -- it cannot be undone (see
-[the owner](#the-owner-and-deleting-accounts)).
+`RequireSession` guards what a key must not reach even with a correctly scoped
+admin key: creating, revoking and deleting keys, your own password, PIN and
+two-factor, other people's files, and the owner's screens.
 
-This is containment, not privilege. A key is a bearer credential that lives in
-a config file or a CI secret. If a leaked key could create another credential,
-revoking it would not end the compromise -- what it created while nobody was
-looking survives. Guarding only `/api/keys` is not enough: a login link
-becomes a session, and a session can mint keys, so an admin key that could
-reissue a link could turn itself into a fresh session and a fresh key.
-Requiring a session for all of them means every credential traces back to a
-person signing in (or an operator at a shell), and revoking a key actually
-revokes it.
+Accounts and sign-in are not on that list. An admin key may create and delete
+accounts, change roles, reset two-factor, hand out login links and invite links
+and sign devices out; any key may list and sign out its own account's devices
+and make that account a login link. That last one needs a key carrying the
+account's full role (`actor.role == actor.user.role`): the link becomes a
+session, and a session acts with the account's role, so an admin's user-scoped
+key would otherwise turn itself into an admin.
 
-What a leaked admin key can still do is everything else an admin can: list
-and disable accounts, revoke access -- but not delete accounts. That is why
-admin keys must be asked for.
+What keeps revoking a leaked key meaningful is provenance. Every login link and
+invite link records the key that made it (`minted_by_key`, from
+`actor.key_id`), and an invite link a key grows, switches on or restores
+becomes that key's too. Revoking or deleting the key runs
+`login_tokens.void_links_minted_by_key` in the same transaction: its login
+links that could still sign someone in are deleted and its invite links are
+switched off. Restoring a deleted key does not bring them back.
 
-Drop `RequireSession` from a route if an app genuinely needs to provision
-accounts or keys programmatically. Do it knowingly -- such a key can then mint
-its own successors -- and write it down in that app's docs.
+What that does not undo is a session already signed in through such a link,
+or what that session did since -- a key it minted, say. Those show in the
+account's devices list and the key list, and revoke access ends all of them at
+once. That is the trade for letting agents hand out ways in; keys themselves
+stay browser-only, so a key can never directly leave a successor behind.
 
 ### The rest of the model
 
@@ -607,15 +611,17 @@ It is the API keys in another shape, not a new way in:
   the key is never even told they exist.
 - **Every key route, and nothing more.** Whatever a person can do on a
   screen, a key can do over HTTP and an agent through `/mcp` -- except managing
-  users, keys and sign-in, and erasing anything for good. Those need a browser
-  session on the REST side for the reasons in
-  [Why a key cannot create credentials](#why-a-key-cannot-create-credentials),
+  API keys, your own password, PIN and two-factor, other people's files and the
+  owner's screens. Those need a browser session on the REST side (see
+  [Keys and the ways in they hand out](#keys-and-the-ways-in-they-hand-out)),
   and a tool is a key-authenticated route, so the same rule keeps them out.
+  Accounts, login links, devices and invite links have tools
+  (`app/routes/mcp_tools_accounts.py`).
   Everything else a key may call has a tool naming its route, or an
-  `x-mcp-http` reason in `config/openapi.json` for staying HTTP only (logout,
+  `mcp_http` reason in its `doc()` for staying HTTP only (logout,
   the references themselves, `/metrics`, the browser's own activity reports,
   and file bytes). `app/tests/test_mcp_parity.py` holds the two lists together, and calls every route
-  with an admin key to check the spec's `security` against the guards.
+  with an admin key to check the docs' `security` against the guards.
 - **File bytes travel over HTTP.** An MCP message is JSON, and clients cap its
   size, so `files_start_upload` reserves the file and answers `chunk_url`, the
   piece size and a `curl` recipe; the agent POSTs each piece to
@@ -647,12 +653,12 @@ registered.
 
 `config/mcp.json` is what `tools/list` says for every tool and any key, plus the
 route each one stands for and the `http_only` routes with their reasons. It is
-generated, not written: `scripts/mcp_json.sh` rebuilds it from the registered
+generated, not written: `scripts/api_docs.sh` rebuilds it from the registered
 tools, and a test fails while the committed copy is stale, so it can be linked
 from GitHub (the MCP card's "MCP reference" link goes to `<app.repo>/blob/HEAD/config/mcp.json`,
 or to `GET /api/mcp.json` when `app.repo` is empty) and still be right. It names
 no features: scaffolding cuts a pruned feature's tools out by their route's
-`x-feature` in the template's `openapi.json`. The Go and Python templates write
+`x-feature` in `openapi.json`. See [The API reference](#the-api-reference). The Go and Python templates write
 it byte for byte the same.
 
 ### Where the MCP code is
@@ -662,7 +668,7 @@ it byte for byte the same.
 | JSON-RPC, version negotiation, the transport rules | `app/mcp/protocol.py` |
 | `Tool`, `Call.bind`, `Refusal`, role filtering | `app/mcp/registry.py` |
 | The built-in tools | `app/routes/mcp_tools.py` |
-| config/mcp.json | `app/mcp/manifest.py`, `scripts/mcp_json.sh` |
+| config/mcp.json | `app/mcp/manifest.py`, `app/apidocs/generate.py`, `scripts/api_docs.sh` |
 | The parity tests | `app/tests/test_mcp_parity.py` |
 | The guard | `RequireAPIKey` in `app/core/security.py` |
 
@@ -805,8 +811,10 @@ file does not have; the next start creates it.
 ## Sessions: seeing and ending your own
 
 The Account screen lists an account's own sessions and can end the others
-(`app/routes/sessions.py`, `static/js/sessions.js`). A browser session is
-required, so an API key gets 403.
+(`app/routes/sessions.py`, `static/js/sessions.js`). A key may do it too
+(`list_my_sessions`, `revoke_my_session`, `revoke_my_other_sessions`). A key has
+no device of its own, so nothing in its list is current and revoke-others
+signs every browser out.
 
 A session record gains three optional fields, read with `.get` so older
 records need no migration: `ip`, `user_agent` (cut to 256 characters) and
@@ -1045,23 +1053,39 @@ State these to the user:
 
 The rules are in `app/core/maintenance.py`, and the check is in `app/core/maintenance.py`.
 
-## The OpenAPI spec
+## The API reference
 
-`config/openapi.json` is OpenAPI 3.1, written by hand so it can say what each
-route takes and returns, which a route table cannot. `GET /api/openapi.json`
-serves it to any signed-in caller, session or key: it maps the admin surface,
-and nobody who cannot sign in has a use for it. `x-required-role` on an
-operation says when it needs an admin or the owner.
+The API reference is three files, all written from the code and committed:
+`config/openapi.json` (OpenAPI 3.1), `config/mcp.json` (the MCP tools, see
+[above](#configmcpjson-the-mcp-reference)) and `config/api.md`, the same
+again as tables a person reads. Nobody edits them by hand. `GET /api/openapi.json`
+serves the spec to any signed-in caller, session or key: it maps the admin
+surface, and nobody who cannot sign in has a use for it.
 
-Hand-written files drift, so `app/tests/test_openapi.py` compares it to the
-route table in both directions and names each route that differs. The pages at
-`/login/*` and `/join/*` and the catch-alls are the only routes left out. Add an
-app's own routes to the same file.
+**Where the docs live.** Every route's handler declares its docs once, in
+`app/routes/<area>_api.py` next to the handler's own file: `doc(account.create_my_login_link, summary=..., tag=..., ...)` with a summary, a tag, who may
+call it, and TypedDicts for its body and reply. A key is required unless `NotRequired[...]`; `Annotated[T, Field(...)]` carries the details: `doc`, `enum`, `format`, `minimum`/`maximum`, `min_length`/`max_length`, `default`, `example` and `nullable`. `T | None` may be null; `@schema(name=...)` makes a named schema, `@schema(doc=...)` a description, `one_of(name, A, B)` a union, and inheriting a named TypedDict makes allOf. `app/apidocs/schema.py` has the full list.
 
-`security` says who may call an operation: `apiKey` listed means a key may, and
-a test calls every route with a key to check that the guards agree. An
-operation a key may call either has an MCP tool or carries `"x-mcp-http"`, one
-line on why it stays HTTP only (see [MCP](#mcp-the-api-keys-for-agents)).
+**How it is built.** `apidocs.build` (`app/apidocs`) walks the route table the app really
+registers and pairs each route with its handler's docs, so paths and methods
+come from the code that serves them. The pages at `/login/*` and `/join/*` and
+the catch-alls are the only routes left out. `operationId`, path parameters and
+the shared error replies are worked out; everything else comes from the docs.
+The Go and Python templates write all three files byte for byte the same.
+
+**Who may call.** `access` (the default is anyone signed in; `PUBLIC`, `SESSION_ONLY` or `KEY_ONLY` otherwise) and `role` (`ADMIN`, `OWNER`) become `security` and `x-required-role`. A test
+(`test_mcp_parity.py`) calls every route with an admin key to check that the guards agree.
+A route a key may call either has an MCP tool or a `mcp_http` reason, one line
+on why it stays HTTP only (see [MCP](#mcp-the-api-keys-for-agents)). `feature`
+becomes `x-feature` on the path, which scaffolding reads to cut a part out.
+
+**What keeps it honest.** `app/tests/test_api_docs.py`: `test_every_route_is_documented` fails while a route has no doc, a doc has no route, or a handler is a lambda; `test_the_api_docs_are_current` fails while a committed file differs from what the code says (`scripts/api_docs.sh`, which is `python -m app.apidocs`, rewrites them, needing nothing but the app's requirements). And `RoutesTestCase.check_reply` holds each 2xx JSON reply a route test gets against the documented schema, so a field the docs promise but a handler leaves out, or one it sends that the docs never mention, fails whichever test saw it.
+
+**Scaffolding.** The template ships the three files for a project with every
+part. A project scaffolded without some parts runs `scripts/api_docs.sh` once,
+and its tests say so until it has. A maintainer who changes the template's docs
+runs `scripts/refresh_api_docs.py` in the skill, which scaffolds a full project
+and copies its files back; `check_features.py` fails while they are stale.
 
 ## Webhooks
 

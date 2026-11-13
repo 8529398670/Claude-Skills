@@ -173,19 +173,31 @@ async def create_my_login_link(request: Request) -> Response:
     has the same effect: any link the account could still use stops working,
     and existing sessions stay signed in.
 
-    Session only (see routes/__init__.py): a login link becomes a session, so
-    an API key that could call this could turn itself into one."""
+    An API key may ask too, but only one that carries the account's full
+    role: the link becomes a session, and a session acts with the account's
+    role, so a key scoped down to "user" on an admin's account would otherwise
+    climb. Revoking the key voids the link while it can still be used."""
     body = await read_json(request)
     if body is None:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
+    try:
+        return JSONResponse(await run(create_my_login_link_checked, request, body))
+    except Refused as refused:
+        return refused.response(request)
+
+
+def create_my_login_link_checked(request: Request, body: dict) -> dict[str, Any]:
+    """create_my_login_link after the request is read, for it and the MCP
+    create_my_login_link tool. Synchronous: it runs in a worker thread."""
+    actor = actor_from(request)
+    if actor.via_api_key and actor.role != actor.user.role:
+        raise Refused(403, "this key acts with less than your account's role, so it cannot make a login link")
     options = link_options(request, body)
-    if options is None:
-        return bad_request(str(login_tokens.BadLoginLinkError()))
-    credential, info = await run(login_tokens.issue_login_link, get_store(request), actor_from(request).user.id, options)
+    credential, info = login_tokens.issue_login_link(get_store(request), actor.user.id, options)
     audit(request, KIND_AUTH, "own login link created", {"max_uses": info["max_uses"], "expires_at": info["expires_at"]})
-    return JSONResponse(link_response(credential, info))
+    return link_response(credential, info)
 
 
 async def cancel_my_login_link(request: Request) -> Response:
@@ -195,9 +207,15 @@ async def cancel_my_login_link(request: Request) -> Response:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    removed = await run(login_tokens.cancel_login_link, get_store(request), actor_from(request).user.id)
+    return JSONResponse(await run(cancel_my_login_link_checked, request))
+
+
+def cancel_my_login_link_checked(request: Request) -> dict[str, Any]:
+    """cancel_my_login_link after the request is read, for it and the MCP
+    cancel_my_login_link tool."""
+    removed = login_tokens.cancel_login_link(get_store(request), actor_from(request).user.id)
     audit(request, KIND_AUTH, "own login link cancelled", {"removed": removed})
-    return JSONResponse({"ok": True, "removed": removed})
+    return {"ok": True, "removed": removed}
 
 
 async def logout(request: Request) -> Response:

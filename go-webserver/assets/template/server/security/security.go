@@ -60,6 +60,14 @@ func ( actor *Actor ) ViaAPIKey() ( result bool ) {
 	return
 }
 
+// KeyID is the id of the API key this request came with, or "" for a browser
+// session. A login link or invite link a key makes records it, so revoking the
+// key voids them (see models.VoidLinksMintedByKeyTx).
+func ( actor *Actor ) KeyID() ( result string ) {
+	if actor.APIKey != nil { result = actor.APIKey.ID } // feature:api_keys
+	return
+}
+
 func ( actor *Actor ) Method() ( result string ) {
 	result = MethodSession
 	// >>> feature:api_keys
@@ -244,25 +252,23 @@ func ( guard *Guard ) RequireAdmin( c fiber.Ctx ) ( err error ) {
 }
 
 // RequireSession refuses a request that authenticated with an API key, even a
-// correctly scoped one. It guards every route that creates a credential:
-// minting and revoking API keys, creating an account, and reissuing a login
-// link (see routes.go).
+// correctly scoped one. It guards what a key must not reach (see routes.go):
+// minting, renaming and revoking API keys, your own password, PIN and
+// two-factor, other people's files, and the owner's screens.
 //
-// The reasoning is containment rather than privilege. A key is a bearer
-// credential that lives in a config file or a CI secret; if a leaked key could
-// create another credential -- a key directly, or a login link that becomes a
-// session that mints a key -- revoking it would not end the compromise,
-// because what it created while you were not looking survives. Requiring a
-// browser session for all of these means every credential traces back to a
-// person signing in, and revoking a key actually revokes it.
+// Accounts and ways in are not on that list. An admin key may create and
+// delete accounts, change roles and hand out login links and invite links,
+// and any key may make its own account a login link -- so long as it carries
+// the account's full role, since the session the link becomes does. What keeps
+// revoking a leaked key meaningful is that every link records the key that
+// made it, and revoking or deleting the key voids those still usable
+// (models.VoidLinksMintedByKeyTx). What it does not undo is a session already
+// signed in through such a link, or anything that session did since: those
+// show in the devices list and the key list, and admin_revoke_access ends
+// them.
 //
-// What a leaked admin-scoped key can still do is everything else an admin
-// can: list and disable accounts, revoke access. That is why admin keys have
-// to be asked for, and why the admin key list exists.
-//
-// Drop this from a route if an app genuinely needs to provision accounts or
-// keys programmatically -- but do it knowingly: such a key can then mint its
-// own successors, and that app's docs should say so.
+// Keys themselves stay browser-only: a key that could mint a key would leave
+// a successor behind with nothing to tie it to the one revoked.
 func ( guard *Guard ) RequireSession( c fiber.Ctx ) ( err error ) {
 	actor := ActorFrom( c )
 	if actor == nil {

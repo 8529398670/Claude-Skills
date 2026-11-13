@@ -15,7 +15,7 @@ import (
 // inviteLink is a link for ten people with a day to run, and its credential.
 func inviteLink( t *testing.T , fixture *authFixture ) ( credential string , link *models.InviteLink ) {
 	t.Helper()
-	credential , link , err := models.IssueInviteLink( fixture.store , "Book club" , 10 , 24 * time.Hour , fixture.owner.ID )
+	credential , link , err := models.IssueInviteLink( fixture.store , "Book club" , 10 , 24 * time.Hour , fixture.owner.ID , "" )
 	if err != nil { t.Fatal( err ) }
 	return
 }
@@ -74,7 +74,7 @@ func TestChangingAnInviteLinksLimits( t *testing.T ) {
 func TestAnExpiredInviteLinkCanBeExtended( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	owner := fixture.signIn( t , fixture.owner.ID )
-	credential , link , err := models.IssueInviteLink( fixture.store , "Old" , 5 , time.Nanosecond , fixture.owner.ID )
+	credential , link , err := models.IssueInviteLink( fixture.store , "Old" , 5 , time.Nanosecond , fixture.owner.ID , "" )
 	if err != nil { t.Fatal( err ) }
 	time.Sleep( time.Millisecond )
 	if _ , err = models.LoadInviteLink( fixture.store , credential ); err == nil { t.Fatal( "expired link loaded" ) }
@@ -104,21 +104,35 @@ func TestSwitchingAnInviteLinkBackOn( t *testing.T ) {
 }
 
 // >>> feature:api_keys
-func TestAKeyCannotReopenOrGrowAnInviteLink( t *testing.T ) {
+func TestAKeyThatReopensOrGrowsAnInviteLinkOwnsIt( t *testing.T ) {
 	fixture := newAuthFixture( t )
-	credential , _ , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "script" , models.RoleAdmin , time.Hour )
+	credential , record , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "script" , models.RoleAdmin , time.Hour )
 	if err != nil { t.Fatal( err ) }
 	_ , link := inviteLink( t , fixture )
 	models.RevokeInviteLink( fixture.store , link.ID )
 	for _ , route := range []string{ "/rename" , "/limits" , "/switch-on" } {
-		request , _ := http.NewRequest( http.MethodPost , "/api/admin/invite-links/" + link.ID + route , strings.NewReader( `{"label":"x","max_uses":999}` ) )
-		request.Header.Set( "Content-Type" , "application/json" )
-		request.Header.Set( "Authorization" , "Bearer " + credential )
-		response , test_err := fixture.app.Test( request , fiber.TestConfig{ Timeout: 10 * time.Second } )
-		if test_err != nil { t.Fatal( test_err ) }
-		if response.StatusCode != fiber.StatusForbidden { t.Fatalf( "%s: %d" , route , response.StatusCode ) }
+		status , reply := fixture.withKey( t , credential , http.MethodPost , "/api/admin/invite-links/" + link.ID + route , fiber.Map{ "label": "x" , "max_uses": 999 } )
+		if status != fiber.StatusOK { t.Fatalf( "%s: %d %v" , route , status , reply ) }
 	}
 	stored , _ := models.GetInviteLink( fixture.store , link.ID )
-	if stored.RevokedAt == nil || stored.MaxUses != 10 || stored.Label != "Book club" { t.Fatalf( "%+v" , stored ) }
+	if stored.RevokedAt != nil || stored.MaxUses != 999 || stored.Label != "x" || stored.MintedByKey != record.ID { t.Fatalf( "%+v" , stored ) }
+
+	// The link is the key's now: revoking the key switches it off again.
+	if err = models.RevokeAPIKey( fixture.store , record.ID ); err != nil { t.Fatal( err ) }
+	if stored , _ = models.GetInviteLink( fixture.store , link.ID ); stored.RevokedAt == nil { t.Fatal( "revoking the key left its link working" ) }
+}
+
+func TestDeletingAKeySwitchesOffTheInviteLinksItMade( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	credential , record , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "script" , models.RoleAdmin , time.Hour )
+	if err != nil { t.Fatal( err ) }
+	status , reply := fixture.withKey( t , credential , http.MethodPost , "/api/admin/invite-links" , fiber.Map{ "label": "Club" , "max_uses": 5 , "days": 1 } )
+	if status != fiber.StatusCreated { t.Fatalf( "%d %v" , status , reply ) }
+	join := strings.TrimPrefix( reply[ "join_path" ].( string ) , "/join/" )
+	_ , kept := inviteLink( t , fixture )
+
+	if err = models.DeleteAPIKey( fixture.store , record.ID , fixture.owner.ID ); err != nil { t.Fatal( err ) }
+	if _ , err = models.LoadInviteLink( fixture.store , join ); err == nil { t.Fatal( "the key's invite link still works" ) }
+	if stored , _ := models.GetInviteLink( fixture.store , kept.ID ); stored.RevokedAt != nil { t.Fatal( "a person's invite link was switched off" ) }
 }
 // <<< feature:api_keys

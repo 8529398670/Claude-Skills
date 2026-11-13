@@ -43,19 +43,21 @@ project.
   the same link offers "is this you?", which is how that person signs in on
   their next device; a person can set a PIN so nobody else holding the link
   can pick their name. Links die with their maker's admin rights, and
-  creating one needs a browser session -- an API key never can. `auth.invite_links`
+  one an admin key made dies with that key. `auth.invite_links`
   switches them and PINs.
 - **Every account can mint API keys, at its own permission level.** A key
   carries the same admin/user role a person does -- one permission model, not
   two -- sent as `Authorization: Bearer <key>`. A key can never outrank the
-  account that owns it, and it cannot create credentials -- no minting keys,
-  creating accounts, or reissuing login links -- so revoking a leaked key
-  ends it. That is what lets a cron job, a CI pipeline, or a sidecar call the
-  app.
+  account that owns it. It cannot mint keys, but an admin key can create
+  accounts and hand out login and invite links, and any key with its account's
+  full role can make that account a login link. Every link records the key
+  that made it, and revoking or deleting the key voids the ones still unused.
+  That is what lets a cron job, a CI pipeline, or a sidecar call the app.
 - **The same keys speak MCP at `/mcp`.** An agent such as Claude Code uses the
   app through a key, at that key's role: admin tools are invisible to a
-  user-scoped key, a browser session is refused, and no tool manages users,
-  keys or sign-in. Every route a key may call has a tool (a test holds them
+  user-scoped key, a browser session is refused, and no tool manages API
+  keys. Agents can create accounts, hand out login and invite links and sign
+  devices out. Every route a key may call has a tool (a test holds them
   to it), file bytes go over the HTTP routes, and `config/mcp.json` lists the
   tools for anyone wiring an agent up. Stateless JSON-RPC over POST, written by
   hand -- no SDK, no SSE, no sessions. `server.mcp: false` removes it.
@@ -70,8 +72,8 @@ project.
   ordinary user; only the owner can delete another admin, and nobody can
   delete, disable, or revoke the owner from the web. Ownership is a marker,
   not a third role, and moves only from a shell (`manage transfer-owner`).
-  Deleting an account takes its sessions, links, and keys with it and needs a
-  browser session, so a leaked admin key cannot erase anyone.
+  Deleting an account takes its sessions, links, and keys with it; an admin
+  key may do it, and its MCP tool is marked destructive.
 - **The server stays thin.** Business logic and rendering belong in
   `static/js/`. The Go side is auth, storage, and file serving. Resist
   adding server-side templating.
@@ -85,8 +87,12 @@ project.
 - **All UI text lives in `language.yaml`.** No user-facing string is
   hardcoded in HTML or JS.
 - **Bootstrap 5 + Bootstrap Icons, light mode by default.** Vendored in
-  `static/vendor/`; a sidebar of screens, one shown at a time. Use its
-  components and utility classes before writing CSS.
+  `static/vendor/`; a sidebar of screens, one shown at a time. Hard rules,
+  kept by a test: Bootstrap's grid (`.row` / `.col-*`), utilities and
+  components for everything they cover; mobile first (the phone is the base,
+  wider screens only add); a table takes the most room on its screen unless
+  there is a good reason; Bootstrap Icons unless none fits. See "Hard rules"
+  in `references/frontend.md`.
 - **Docker, never compose.** One hardened Alpine image, one `docker/run.sh`.
 - **`scripts/run.sh` just makes it run** outside Docker, from the checkout:
   it stops the copy it started last and starts a fresh one in the foreground
@@ -106,7 +112,9 @@ project.
   would never return. `run.bat` / `login.bat` are the same
   on Windows. Run inside the skill's own `assets/template/`, they stamp a demo project
   into `~/.cache/go-webserver-demo/` (via `scripts/demo.py`) and runs
-  that, so the template can be tried without scaffolding anything.
+  that, so the template can be tried without scaffolding anything. The demo
+  always listens on http://127.0.0.1:18471, so its browser tab stays signed in
+  from one run to the next.
 - **Ships as a single file too.** The frontend is compiled in with `go:embed`,
   so `scripts/build.sh` cross-compiles portable binaries that need no Docker, no Go
   toolchain, and no files alongside them. The same binary is also the admin
@@ -156,9 +164,14 @@ project.
 - **Maintenance mode.** `server.maintenance` is `none`, `read_only` or `full`,
   applied live from Settings. Everyone but the owner's browser session gets a
   503 with `Retry-After`: a page in a browser, JSON for a script.
-- **An OpenAPI spec.** `config/openapi.json` describes every route, and
-  `GET /api/openapi.json` hands it to anyone signed in. A test fails until a
-  new route is in it.
+- **An API reference written from the code.** Each handler declares its docs
+  once, in a `*_api.go` file beside it: a summary, who may call it, and Go
+  types for what it takes and gives back, with the details in struct tags.
+  `scripts/api_docs.sh` writes `config/openapi.json`, `config/mcp.json` and
+  `config/api.md` (all of it as tables) from those and the registered MCP
+  tools. Nobody edits them by hand: a test fails while one is out of date, or a
+  route has no docs, and every reply the tests see is checked against its docs.
+  `GET /api/openapi.json` hands the spec to anyone signed in.
 - **Live updates.** `server/stream` is a server-sent events helper that handles
   the write deadline, re-checks access on open streams and ends them on
   shutdown. The Logs screen's Live button runs on it, with no polling.
@@ -316,8 +329,10 @@ ports they ran on. Do not reset either to a shared value.
                               #   editable live from the Settings screen)
     secret.key                # the key that encrypts the database (written by
                               #   scaffold.py; gitignored, 0600) -- back it up
-    openapi.json              # the API, by hand; a test keeps it in step
-    mcp.json                  # the MCP tools, written by scripts/mcp_json.sh
+    openapi.json              # the API reference, as OpenAPI 3.1
+    mcp.json                  # the MCP tools
+    api.md                    # both, as tables to read; scripts/api_docs.sh
+                              #   writes all three from the code
     config.example.yaml       # every default -- commit this; a fresh clone
                               #   copies it to config/config.yaml
                               #   (`go run . config example` regenerates it)
@@ -403,7 +418,7 @@ ports they ran on. Do not reset either to a shared value.
     run.sh, run.bat           # local run: (re)starts the server; with args, the CLI
     login.sh, login.bat       # the owner's login link, from whatever is live
                               # (starts the server right there if nothing is)
-    mcp_json.sh               # rewrites config/mcp.json from the registered tools
+    api_docs.sh               # rewrites config/openapi.json, mcp.json and api.md
     build.sh                  # cross-compiles single-file portable binaries
     lib.sh                    # shared by run.sh and login.sh (sourced)
   docker/
@@ -461,21 +476,25 @@ but stay consistent with the patterns already there:
   `actor.IsAdmin()`) rather than `user.Role`, which is the account's role and
   ignores a key that deliberately carries less. Add
   `Guard.RequireSession` to a route only when it must be browser-only, the
-  way key management, account creation and login-link reissue are -- and to
-  any new route that creates a credential.
+  way key management and your own password, PIN and two-factor are -- and to
+  any new route that mints an API key. A new route that hands out a way in
+  (a link, a code) records `actor.KeyID()` on it and voids it in
+  `models.VoidLinksMintedByKeyTx`, so revoking the key still ends it.
 - **Every action is an API action and an MCP tool.** Whatever a person can do
   on a screen, a key can do over HTTP and an agent through `/mcp` -- except
-  managing users, keys and sign-in, and erasing anything for good, which need a
-  browser session (`RequireSession`). So a feature's routes take API keys by
+  managing API keys, setting your own password, PIN or two-factor, reaching
+  other people's files and the owner's screens, which need a browser session
+  (`RequireSession`). So a feature's routes take API keys by
   default, and each one a key may call gets a tool calling the same helper, with
   `Route` naming the route. A route with no use to an agent (file bytes: MCP
-  messages are JSON, and clients cap their size) gets an `"x-mcp-http": "<why>"`
-  on its operation in `config/openapi.json` instead, and its tool hands back the
-  address -- `files_start_upload` and `files_download_url` are the pattern.
+  messages are JSON, and clients cap their size) gets `MCPHTTP: "<why>"` in its
+  `apidoc.Doc` instead, and its tool hands back the address --
+  `files_start_upload` and `files_download_url` are the pattern.
   `go test ./server/routes` fails until every key route is covered, and until
-  `config/openapi.json`'s `security` matches what the guards really do. Then run
-  `scripts/mcp_json.sh`, which rewrites `config/mcp.json` (committed, linked
-  from the MCP card as the MCP reference); the same tests fail while it is stale.
+  each Doc's `Access` matches what the guards really do. Then run
+  `scripts/api_docs.sh`, which rewrites `config/mcp.json` (committed, linked
+  from the MCP card as the MCP reference) with the rest of the API reference;
+  the same tests fail while it is stale.
 - **New MCP tools** go in `server/routes/mcp_tools_<feature>.go`, registered
   from `registerMCPTools` in `mcp_tools.go`. Pull the HTTP handler's body into
   a helper both call (the way `meRow`, `setUserDisabled` and `createFile` are), so the two doors share one set of
@@ -531,9 +550,13 @@ but stay consistent with the patterns already there:
 - **A new event** goes in the list in `server/models/webhook.go`, and is sent with
   `handlers.Webhooks.Emit( name , data )` where the thing happens. Ids and names only
   in `data`, since it leaves the server, and never rename one once it has shipped.
-- **A new route** goes in `config/openapi.json` too: `go test ./server/routes` fails
-  until it is, and until it has an MCP tool or an `x-mcp-http` reason (see above). A route that changes something must not be a GET, or `read_only`
-  maintenance will not stop it.
+- **A new route** gets its docs next to it: an `apidoc.Doc( (*Handlers).Name , apidoc.Op{ ... } )`
+  in the area's `server/routes/<area>_api.go`, with types for its body and reply whose struct
+  tags say what each field is (`doc:"..."`, `minimum`, `enum`, `omitempty` for optional;
+  `server/apidoc/schema.go` lists them). Then run `scripts/api_docs.sh`. `go test ./server/routes`
+  fails until the route has docs, until it has an MCP tool or an `MCPHTTP` reason (see above),
+  and when a reply a test gets has a field the docs lack or lacks one they promise. A route that
+  changes something must not be a GET, or `read_only` maintenance will not stop it.
 - **A new list route** answers with `sendPage( c , "rows" , rows )`, and its screen
   uses `Pager.load`: a plain `forEach` would stop at the first page.
 - **A new page with a path of its own** needs a route using `handlers.Static.ServeIndex`
@@ -577,6 +600,8 @@ Do not scaffold and hand it over unverified. Actually exercise the flow:
 
 ```bash
 cd <target-dir>
+go mod tidy
+scripts/api_docs.sh  # the API reference, for the parts this project kept
 go test ./...      # invite links, soft delete, MCP, and the activity log
 # in config/config.yaml: server.secure_cookies: false   (plain http on localhost only)
 scripts/run.sh
@@ -629,11 +654,11 @@ curl -H "Authorization: Bearer <user key>"  localhost:<port>/api/me            #
 The third line is the one worth reading: an admin who mints a user-scoped key
 gets `"role":"user"` back, because the effective role is the lower of the two.
 Also confirm a non-admin is refused when asking for an admin key, that a key
-cannot mint a key (403, session required), that an admin key gets 403 from
-`POST /api/admin/users` and `POST /api/admin/users/<id>/reissue-login` too,
-and any key gets 403 from `POST /api/account/login-link`
-(a login link would become a session that mints keys), and that revoking a
-key kills it on the next request. `manage list-keys` works from a shell either way.
+cannot mint a key (403, session required), that an admin key gets 201 from
+`POST /api/admin/users` with a working `login_path`, that the admin's
+user-scoped key gets 403 from `POST /api/account/login-link` (the session
+would be an admin's), and that revoking a key kills it on the next request
+and voids the unused link it made. `manage list-keys` works from a shell either way.
 
 Then `/mcp` with the same two keys (`go test ./server/routes -run MCP` covers
 all of this too, but see it once against the real server):
@@ -656,8 +681,8 @@ Then the delete rules, because they are permission checks that only show up
 when someone is refused. Create a second admin B and a user C, sign B in, and
 confirm: B can delete C (`POST /api/admin/users/<id>/delete`), B gets 403
 deleting another admin or the owner, the owner can delete an admin, nobody can
-delete themselves (400), an admin key gets 403 from the delete route (session
-required), and B gets 403 disabling or revoking the owner. A key's owner can
+delete themselves (400), an admin key may delete under the same rules, and B
+gets 403 disabling or revoking the owner. A key's owner can
 delete it (`POST /api/keys/<id>/delete`) and it gets 401 on the next request;
 deleting an account kills its keys too. `manage list-users` marks the owner.
 
@@ -674,8 +699,9 @@ private window:
   signs in,
 - an admin is never offered, and a wrong secret, an expired link, or a
   switched-off one all answer 404 `invite_link_invalid`,
-- an admin API key gets 403 from `POST /api/admin/invite-links` and
-  `POST /api/account/pin` (both would let a key become a session), and
+- an admin API key gets 201 from `POST /api/admin/invite-links`, and the link
+  stops working once that key is revoked, while `POST /api/account/pin` still
+  gets 403 (a PIN is a credential of your own), and
 - `manage create-invite -user-id 1 -label "Test"` prints a working
   `/join/...` path, with the server up or down.
 

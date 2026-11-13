@@ -30,8 +30,8 @@ import (
 //
 // Minting, revoking, and deleting require a browser session (the group in routes.go adds
 // Guard.RequireSession), so a leaked key cannot quietly mint its replacement.
-// The admin routes that hand out login links require one too, for the same
-// reason -- see Guard.RequireSession.
+// A key may hand out login links and invite links, but revoking or deleting
+// it voids the ones still usable -- see Guard.RequireSession.
 
 type createAPIKeyRequest struct {
 	Name string `json:"name"`

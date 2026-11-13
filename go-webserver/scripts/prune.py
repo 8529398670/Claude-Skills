@@ -24,12 +24,16 @@ One line, as a comment at its end:
 
     webhooks "app/server/webhooks"  // feature:webhooks
 
-config/openapi.json has no comments, so a path or schema carries a key instead:
+config/openapi.json has no comments, so a path carries a key instead, which
+the API docs' generator writes from the route's Feature (Go) or feature (Python):
 
     "x-feature": "webhooks"
 
 config/mcp.json is written from the registered tools, so it names no features:
 each tool and http_only entry goes with the openapi.json path its route is on.
+config/api.md is left as it is. All three are written from the code by the
+project's scripts/api_docs.sh, so a project that lost parts runs that once to
+bring them in line with what is left.
 
 Only the standard library is used, because this has to run wherever the skills do.
 """
@@ -44,6 +48,7 @@ SUFFIXES = {".go", ".py", ".js", ".css", ".html", ".yaml", ".yml", ".sh", ".bat"
 NAMES = {"Dockerfile"}
 OPENAPI = "config/openapi.json"
 MCP_JSON = "config/mcp.json"
+API_MD = "config/api.md"
 
 EXPRESSION = r"!?[a-z0-9_]+(?:\|!?[a-z0-9_]+)*"
 WHOLE_FILE = re.compile(r"whole-file feature:(" + EXPRESSION + r")")
@@ -115,18 +120,29 @@ def prune_text(text: str, removed: set[str], where: str = "") -> str:
 
 
 def prune_spec(text: str, removed: set[str]) -> str:
-    """openapi.json without the paths and schemas of removed features, and with
-    every x-feature key gone."""
+    """openapi.json without the paths of removed features, the schemas nothing
+    refers to any more, or tags nothing uses. Written the way the app's own
+    generator writes it, so a project with every part matches it exactly."""
     spec = json.loads(text)
-    for group in (spec.get("paths", {}), spec.get("components", {}).get("schemas", {})):
-        for name in list(group):
-            expression = group[name].pop("x-feature", None)
-            if expression is not None and not keeps(expression, removed):
-                del group[name]
-    used = {tag for item in spec.get("paths", {}).values() for operation in item.values() if isinstance(operation, dict) for tag in operation.get("tags", [])}
+    paths = spec.get("paths", {})
+    for name in list(paths):
+        expression = paths[name].get("x-feature")
+        if expression is not None and not keeps(expression, removed):
+            del paths[name]
+    schemas = spec.get("components", {}).get("schemas", {})
+    while True:
+        rest = {key: value for key, value in spec.items() if key != "components"}
+        rest["responses"] = spec.get("components", {}).get("responses", {})
+        used = set(re.findall(r'"#/components/schemas/([^"]+)"', json.dumps([rest, schemas])))
+        unused = [name for name in schemas if name not in used]
+        if not unused:
+            break
+        for name in unused:
+            del schemas[name]
+    used_tags = {tag for item in paths.values() for operation in item.values() if isinstance(operation, dict) for tag in operation.get("tags", [])}
     if "tags" in spec:
-        spec["tags"] = [tag for tag in spec["tags"] if tag["name"] in used]
-    return json.dumps(spec, indent=2, ensure_ascii=False)
+        spec["tags"] = [tag for tag in spec["tags"] if tag["name"] in used_tags]
+    return json.dumps(spec, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
 
 
 def route_features(spec_text: str) -> dict[str, str]:
@@ -192,6 +208,8 @@ def prune_tree(root: Path, removed: set[str], data_files: dict[str, tuple[str, .
             continue
         if relative == MCP_JSON:
             path.write_text(prune_mcp(path.read_text(encoding="utf-8"), removed, features), encoding="utf-8", newline="")
+            continue
+        if relative == API_MD:
             continue
         if not prunable(path):
             continue

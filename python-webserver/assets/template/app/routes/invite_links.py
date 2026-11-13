@@ -18,7 +18,7 @@ from app.models import RestoreError, invite_links, users
 from app.models import webhooks  # feature:webhooks
 from app.models.invite_links import InviteLink
 from app.models.users import User
-from app.routes.helpers import bad_request, conflict, forbidden, get_store, match_rows, not_found, read_json, restore_refused, run, send_page
+from app.routes.helpers import Refused, bad_request, forbidden, get_store, match_rows, not_found, read_json, restore_refusal, run, send_page
 from app.routes.helpers import emit  # feature:webhooks
 from app.routes.logs import audit
 
@@ -56,22 +56,30 @@ async def list_invite_links(request: Request) -> Response:
 
 
 async def create_invite_link(request: Request) -> Response:
+    """One link for a group (see invite_links.py's module docs)."""
     body = await read_json(request)
     if body is None:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    label, max_uses, days = body.get("label"), body.get("max_uses"), body.get("days")
-    if not invite_links.valid_invite_link(label, max_uses, days):
-        return bad_request("label must be 1-80 characters, uses 1-1000, days 1-365")
+    try:
+        return JSONResponse(await run(create_invite_link_checked, request, body.get("label"), body.get("max_uses"), body.get("days")), status_code=201)
+    except Refused as refused:
+        return refused.response(request)
 
-    store, creator = get_store(request), actor_from(request).user
-    credential, link = await run(invite_links.issue_invite_link, store, label, max_uses, timedelta(days=days), creator.id)
-    row = _row(link, creator)
+
+def create_invite_link_checked(request: Request, label: Any, max_uses: Any, days: Any) -> dict[str, Any]:
+    """create_invite_link after the request is read, for it and the MCP
+    admin_create_invite_link tool. Synchronous: it runs in a worker thread."""
+    if not invite_links.valid_invite_link(label, max_uses, days):
+        raise Refused(400, "label must be 1-80 characters, uses 1-1000, days 1-365")
+    actor = actor_from(request)
+    credential, link = invite_links.issue_invite_link(get_store(request), label, max_uses, timedelta(days=days), actor.user.id, actor.key_id)
+    row = _row(link, actor.user)
     row["join_path"] = f"/join/{credential}"
     audit(request, KIND_ADMIN, "invite link created", {"link_id": link.id, "label": link.label, "max_uses": link.max_uses})
-    await emit(request, webhooks.EVENT_INVITE_LINK_CREATED, {"link_id": link.id, "label": link.label})  # feature:webhooks
-    return JSONResponse(row, status_code=201)
+    request.app.state.webhooks.emit(webhooks.EVENT_INVITE_LINK_CREATED, {"link_id": link.id, "label": link.label})  # feature:webhooks
+    return row
 
 
 async def rename_invite_link(request: Request) -> Response:
@@ -81,63 +89,86 @@ async def rename_invite_link(request: Request) -> Response:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    label = body.get("label")
+    try:
+        return JSONResponse(await run(rename_invite_link_checked, request, request.path_params["link_id"], body.get("label"), body.get("expect")))
+    except Refused as refused:
+        return refused.response(request)
+
+
+def rename_invite_link_checked(request: Request, link_id: str, label: Any, expect: Any) -> dict[str, Any]:
+    """rename_invite_link after the request is read, for it and the MCP
+    admin_rename_invite_link tool."""
     if not invite_links.valid_invite_label(label):
-        return bad_request("label must be 1-80 characters")
+        raise Refused(400, "label must be 1-80 characters")
     # Optional: the label the caller expects to replace, so an undo cannot
     # overwrite a rename made elsewhere.
-    expect = body.get("expect")
     if expect is not None and not isinstance(expect, str):
-        return bad_request("expect must be a string")
-    link_id = request.path_params["link_id"]
+        raise Refused(400, "expect must be a string")
     try:
-        renamed = await run(invite_links.rename_invite_link, get_store(request), link_id, label, expect)
+        renamed = invite_links.rename_invite_link(get_store(request), link_id, label, expect)
     except users.RenameConflictError as refusal:
-        return conflict(str(refusal), label=refusal.current)
+        raise Refused(409, str(refusal), label=refusal.current) from None
     if not renamed:
-        return not_found("no such invite link")
+        raise Refused(404, "no such invite link")
     audit(request, KIND_ADMIN, "invite link renamed", {"link_id": link_id, "label": label.strip()})
-    return JSONResponse({"ok": True, "label": label.strip()})
+    return {"ok": True, "label": label.strip()}
 
 
 async def set_invite_link_limits(request: Request) -> Response:
     """Change a link's places, and its expiry when days is given; leaving days
-    out keeps the expiry. It needs a session, like making a link: more places
-    is more accounts, so a leaked admin key must not be a way to add them."""
+    out keeps the expiry. Through an API key the link becomes that key's:
+    revoking the key switches it off (see invite_links.set_invite_link_limits)."""
     body = await read_json(request)
     if body is None:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    max_uses, days = body.get("max_uses"), body.get("days")
+    try:
+        return JSONResponse(await run(set_invite_link_limits_checked, request, request.path_params["link_id"], body.get("max_uses"), body.get("days")))
+    except Refused as refused:
+        return refused.response(request)
+
+
+def set_invite_link_limits_checked(request: Request, link_id: str, max_uses: Any, days: Any) -> dict[str, Any]:
+    """set_invite_link_limits after the request is read, for it and the MCP
+    admin_set_invite_link_limits tool."""
     if not invite_links.valid_invite_limits(max_uses, days):
-        return bad_request("uses must be 1-1000 and days 1-365")
+        raise Refused(400, "uses must be 1-1000 and days 1-365")
     store = get_store(request)
     ttl = None if days is None else timedelta(days=days)
     try:
-        link = await run(invite_links.set_invite_link_limits, store, request.path_params["link_id"], max_uses, ttl)
+        link = invite_links.set_invite_link_limits(store, link_id, max_uses, ttl, actor_from(request).key_id)
     except invite_links.InvitePlacesError as refusal:
-        return bad_request(str(refusal))
+        raise Refused(400, str(refusal)) from None
     if link is None:
-        return not_found("no such invite link")
+        raise Refused(404, "no such invite link")
     audit(request, KIND_ADMIN, "invite link limits changed", {"link_id": link.id, "max_uses": link.max_uses, "expires_at": link.expires_at.isoformat()})
-    return JSONResponse(_row(link, await run(users.get_user, store, link.created_by)))
+    return _row(link, users.get_user(store, link.created_by))
 
 
 async def switch_on_invite_link(request: Request) -> Response:
-    """Undo revoke_invite_link. Switching off is safe for an admin key; this
-    needs a session, or a leaked key could reopen a closed link."""
+    """Undo revoke_invite_link. A key that switches a link on takes it over, so
+    revoking that key closes it again."""
     body = await read_json(request)
     if body is None:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
+    try:
+        return JSONResponse(await run(switch_on_invite_link_checked, request, request.path_params["link_id"]))
+    except Refused as refused:
+        return refused.response(request)
+
+
+def switch_on_invite_link_checked(request: Request, link_id: str) -> dict[str, Any]:
+    """switch_on_invite_link after the request is read, for it and the MCP
+    admin_switch_on_invite_link tool."""
     store = get_store(request)
-    link = await run(invite_links.switch_on_invite_link, store, request.path_params["link_id"])
+    link = invite_links.switch_on_invite_link(store, link_id, actor_from(request).key_id)
     if link is None:
-        return not_found("no such invite link")
+        raise Refused(404, "no such invite link")
     audit(request, KIND_ADMIN, "invite link switched back on", {"link_id": link.id})
-    return JSONResponse(_row(link, await run(users.get_user, store, link.created_by)))
+    return _row(link, users.get_user(store, link.created_by))
 
 
 async def revoke_invite_link(request: Request) -> Response:
@@ -163,11 +194,19 @@ async def delete_invite_link(request: Request) -> Response:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    actor_id = actor_from(request).user.id
-    if not await run(invite_links.delete_invite_link, get_store(request), request.path_params["link_id"], actor_id):
-        return not_found("no such invite link")
-    audit(request, KIND_ADMIN, "invite link deleted", {"link_id": request.path_params["link_id"]})
-    return JSONResponse({"ok": True})
+    try:
+        return JSONResponse(await run(delete_invite_link_checked, request, request.path_params["link_id"]))
+    except Refused as refused:
+        return refused.response(request)
+
+
+def delete_invite_link_checked(request: Request, link_id: str) -> dict[str, Any]:
+    """delete_invite_link after the request is read, for it and the MCP
+    admin_delete_invite_link tool."""
+    if not invite_links.delete_invite_link(get_store(request), link_id, actor_from(request).user.id):
+        raise Refused(404, "no such invite link")
+    audit(request, KIND_ADMIN, "invite link deleted", {"link_id": link_id})
+    return {"ok": True}
 
 
 async def restore_invite_link(request: Request) -> Response:
@@ -178,10 +217,19 @@ async def restore_invite_link(request: Request) -> Response:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    store, actor = get_store(request), actor_from(request).user
     try:
-        link = await run(invite_links.restore_invite_link, store, request.path_params["link_id"], actor.id, actor.is_admin)
+        return JSONResponse(await run(restore_invite_link_checked, request, request.path_params["link_id"]))
+    except Refused as refused:
+        return refused.response(request)
+
+
+def restore_invite_link_checked(request: Request, link_id: str) -> dict[str, Any]:
+    """restore_invite_link after the request is read, for it and the MCP
+    admin_restore_invite_link tool."""
+    store, actor = get_store(request), actor_from(request)
+    try:
+        link = invite_links.restore_invite_link(store, link_id, actor.user.id, actor.user.is_admin, actor.key_id)
     except RestoreError as refusal:
-        return restore_refused(refusal)
-    audit(request, KIND_ADMIN, "invite link restored", {"link_id": request.path_params["link_id"]})
-    return JSONResponse(_row(link, await run(users.get_user, store, link.created_by)))
+        raise restore_refusal(refusal) from None
+    audit(request, KIND_ADMIN, "invite link restored", {"link_id": link_id})
+    return _row(link, users.get_user(store, link.created_by))

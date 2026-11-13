@@ -75,7 +75,7 @@ An app scaffolded before stamps existed needs one.
    app needs, ask.
 5. **Cut out what was left out,** also in the staged files. The report lists each
    left-out upgrade and where its marks are. Marks are only a sample: use the
-   upgrade's entry to find all of it, including routes, `openapi.json` entries,
+   upgrade's entry to find all of it, including routes, API docs (`*_api.go` / `*_api.py`),
    `language.yaml` keys, tests, and the same code in `config.example.yaml` if you
    change `defaults.yaml`. Compare with `render` when a line could belong to either
    a fix or an upgrade, and keep the fix. A JavaScript call to something you removed
