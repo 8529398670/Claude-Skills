@@ -4,6 +4,7 @@ package routes
 import (
 	fmt "fmt"
 	strings "strings"
+	sync "sync"
 	testing "testing"
 
 	fiber "github.com/gofiber/fiber/v3"
@@ -97,6 +98,35 @@ func TestWrongCodesLock( t *testing.T ) {
 	if _ , reply := fixture.finish( t , challenge , codeFor( t , secret , 1 ) ); reply[ "error" ] != "two_factor_locked" {
 		t.Errorf( "%v" , reply )
 	}
+}
+
+// S4: twenty wrong codes sent at once get at most AttemptMaxFailures
+// evaluated. The lockout used to be checked before the code and recorded
+// after it, so parallel guesses all slipped past the check.
+func TestParallelWrongCodesCannotPassTheLockout( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	fixture.signIn( t , fixture.alice.ID ).enrol( t )
+	challenge := fixture.challenge( t , fixture.alice.ID )
+	start := make( chan struct{} )
+	statuses := make( chan int , 20 )
+	var done sync.WaitGroup
+	for range 20 {
+		done.Add( 1 )
+		go func() {
+			defer done.Done()
+			<-start
+			status , _ := fixture.browser().post( t , "/api/login/two-factor" , fiber.Map{ "challenge": challenge , "code": "000000" } )
+			statuses <- status
+		}()
+	}
+	close( start )
+	done.Wait()
+	close( statuses )
+	evaluated := 0
+	for status := range statuses {
+		if status == fiber.StatusForbidden { evaluated++ }
+	}
+	if evaluated > models.AttemptMaxFailures { t.Fatalf( "%d wrong codes were evaluated, limit %d" , evaluated , models.AttemptMaxFailures ) }
 }
 
 func TestTurningTwoFactorOffNeedsACode( t *testing.T ) {

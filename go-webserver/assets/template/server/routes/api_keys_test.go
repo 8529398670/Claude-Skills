@@ -54,6 +54,72 @@ func TestWhoMayMintAKeyForWhom( t *testing.T ) {
 	}
 }
 
+// S3: revoking, deleting and restoring someone else's key follow the owner
+// rule for the key's account. Before, any admin could kill another admin's
+// keys, or bring back a key the owner had deleted.
+func TestOnlyTheOwnerTouchesAnAdminsKeys( t *testing.T ) {
+	for _ , verb := range []string{ "revoke" , "delete" } {
+		fixture := newAuthFixture( t )
+		second , _ := models.CreateUser( fixture.store , "Second admin" , models.RoleAdmin )
+		third , _ := models.CreateUser( fixture.store , "Third admin" , models.RoleAdmin )
+		owner := fixture.signIn( t , fixture.owner.ID )
+		admin := fixture.signIn( t , second.ID )
+		for _ , holder := range []uint64{ fixture.owner.ID , third.ID } {
+			_ , key , err := models.IssueAPIKey( fixture.store , holder , "ci" , models.RoleUser , time.Hour )
+			if err != nil { t.Fatal( err ) }
+			if status , reply := send( t , admin , "/api/admin/keys/"+key.ID+"/"+verb , fiber.Map{} ); status != fiber.StatusForbidden {
+				t.Fatalf( "%s #%d's key by a peer: %d %v" , verb , holder , status , reply )
+			}
+			if stored , _ := models.GetAPIKey( fixture.store , key.ID ); stored.Live() == false { t.Fatalf( "%s: a peer's refusal still changed the key" , verb ) }
+		}
+		_ , key , _ := models.IssueAPIKey( fixture.store , fixture.alice.ID , "ci" , models.RoleUser , time.Hour )
+		if status , _ := send( t , admin , "/api/admin/keys/"+key.ID+"/"+verb , fiber.Map{} ); status != fiber.StatusOK { t.Fatalf( "%s a user's key: %d" , verb , status ) }
+		_ , key , _ = models.IssueAPIKey( fixture.store , third.ID , "ci" , models.RoleUser , time.Hour )
+		if status , _ := send( t , owner , "/api/admin/keys/"+key.ID+"/"+verb , fiber.Map{} ); status != fiber.StatusOK { t.Fatalf( "the owner %s an admin's key: %d" , verb , status ) }
+	}
+}
+
+func TestRestoringAKeyFollowsItsAccount( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	second , _ := models.CreateUser( fixture.store , "Second admin" , models.RoleAdmin )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	admin := fixture.signIn( t , second.ID )
+	_ , key , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "ci" , models.RoleAdmin , time.Hour )
+	if err != nil { t.Fatal( err ) }
+	if status , _ := send( t , owner , "/api/keys/"+key.ID+"/delete" , fiber.Map{} ); status != fiber.StatusOK { t.Fatalf( "delete: %d" , status ) }
+	if status , reply := send( t , admin , "/api/admin/keys/"+key.ID+"/restore" , fiber.Map{} ); status != fiber.StatusForbidden {
+		t.Fatalf( "a peer brought back the owner's key: %d %v" , status , reply )
+	}
+	if stored , _ := models.GetAPIKey( fixture.store , key.ID ); stored.Deleted() == false { t.Fatal( "the key came back" ) }
+	if status , _ := send( t , owner , "/api/keys/"+key.ID+"/restore" , fiber.Map{} ); status != fiber.StatusOK { t.Fatalf( "the owner's own restore: %d" , status ) }
+}
+
+// S7: a request carrying both a signed-in cookie and a key acts as the key.
+// It used to act as the cookie, so a script using a narrow key from a
+// signed-in browser quietly ran with the full account.
+func TestABearerHeaderWinsOverTheCookie( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	narrow , _ , err := models.IssueAPIKey( fixture.store , fixture.alice.ID , "narrow" , models.RoleUser , time.Hour )
+	if err != nil { t.Fatal( err ) }
+	who := func( key string ) ( status int , reply map[ string ]any ) {
+		request , _ := http.NewRequest( http.MethodGet , "/api/me" , nil )
+		request.Header.Set( "Cookie" , owner.cookie )
+		request.Header.Set( "Authorization" , "Bearer "+key )
+		response , test_err := fixture.app.Test( request )
+		if test_err != nil { t.Fatal( test_err ) }
+		raw , _ := io.ReadAll( response.Body )
+		status = response.StatusCode
+		encoding_json.Unmarshal( raw , &reply )
+		return
+	}
+	if status , reply := who( narrow ); status != fiber.StatusOK || reply[ "id" ] != float64( fixture.alice.ID ) {
+		t.Fatalf( "the key: %d %v" , status , reply )
+	}
+	// A bad key is no one, not the signed-in account.
+	if status , reply := who( "nope.nope" ); status != fiber.StatusUnauthorized { t.Fatalf( "a bad key: %d %v" , status , reply ) }
+}
+
 func TestAKeyMadeForSomeoneActsAsThemAndSaysWhoMadeIt( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	owner := fixture.signIn( t , fixture.owner.ID )

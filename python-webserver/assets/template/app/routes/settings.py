@@ -46,6 +46,8 @@ async def save_settings(request: Request) -> Response:
         return conflict("settings_stale")
     except config_live.ReadOnlyError:
         return conflict("settings_read_only")
+    except config_live.FileOnlyError:
+        return forbidden("settings_file_only")
     except config_live.LockedError:
         return forbidden("settings_locked")
     except config_live.UnknownSettingError as unknown:

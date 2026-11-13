@@ -67,6 +67,11 @@ type LoginLinkOptions struct {
 	// MintedByKey is the id of the API key asking, if one is. See
 	// LoginToken.MintedByKey.
 	MintedByKey string
+	// ActorID is the account asking for a link to someone else's account,
+	// checked against mayActOnTx inside the issuing transaction: a link is a
+	// way in, so minting one is as much power over the account as deleting
+	// it. Zero is the operator, or an account being created just now.
+	ActorID uint64
 }
 
 // OnceLink is the classic one-time link.
@@ -268,7 +273,9 @@ func IssueLoginLink( store *db.Store , user_id uint64 , options LoginLinkOptions
 	if token.Unlimited { token.MaxUses = 0 }
 	if options.TTL > 0 { token.ExpiresAt = now.Add( options.TTL ) }
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
-		if tx_err = tx.Get( db.BucketUsers , encryption.Uint64ToBytes( user_id ) , &User{} ); tx_err != nil { return }
+		target := &User{}
+		if tx_err = tx.Get( db.BucketUsers , encryption.Uint64ToBytes( user_id ) , target ); tx_err != nil { return }
+		if tx_err = mayActOnTx( tx , options.ActorID , target ); tx_err != nil { return }
 		if _ , tx_err = deletePendingLoginTokens( tx , user_id ); tx_err != nil { return }
 		tx_err = tx.Put( db.BucketLoginTokens , []byte( token_id ) , token )
 		return
@@ -332,6 +339,7 @@ func RedeemLoginToken( store *db.Store , credential string , rules SignInRules )
 		current.UsedAt = &now
 		if tx_err = tx.Put( db.BucketLoginTokens , []byte( token_id ) , current ); tx_err != nil { return }
 
+		rules.MintedByKey = current.MintedByKey
 		signed , tx_err = startSignInTx( tx , owner , rules )
 		return
 	} )
@@ -361,9 +369,11 @@ func LiveLoginLinks( store *db.Store ) ( links map[uint64]LoginLinkInfo , err er
 }
 
 // CancelLoginLink stops the account's live link working. Sessions it already
-// made stay signed in, as with reissuing.
-func CancelLoginLink( store *db.Store , user_id uint64 ) ( removed int , err error ) {
+// made stay signed in, as with reissuing. actor_id is who is asking, held to
+// mayActOnTx: zero for the operator, the account itself for its own link.
+func CancelLoginLink( store *db.Store , user_id uint64 , actor_id uint64 ) ( removed int , err error ) {
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		if tx_err = mayActOnIDTx( tx , actor_id , user_id ); tx_err != nil { return }
 		removed , tx_err = deletePendingLoginTokens( tx , user_id )
 		return
 	} )
@@ -387,9 +397,13 @@ func deletePendingLoginTokens( tx *db.Tx , user_id uint64 ) ( removed int , err 
 // VoidLinksMintedByKeyTx is what keeps revoking a key meaningful now that a key
 // may hand out login links and invite links: inside the caller's transaction
 // (the one revoking or deleting the key), every login link the key made that
-// could still sign someone in is deleted, and every invite link it made is
-// switched off. Sessions already made through them stay; they show in the
-// devices list. Restoring a deleted key does not bring the links back.
+// could still sign someone in is deleted, every browser session one of those
+// links signed in is ended, along with a sign-in still waiting on its
+// two-factor code, and every invite link it made is switched off. Restoring a
+// deleted key brings none of them back.
+//
+// Sessions made through an invite link the key made stay: those are the
+// accounts of the people who joined, not a way into an existing one.
 func VoidLinksMintedByKeyTx( tx *db.Tx , key_id string ) ( voided int , err error ) {
 	if key_id == "" { return }
 	voided , err = tx.DeleteWhere( db.BucketLoginTokens ,
@@ -399,6 +413,22 @@ func VoidLinksMintedByKeyTx( tx *db.Tx , key_id string ) ( voided int , err erro
 			return token.MintedByKey == key_id && token.Usable()
 		} )
 	if err != nil { return }
+	ended , err := tx.DeleteWhere( db.BucketSessions ,
+		func() any { return &Session{} } ,
+		func( key []byte , item any ) bool {
+			return item.( *Session ).MintedByKey == key_id
+		} )
+	voided += ended
+	if err != nil { return }
+	// >>> feature:two_factor
+	waiting , err := tx.DeleteWhere( db.BucketSignInChallenges ,
+		func() any { return &signInChallenge{} } ,
+		func( key []byte , item any ) bool {
+			return item.( *signInChallenge ).MintedByKey == key_id
+		} )
+	voided += waiting
+	if err != nil { return }
+	// <<< feature:two_factor
 	// >>> feature:invite_links
 	switched_off , err := revokeInviteLinksMintedByKeyTx( tx , key_id )
 	voided += switched_off

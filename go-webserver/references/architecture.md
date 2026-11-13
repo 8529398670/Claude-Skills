@@ -270,9 +270,20 @@ wins.
 |---|---|---|---|---|
 | **Delete, as an admin** | yes | no | no | no |
 | **Delete, as the owner** | yes | yes | -- | no |
-| **Disable / revoke access** (any admin) | yes | yes | no | no |
+| **Anything else, as an admin** | yes | no | no | see below |
+| **Anything else, as the owner** | yes | yes | -- | see below |
 | **CLI / control socket** (the operator) | delete, disable, revoke | delete, disable, revoke | revoke only | -- |
 
+- **One rule for acting on someone else's account,** in `models.mayActOnTx` and checked
+  inside each change's own transaction: nobody acts on the owner, and only the
+  owner acts on another admin. "Anything else" is disabling and re-enabling,
+  revoking access, reissuing or cancelling a login link, ending a session, and
+  minting, revoking, deleting, restoring or changing the expiry of an API key
+  that is not your own. A login link is a way in, so before this rule reached
+  reissue, any admin could sign in as the owner. Acting on yourself goes by
+  each route: you cannot disable, revoke or delete yourself, and your own
+  login link and keys are yours. An app route that changes another account
+  should call the same helper.
 - **Renaming and roles follow the same table,** from the Users screen, an
   admin API key or the MCP tools. Only the owner renames an admin or takes an admin's rights
   away; nobody changes their own role, and the owner is always an admin. The one

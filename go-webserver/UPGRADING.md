@@ -3,6 +3,93 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 5c06754
+
+**Security fixes S1-S8 (2026-11-13 review).** All fixes, so every app gets all
+of them; none adds a route, screen or setting. S1 and S2 chained let a leaked
+non-owner admin key download `secret.key`, so take this before anything else.
+Then, per app: check the activity log for `login link reissued` entries that
+target the owner or another admin, and if `server.static_dir` was ever changed
+from Settings, rotate `secret.key` (`docker/rotate-key.sh` or `manage`).
+
+- **S1 (high): reissuing or cancelling a login link follows the owner rule.**
+  `server/models/owner.go` gains `mayActOnTx`, `mayActOnIDTx` and `MayActOn`:
+  nobody acts on the owner, and only the owner acts on another admin (the
+  operator, actor 0, and acting on yourself pass). `DeleteUser`,
+  `ResetTwoFactor`, `SetUserRole`, `issueAPIKey` and `SetAPIKeyExpiry` call it
+  instead of their own copies. `ErrOwnerRequired`'s text is now general.
+  `LoginLinkOptions` gains `ActorID`, checked inside `IssueLoginLink`'s
+  transaction; `reissueLogin` sets it (`createUser` does not: anyone may make
+  an account). `CancelLoginLink( store , user_id , actor_id )` gains an
+  argument -- **app code calling it no longer compiles**; pass the account
+  asking, or 0 from a shell. `routes/admin.go` gains `actOnRefusal`, the
+  shared 403 wording. The MCP tools `admin_reissue_login` and
+  `admin_cancel_login_link` go through the same helpers.
+- **S2 (medium): paths are file-only, and static_dir may not serve secrets.**
+  `server/config/live.go` gains `fileOnlyKeys` (`server.app_dir`,
+  `server.static_dir`, `server.language_file`, `docker.data_dir`,
+  `build.output_dir`), `FileOnly`, `ErrFileOnly`; `Locked` is true for them
+  everywhere, and `KeyState` gains `file_only`. `routes/settings.go` answers
+  `settings_file_only`; `language.yaml` gains `settings.file_only` and
+  `errors.settings_file_only`; `static/js/settings.js` shows the note.
+  `server/assets/assets.go` gains `CheckStaticDir`, which `main.go` calls
+  before `assets.Resolve` (and imports `path/filepath`): the server refuses to
+  start when `static_dir` is, holds, or sits inside the config dir, the state
+  dir, `secret.key` or the database. `server/static/static.go` never serves a
+  path with a segment starting with `.` (`hasDotFile`), except `.well-known/`.
+  **An app with its own path-typed key** (`*_dir`, `*_file`, `*_path`) must add
+  it to `fileOnlyKeys`; `TestEveryPathKeyIsFileOnly` fails until it does. An
+  app that serves its own dotfiles from `static/` must move them.
+- **S3 (low): the owner rule for every other admin action.** Through the web,
+  disabling or re-enabling, revoking access, ending one session, and revoking,
+  deleting or restoring someone else's API key now refuse another admin's
+  account unless the owner asks, and refuse the owner's. New:
+  `SetUserDisabledAs`, `RevokeAllCredentialsAs`, `RevokeSessionAs`,
+  `RevokeAPIKeyAs`; `DeleteAPIKey` and `RestoreAPIKey` check the key's account.
+  The old names are the operator's (no rule), so the CLI and control socket are
+  unchanged. `deleteKeyError` and `restoreRefusal` map the two errors to 403.
+  **App routes that change another account** should do the same: call the
+  model inside its transaction with `mayActOnTx`, or `models.MayActOn` first.
+- **S4 (low): guess limits can no longer be raced.** `models.AttemptGuard`
+  gains `Reserve` and `Settle` (`AttemptVoid`, `AttemptFailed`,
+  `AttemptPassed`): an attempt is counted in flight before the guess is
+  checked, so parallel guesses get at most the limit evaluated. Every caller in
+  `two_factor.go`, `join.go` (PIN) and `passwords.go` (password and code) uses
+  them; `Locked` and `Record` stay for app code but have the race.
+- **S5 (low): `.run/` is private.** `scripts/lib.sh` gains `private_run_dir`
+  (umask 077, then `chmod 700 .run`, `chmod 600 .run/server.log`), called by
+  `start_in_background`. `scripts/run.bat` writes no log file and says so.
+- **S6 (info): log redaction ignores case.** `server/logs/redact.go` matches
+  `/login/` and `/join/` whatever their case, keeping the request's spelling,
+  so `/LOGIN/<credential>` (which Fiber routes) is logged as `/LOGIN/…`. The
+  Referer goes through the same function.
+- **S7 (info): a Bearer header wins over the cookie.** `security.LoadUser`
+  reads only the key when `Authorization: Bearer` is present (`hasBearer`); a
+  bad key is no one. A signed-in browser calling with a narrow key now acts as
+  that key.
+- **S8: revoking a key signs out what its login links signed in.** `Session`,
+  `SignInRules` and the two-factor challenge gain `MintedByKey`;
+  `RedeemLoginToken` copies the link's key into the rules, and
+  `VoidLinksMintedByKeyTx` also deletes those sessions and waiting challenges.
+  Sessions from before this have no key and stay. Invite-link joins are not
+  covered: those are new accounts, not a way into one. The MCP login-link
+  description says so; `config/openapi.json`, `config/mcp.json` and
+  `config/api.md` are regenerated (also for `file_only`).
+- New tests, copied whole: `server/models/attempts_test.go`,
+  `server/assets/assets_test.go`, `server/static/static_test.go`,
+  `server/config/scripts_test.go`, `server/middleware/request_log_test.go`;
+  new cases in `admin_test.go`, `api_keys_test.go`, `sessions_test.go`,
+  `settings_test.go`, `mcp_test.go`, `two_factor_test.go`, `live_test.go`,
+  `schema_test.go`, `logs_test.go`. `TestContainerLocksScriptKeys` now uses
+  `docker.memory`, since `docker.data_dir` is file-only.
+
+**Test:** `go test ./...` passes. As a second, non-owner admin: reissuing the
+owner's link answers 403; Settings shows `static_dir` as "A path, so it can
+only be changed in config/config.yaml"; disabling another admin answers 403.
+`scripts/run.sh`, then `ls -ld .run .run/server.log` shows `drwx------` and
+`-rw-------`. Setting `static_dir: ./config` in `config.yaml` stops the server
+at startup with a `refusing to start` message. `GET /.env` answers 404.
+
 ## After d943458
 
 **Upgrade `bootstrap-grid`: layout is Bootstrap's grid, mobile first, and a test keeps it that way.**

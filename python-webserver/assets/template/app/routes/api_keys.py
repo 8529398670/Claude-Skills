@@ -370,9 +370,18 @@ async def _restore(store: Store, key_id: str, actor: users.User) -> Response:
         key = await run(api_keys.restore_api_key, store, key_id, actor.id, actor.is_admin)
     except RestoreError as refusal:
         return restore_refused(refusal)
+    except (users.OwnerProtectedError, users.OwnerRequiredError) as refusal:
+        return _owner_refused(refusal, "restore")
     except api_keys.APIKeyLimitError:
         return conflict("its owner already has the maximum number of live API keys")
     return JSONResponse(api_key_row(key))
+
+
+def _owner_refused(refusal: Exception, what: str = "change") -> Response:
+    """users.may_act_on_tx's refusal for a key, worded like the other routes'."""
+    if isinstance(refusal, users.OwnerProtectedError):
+        return forbidden(f"only the owner can {what} the owner's keys")
+    return forbidden(f"only the owner can {what} an admin's keys")
 
 
 async def list_all_keys(request: Request) -> Response:
@@ -396,7 +405,10 @@ async def revoke_any_key(request: Request) -> Response:
         return bad_request("malformed request body")
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
-    revoked = await run(api_keys.revoke_api_key, get_store(request), request.path_params["key_id"])
+    try:
+        revoked = await run(api_keys.revoke_api_key, get_store(request), request.path_params["key_id"], actor_from(request).user.id)
+    except (users.OwnerProtectedError, users.OwnerRequiredError) as refusal:
+        return _owner_refused(refusal)
     if revoked is None:
         return not_found("no such api key")
     audit(request, KIND_ADMIN, "api key revoked", {"key_id": request.path_params["key_id"]})
@@ -413,7 +425,11 @@ async def delete_any_key(request: Request) -> Response:
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
     actor_id = actor_from(request).user.id
-    if not await run(api_keys.delete_api_key, get_store(request), request.path_params["key_id"], actor_id):
+    try:
+        deleted = await run(api_keys.delete_api_key, get_store(request), request.path_params["key_id"], actor_id)
+    except (users.OwnerProtectedError, users.OwnerRequiredError) as refusal:
+        return _owner_refused(refusal)
+    if not deleted:
         return not_found("no such api key")
     audit(request, KIND_ADMIN, "api key deleted", {"key_id": request.path_params["key_id"]})
     return JSONResponse({"ok": True})

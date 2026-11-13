@@ -40,20 +40,24 @@ async def finish_sign_in(request: Request) -> Response:
     user_id = await run(sign_in.challenge_user_id, store, credential)
     if user_id is None:
         return bad_request("challenge_invalid")
-    if CODES.locked(user_id):
+    # Reserved before the code is checked, so guesses sent in parallel cannot
+    # all get past the lockout (see app/models/attempts.py).
+    attempt = CODES.reserve(user_id)
+    if attempt is None:
         return error(429, "two_factor_locked")
 
-    try:
-        signed, method = await run(
-            sign_in.finish_challenge, store, credential, body.get("code"), cfg.session_ttl_seconds, cfg.secret_key
-        )
-    except sign_in.ChallengeInvalidError:
-        return bad_request("challenge_invalid")
-    except two_factor.WrongCodeError:
-        CODES.record(user_id, False)
-        audit_as(request, await run(user_actor, store, user_id, "anon"), KIND_AUTH, LEVEL_WARN, "wrong two-factor code")
-        return forbidden("two_factor_wrong")
-    CODES.record(user_id, True)
+    with attempt:
+        try:
+            signed, method = await run(
+                sign_in.finish_challenge, store, credential, body.get("code"), cfg.session_ttl_seconds, cfg.secret_key
+            )
+        except sign_in.ChallengeInvalidError:
+            return bad_request("challenge_invalid")
+        except two_factor.WrongCodeError:
+            attempt.failed()
+            audit_as(request, await run(user_actor, store, user_id, "anon"), KIND_AUTH, LEVEL_WARN, "wrong two-factor code")
+            return forbidden("two_factor_wrong")
+        attempt.passed()
     message = "signed in with a recovery code" if method == "recovery" else "signed in with a two-factor code"
     audit_as(request, await run(user_actor, store, user_id, "session"), KIND_AUTH, LEVEL_INFO, message)
     return await sign_in_response(request, signed, {"ok": True}, 200)
@@ -86,18 +90,20 @@ async def confirm_setup(request: Request) -> Response:
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
     user_id = actor_from(request).user.id
-    if CODES.locked(user_id):
+    attempt = CODES.reserve(user_id)
+    if attempt is None:
         return error(429, "two_factor_locked")
-    try:
-        codes = await run(two_factor.confirm_setup, get_store(request), user_id, body.get("code"), get_config(request).secret_key)
-    except two_factor.AlreadyOnError:
-        return conflict("two_factor_on")
-    except two_factor.WrongCodeError:
-        CODES.record(user_id, False)
-        return forbidden("two_factor_wrong")
-    if codes is None:
-        return server_error(request, "two-factor confirm: the signed-in account has no record")
-    CODES.record(user_id, True)
+    with attempt:
+        try:
+            codes = await run(two_factor.confirm_setup, get_store(request), user_id, body.get("code"), get_config(request).secret_key)
+        except two_factor.AlreadyOnError:
+            return conflict("two_factor_on")
+        except two_factor.WrongCodeError:
+            attempt.failed()
+            return forbidden("two_factor_wrong")
+        if codes is None:
+            return server_error(request, "two-factor confirm: the signed-in account has no record")
+        attempt.passed()
     audit(request, KIND_AUTH, "two-factor sign-in turned on")
     return JSONResponse({"recovery_codes": codes})
 
@@ -109,17 +115,19 @@ async def disable(request: Request) -> Response:
     if not check_csrf(request, body.get("csrf_token")):
         return forbidden("invalid csrf token")
     user_id = actor_from(request).user.id
-    if CODES.locked(user_id):
+    attempt = CODES.reserve(user_id)
+    if attempt is None:
         return error(429, "two_factor_locked")
-    try:
-        found = await run(two_factor.disable, get_store(request), user_id, body.get("code"), get_config(request).secret_key)
-    except two_factor.NotOnError:
-        return conflict("two_factor_off")
-    except two_factor.WrongCodeError:
-        CODES.record(user_id, False)
-        return forbidden("two_factor_wrong")
-    if not found:
-        return server_error(request, "two-factor disable: the signed-in account has no record")
-    CODES.record(user_id, True)
+    with attempt:
+        try:
+            found = await run(two_factor.disable, get_store(request), user_id, body.get("code"), get_config(request).secret_key)
+        except two_factor.NotOnError:
+            return conflict("two_factor_off")
+        except two_factor.WrongCodeError:
+            attempt.failed()
+            return forbidden("two_factor_wrong")
+        if not found:
+            return server_error(request, "two-factor disable: the signed-in account has no record")
+        attempt.passed()
     audit(request, KIND_AUTH, "two-factor sign-in turned off")
     return JSONResponse({"ok": True})

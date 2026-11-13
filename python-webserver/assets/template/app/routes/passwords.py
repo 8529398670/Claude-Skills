@@ -56,17 +56,24 @@ async def password_login(request: Request) -> Response:
     store, cfg = get_store(request), get_config(request)
     name = passwords.normalize_username(body.get("username"))[:64]
     address = client_ip(request.scope, cfg, trusted_for(cfg))
-    if NAMES.locked(name) or ADDRESSES.locked(address):
+    # Reserved before the password is checked, so guesses sent in parallel
+    # cannot all get past the lockout (see app/models/attempts.py).
+    by_name = NAMES.reserve(name)
+    if by_name is None:
         return error(429, "login_locked")
-
-    user = await run(passwords.check_password, store, name, body.get("password_digest"))
-    signed = None if user is None else await run(passwords.start_password_sign_in, store, user, sign_in_rules(cfg))
-    if signed is None:
-        NAMES.record(name, False)
-        ADDRESSES.record(address, False)
-        audit_as(request, anonymous(), KIND_AUTH, LEVEL_WARN, "password refused")
-        return bad_request("invalid_login")
-    NAMES.record(name, True)
+    with by_name:
+        by_address = ADDRESSES.reserve(address)
+        if by_address is None:
+            return error(429, "login_locked")
+        with by_address:
+            user = await run(passwords.check_password, store, name, body.get("password_digest"))
+            signed = None if user is None else await run(passwords.start_password_sign_in, store, user, sign_in_rules(cfg))
+            if signed is None:
+                by_name.failed()
+                by_address.failed()
+                audit_as(request, anonymous(), KIND_AUTH, LEVEL_WARN, "password refused")
+                return bad_request("invalid_login")
+            by_name.passed()
     message = "password accepted, waiting for a code" if signed.challenge else "signed in with a password"  # feature:two_factor
     message = "signed in with a password"  # feature:!two_factor
     audit_as(request, await run(user_actor, store, user.id, "session"), KIND_AUTH, LEVEL_INFO, message)
@@ -84,6 +91,16 @@ def _session_id(request: Request) -> str:
     return "" if parts is None else parts[0]
 
 
+def _set_password_refused(refusal: Exception) -> Response:
+    if isinstance(refusal, passwords.BadUsernameError):
+        return bad_request("bad_username")
+    if isinstance(refusal, passwords.BadDigestError):
+        return bad_request("bad_digest")
+    if isinstance(refusal, passwords.UsernameTakenError):
+        return conflict("username_taken")
+    return forbidden("password_blocked")
+
+
 async def set_password(request: Request) -> Response:
     """Set the account's username and password, or with an empty
     password_digest remove the password. Session only: a key that could set
@@ -96,29 +113,31 @@ async def set_password(request: Request) -> Response:
 
     store, cfg = get_store(request), get_config(request)
     user = actor_from(request).user
-    # >>> feature:two_factor
-    if CODES.locked(user.id):
-        return error(429, "two_factor_locked")
-    # <<< feature:two_factor
     digest = body.get("password_digest")
-    try:
-        found = await run(
-            passwords.set_password, store, user.id, body.get("username"), digest, _session_id(request),
-            body.get("code"), cfg.two_factor_enabled, cfg.secret_key,  # feature:two_factor
-        )
-    except passwords.BadUsernameError:
-        return bad_request("bad_username")
-    except passwords.BadDigestError:
-        return bad_request("bad_digest")
-    except passwords.UsernameTakenError:
-        return conflict("username_taken")
-    except passwords.PasswordBlockedError:
-        return forbidden("password_blocked")
     # >>> feature:two_factor
-    except two_factor.WrongCodeError:
-        CODES.record(user.id, False)
-        return forbidden("two_factor_wrong")
+    # Reserved before the code is checked (see app/models/attempts.py). A
+    # right code here forgives nothing, as before: only a wrong one counts.
+    attempt = CODES.reserve(user.id)
+    if attempt is None:
+        return error(429, "two_factor_locked")
+    with attempt:
+        try:
+            found = await run(
+                passwords.set_password, store, user.id, body.get("username"), digest, _session_id(request),
+                body.get("code"), cfg.two_factor_enabled, cfg.secret_key,
+            )
+        except two_factor.WrongCodeError:
+            attempt.failed()
+            return forbidden("two_factor_wrong")
+        except (passwords.BadUsernameError, passwords.BadDigestError, passwords.UsernameTakenError, passwords.PasswordBlockedError) as refusal:
+            return _set_password_refused(refusal)
     # <<< feature:two_factor
+    # >>> feature:!two_factor
+    try:
+        found = await run(passwords.set_password, store, user.id, body.get("username"), digest, _session_id(request))
+    except (passwords.BadUsernameError, passwords.BadDigestError, passwords.UsernameTakenError, passwords.PasswordBlockedError) as refusal:
+        return _set_password_refused(refusal)
+    # <<< feature:!two_factor
     if not found:
         return server_error(request, "set password: the signed-in account has no record")
     audit(request, KIND_AUTH, "password removed" if digest == "" else "password changed")

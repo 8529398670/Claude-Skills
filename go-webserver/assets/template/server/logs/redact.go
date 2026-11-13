@@ -10,7 +10,9 @@ import (
 // this with or without the activity log.
 
 // The path prefixes whose next segment is a credential: a login link, an
-// invite link. Opening one is logged; the credential is not.
+// invite link. Opening one is logged; the credential is not. Matched without
+// regard to case, because the router routes /LOGIN/<credential> to the same
+// page as /login/<credential>.
 var secretPathPrefixes = []string{ "/login/" , "/join/" }
 
 // Query parameters whose values are never written, whatever route they are on.
@@ -27,9 +29,10 @@ const maxPathLength = 300
 // whole is capped so a pathological URL cannot bloat a line.
 func Redact( path string , raw_query string ) ( result string ) {
 	result = path
+	lowered := strings.ToLower( result )
 	for _ , prefix := range secretPathPrefixes {
-		if strings.HasPrefix( result , prefix ) && len( result ) > len( prefix ) {
-			result = prefix + "…"
+		if strings.HasPrefix( lowered , prefix ) && len( result ) > len( prefix ) {
+			result = result[ :len( prefix ) ] + "…"
 			break
 		}
 	}

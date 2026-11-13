@@ -420,6 +420,25 @@ func TestOnlyTheOwnerReachesTheOwnersSessionsAndAddresses( t *testing.T ) {
 // <<< feature:sessions
 
 // >>> feature:sessions
+// S3: only the owner signs another admin's device out.
+func TestOnlyTheOwnerEndsAnAdminsSession( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	peer , _ := models.CreateUser( fixture.store , "Peer" , models.RoleAdmin )
+	other , _ := models.CreateUser( fixture.store , "Other" , models.RoleAdmin )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	admin := fixture.signIn( t , peer.ID )
+	victim := fixture.signIn( t , other.ID )
+	session := victim.devices( t )[ 0 ][ "id" ].( string )
+	path := fmt.Sprintf( "/api/admin/users/%d/sessions/%s/revoke" , other.ID , session )
+
+	if status , _ := admin.post( t , path , fiber.Map{ "csrf_token": admin.csrf( t ) } ); status != http.StatusForbidden { t.Fatalf( "a peer: %d" , status ) }
+	if victim.signedIn( t ) == false { t.Fatal( "a peer signed another admin out" ) }
+	if status , _ := owner.post( t , path , fiber.Map{ "csrf_token": owner.csrf( t ) } ); status != http.StatusOK { t.Fatalf( "the owner: %d" , status ) }
+	if victim.signedIn( t ) { t.Fatal( "the owner's revoke did not end the session" ) }
+}
+// <<< feature:sessions
+
+// >>> feature:sessions
 func TestSessionAdminRoutesRefuse( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	owner := fixture.signIn( t , fixture.owner.ID )

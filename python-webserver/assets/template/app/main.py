@@ -162,6 +162,9 @@ def serve(version: str) -> None:
     lock = server_lock.acquire(cfg.app_dir / config.SERVER_LOCK_NAME, timeout_seconds=5)
     if lock is None:
         raise RuntimeError(f"another server is already running on {cfg.app_dir}")
+    # Everything in static_dir is public, so it may not be, hold, or sit
+    # inside the config or state directory. See app/core/assets.py.
+    assets.check_static_dir(cfg.static_dir, cfg.config_file.parent, cfg.app_dir, cfg.secret_file, cfg.database_path)
     bundle = assets.resolve(cfg.static_dir, cfg.language_file)
     store = db.open_store(cfg.database_path, cfg.secret_key, cfg.encrypt_at_rest)
     lang = language.parse(bundle.language_yaml)

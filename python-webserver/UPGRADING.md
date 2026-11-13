@@ -3,6 +3,95 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 5c06754
+
+**Security fixes S1-S8 (2026-11-13 review).** All fixes, so every app gets all
+of them; none adds a route, screen or setting. S1 and S2 chained let a leaked
+non-owner admin key download `secret.key`, so take this before anything else.
+Then, per app: check the activity log for `login link reissued` entries that
+target the owner or another admin, and if `server.static_dir` was ever changed
+from Settings, rotate `secret.key` (`docker/rotate-key.sh` or `manage`).
+
+- **S1 (high): reissuing or cancelling a login link follows the owner rule.**
+  `app/models/users.py` gains `may_act_on_tx`, `may_act_on_id_tx` and
+  `may_act_on`: nobody acts on the owner, and only the owner acts on another
+  admin (the operator, `None`, and acting on yourself pass).
+  `OwnerProtectedError` and `OwnerRequiredError` move there from
+  `credentials.py`, which still re-exports them. `delete_user`,
+  `reset_two_factor`, `set_user_role`, `issue_api_key` and
+  `set_api_key_expiry` call the helper instead of their own copies.
+  `LinkOptions` gains `actor_id`, checked inside `issue_login_link`'s
+  transaction; `reissue_login_checked` sets it (`create_user_checked` does
+  not: anyone may make an account). `cancel_login_link` gains
+  `actor_id=None`. `app/routes/helpers.py` gains `act_on_refusals`, the
+  shared 403 wording. The MCP tools go through the same helpers.
+- **S2 (medium): paths are file-only, and static_dir may not serve secrets.**
+  Outside a container, `locked()` used to be false for every key, so the
+  owner's Settings could point `static_dir` at the config folder.
+  `app/core/config_live.py` gains `FILE_ONLY_KEYS` (`server.app_dir`,
+  `server.static_dir`, `server.language_file`, `docker.data_dir`),
+  `file_only`, `FileOnlyError` (a `LockedError`); `locked()` is true for them
+  everywhere and the snapshot gains `file_only`. `routes/settings.py` answers
+  `settings_file_only`; `language.yaml` gains `settings.file_only` and
+  `errors.settings_file_only`; `static/js/settings.js` shows the note;
+  `routes/schemas_api.py` documents the field. `app/core/assets.py` gains
+  `check_static_dir`, which `main.serve` calls before `assets.resolve`: the
+  server refuses to start when `static_dir` is, holds, or sits inside the
+  config dir, the state dir, `secret.key` or the database.
+  `app/core/static_files.py` never serves a path with a segment starting with
+  `.` (`has_dot_file`), except `.well-known/`. **An app with its own
+  path-typed key** (`*_dir`, `*_file`, `*_path`) must add it to
+  `FILE_ONLY_KEYS`; `test_every_path_key_is_file_only` fails until it does.
+- **S3 (low): the owner rule for every other admin action.** Through the web,
+  disabling or re-enabling, revoking access, ending one session, and revoking,
+  deleting or restoring someone else's API key now refuse another admin's
+  account unless the owner asks, and refuse the owner's.
+  `set_user_disabled`, `revoke_all_credentials`, `sessions.revoke_session`
+  and `revoke_api_key` gain `actor_id=None` (None is the operator, so the CLI
+  is unchanged); `delete_api_key` and `restore_api_key` check the key's
+  account. `routes/api_keys.py` gains `_owner_refused`. **App routes that
+  change another account** should do the same with `may_act_on_tx`.
+- **S4 (low): guess limits can no longer be raced.** `AttemptGuard` gains
+  `reserve()`, which returns an `Attempt` (a context manager; mark it
+  `failed()` or `passed()`, or it settles as void) or None when locked: an
+  attempt is counted in flight before the guess is checked. Every caller in
+  `routes/two_factor.py`, `join.py` (PIN) and `passwords.py` (password and
+  code) uses it; `set_password` is split by `feature:two_factor` and gains
+  `_set_password_refused`. `locked()` and `record()` stay for app code but
+  have the race.
+- **S5 (low): `.run/` is private.** `scripts/lib.sh` gains `private_run_dir`
+  (umask 077, then `chmod 700 .run`, `chmod 600 .run/server.log`), called by
+  `start_in_background`. `scripts/run.bat` writes no log file and says so.
+- **S6 (info): log redaction ignores case.** Starlette's routes are
+  case-sensitive, so `/LOGIN/<credential>` is a 404 here and never opens the
+  page (a test pins it), but the request log still wrote the path:
+  `logs.redact` now matches `/login/` and `/join/` in any case.
+- **S7 (info): a Bearer header wins over the cookie.**
+  `security.resolve_actor` reads only the key when `Authorization: Bearer` is
+  present (`_has_bearer`); a bad key is no one.
+- **S8: revoking a key signs out what its login links signed in.** `Session`,
+  `SignInRules` and the two-factor challenge gain `minted_by_key`;
+  `redeem_login_token` copies the link's key into the rules, and
+  `void_links_minted_by_key` also deletes those sessions and waiting
+  challenges. Sessions from before this have no key and stay. Invite-link
+  joins are not covered: those are new accounts. The MCP login-link
+  description says so; `config/openapi.json`, `config/mcp.json` and
+  `config/api.md` are regenerated (also for `file_only`).
+- New tests, copied whole: `app/tests/test_attempts.py`,
+  `app/tests/test_static_files.py`, `app/tests/test_scripts.py`; new cases in
+  `test_admin_users.py`, `test_api_keys.py`, `test_sessions.py`,
+  `test_settings_routes.py`, `test_mcp_parity.py`, `test_passwords.py`,
+  `test_config_live.py`, `test_config_schema.py`, `test_logs.py`,
+  `test_login_tokens.py`. `test_container_locks_script_keys` now uses
+  `docker.memory`, since `docker.data_dir` is file-only.
+
+**Test:** the tests pass. As a second, non-owner admin: reissuing the owner's
+link answers 403; Settings shows `static_dir` as "A path, so it can only be
+changed in config/config.yaml"; disabling another admin answers 403.
+`scripts/run.sh`, then `ls -ld .run .run/server.log` shows `drwx------` and
+`-rw-------`. Setting `static_dir: ./config` in `config.yaml` stops the server
+at startup with a `refusing to start` message. `GET /.env` answers 404.
+
 ## After d943458
 
 **Upgrade `bootstrap-grid`: layout is Bootstrap's grid, mobile first, and a test keeps it that way.**

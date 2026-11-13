@@ -75,7 +75,7 @@ func TestEndingAUsedReusableLink( t *testing.T ) {
 		"disable": func( store *db.Store , user *User , _ *User ) { SetUserDisabled( store , user.ID , true ) },
 		"promote": func( store *db.Store , user *User , admin *User ) { SetUserRole( store , user.ID , admin.ID , RoleAdmin ) },
 		"revoke":  func( store *db.Store , user *User , _ *User ) { RevokeAllCredentials( store , user.ID , true ) },
-		"cancel":  func( store *db.Store , user *User , _ *User ) { CancelLoginLink( store , user.ID ) },
+		"cancel":  func( store *db.Store , user *User , _ *User ) { CancelLoginLink( store , user.ID , 0 ) },
 	}
 	for name , end := range ends {
 		t.Run( name , func( t *testing.T ) {

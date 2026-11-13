@@ -38,8 +38,8 @@ var (
 	ErrOwnerProtected = errors.New( "the owner account cannot be deleted, disabled, or have its access revoked -- transfer ownership first (manage transfer-owner)" )
 
 	// ErrOwnerRequired is the refusal for an admin who is not the owner
-	// trying to delete another admin.
-	ErrOwnerRequired = errors.New( "only the owner can delete an admin account" )
+	// trying to act on another admin (see mayActOnTx).
+	ErrOwnerRequired = errors.New( "only the owner can do this to an admin account" )
 
 	// ErrNotAdmin is the refusal for making a non-admin, or a disabled
 	// admin, the owner.
@@ -83,6 +83,56 @@ func refuseOwnerTx( tx *db.Tx , user_id uint64 ) ( err error ) {
 	if owner_id == user_id {
 		err = ErrOwnerProtected
 	}
+	return
+}
+
+// mayActOnTx is the one rule for an admin acting on someone else's account,
+// read inside the caller's transaction so ownership cannot move between the
+// check and the change:
+//
+//   - nobody acts on the owner (ErrOwnerProtected);
+//   - only the owner acts on another admin (ErrOwnerRequired).
+//
+// An actor_id of zero is the operator, through the CLI or the control socket,
+// and acting on your own account is your own business; neither is refused
+// here. A route that also refuses acting on yourself (deleting, changing your
+// own role) checks that before calling this, with its own error.
+//
+// Every route that changes another account goes through this -- deleting,
+// role, 2FA reset, login links, disabling, revoking, ending sessions, and
+// minting, revoking, deleting or restoring an API key for someone else -- so
+// the rule cannot be forgotten on one door and kept on the others.
+func mayActOnTx( tx *db.Tx , actor_id uint64 , target *User ) ( err error ) {
+	if actor_id == 0 || actor_id == target.ID { return }
+	owner_id , err := ownerIDTx( tx )
+	if err != nil { return }
+	if target.ID == owner_id {
+		err = ErrOwnerProtected
+		return
+	}
+	if target.IsAdmin() && actor_id != owner_id {
+		err = ErrOwnerRequired
+	}
+	return
+}
+
+// mayActOnIDTx is mayActOnTx for a caller holding only the target's id. A
+// missing account is db.ErrNotFound.
+func mayActOnIDTx( tx *db.Tx , actor_id uint64 , user_id uint64 ) ( err error ) {
+	if actor_id == 0 || actor_id == user_id { return }
+	target := &User{}
+	if err = tx.Get( db.BucketUsers , encryption.Uint64ToBytes( user_id ) , target ); err != nil { return }
+	err = mayActOnTx( tx , actor_id , target )
+	return
+}
+
+// MayActOn is mayActOnTx on its own read, for a route that must refuse before
+// it does anything else. Where the change itself is a write, check inside it.
+func MayActOn( store *db.Store , actor_id uint64 , user_id uint64 ) ( err error ) {
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		tx_err = mayActOnIDTx( tx , actor_id , user_id )
+		return
+	} )
 	return
 }
 

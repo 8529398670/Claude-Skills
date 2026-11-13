@@ -131,6 +131,21 @@ class MCPParity(RoutesTestCase):
         self.assertTrue(tool("admin_set_user_role", {"user_id": self.owner.id, "role": "user"}, self.admin_key)[0])
         self.assertFalse(tool("admin_rename_user", {"user_id": self.user.id, "display_name": "Mem"}, self.admin_key)[0])
 
+        # S1: a non-owner admin's key gets neither the owner nor another admin
+        # a login link; the owner's key still may.
+        from app.models import api_keys, users
+
+        third = users.create_user(self.store, "Third", users.ROLE_ADMIN)
+        other_key, _ = api_keys.issue_api_key(self.store, self.admin.id, "ops", users.ROLE_ADMIN, 3600)
+        for name in ("admin_reissue_login", "admin_cancel_login_link"):
+            for target in (self.owner.id, third.id):
+                with self.subTest(tool=name, target=target):
+                    failed, reply = tool(name, {"user_id": target}, other_key)
+                    self.assertTrue(failed, reply)
+                    self.assertIn("owner", reply["error"])
+        failed, reply = tool("admin_reissue_login", {"user_id": third.id}, self.admin_key)
+        self.assertFalse(failed, reply)
+
     # >>> feature:files
     def test_files_travel_over_http(self) -> None:
         """Start and finish through /mcp, the bytes over plain HTTP with the

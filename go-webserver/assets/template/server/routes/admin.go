@@ -230,12 +230,10 @@ func ( handlers *Handlers ) reissueLogin( c fiber.Ctx , user_id uint64 , request
 	}
 	options , refused := handlers.loginLinkOptions( c , request )
 	if refused != nil { return }
+	options.ActorID = security.UserFrom( c ).ID
 
 	credential , info , token_err := models.IssueLoginLink( handlers.Store , user_id , options )
-	if token_err != nil {
-		refused = internalFailure( token_err )
-		return
-	}
+	if refused = actOnRefusal( token_err , "reissue a login link for" ); refused != nil { return }
 	handlers.audit( c , logs.KindAdmin , "login link reissued" , fiber.Map{ "user_id": user_id , "max_uses": info.MaxUses , "expires_at": info.ExpiresAt } )
 	payload = loginLinkResponse( credential , info )
 	return
@@ -277,11 +275,8 @@ func ( handlers *Handlers ) cancelLoginLink( c fiber.Ctx , user_id uint64 ) ( pa
 		refused = refuse( fiber.StatusNotFound , "no such user" )
 		return
 	}
-	removed , cancel_err := models.CancelLoginLink( handlers.Store , user_id )
-	if cancel_err != nil {
-		refused = internalFailure( cancel_err )
-		return
-	}
+	removed , cancel_err := models.CancelLoginLink( handlers.Store , user_id , security.UserFrom( c ).ID )
+	if refused = actOnRefusal( cancel_err , "cancel the login link of" ); refused != nil { return }
 	handlers.audit( c , logs.KindAdmin , "login link cancelled" , fiber.Map{ "user_id": user_id , "removed": removed } )
 	payload = fiber.Map{ "ok": true , "removed": removed }
 	return
@@ -607,6 +602,25 @@ func internalFailure( cause error ) ( refused *refusal ) {
 	return
 }
 
+// actOnRefusal turns an error from a model that checked models.mayActOnTx
+// into the answer every account route gives: 404 for a missing account, 403
+// with the same wording for the owner rule, 500 for anything else. what is
+// the action, worded to follow "cannot": "reissue a login link for".
+func actOnRefusal( err error , what string ) ( refused *refusal ) {
+	switch {
+	case err == nil:
+	case errors.Is( err , db.ErrNotFound ):
+		refused = refuse( fiber.StatusNotFound , "no such user" )
+	case errors.Is( err , models.ErrOwnerProtected ):
+		refused = refuse( fiber.StatusForbidden , "nobody can " + what + " the owner account" )
+	case errors.Is( err , models.ErrOwnerRequired ):
+		refused = refuse( fiber.StatusForbidden , "only the owner can " + what + " an admin account" )
+	default:
+		refused = internalFailure( err )
+	}
+	return
+}
+
 // setUserDisabled carries every rule for switching an account off or on, for
 // SetUserDisabled and the MCP admin_set_user_disabled tool.
 func ( handlers *Handlers ) setUserDisabled( self_id uint64 , user_id uint64 , disabled bool ) ( refused *refusal ) {
@@ -624,13 +638,14 @@ func ( handlers *Handlers ) setUserDisabled( self_id uint64 , user_id uint64 , d
 
 	// Disabling also deletes the account's sessions and live login links,
 	// in the same transaction -- see models.SetUserDisabled. The owner cannot
-	// be disabled; that check is in the model so every route gets it.
-	if disable_err := models.SetUserDisabled( handlers.Store , user_id , disabled ); disable_err != nil {
+	// be disabled, and only the owner switches another admin off or on; those
+	// checks are in the model so every route gets them.
+	if disable_err := models.SetUserDisabledAs( handlers.Store , user_id , self_id , disabled ); disable_err != nil {
 		if errors.Is( disable_err , models.ErrOwnerProtected ) {
 			refused = &refusal{ status: fiber.StatusForbidden , message: "the owner account cannot be disabled" }
 			return
 		}
-		refused = &refusal{ status: fiber.StatusInternalServerError , message: "internal error" , cause: disable_err }
+		refused = actOnRefusal( disable_err , "disable or enable" )
 		return
 	}
 	handlers.Webhooks.Emit( models.EventUserDisabled , map[string]any{ "user_id": user_id , "disabled": disabled } ) // feature:webhooks
@@ -651,15 +666,16 @@ func ( handlers *Handlers ) revokeAccess( self_id uint64 , user_id uint64 ) ( re
 		return
 	}
 
-	// The owner is refused here (allow_owner false). Only an operator with
-	// shell access may cut the owner off -- see models.RevokeAllCredentials.
-	revoked , revoke_err := models.RevokeAllCredentials( handlers.Store , user_id , false )
+	// The owner is refused here, and only the owner revokes another admin.
+	// Only an operator with shell access may cut the owner off -- see
+	// models.RevokeAllCredentials.
+	revoked , revoke_err := models.RevokeAllCredentialsAs( handlers.Store , user_id , self_id )
 	if revoke_err != nil {
 		if errors.Is( revoke_err , models.ErrOwnerProtected ) {
 			refused = &refusal{ status: fiber.StatusForbidden , message: "the owner account's access cannot be revoked" }
 			return
 		}
-		refused = &refusal{ status: fiber.StatusInternalServerError , message: "internal error" , cause: revoke_err }
+		refused = actOnRefusal( revoke_err , "revoke the access of" )
 	}
 	return
 }

@@ -256,6 +256,7 @@ class SettingsSnapshotSchemaError(TypedDict):
 class SettingsSnapshotSchemaSectionsItemKeysItem(TypedDict):
     apply: NotRequired[str]
     default: NotRequired[Any]
+    file_only: NotRequired[Annotated[bool, Field(doc="A path: change it in config.yaml, never here.")]]
     help: NotRequired[str]
     in_file: NotRequired[bool]
     key: NotRequired[str]

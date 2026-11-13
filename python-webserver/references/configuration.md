@@ -368,6 +368,16 @@ holds, Starlette's body-size limit. (Proxy trust is `[live]` here and
 `[restart]` in the Go template, whose framework fixes it at startup; here the
 client-IP check is app code.)
 
+**Paths are file-only.** The Settings screen never changes a key that names a
+path -- `server.app_dir`, `static_dir`, `language_file` and `docker.data_dir` (`FILE_ONLY_KEYS` in `app/core/config_live.py`) -- inside a container or out: a path
+decides what the server reads, writes or serves, and everything in
+`static_dir` is served without signing in, so a stolen owner session could
+otherwise point it at `secret.key`. Edit `config.yaml` to change one. At
+startup the server also refuses a `static_dir` that is, holds, or sits inside
+the config folder, the state folder, `secret.key` or the database, and the
+static handler never serves a dotfile (`.well-known/` aside). A new path-typed
+key goes in that list; a test fails until it does.
+
 "Live" is literal: everything that reads a setting per request reads
 `request.app.state.settings.get()` (via `helpers.get_config`), never a
 `Config` captured at startup -- the guard, the routes, the rate limiter and

@@ -37,6 +37,11 @@ type Session struct {
 	// what a device says it is.
 	Label string `json:"label,omitempty"`
 	// <<< feature:sessions
+	// MintedByKey is the API key that made the login link this session came
+	// from, empty when a person made it. Revoking or deleting that key ends
+	// the session too (VoidLinksMintedByKeyTx): a key that could sign a
+	// browser in must not leave one signed in after it dies.
+	MintedByKey string `json:"minted_by_key,omitempty"`
 	// ID is the record's key, filled in when a session is read. It is not
 	// stored, since the key already says it, and is no use without the secret.
 	ID string `json:"-"`
@@ -244,7 +249,15 @@ func LabelSession( store *db.Store , user_id uint64 , session_id string , label 
 // RevokeSession ends one of an account's own sessions. The ownership check and
 // the delete share a transaction, so what was checked is what goes.
 func RevokeSession( store *db.Store , user_id uint64 , session_id string ) ( err error ) {
+	err = RevokeSessionAs( store , user_id , user_id , session_id )
+	return
+}
+
+// RevokeSessionAs is RevokeSession for an admin ending someone else's
+// session, held to mayActOnTx: only the owner signs another admin out.
+func RevokeSessionAs( store *db.Store , user_id uint64 , actor_id uint64 , session_id string ) ( err error ) {
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		if tx_err = mayActOnIDTx( tx , actor_id , user_id ); tx_err != nil { return }
 		session := &Session{}
 		tx_err = tx.Get( db.BucketSessions , []byte( session_id ) , session )
 		if errors.Is( tx_err , db.ErrNotFound ) || ( tx_err == nil && session.UserID != user_id ) {

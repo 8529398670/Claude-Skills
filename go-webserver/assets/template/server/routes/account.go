@@ -265,7 +265,7 @@ func ( handlers *Handlers ) CancelMyLoginLink( c fiber.Ctx ) ( err error ) {
 // cancelMyLoginLink is CancelMyLoginLink after the request is read, for it
 // and the MCP cancel_my_login_link tool.
 func ( handlers *Handlers ) cancelMyLoginLink( c fiber.Ctx ) ( payload fiber.Map , refused *refusal ) {
-	removed , cancel_err := models.CancelLoginLink( handlers.Store , security.UserFrom( c ).ID )
+	removed , cancel_err := models.CancelLoginLink( handlers.Store , security.UserFrom( c ).ID , security.UserFrom( c ).ID )
 	if cancel_err != nil {
 		refused = internalFailure( cancel_err )
 		return

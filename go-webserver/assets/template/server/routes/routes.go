@@ -463,6 +463,10 @@ func restoreRefusal( cause error ) ( refused *refusal ) {
 		refused = refuse( fiber.StatusConflict , cause.Error() )
 	case errors.Is( cause , models.ErrAPIKeyLimit ): // feature:api_keys
 		refused = refuse( fiber.StatusConflict , "its owner already has the maximum number of live API keys" ) // feature:api_keys
+	case errors.Is( cause , models.ErrOwnerProtected ):
+		refused = refuse( fiber.StatusForbidden , "nobody can restore the owner account's keys" )
+	case errors.Is( cause , models.ErrOwnerRequired ):
+		refused = refuse( fiber.StatusForbidden , "only the owner can restore an admin account's keys" )
 	default:
 		refused = internalFailure( cause )
 	}

@@ -170,6 +170,28 @@ func TestSaveSettings( t *testing.T ) {
 	}
 }
 
+// S2: a path is never set from Settings, inside a container or out. Before,
+// the owner's screen could point static_dir at the config folder, and the
+// static handler then served secret.key to anyone.
+func TestSettingsNeverChangeAPath( t *testing.T ) {
+	fixture := newSettingsFixture( t )
+	for _ , key := range []string{ "server.static_dir" , "server.language_file" , "server.app_dir" , "docker.data_dir" , "build.output_dir" } {
+		_ , snapshot := fixture.request( t , http.MethodGet , "/api/owner/settings" , fixture.owner , "" , "" )
+		version , _ := snapshot[ "version" ].( string )
+		body := `{"csrf_token":"` + fixture.csrf + `","version":"` + version + `","changes":{"` + key + `":"/s2-probe"}}`
+		status , reply := fixture.request( t , http.MethodPost , "/api/owner/settings" , fixture.owner , "" , body )
+		if status != 403 || reply[ "error" ] != "settings_file_only" {
+			t.Fatalf( "%s: status %d %v" , key , status , reply )
+		}
+	}
+	raw , _ := os.ReadFile( fixture.path )
+	if strings.Contains( string( raw ) , "s2-probe" ) { t.Fatalf( "config.yaml was changed:\n%s" , raw ) }
+	// The screen shows them as fixed.
+	_ , snapshot := fixture.request( t , http.MethodGet , "/api/owner/settings" , fixture.owner , "" , "" )
+	encoded , _ := json.Marshal( snapshot )
+	if strings.Contains( string( encoded ) , `"file_only":true` ) == false { t.Fatalf( "no key is marked file_only: %s" , encoded ) }
+}
+
 // >>> feature:mcp
 func TestMCPFollowsTheSetting( t *testing.T ) {
 	fixture := newSettingsFixture( t )

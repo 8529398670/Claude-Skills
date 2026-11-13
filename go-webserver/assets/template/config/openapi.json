@@ -874,6 +874,10 @@
                         "type": "string"
                       },
                       "default": {},
+                      "file_only": {
+                        "description": "A path: change it in config.yaml, never here.",
+                        "type": "boolean"
+                      },
                       "help": {
                         "type": "string"
                       },

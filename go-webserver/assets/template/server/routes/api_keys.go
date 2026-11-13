@@ -534,12 +534,19 @@ func ( handlers *Handlers ) restoreKey( c fiber.Ctx , key_id string , actor *mod
 // deleteKeyError maps a DeleteAPIKey failure. A key that is already deleted,
 // or vanished between the lookup and the delete -- deleted by its owner and
 // an admin at once -- is reported as missing, not as a server fault.
+//
+// The owner rule (models.mayActOnTx) is a 403 worded like the other routes'.
 func deleteKeyError( c fiber.Ctx , delete_err error ) ( err error ) {
-	if errors.Is( delete_err , db.ErrNotFound ) {
+	switch {
+	case errors.Is( delete_err , db.ErrNotFound ):
 		err = notFound( c , "no such api key" )
-		return
+	case errors.Is( delete_err , models.ErrOwnerProtected ):
+		err = forbidden( c , "only the owner can change the owner's keys" )
+	case errors.Is( delete_err , models.ErrOwnerRequired ):
+		err = forbidden( c , "only the owner can change an admin's keys" )
+	default:
+		err = serverError( c , delete_err )
 	}
-	err = serverError( c , delete_err )
 	return
 }
 
@@ -588,8 +595,8 @@ func ( handlers *Handlers ) RevokeAnyAPIKey( c fiber.Ctx ) ( err error ) {
 		err = notFound( c , "no such api key" )
 		return
 	}
-	if revoke_err := models.RevokeAPIKey( handlers.Store , key.ID ); revoke_err != nil {
-		err = serverError( c , revoke_err )
+	if revoke_err := models.RevokeAPIKeyAs( handlers.Store , key.ID , security.UserFrom( c ).ID ); revoke_err != nil {
+		err = deleteKeyError( c , revoke_err )
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": c.Params( "key_id" ) } )

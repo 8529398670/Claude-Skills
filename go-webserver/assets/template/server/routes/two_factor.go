@@ -59,10 +59,14 @@ func ( handlers *Handlers ) FinishSignIn( c fiber.Ctx ) ( err error ) {
 		err = badRequest( c , "challenge_invalid" )
 		return
 	}
-	if handlers.Codes.Locked( user_id ) {
+	// Reserved before the code is checked, so guesses sent in parallel
+	// cannot all get past the lockout (see models.AttemptGuard).
+	if handlers.Codes.Reserve( user_id ) == false {
 		err = tooMany( c , "two_factor_locked" )
 		return
 	}
+	outcome := models.AttemptVoid
+	defer func() { handlers.Codes.Settle( user_id , outcome ) }()
 
 	cfg := handlers.cfg()
 	signed , method , finish_err := models.FinishChallenge( handlers.Store , body.Challenge , body.Code , cfg.SessionTTL , cfg.SecretKey )
@@ -71,7 +75,7 @@ func ( handlers *Handlers ) FinishSignIn( c fiber.Ctx ) ( err error ) {
 		err = badRequest( c , "challenge_invalid" )
 		return
 	case errors.Is( finish_err , models.ErrWrongCode ):
-		handlers.Codes.Record( user_id , false )
+		outcome = models.AttemptFailed
 		handlers.auditAs( c , handlers.logUser( user_id , "anon" ) , logs.KindAuth , logs.LevelWarn , "wrong two-factor code" , nil )
 		err = forbidden( c , "two_factor_wrong" )
 		return
@@ -79,7 +83,7 @@ func ( handlers *Handlers ) FinishSignIn( c fiber.Ctx ) ( err error ) {
 		err = serverError( c , finish_err )
 		return
 	}
-	handlers.Codes.Record( user_id , true )
+	outcome = models.AttemptPassed
 	message := "signed in with a two-factor code"
 	if method == models.CodeMethodRecovery { message = "signed in with a recovery code" }
 	handlers.auditAs( c , handlers.logUser( user_id , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , nil )
@@ -126,24 +130,26 @@ func ( handlers *Handlers ) ConfirmTwoFactor( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	user_id := security.UserFrom( c ).ID
-	if handlers.Codes.Locked( user_id ) {
+	if handlers.Codes.Reserve( user_id ) == false {
 		err = tooMany( c , "two_factor_locked" )
 		return
 	}
+	outcome := models.AttemptVoid
+	defer func() { handlers.Codes.Settle( user_id , outcome ) }()
 	codes , confirm_err := models.ConfirmTwoFactorSetup( handlers.Store , user_id , body.Code , handlers.cfg().SecretKey )
 	switch {
 	case errors.Is( confirm_err , models.ErrTwoFactorOn ):
 		err = conflict( c , "two_factor_on" , nil )
 		return
 	case errors.Is( confirm_err , models.ErrWrongCode ):
-		handlers.Codes.Record( user_id , false )
+		outcome = models.AttemptFailed
 		err = forbidden( c , "two_factor_wrong" )
 		return
 	case confirm_err != nil:
 		err = serverError( c , confirm_err )
 		return
 	}
-	handlers.Codes.Record( user_id , true )
+	outcome = models.AttemptPassed
 	handlers.audit( c , logs.KindAuth , "two-factor sign-in turned on" , nil )
 	err = c.JSON( fiber.Map{ "recovery_codes": codes } )
 	return
@@ -160,24 +166,26 @@ func ( handlers *Handlers ) DisableTwoFactor( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	user_id := security.UserFrom( c ).ID
-	if handlers.Codes.Locked( user_id ) {
+	if handlers.Codes.Reserve( user_id ) == false {
 		err = tooMany( c , "two_factor_locked" )
 		return
 	}
+	outcome := models.AttemptVoid
+	defer func() { handlers.Codes.Settle( user_id , outcome ) }()
 	disable_err := models.DisableTwoFactor( handlers.Store , user_id , body.Code , handlers.cfg().SecretKey )
 	switch {
 	case errors.Is( disable_err , models.ErrTwoFactorOff ):
 		err = conflict( c , "two_factor_off" , nil )
 		return
 	case errors.Is( disable_err , models.ErrWrongCode ):
-		handlers.Codes.Record( user_id , false )
+		outcome = models.AttemptFailed
 		err = forbidden( c , "two_factor_wrong" )
 		return
 	case disable_err != nil:
 		err = serverError( c , disable_err )
 		return
 	}
-	handlers.Codes.Record( user_id , true )
+	outcome = models.AttemptPassed
 	handlers.audit( c , logs.KindAuth , "two-factor sign-in turned off" , nil )
 	err = c.JSON( fiber.Map{ "ok": true } )
 	return

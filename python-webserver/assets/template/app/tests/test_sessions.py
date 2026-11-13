@@ -449,6 +449,16 @@ class AdminSessionTest(RoutesTestCase):
         self.assertEqual(len(found), 1)
         return found[0].id
 
+    def test_only_the_owner_ends_an_admins_session(self) -> None:
+        """S3: only the owner signs another admin's device out."""
+        third = users.create_user(self.store, "Third", users.ROLE_ADMIN)
+        third_cookie = self.session(third.id)
+        path = f"{self.route(third.id)}/{self.only_session(third.id)}/revoke"
+        self.assertEqual(self.post(path, self.admin_cookie), 403)
+        self.assertEqual(self.call("GET", "/api/me", cookie=third_cookie)[0], 200)
+        self.assertEqual(self.post(path, self.owner_cookie), 200)
+        self.assertEqual(self.call("GET", "/api/me", cookie=third_cookie)[0], 401)
+
     def test_the_routes_refuse(self) -> None:
         path = self.route(self.user.id)
         self.assertEqual(self.call("GET", path, cookie=self.user_cookie)[0], 403)

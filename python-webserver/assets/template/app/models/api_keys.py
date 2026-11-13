@@ -32,7 +32,18 @@ from app.core.db import BUCKET_API_KEYS, BUCKET_USERS, Record, Store
 from app.models import RestoreGoneError, deleted_long_ago, from_iso, mark_deleted, to_iso, unmark_deleted, utc_now
 from app.models import login_tokens
 from app.models.sessions import split_credential
-from app.models.users import ROLE_ADMIN, ROLE_USER, RenameConflictError, User, get_user, owner_id_tx, valid_role
+from app.models.users import (
+    ROLE_ADMIN,
+    ROLE_USER,
+    OwnerProtectedError,
+    OwnerRequiredError,
+    RenameConflictError,
+    User,
+    get_user,
+    may_act_on_id_tx,
+    may_act_on_tx,
+    valid_role,
+)
 
 # How many live keys one account can hold. Any signed-in user can mint keys,
 # so without a cap a single account can grow the bucket without limit. 25 is
@@ -288,12 +299,12 @@ def issue_api_key(store: Store, user_id: int, name: str, role: str, ttl_seconds:
         if owner_record is None:
             raise APIKeyOwnerError(user_id)
         owner = User.from_record(owner_record)
-        if created_by is not None:
-            owner_id = owner_id_tx(tx)
-            if owner_id == user_id:
-                raise APIKeyForOwnerError()
-            if owner.is_admin and created_by != owner_id:
-                raise APIKeyForAdminError()
+        try:
+            may_act_on_tx(tx, created_by, owner)
+        except OwnerProtectedError:
+            raise APIKeyForOwnerError() from None
+        except OwnerRequiredError:
+            raise APIKeyForAdminError() from None
         if owner.disabled:
             raise APIKeyDisabledError()
         if role == ROLE_ADMIN and not owner.is_admin:
@@ -387,7 +398,7 @@ def count_live_api_keys_for_user(store: Store, user_id: int) -> int:
     return sum(1 for key in list_api_keys_for_user(store, user_id) if key.live)
 
 
-def revoke_api_key(store: Store, key_id: str) -> APIKey | None:
+def revoke_api_key(store: Store, key_id: str, actor_id: int | None = None) -> APIKey | None:
     """Mark a key dead and return it, or None if there is no such key. It is
     idempotent -- revoking twice keeps the first timestamp -- and goes through
     update_value so two concurrent revocations cannot have one overwrite the
@@ -398,11 +409,16 @@ def revoke_api_key(store: Store, key_id: str) -> APIKey | None:
 
     In the same transaction it voids the login links and invite links the key
     made that could still be used (login_tokens.void_links_minted_by_key), so a
-    leaked key cannot leave a way in behind it."""
+    leaked key cannot leave a way in behind it.
+
+    actor_id, when given, is the account asking through the web, held to
+    users.may_act_on_tx for the key's account: only the owner revokes another
+    admin's key, and nobody else revokes the owner's. None is the operator."""
     with store.transaction() as tx:
         record = tx.get(BUCKET_API_KEYS, key_id)
         if record is None:
             return None
+        may_act_on_id_tx(tx, actor_id, record["user_id"])
         if record.get("revoked_at") is None:
             record["revoked_at"] = to_iso(utc_now())
             tx.put(BUCKET_API_KEYS, key_id, record)
@@ -455,13 +471,12 @@ def set_api_key_expiry(store: Store, key_id: str, actor_id: int, ttl_seconds: in
             return None
         if not key.live:
             raise APIKeyDeadError()
-        if actor_id != key.user_id:
-            owner_id = owner_id_tx(tx)
-            if owner_id == key.user_id:
-                raise APIKeyExpiryOwnerError()
-            holder = tx.get(BUCKET_USERS, key.user_id)
-            if holder is not None and User.from_record(holder).is_admin and actor_id != owner_id:
-                raise APIKeyExpiryAdminError()
+        try:
+            may_act_on_id_tx(tx, actor_id, key.user_id)
+        except OwnerProtectedError:
+            raise APIKeyExpiryOwnerError() from None
+        except OwnerRequiredError:
+            raise APIKeyExpiryAdminError() from None
         key.expires_at = utc_now() + timedelta(seconds=ttl_seconds) if ttl_seconds > 0 else None
         tx.put(BUCKET_API_KEYS, key_id, key.to_record())
     return key
@@ -475,7 +490,9 @@ def delete_api_key(store: Store, key_id: str, actor_id: int | None) -> bool:
     restore_api_key brings it back -- working again -- for RESTORE_WINDOW,
     after which the purge removes it. Revoke is the one-way switch for a key
     that may have leaked; delete is tidying up, and tidying up the wrong row
-    is the mistake an undo exists for. The routes decide who may ask.
+    is the mistake an undo exists for. The routes decide who may ask, and
+    actor_id is held to users.may_act_on_tx for the key's account: only the
+    owner deletes another admin's key, and nobody else deletes the owner's.
 
     Like revoking, it voids the links the key made
     (login_tokens.void_links_minted_by_key); restoring the key does not bring
@@ -484,6 +501,7 @@ def delete_api_key(store: Store, key_id: str, actor_id: int | None) -> bool:
         record = tx.get(BUCKET_API_KEYS, key_id)
         if record is None or record.get("deleted_at") is not None:
             return False
+        may_act_on_id_tx(tx, actor_id, record["user_id"])
         mark_deleted(record, actor_id)
         tx.put(BUCKET_API_KEYS, key_id, record)
         login_tokens.void_links_minted_by_key(tx, key_id)
@@ -500,6 +518,9 @@ def restore_api_key(store: Store, key_id: str, actor_id: int, actor_is_admin: bo
         record = tx.get(BUCKET_API_KEYS, key_id)
         if record is None:
             raise RestoreGoneError()
+        # Bringing a key back is as much power over its account as minting
+        # one, so the rule is the key's account's, not the deleter's.
+        may_act_on_id_tx(tx, actor_id, record["user_id"])
         unmark_deleted(record, actor_id, actor_is_admin)
         key = APIKey.from_record(record)
         if key.live:

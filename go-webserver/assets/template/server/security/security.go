@@ -153,17 +153,25 @@ func ( guard *Guard ) DecryptCookie( raw string ) ( credential string , err erro
 // RequireLogin's job -- because plenty of routes are fine for anonymous
 // visitors.
 //
-// The cookie is tried first and an API key only if there is no live session.
-// Either order is safe, but this one keeps the CSRF rule below unambiguous: a
-// request that arrives with ambient browser credentials is always held to the
-// token check, and cannot opt out of it by also carrying a key.
+// An Authorization: Bearer header decides it: the request is that key or no
+// one, and the cookie is not read. Otherwise the cookie. The CSRF rule below
+// stays sound: a header is never ambient -- a page on another site cannot add
+// one without a CORS preflight this server does not answer -- and a request
+// that skips the token check by carrying a key needed that key to begin with.
 func ( guard *Guard ) LoadUser( c fiber.Ctx ) ( err error ) {
-	actor := guard.resolveSession( c )
+	var actor *Actor
 	// >>> feature:api_keys
-	if actor == nil {
+	// A request that names a key in its Authorization header acts as that key
+	// and nothing else, even from a browser that is signed in: a script using
+	// a narrow key must not quietly run as the full account whose cookie
+	// happens to be in the jar. A bad key is no one, not the cookie.
+	if hasBearer( c ) {
 		actor = guard.resolveAPIKey( c )
+	} else {
+		actor = guard.resolveSession( c )
 	}
 	// <<< feature:api_keys
+	actor = guard.resolveSession( c ) // feature:!api_keys
 	if actor != nil {
 		c.Locals( keyActor , actor )
 	}
@@ -191,6 +199,13 @@ func ( guard *Guard ) resolveSession( c fiber.Ctx ) ( actor *Actor ) {
 }
 
 // >>> feature:api_keys
+// hasBearer is true when the request carries "Authorization: Bearer ...".
+func hasBearer( c fiber.Ctx ) ( result bool ) {
+	scheme , _ , found := strings.Cut( strings.TrimSpace( c.Get( fiber.HeaderAuthorization ) ) , " " )
+	result = found && strings.EqualFold( scheme , "bearer" )
+	return
+}
+
 // resolveAPIKey reads "Authorization: Bearer <id>.<secret>".
 //
 // One header and one scheme, deliberately: a second accepted spelling (an
@@ -261,11 +276,11 @@ func ( guard *Guard ) RequireAdmin( c fiber.Ctx ) ( err error ) {
 // and any key may make its own account a login link -- so long as it carries
 // the account's full role, since the session the link becomes does. What keeps
 // revoking a leaked key meaningful is that every link records the key that
-// made it, and revoking or deleting the key voids those still usable
-// (models.VoidLinksMintedByKeyTx). What it does not undo is a session already
-// signed in through such a link, or anything that session did since: those
-// show in the devices list and the key list, and admin_revoke_access ends
-// them.
+// made it, and revoking or deleting the key voids those still usable and ends
+// every session one of its login links signed in (models.VoidLinksMintedByKeyTx).
+// What it does not undo is anything such a session did meanwhile, or the
+// accounts made through an invite link it handed out: those show in the
+// activity log and the user list.
 //
 // Keys themselves stay browser-only: a key that could mint a key would leave
 // a successor behind with nothing to tie it to the one revoked.

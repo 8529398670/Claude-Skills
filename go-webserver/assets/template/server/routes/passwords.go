@@ -89,10 +89,22 @@ func ( handlers *Handlers ) PasswordLogin( c fiber.Ctx ) ( err error ) {
 	name := models.NormalizeUsername( body.Username )
 	if len( name ) > 64 { name = name[ :64 ] }
 	address := c.IP()
-	if handlers.PasswordNames.Locked( name ) || handlers.PasswordAddresses.Locked( address ) {
+	// Reserved before the password is checked, so guesses sent in parallel
+	// cannot all get past the lockout (see models.AttemptGuard).
+	if handlers.PasswordNames.Reserve( name ) == false {
 		err = tooMany( c , "login_locked" )
 		return
 	}
+	if handlers.PasswordAddresses.Reserve( address ) == false {
+		handlers.PasswordNames.Settle( name , models.AttemptVoid )
+		err = tooMany( c , "login_locked" )
+		return
+	}
+	name_outcome , address_outcome := models.AttemptVoid , models.AttemptVoid
+	defer func() {
+		handlers.PasswordNames.Settle( name , name_outcome )
+		handlers.PasswordAddresses.Settle( address , address_outcome )
+	}()
 
 	var signed *models.SignIn
 	user := models.CheckPassword( handlers.Store , name , body.PasswordDigest )
@@ -104,13 +116,12 @@ func ( handlers *Handlers ) PasswordLogin( c fiber.Ctx ) ( err error ) {
 		}
 	}
 	if signed == nil {
-		handlers.PasswordNames.Record( name , false )
-		handlers.PasswordAddresses.Record( address , false )
+		name_outcome , address_outcome = models.AttemptFailed , models.AttemptFailed
 		handlers.auditAs( c , logs.Anonymous() , logs.KindAuth , logs.LevelWarn , "password refused" , nil )
 		err = badRequest( c , "invalid_login" )
 		return
 	}
-	handlers.PasswordNames.Record( name , true )
+	name_outcome = models.AttemptPassed
 	message := "signed in with a password"
 	if signed.Challenge != "" { message = "password accepted, waiting for a code" } // feature:two_factor
 	handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , nil )
@@ -144,10 +155,14 @@ func ( handlers *Handlers ) SetPassword( c fiber.Ctx ) ( err error ) {
 	user_id := security.UserFrom( c ).ID
 	// >>> feature:two_factor
 	cfg := handlers.cfg()
-	if handlers.Codes.Locked( user_id ) {
+	if handlers.Codes.Reserve( user_id ) == false {
 		err = tooMany( c , "two_factor_locked" )
 		return
 	}
+	// Reserved before the code is checked (see models.AttemptGuard). A right
+	// code here forgives nothing, as before: only a wrong one counts.
+	code_outcome := models.AttemptVoid
+	defer func() { handlers.Codes.Settle( user_id , code_outcome ) }()
 	// <<< feature:two_factor
 	set_err := models.SetPassword( handlers.Store , user_id , body.Username , body.PasswordDigest , handlers.sessionID( c ) , body.Code , cfg.TwoFactorEnabled , cfg.SecretKey ) // feature:two_factor
 	set_err := models.SetPassword( handlers.Store , user_id , body.Username , body.PasswordDigest , handlers.sessionID( c ) ) // feature:!two_factor
@@ -166,7 +181,7 @@ func ( handlers *Handlers ) SetPassword( c fiber.Ctx ) ( err error ) {
 		return
 	// >>> feature:two_factor
 	case errors.Is( set_err , models.ErrWrongCode ):
-		handlers.Codes.Record( user_id , false )
+		code_outcome = models.AttemptFailed
 		err = forbidden( c , "two_factor_wrong" )
 		return
 	// <<< feature:two_factor

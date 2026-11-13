@@ -3233,6 +3233,7 @@ Every field of [`APIKey`](#apikey), plus these:
 | `sections[].keys` | array of object | no |  |  |
 | `sections[].keys[].apply` | string | no |  |  |
 | `sections[].keys[].default` | any | no |  |  |
+| `sections[].keys[].file_only` | boolean | no |  | A path: change it in config.yaml, never here. |
 | `sections[].keys[].help` | string | no |  |  |
 | `sections[].keys[].in_file` | boolean | no |  |  |
 | `sections[].keys[].key` | string | no |  |  |
@@ -3574,7 +3575,7 @@ Replace the theme list everyone without their own list sees, 1 to 40 themes in t
 
 ### create_my_login_link
 
-A link that signs your own account in on a browser or another device. Only a key with your account's full role may ask: one scoped down to user on an admin account is refused. Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), expires_at and max_uses. Any older link the account could still use stops working; its signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is unused.
+A link that signs your own account in on a browser or another device. Only a key with your account's full role may ask: one scoped down to user on an admin account is refused. Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), expires_at and max_uses. Any older link the account could still use stops working; its signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs out every device it signed in.
 
 |  |  |
 |---|---|
@@ -3606,7 +3607,7 @@ Void your account's live login link without making a new one. Devices it already
 
 ### admin_create_user
 
-Make a new account and its first login link, to hand to the person. role is admin or user. Answers with user_id and the link. Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), expires_at and max_uses. Any older link the account could still use stops working; its signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is unused.
+Make a new account and its first login link, to hand to the person. role is admin or user. Answers with user_id and the link. Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), expires_at and max_uses. Any older link the account could still use stops working; its signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs out every device it signed in.
 
 |  |  |
 |---|---|
@@ -3625,7 +3626,7 @@ Make a new account and its first login link, to hand to the person. role is admi
 
 ### admin_reissue_login
 
-For someone who lost their device or their link: a fresh login link for their account. Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), expires_at and max_uses. Any older link the account could still use stops working; its signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is unused.
+For someone who lost their device or their link: a fresh login link for their account. Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), expires_at and max_uses. Any older link the account could still use stops working; its signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs out every device it signed in.
 
 |  |  |
 |---|---|

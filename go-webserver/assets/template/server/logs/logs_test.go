@@ -55,6 +55,9 @@ func TestRedact( t *testing.T ) {
 		"/api/me":            { "" , "/api/me" },
 		"/api/thing":         { "token=s3cret&page=2" , "/api/thing?page=2&token=%E2%80%A6" },
 		"/login/":            { "" , "/login/" },
+		// S6: the router ignores case, so the redaction does too.
+		"/LOGIN/abc.def":     { "" , "/LOGIN/…" },
+		"/Join/xyz":          { "" , "/Join/…" },
 	}
 	for path , want := range cases {
 		if got := Redact( path , want[ 0 ] ); got != want[ 1 ] {

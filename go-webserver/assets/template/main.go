@@ -22,6 +22,7 @@ import (
 	log "log"
 	os "os"
 	signal "os/signal"
+	filepath "path/filepath"
 	runtime "runtime"
 	syscall "syscall"
 	time "time"
@@ -176,6 +177,10 @@ func run() ( err error ) {
 
 	embedded , err := embeddedStatic()
 	if err != nil { return }
+
+	// Everything in static_dir is public, so it may not be, hold, or sit
+	// inside the config or state directory. See server/assets.
+	if err = assets.CheckStaticDir( cfg.StaticDir , filepath.Dir( cfg.ConfigFile ) , cfg.AppDir , cfg.SecretFile , cfg.DatabasePath ); err != nil { return }
 
 	// Disk when it exists, the embedded copy otherwise. See server/assets.
 	bundle , err := assets.Resolve( cfg.StaticDir , cfg.LanguageFile , embedded , embeddedLanguage )

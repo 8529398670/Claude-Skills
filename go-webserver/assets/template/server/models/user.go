@@ -225,17 +225,9 @@ func SetUserRole( store *db.Store , user_id uint64 , actor_id uint64 , role stri
 			tx_err = ErrRoleSelf
 			return
 		}
-		owner_id , tx_err := ownerIDTx( tx )
-		if tx_err != nil { return }
-		if user_id == owner_id {
-			tx_err = ErrOwnerProtected
-			return
-		}
+		if tx_err = refuseOwnerTx( tx , user_id ); tx_err != nil { return }
 		if user.Role == role { return }
-		if user.IsAdmin() && actor_id != owner_id {
-			tx_err = ErrOwnerRequired
-			return
-		}
+		if tx_err = mayActOnTx( tx , actor_id , user ); tx_err != nil { return }
 		user.Role = role
 		if tx_err = tx.Put( db.BucketUsers , key , user ); tx_err != nil { return }
 		changed = true
@@ -270,10 +262,19 @@ func ( conflict *RenameConflictError ) Error() ( result string ) {
 // The owner cannot be disabled by any route, the CLI included: the owner is
 // always an enabled admin (see owner.go). Transfer ownership first.
 func SetUserDisabled( store *db.Store , user_id uint64 , disabled bool ) ( err error ) {
+	err = SetUserDisabledAs( store , user_id , 0 , disabled )
+	return
+}
+
+// SetUserDisabledAs is SetUserDisabled for an admin acting through the web,
+// held to mayActOnTx both ways: only the owner switches another admin off, or
+// back on.
+func SetUserDisabledAs( store *db.Store , user_id uint64 , actor_id uint64 , disabled bool ) ( err error ) {
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
 		key := encryption.Uint64ToBytes( user_id )
 		user := &User{}
 		if tx_err = tx.Get( db.BucketUsers , key , user ); tx_err != nil { return }
+		if tx_err = mayActOnTx( tx , actor_id , user ); tx_err != nil { return }
 		if disabled {
 			if tx_err = refuseOwnerTx( tx , user_id ); tx_err != nil { return }
 			now := time.Now().UTC()

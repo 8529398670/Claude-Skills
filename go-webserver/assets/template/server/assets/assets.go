@@ -20,6 +20,7 @@ import (
 	fs "io/fs"
 	os "os"
 	filepath "path/filepath"
+	strings "strings"
 )
 
 type Bundle struct {
@@ -96,5 +97,46 @@ func Resolve( static_dir string , language_file string , embedded_static fs.FS ,
 	}
 
 	bundle.Source = fmt.Sprintf( "static=%s language=%s" , static_source , language_source )
+	return
+}
+
+// CheckStaticDir refuses a static directory that would hand a secret to
+// anyone: everything in it is served without signing in. protected is the
+// config directory, the state directory, secret.key and the database. The
+// static directory may not be one of them, sit inside one, or hold one.
+//
+// config.yaml is file-only for this key (see config.FileOnly), so only a
+// person editing the file can get here -- but a typo there must stop the
+// server with a clear message rather than publish the key. A static_dir that
+// does not exist is fine: the embedded copy is served instead.
+func CheckStaticDir( static_dir string , protected ...string ) ( err error ) {
+	if static_dir == "" || isDirectory( static_dir ) == false { return }
+	static_path , err := canonical( static_dir )
+	if err != nil { return }
+	for _ , item := range protected {
+		if item == "" { continue }
+		item_path , item_err := canonical( item )
+		if item_err != nil { continue } // not there yet: nothing to serve
+		if within( static_path , item_path ) || within( item_path , static_path ) {
+			err = fmt.Errorf( "refusing to start: server.static_dir (%s) would serve %s to anyone -- point static_dir at the frontend files only, in config.yaml" , static_path , item_path )
+			return
+		}
+	}
+	return
+}
+
+// canonical is path absolute, with symlinks followed, so a link cannot dodge
+// CheckStaticDir.
+func canonical( path string ) ( result string , err error ) {
+	result , err = filepath.Abs( path )
+	if err != nil { return }
+	result , err = filepath.EvalSymlinks( result )
+	return
+}
+
+// within is true when inner is outer or below it.
+func within( inner string , outer string ) ( result bool ) {
+	rel , err := filepath.Rel( outer , inner )
+	result = err == nil && rel != ".." && strings.HasPrefix( rel , ".." + string( filepath.Separator ) ) == false && filepath.IsAbs( rel ) == false
 	return
 }

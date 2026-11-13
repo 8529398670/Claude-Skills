@@ -247,6 +247,28 @@ func TestMCPAdminToolsKeepTheRules( t *testing.T ) {
 	}
 }
 
+// S1 through MCP: a non-owner admin's key cannot get the owner, or another
+// admin, a login link.
+func TestMCPLoginLinksKeepTheOwnerRule( t *testing.T ) {
+	fixture := newMCPFixture( t )
+	fixture.cfg.LoginTokenTTL = 30 * time.Minute
+	fixture.cfg.MultiUseLoginTokenTTL = time.Hour
+	second , _ := models.CreateUser( fixture.store , "Second" , models.RoleAdmin )
+	third , _ := models.CreateUser( fixture.store , "Third" , models.RoleAdmin )
+	key , _ , err := models.IssueAPIKey( fixture.store , second.ID , "ops" , models.RoleAdmin , time.Hour )
+	if err != nil { t.Fatal( err ) }
+	for _ , tool := range []string{ "admin_reissue_login" , "admin_cancel_login_link" } {
+		for _ , target := range []*models.User{ fixture.owner , third } {
+			_ , reply := fixture.post( t , key , callTool( tool , `{"user_id":`+itoa( target.ID )+`}` ) )
+			if failed , text := toolFailed( t , reply ); failed == false || strings.Contains( text , "owner" ) == false {
+				t.Errorf( "%s for #%d: %s" , tool , target.ID , text )
+			}
+		}
+	}
+	_ , reply := fixture.post( t , fixture.admin_key , callTool( "admin_reissue_login" , `{"user_id":`+itoa( third.ID )+`}` ) )
+	if failed , text := toolFailed( t , reply ); failed { t.Errorf( "the owner reissuing for an admin: %s" , text ) }
+}
+
 func TestMCPAccountTools( t *testing.T ) {
 	fixture := newMCPFixture( t )
 

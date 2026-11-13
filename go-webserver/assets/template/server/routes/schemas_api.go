@@ -271,6 +271,7 @@ type settingsSnapshotSchemaSectionsItemDocKeysItem struct {
 	PendingRestart bool `json:"pending_restart,omitempty"`
 	Running any `json:"running,omitempty"`
 	Locked bool `json:"locked,omitempty"`
+	FileOnly bool `json:"file_only,omitempty" doc:"A path: change it in config.yaml, never here."`
 }
 // <<< feature:settings
 

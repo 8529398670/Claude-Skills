@@ -137,7 +137,70 @@ func TestWhoMayChangeWhoseRole( t *testing.T ) {
 	if status , _ := send( t , owner , "/api/admin/users/9999/role" , fiber.Map{ "role": "admin" } ); status != fiber.StatusNotFound { t.Fatalf( "%d" , status ) }
 }
 
+// S1: a login link is a way in, so reissuing or cancelling one follows the
+// owner rule. Before this, any admin could mint the owner a link and sign in
+// as the owner.
+func TestOnlyTheOwnerHandsOutAnAdminsLoginLink( t *testing.T ) {
+	fixture := linkFixture( t )
+	second := secondAdmin( t , fixture )
+	third := secondAdmin( t , fixture )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	admin := fixture.signIn( t , second.ID )
+
+	for _ , verb := range []string{ "reissue-login" , "cancel-login-link" } {
+		for _ , target := range []*models.User{ fixture.owner , third } {
+			if status , reply := send( t , admin , userPath( target , verb ) , fiber.Map{} ); status != fiber.StatusForbidden || reply[ "login_path" ] != nil {
+				t.Fatalf( "%s for #%d by a non-owner admin: %d %v" , verb , target.ID , status , reply )
+			}
+		}
+		if status , reply := send( t , admin , userPath( fixture.alice , verb ) , fiber.Map{} ); status != fiber.StatusOK { t.Fatalf( "%s for a user: %d %v" , verb , status , reply ) }
+	}
+	// The owner still reissues an admin's link, and it signs in.
+	status , reply := send( t , owner , userPath( third , "reissue-login" ) , fiber.Map{} )
+	if status != fiber.StatusOK || signInWith( t , fixture , credentialOf( reply ) ) != fiber.StatusOK { t.Fatalf( "owner reissuing for an admin: %d %v" , status , reply ) }
+	if status , _ := send( t , owner , userPath( third , "cancel-login-link" ) , fiber.Map{} ); status != fiber.StatusOK { t.Fatalf( "owner cancelling: %d" , status ) }
+}
+
+// S3: disabling and revoking another admin follow the owner rule too, so a
+// non-owner admin cannot lock a peer out.
+func TestOnlyTheOwnerDisablesOrRevokesAnAdmin( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	second := secondAdmin( t , fixture )
+	third := secondAdmin( t , fixture )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	admin := fixture.signIn( t , second.ID )
+	victim := fixture.signIn( t , third.ID )
+
+	if status , reply := send( t , admin , userPath( third , "disabled" ) , fiber.Map{ "disabled": true } ); status != fiber.StatusForbidden { t.Fatalf( "disable: %d %v" , status , reply ) }
+	if status , reply := send( t , admin , userPath( third , "revoke-access" ) , fiber.Map{} ); status != fiber.StatusForbidden { t.Fatalf( "revoke: %d %v" , status , reply ) }
+	if user , _ := models.GetUser( fixture.store , third.ID ); user.Disabled() || victim.signedIn( t ) == false { t.Fatal( "the other admin was locked out" ) }
+
+	// Any admin still does both to an ordinary user; the owner to an admin.
+	if status , _ := send( t , admin , userPath( fixture.alice , "disabled" ) , fiber.Map{ "disabled": true } ); status != fiber.StatusOK { t.Fatalf( "%d" , status ) }
+	if status , _ := send( t , admin , userPath( fixture.alice , "revoke-access" ) , fiber.Map{} ); status != fiber.StatusOK { t.Fatalf( "%d" , status ) }
+	if status , _ := send( t , owner , userPath( third , "disabled" ) , fiber.Map{ "disabled": true } ); status != fiber.StatusOK { t.Fatalf( "%d" , status ) }
+	// Switching an admin back on is the owner's too.
+	if status , _ := send( t , admin , userPath( third , "disabled" ) , fiber.Map{ "disabled": false } ); status != fiber.StatusForbidden { t.Fatalf( "re-enable: %d" , status ) }
+	if status , _ := send( t , owner , userPath( third , "revoke-access" ) , fiber.Map{} ); status != fiber.StatusOK { t.Fatalf( "%d" , status ) }
+}
+
 // >>> feature:api_keys
+func TestAnAdminKeyCannotReissueTheOwnersLink( t *testing.T ) {
+	fixture := linkFixture( t )
+	second := secondAdmin( t , fixture )
+	third := secondAdmin( t , fixture )
+	key , _ , err := models.IssueAPIKey( fixture.store , second.ID , "ops" , models.RoleAdmin , time.Hour )
+	if err != nil { t.Fatal( err ) }
+	for _ , verb := range []string{ "reissue-login" , "cancel-login-link" } {
+		for _ , target := range []*models.User{ fixture.owner , third } {
+			if status , reply := fixture.withKey( t , key , http.MethodPost , userPath( target , verb ) , fiber.Map{} ); status != fiber.StatusForbidden || reply[ "login_path" ] != nil {
+				t.Fatalf( "%s for #%d through a key: %d %v" , verb , target.ID , status , reply )
+			}
+		}
+	}
+	if status , reply := fixture.withKey( t , key , http.MethodPost , userPath( fixture.alice , "reissue-login" ) , fiber.Map{} ); status != fiber.StatusOK { t.Fatalf( "%d %v" , status , reply ) }
+}
+
 func TestAnAdminKeyManagesAccounts( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	key , _ , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "ops" , models.RoleAdmin , time.Hour )
@@ -195,6 +258,35 @@ func TestRevokingAKeyVoidsTheLinksItMade( t *testing.T ) {
 		if err != nil { t.Fatal( err ) }
 		if fixture.loginWith( t , made_by_key[ "login_path" ].( string ) ) { t.Fatalf( "%s: the key's link still signs in" , how ) }
 		if fixture.loginWith( t , made_by_person[ "login_path" ].( string ) ) == false { t.Fatalf( "%s: a person's link stopped working" , how ) }
+	}
+}
+
+// S8: a browser signed in through a link a key made is signed out when the
+// key is revoked or deleted; one signed in through a person's link is not.
+// Before, the session outlived the key that made its way in.
+func TestRevokingAKeyEndsTheSessionsItsLinksMade( t *testing.T ) {
+	for _ , how := range []string{ "revoke" , "delete" } {
+		fixture := newAuthFixture( t )
+		key , record , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "ops" , models.RoleAdmin , time.Hour )
+		if err != nil { t.Fatal( err ) }
+		_ , by_key := fixture.withKey( t , key , http.MethodPost , userPath( fixture.alice , "reissue-login" ) , fiber.Map{ "max_uses": 2 } )
+		through_key := fixture.browser()
+		if status , _ := through_key.post( t , "/api/login" , fiber.Map{ "credential": strings.TrimPrefix( by_key[ "login_path" ].( string ) , "/login/" ) } ); status != fiber.StatusOK { t.Fatalf( "%s: sign-in: %d" , how , status ) }
+		by_person := fixture.signIn( t , fixture.alice.ID )
+
+		if how == "revoke" {
+			err = models.RevokeAPIKey( fixture.store , record.ID )
+		} else {
+			err = models.DeleteAPIKey( fixture.store , record.ID , fixture.owner.ID )
+		}
+		if err != nil { t.Fatal( err ) }
+		if through_key.signedIn( t ) { t.Fatalf( "%s: the key's session is still signed in" , how ) }
+		if by_person.signedIn( t ) == false { t.Fatalf( "%s: a person's session was signed out" , how ) }
+		// Restoring the key does not bring it back.
+		if how == "delete" {
+			if _ , err = models.RestoreAPIKey( fixture.store , record.ID , fixture.owner.ID , true ); err != nil { t.Fatal( err ) }
+			if through_key.signedIn( t ) { t.Fatal( "restoring the key restored its session" ) }
+		}
 	}
 }
 // <<< feature:api_keys

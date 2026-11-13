@@ -196,12 +196,12 @@ func ( handlers *Handlers ) revokeUserSession( c fiber.Ctx , user_id uint64 , se
 		refused = refuse( fiber.StatusBadRequest , "use sign out for this device" )
 		return
 	}
-	revoke_err := models.RevokeSession( handlers.Store , user_id , session_id )
+	revoke_err := models.RevokeSessionAs( handlers.Store , user_id , security.UserFrom( c ).ID , session_id )
 	switch {
 	case errors.Is( revoke_err , models.ErrSessionNotFound ):
 		refused = refuse( fiber.StatusNotFound , "not found" )
 	case revoke_err != nil:
-		refused = internalFailure( revoke_err )
+		refused = actOnRefusal( revoke_err , "end a session of" )
 	default:
 		handlers.audit( c , logs.KindAdmin , "session revoked" , fiber.Map{ "user_id": user_id } )
 		payload = fiber.Map{ "ok": true }

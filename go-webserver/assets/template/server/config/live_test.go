@@ -186,9 +186,20 @@ func TestSnapshotNeverHoldsTheKey( t *testing.T ) {
 func TestContainerLocksScriptKeys( t *testing.T ) {
 	holder , path := newTestHolder( t )
 	inContainer( t , path , t.TempDir() )
-	_ , err := holder.Save( currentVersion( t , path ) , map[string]any{ "docker.data_dir": "/home" } )
+	_ , err := holder.Save( currentVersion( t , path ) , map[string]any{ "docker.memory": "1g" } )
 	if errors.Is( err , ErrLocked ) == false {
 		t.Fatalf( "expected ErrLocked, got %v" , err )
+	}
+}
+
+// S2: a path is file-only outside the container too.
+func TestPathsAreFileOnlyEverywhere( t *testing.T ) {
+	holder , path := newTestHolder( t )
+	for _ , key := range []string{ "server.static_dir" , "server.language_file" , "server.app_dir" , "docker.data_dir" , "build.output_dir" } {
+		_ , err := holder.Save( currentVersion( t , path ) , map[string]any{ key: filepath.Dir( path ) } )
+		if errors.Is( err , ErrFileOnly ) == false {
+			t.Fatalf( "%s: expected ErrFileOnly, got %v" , key , err )
+		}
 	}
 }
 // <<< feature:settings

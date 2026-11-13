@@ -90,11 +90,13 @@ async def join_claim(request: Request) -> Response:
         return not_found("no_such_account")
 
     if pins.has_pin(user):
-        if PINS.locked(user.id):
+        attempt = PINS.reserve(user.id)
+        if attempt is None:
             return error(429, "pin_locked")
         pin = body.get("pin")
-        ok = await run(pins.check_pin, user, pin)
-        PINS.record(user.id, ok)
+        with attempt:
+            ok = await run(pins.check_pin, user, pin)
+            attempt.passed() if ok else attempt.failed()
         if not ok:
             audit_as(request, await run(user_actor, store, user.id, "anon"), KIND_AUTH, LEVEL_WARN, "wrong pin on an invite link", {"link_id": link.id})
             return forbidden("pin_needed" if not pin else "pin_wrong")

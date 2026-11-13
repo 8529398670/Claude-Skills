@@ -44,7 +44,7 @@ func withLoginURL( call *mcp.Call , payload fiber.Map , refused *refusal ) ( res
 	return
 }
 
-const loginLinkAnswer = "Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), expires_at and max_uses. Any older link the account could still use stops working; its signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is unused."
+const loginLinkAnswer = "Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), expires_at and max_uses. Any older link the account could still use stops working; its signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs out every device it signed in."
 
 func ( handlers *Handlers ) registerAccountTools( server *mcp.Server ) {
 	server.Register( &mcp.Tool{

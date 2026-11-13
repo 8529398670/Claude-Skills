@@ -66,6 +66,8 @@ func ( handlers *Handlers ) SaveSettings( c fiber.Ctx ) ( err error ) {
 		err = conflict( c , "settings_stale" , nil )
 	case errors.Is( save_err , config.ErrReadOnly ):
 		err = conflict( c , "settings_read_only" , nil )
+	case errors.Is( save_err , config.ErrFileOnly ):
+		err = forbidden( c , "settings_file_only" )
 	case errors.Is( save_err , config.ErrLocked ):
 		err = forbidden( c , "settings_locked" )
 	case errors.As( save_err , &validation ):

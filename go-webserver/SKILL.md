@@ -69,8 +69,9 @@ project.
   JSON. Every list in the API is paged, and nothing here is meant for search engines:
   `robots.txt` and an `X-Robots-Tag` header on every response say so.
 - **The first admin is the owner.** Any admin can permanently delete an
-  ordinary user; only the owner can delete another admin, and nobody can
-  delete, disable, or revoke the owner from the web. Ownership is a marker,
+  ordinary user; only the owner can delete, disable, sign out, or hand a
+  login link or key for another admin, and nobody can do any of that to the
+  owner from the web. Ownership is a marker,
   not a third role, and moves only from a shell (`manage transfer-owner`).
   Deleting an account takes its sessions, links, and keys with it; an admin
   key may do it, and its MCP tool is marked destructive.

@@ -112,12 +112,14 @@ func ( handlers *Handlers ) JoinClaim( c fiber.Ctx ) ( err error ) {
 		return
 	}
 	if user.HasPin() {
-		if handlers.Pins.Locked( user.ID ) {
+		if handlers.Pins.Reserve( user.ID ) == false {
 			err = c.Status( fiber.StatusTooManyRequests ).JSON( fiber.Map{ "error": "pin_locked" } )
 			return
 		}
 		ok := user.CheckPin( body.Pin )
-		handlers.Pins.Record( user.ID , ok )
+		outcome := models.AttemptFailed
+		if ok { outcome = models.AttemptPassed }
+		handlers.Pins.Settle( user.ID , outcome )
 		if ok == false {
 			handlers.auditAs( c , handlers.logUser( user.ID , "anon" ) , logs.KindAuth , logs.LevelWarn , "wrong pin on an invite link" , fiber.Map{ "link_id": link.ID } )
 			code := "pin_wrong"

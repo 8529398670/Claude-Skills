@@ -2,6 +2,7 @@ package config
 
 import (
 	reflect "reflect"
+	strings "strings"
 	testing "testing"
 )
 
@@ -23,6 +24,26 @@ func TestEveryKeyIsTagged( t *testing.T ) {
 	for path := range fieldTypes() {
 		if seen[ path ] == false {
 			t.Errorf( "%s is in File but not in defaults.yaml" , path )
+		}
+	}
+}
+
+// Every key that names a path is file-only (see fileOnlyKeys): a path set from
+// the Settings screen is how S2 served secret.key. A new *_dir, *_file or
+// *_path key fails here until it is listed.
+func TestEveryPathKeyIsFileOnly( t *testing.T ) {
+	useTestDefaults( t )
+	sections , err := Schema()
+	if err != nil { t.Fatal( err ) }
+	for _ , section := range sections {
+		for _ , key := range section.Keys {
+			path_like := strings.HasSuffix( key.Name , "_dir" ) || strings.HasSuffix( key.Name , "_file" ) || strings.HasSuffix( key.Name , "_path" )
+			if path_like && FileOnly( key ) == false {
+				t.Errorf( "%s names a path but is not in fileOnlyKeys" , key.Path )
+			}
+			if FileOnly( key ) && Locked( key ) == false {
+				t.Errorf( "%s is file-only but not locked" , key.Path )
+			}
 		}
 	}
 }

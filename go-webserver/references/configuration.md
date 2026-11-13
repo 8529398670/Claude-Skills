@@ -361,6 +361,16 @@ running with. `[restart]` keys are restart-only because something is built
 from them once: the listener, the database, the control socket, the cookie
 name every browser holds, fiber's proxy and body-limit settings.
 
+**Paths are file-only.** The Settings screen never changes a key that names a
+path -- `server.app_dir`, `static_dir`, `language_file`, `docker.data_dir` and `build.output_dir` (`fileOnlyKeys` in `server/config/live.go`) -- inside a container or out: a path
+decides what the server reads, writes or serves, and everything in
+`static_dir` is served without signing in, so a stolen owner session could
+otherwise point it at `secret.key`. Edit `config.yaml` to change one. At
+startup the server also refuses a `static_dir` that is, holds, or sits inside
+the config folder, the state folder, `secret.key` or the database, and the
+static handler never serves a dotfile (`.well-known/` aside). A new path-typed
+key goes in that list; a test fails until it does.
+
 "Live" is literal: everything that reads a setting per request reads
 `Holder.Get()`, never a `Config` it was handed at startup -- the guard, the
 handlers, the rate limiter (`MaxFunc`/`ExpirationFunc`), the security headers

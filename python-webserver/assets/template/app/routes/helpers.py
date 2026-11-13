@@ -7,6 +7,8 @@ models through `await run(...)`, which runs the call in a worker thread.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from starlette.concurrency import run_in_threadpool
@@ -18,6 +20,7 @@ from app.core.config_live import Holder  # feature:settings
 from app.core.db import Store
 from app.core.middleware import internal_error
 from app.models import RestoreError, RestoreForbiddenError, RestoreGoneError  # feature:api_keys|files|invite_links|webhooks
+from app.models.users import OwnerProtectedError, OwnerRequiredError
 
 run = run_in_threadpool
 
@@ -173,6 +176,19 @@ class Refused(Exception):
         if self.status >= 500 and request is not None:
             return server_error(request, self.cause)
         return JSONResponse({"error": self.message, **self.extra}, status_code=self.status)
+
+
+@contextmanager
+def act_on_refusals(what: str) -> Iterator[None]:
+    """Turns users.may_act_on_tx's refusals into the 403 every account route
+    gives, with the same wording. what is the action, worded to follow
+    "cannot": "reissue a login link for"."""
+    try:
+        yield
+    except OwnerProtectedError:
+        raise Refused(403, f"nobody can {what} the owner account") from None
+    except OwnerRequiredError:
+        raise Refused(403, f"only the owner can {what} an admin account") from None
 
 
 def error(status: int, message: str) -> JSONResponse:

@@ -226,21 +226,7 @@ func issueAPIKey( store *db.Store , user_id uint64 , name string , role string ,
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
 		owner := &User{}
 		if tx_err = tx.Get( db.BucketUsers , encryption.Uint64ToBytes( user_id ) , owner ); tx_err != nil { return }
-		if created_by != 0 {
-			owner_id , owner_err := ownerIDTx( tx )
-			if owner_err != nil {
-				tx_err = owner_err
-				return
-			}
-			if owner_id == user_id {
-				tx_err = ErrOwnerProtected
-				return
-			}
-			if owner.IsAdmin() && created_by != owner_id {
-				tx_err = ErrOwnerRequired
-				return
-			}
-		}
+		if tx_err = mayActOnTx( tx , created_by , owner ); tx_err != nil { return }
 		if owner.Disabled() {
 			tx_err = ErrAPIKeyDisabled
 			return
@@ -411,9 +397,18 @@ func CountLiveAPIKeysForUser( store *db.Store , user_id uint64 ) ( count int , e
 // made that could still be used (VoidLinksMintedByKeyTx), so a leaked key
 // cannot leave a way in behind it.
 func RevokeAPIKey( store *db.Store , key_id string ) ( err error ) {
+	err = RevokeAPIKeyAs( store , key_id , 0 )
+	return
+}
+
+// RevokeAPIKeyAs is RevokeAPIKey for an account acting through the web, held
+// to mayActOnTx for the key's account: only the owner revokes another admin's
+// key, and nobody else revokes the owner's.
+func RevokeAPIKeyAs( store *db.Store , key_id string , actor_id uint64 ) ( err error ) {
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
 		key := &APIKey{}
 		if tx_err = tx.Get( db.BucketAPIKeys , []byte( key_id ) , key ); tx_err != nil { return }
+		if tx_err = mayActOnIDTx( tx , actor_id , key.UserID ); tx_err != nil { return }
 		if key.RevokedAt == nil {
 			now := time.Now().UTC()
 			key.RevokedAt = &now
@@ -475,23 +470,7 @@ func SetAPIKeyExpiry( store *db.Store , key_id string , actor_id uint64 , ttl ti
 			tx_err = ErrAPIKeyDead
 			return
 		}
-		if actor_id != stored.UserID {
-			holder := &User{}
-			if tx_err = tx.Get( db.BucketUsers , encryption.Uint64ToBytes( stored.UserID ) , holder ); tx_err != nil { return }
-			owner_id , owner_err := ownerIDTx( tx )
-			if owner_err != nil {
-				tx_err = owner_err
-				return
-			}
-			if owner_id == stored.UserID {
-				tx_err = ErrOwnerProtected
-				return
-			}
-			if holder.IsAdmin() && actor_id != owner_id {
-				tx_err = ErrOwnerRequired
-				return
-			}
-		}
+		if tx_err = mayActOnIDTx( tx , actor_id , stored.UserID ); tx_err != nil { return }
 		stored.ExpiresAt = nil
 		if ttl > 0 {
 			expires := time.Now().UTC().Add( ttl )
@@ -511,7 +490,9 @@ func SetAPIKeyExpiry( store *db.Store , key_id string , actor_id uint64 , ttl ti
 // RestoreAPIKey brings it back -- working again -- for RestoreWindow, after
 // which the purge removes it. Revoke is the one-way switch for a key that
 // may have leaked; delete is tidying up, and tidying up the wrong row is the
-// mistake an undo exists for. The routes decide who may ask.
+// mistake an undo exists for. The routes decide who may ask, and actor_id is
+// held to mayActOnTx for the key's account: only the owner deletes another
+// admin's key, and nobody else deletes the owner's.
 //
 // Like revoking, it voids the links the key made (VoidLinksMintedByKeyTx);
 // restoring the key does not bring them back.
@@ -519,6 +500,7 @@ func DeleteAPIKey( store *db.Store , key_id string , actor_id uint64 ) ( err err
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
 		key := &APIKey{}
 		if tx_err = tx.Get( db.BucketAPIKeys , []byte( key_id ) , key ); tx_err != nil { return }
+		if tx_err = mayActOnIDTx( tx , actor_id , key.UserID ); tx_err != nil { return }
 		if key.markDeleted( actor_id ) == false {
 			tx_err = db.ErrNotFound
 			return
@@ -541,6 +523,9 @@ func RestoreAPIKey( store *db.Store , key_id string , actor_id uint64 , actor_is
 			if errors.Is( tx_err , db.ErrNotFound ) { tx_err = ErrRestoreGone }
 			return
 		}
+		// Bringing a key back is as much power over its account as minting
+		// one, so the rule is the key's account's, not the deleter's.
+		if tx_err = mayActOnIDTx( tx , actor_id , found.UserID ); tx_err != nil { return }
 		if tx_err = found.unmarkDeleted( actor_id , actor_is_admin ); tx_err != nil { return }
 		if found.Live() {
 			live := 0

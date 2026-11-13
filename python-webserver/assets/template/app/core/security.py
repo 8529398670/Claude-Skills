@@ -161,15 +161,28 @@ def _resolve_api_key(store: Store, cfg: Config, authorization: str) -> Actor | N
     return Actor(user=user, role=narrow_role(user.role, key.role), api_key=key)
 
 
+def _has_bearer(authorization: str) -> bool:
+    """True when the request carries "Authorization: Bearer ..."."""
+    scheme, space, _ = authorization.strip().partition(" ")
+    return bool(space) and scheme.lower() == "bearer"
+
+
 # <<< feature:api_keys
 def resolve_actor(store: Store, cfg: Config, cookies: dict[str, str], authorization: str) -> Actor | None:
-    """The cookie is tried first and an API key only if there is no live
-    session. Either order is safe, but this one keeps the CSRF rule below
-    unambiguous: a request that arrives with ambient browser credentials is
-    always held to the token check, and cannot opt out of it by also carrying
-    a key."""
-    return _resolve_session(store, cfg, cookies) or _resolve_api_key(store, cfg, authorization)  # feature:api_keys
-    return _resolve_session(store, cfg, cookies)  # feature:!api_keys
+    """An Authorization: Bearer header decides it: the request is that key or
+    no one, and the cookie is not read. Otherwise the cookie. A script using
+    a narrow key must not quietly run as the full account whose cookie
+    happens to be in the jar, and a bad key is no one, not the cookie.
+
+    The CSRF rule below stays sound: a header is never ambient -- a page on
+    another site cannot add one without a CORS preflight this server does not
+    answer -- and a request that skips the token check by carrying a key
+    needed that key to begin with."""
+    # >>> feature:api_keys
+    if _has_bearer(authorization):
+        return _resolve_api_key(store, cfg, authorization)
+    # <<< feature:api_keys
+    return _resolve_session(store, cfg, cookies)
 
 
 class LoadActor:
@@ -290,10 +303,10 @@ class RequireSession(Guard):
     the account's full role, since the session the link becomes does. What
     keeps revoking a leaked key meaningful is that every link records the key
     that made it, and revoking or deleting the key voids those still usable
-    (login_tokens.void_links_minted_by_key). What it does not undo is a session
-    already signed in through such a link, or anything that session did since:
-    those show in the devices list and the key list, and admin_revoke_access
-    ends them.
+    and ends every session one of its login links signed in
+    (login_tokens.void_links_minted_by_key). What it does not undo is anything
+    such a session did meanwhile, or the accounts made through an invite link
+    it handed out: those show in the activity log and the user list.
 
     Keys themselves stay browser-only: a key that could mint a key would leave
     a successor behind with nothing to tie it to the one revoked."""

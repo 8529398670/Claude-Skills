@@ -42,6 +42,10 @@ class SignInRules:
 
     session_ttl_seconds: int
     two_factor: bool = False  # feature:two_factor
+    # The API key that made the link being redeemed, carried to the session
+    # (and through a two-factor challenge) so revoking the key ends it.
+    # redeem_login_token fills it in; callers leave it empty.
+    minted_by_key: str = ""
 
 
 @dataclass
@@ -67,10 +71,12 @@ def start_sign_in_tx(tx: Transaction, user: User, rules: SignInRules) -> SignIn:
             "user_id": user.id,
             "secret_hash": encryption.sha256_hex(secret),
             "expires_at": to_iso(utc_now() + timedelta(seconds=CHALLENGE_TTL_SECONDS)),
+            "minted_by_key": rules.minted_by_key,
         })
         return SignIn(user_id=user.id, challenge=f"{challenge_id}.{secret}")
     # <<< feature:two_factor
     session_id, session_credential, session = new_session(user.id, rules.session_ttl_seconds)
+    session.minted_by_key = rules.minted_by_key
     tx.put(BUCKET_SESSIONS, session_id, session.to_record())
     return SignIn(user_id=user.id, session_credential=session_credential)
 
@@ -116,6 +122,7 @@ def finish_challenge(store: Store, credential: object, code: object, session_ttl
         tx.put(BUCKET_USERS, record["id"], record)
         tx.delete(BUCKET_SIGN_IN_CHALLENGES, challenge_id)
         session_id, session_credential, session = new_session(record["id"], session_ttl_seconds)
+        session.minted_by_key = challenge.get("minted_by_key", "")
         tx.put(BUCKET_SESSIONS, session_id, session.to_record())
     return SignIn(user_id=record["id"], session_credential=session_credential), method
 

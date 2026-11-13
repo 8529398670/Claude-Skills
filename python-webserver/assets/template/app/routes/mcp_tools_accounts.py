@@ -35,7 +35,7 @@ LOGIN_LINK_OPTIONAL = {"max_uses": int, "expires_in_minutes": int}
 LOGIN_LINK_ANSWER = (
     "Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), expires_at and max_uses. "
     "Any older link the account could still use stops working; its signed-in devices stay signed in. "
-    "Revoking or deleting this API key voids the link while it is unused."
+    "Revoking or deleting this API key voids the link while it is unused, and signs out every device it signed in."
 )
 ROLE_SCHEMA = {"type": "string", "enum": [ROLE_ADMIN, ROLE_USER]}
 

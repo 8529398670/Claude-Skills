@@ -17,7 +17,7 @@ from app.core.logs import KIND_ADMIN, KIND_AUTH
 from app.core.security import actor_from, check_csrf
 from app.models import sessions, to_iso, users
 from app.models import ip_names  # feature:logs
-from app.routes.helpers import Refused, bad_request, forbidden, get_store, parse_id, read_json, run, send_page
+from app.routes.helpers import Refused, act_on_refusals, bad_request, forbidden, get_store, parse_id, read_json, run, send_page
 from app.routes.logs import audit
 
 
@@ -141,7 +141,9 @@ def revoke_user_session_checked(request: Request, user_id: int, session_id: str)
     _target_of(store, actor_from(request).user.id, user_id)
     if session_id and session_id == current_session_id(request):
         raise Refused(400, "use sign out for this device")
-    if not sessions.revoke_session(store, user_id, session_id):
+    with act_on_refusals("end a session of"):
+        found = sessions.revoke_session(store, user_id, session_id, actor_id=actor_from(request).user.id)
+    if not found:
         raise Refused(404, "not found")
     audit(request, KIND_ADMIN, "session revoked", {"user_id": user_id})
     return {"ok": True}

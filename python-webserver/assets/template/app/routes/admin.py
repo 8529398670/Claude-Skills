@@ -25,7 +25,7 @@ from app.models import credentials, from_iso, login_tokens, to_iso, users, utc_n
 from app.models import passwords  # feature:passwords
 from app.models import two_factor  # feature:two_factor
 from app.models import webhooks  # feature:webhooks
-from app.routes.helpers import Refused, bad_request, error, forbidden, get_config, get_store, parse_id, read_json, run, send_page
+from app.routes.helpers import Refused, act_on_refusals, bad_request, error, forbidden, get_config, get_store, parse_id, read_json, run, send_page
 from app.routes.helpers import emit  # feature:webhooks
 from app.routes.logs import audit
 
@@ -164,8 +164,9 @@ def reissue_login_checked(request: Request, user_id: int, body: dict) -> dict[st
     store = get_store(request)
     if users.get_user(store, user_id) is None:
         raise Refused(404, "no such user")
-    options = link_options(request, body)
-    credential, info = login_tokens.issue_login_link(store, user_id, options)
+    options = replace(link_options(request, body), actor_id=actor_from(request).user.id)
+    with act_on_refusals("reissue a login link for"):
+        credential, info = login_tokens.issue_login_link(store, user_id, options)
     audit(request, KIND_ADMIN, "login link reissued", {"user_id": user_id, "max_uses": info["max_uses"], "expires_at": info["expires_at"]})
     return link_response(credential, info)
 
@@ -196,7 +197,8 @@ def cancel_login_link_checked(request: Request, user_id: int) -> dict[str, Any]:
     store = get_store(request)
     if users.get_user(store, user_id) is None:
         raise Refused(404, "no such user")
-    removed = login_tokens.cancel_login_link(store, user_id)
+    with act_on_refusals("cancel the login link of"):
+        removed = login_tokens.cancel_login_link(store, user_id, actor_from(request).user.id)
     audit(request, KIND_ADMIN, "login link cancelled", {"user_id": user_id, "removed": removed})
     return {"ok": True, "removed": removed}
 
@@ -422,11 +424,14 @@ def set_disabled_checked(store: Store, self_id: int, user_id: int, disabled: boo
 
     # Disabling also deletes the account's sessions and live login links,
     # in the same transaction -- see credentials.set_user_disabled. The owner
-    # cannot be disabled; that check is in the model so every route gets it.
+    # cannot be disabled, and only the owner switches another admin off or
+    # on; those checks are in the model so every route gets them.
     try:
-        found = credentials.set_user_disabled(store, user_id, disabled)
+        found = credentials.set_user_disabled(store, user_id, disabled, actor_id=self_id)
     except credentials.OwnerProtectedError:
         return RuleRefusal(403, "the owner account cannot be disabled")
+    except credentials.OwnerRequiredError:
+        return RuleRefusal(403, "only the owner can disable or enable an admin account")
     if not found:
         return RuleRefusal(404, "no such user")
     return None
@@ -439,12 +444,15 @@ def revoke_access_checked(store: Store, self_id: int, user_id: int) -> credentia
     if user_id == self_id:
         return RuleRefusal(400, "you cannot revoke your own access")
 
-    # The owner is refused here (allow_owner False). Only an operator with
-    # shell access may cut the owner off -- see revoke_all_credentials.
+    # The owner is refused here (allow_owner False), and only the owner
+    # revokes another admin. Only an operator with shell access may cut the
+    # owner off -- see revoke_all_credentials.
     try:
-        revoked = credentials.revoke_all_credentials(store, user_id)
+        revoked = credentials.revoke_all_credentials(store, user_id, actor_id=self_id)
     except credentials.OwnerProtectedError:
         return RuleRefusal(403, "the owner account's access cannot be revoked")
+    except credentials.OwnerRequiredError:
+        return RuleRefusal(403, "only the owner can revoke the access of an admin account")
     if revoked is None:
         return RuleRefusal(404, "no such user")
     return revoked

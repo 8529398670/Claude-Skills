@@ -81,13 +81,30 @@ func hasDotDot( request_path string ) ( result bool ) {
 	return
 }
 
+// hasDotFile spots a segment that starts with a dot: .env, .git/config,
+// .htpasswd, an editor's swap file. Nothing the app serves is named like
+// that, and a directory that ends up served by mistake is exactly where such
+// files are, so they are never served -- defense in depth behind the startup
+// check (server/assets.CheckStaticDir). .well-known/ is the exception: it is
+// public by definition (RFC 8615).
+func hasDotFile( name string ) ( result bool ) {
+	for index , segment := range strings.Split( name , "/" ) {
+		if index == 0 && segment == ".well-known" { continue }
+		if strings.HasPrefix( segment , "." ) {
+			result = true
+			return
+		}
+	}
+	return
+}
+
 // resolve turns a request path into an fs.FS name: forward slashes, no
-// leading slash, no "." or ".." elements.
+// leading slash, no "." or ".." elements, and no dotfiles (see hasDotFile).
 func resolve( request_path string ) ( result string , ok bool ) {
 	if hasDotDot( request_path ) { return }
 	cleaned := path.Clean( "/" + strings.ReplaceAll( request_path , "\\" , "/" ) )
 	cleaned = strings.TrimPrefix( cleaned , "/" )
-	if cleaned == "" || fs.ValidPath( cleaned ) == false { return }
+	if cleaned == "" || fs.ValidPath( cleaned ) == false || hasDotFile( cleaned ) { return }
 	result , ok = cleaned , true
 	return
 }
