@@ -142,7 +142,7 @@ def frontend_problems(skill: str, project: Path) -> list[str]:
 def check(skill: str, name: str, cut: set[str], arguments: argparse.Namespace, base: Path) -> tuple[str, bool, str]:
     project = base / name
     scaffold = SKILLS / skill / "scripts" / "scaffold.py"
-    ok, output = run([sys.executable, "-B", str(scaffold), str(project), "Check", "--prune", ",".join(sorted(cut)) or "none"], base)
+    ok, output = run([sys.executable, "-B", str(scaffold), str(project), "Check", "--tests", "--prune", ",".join(sorted(cut)) or "none"], base)
     if not ok:
         return name, False, tail(output)
     for script in sorted((project / "static" / "js").glob("*.js")):

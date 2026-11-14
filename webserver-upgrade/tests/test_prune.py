@@ -130,6 +130,27 @@ class TreeTest(unittest.TestCase):
             self.assertEqual((root / "only.go").read_text(), "package pkg\n")
 
 
+class TestsOffTest(unittest.TestCase):
+    def test_strip_keeps_the_security_and_api_docs_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("server/routes/api_docs_test.go", "server/routes/themes_test.go", "server/config/live.go",
+                         "server/config/live_test.go", "server/config/testdata/a.yaml", "app/tests/test_a.py",
+                         "app/tests/test_sessions.py", "app/tests/support.py"):
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text("x")
+            prune.strip_tests(root)
+            left = sorted(path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file())
+            self.assertEqual(left, ["app/tests/support.py", "app/tests/test_sessions.py", "server/config/live.go", "server/routes/api_docs_test.go"])
+
+    def test_config_default(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.yaml"
+            self.assertFalse(prune.tests_by_default(config))
+            config.write_text("# x\ntests: true  # on\n")
+            self.assertTrue(prune.tests_by_default(config))
+
+
 class CopiesTest(unittest.TestCase):
     def test_both_skills_have_the_same_file(self) -> None:
         self.assertTrue(filecmp.cmp(FILE, SKILLS / "python-webserver" / "scripts" / "prune.py", shallow=False))

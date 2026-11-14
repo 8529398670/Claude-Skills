@@ -103,7 +103,9 @@ An app scaffolded before stamps existed needs one.
    - Go: `go mod tidy`, `scripts/api_docs.sh` (it rewrites the route table and
      the API docs), `go build ./...`, `go test ./...`.
    - Python: install `app/requirements.txt` in the app's venv, run
-     `scripts/api_docs.sh`, then its tests.
+     `scripts/api_docs.sh`, then its tests if it has any.
+   - An app stamped `tests: false` gets no template tests in an update either
+     beyond the security and sign-in ones it keeps; run those, and don't add the rest.
    - Run `config check` against a **copy** of the real `config.yaml`. The decoder
      is strict, so a key the merge lost makes the app refuse to start.
 9. **Report** what changed, what you decided, and anything not verified. Name

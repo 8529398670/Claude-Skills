@@ -333,7 +333,7 @@ def skill_commit() -> str:
     return git("rev-parse", "HEAD") or "unknown"
 
 
-def write_origin(target_dir: Path, project_name: str, slug: str, module_path: str | None, port: int, features: list[str], pruned: set[str]) -> Path:
+def write_origin(target_dir: Path, project_name: str, slug: str, module_path: str | None, port: int, features: list[str], pruned: set[str], tests: bool = True) -> Path:
     """Write <target>/.skill-origin.yaml. It is committed with the project."""
     commit = skill_commit()
     lines = [
@@ -346,7 +346,7 @@ def write_origin(target_dir: Path, project_name: str, slug: str, module_path: st
     ]
     if module_path:
         lines.append(f"module_path: {module_path}")
-    lines += [f"port: {port}", f"features: [{', '.join(features)}]", f"pruned: [{', '.join(sorted(pruned))}]"]
+    lines += [f"port: {port}", f"features: [{', '.join(features)}]", f"pruned: [{', '.join(sorted(pruned))}]", f"tests: {'true' if tests else 'false'}"]
     origin_path = target_dir / ORIGIN_FILE
     origin_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return origin_path
@@ -397,7 +397,11 @@ def main() -> None:
     parser.add_argument("--repo", help="where the source lives, e.g. https://github.com/you/app (an ssh remote is fine); becomes app.repo. Left out, a github.com/... module path is used")
     parser.add_argument("--port", type=int, help="the port to use in place of a random free one; demo.py pins its demo to one so the browser keeps it signed in")
     parser.add_argument("--prune", help="exactly what to cut, comma-separated, or none, in place of working it out from --features and --without; for webserver-upgrade and demo.py")
+    tests = parser.add_mutually_exclusive_group()
+    tests.add_argument("--tests", dest="tests", action="store_true", default=None, help="copy the template's tests into the project")
+    tests.add_argument("--no-tests", dest="tests", action="store_false", help="leave them out (Go keeps the few scripts/api_docs.sh runs)")
     args = parser.parse_args()
+    with_tests = prune.tests_by_default() if args.tests is None else args.tests
     # Before anything is written: a typo should not leave half a project.
     chosen, added = parse_features(args.features) if args.features is not None else (None, [])
     without = parse_names(args.without, "--without")
@@ -460,9 +464,11 @@ def main() -> None:
     pruned = exact if exact is not None else with_dependents(set(FEATURES) - set(on) | without)
     on = [name for name in on if name not in pruned]
     prune.prune_tree(target_dir, pruned, DATA_FILES)
+    if not with_tests:
+        prune.strip_tests(target_dir)
     config_path, secret_path = write_config(target_dir)
     example_path = write_example(target_dir)
-    write_origin(target_dir, project_name, slugify(project_name), module_path, port, on, pruned)
+    write_origin(target_dir, project_name, slugify(project_name), module_path, port, on, pruned, with_tests)
 
     print(f"Scaffolded '{project_name}' into {target_dir}")
     print(f"  module {module_path}")
@@ -476,6 +482,7 @@ def main() -> None:
     print(f"  features on: {', '.join(on) or '(core only)'}")
     if off:
         print(f"  features off: {', '.join(off)} -- in the project; switch one on in Settings")
+    print(f"  tests: {'included' if with_tests else 'left out (--tests, or tests: true in ~/.claude/skills/config.yaml, brings them)'}")
     if pruned:
         print(f"  left out: {', '.join(sorted(pruned))} -- webserver-upgrade's add-feature brings one in")
     for name in added:

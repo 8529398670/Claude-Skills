@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 # What prune_tree reads. Anything else is left alone.
@@ -228,3 +229,77 @@ def prune_tree(root: Path, removed: set[str], data_files: dict[str, tuple[str, .
     for path in sorted(root.rglob("*"), reverse=True):
         if path.is_dir() and not any(path.iterdir()):
             path.rmdir()
+
+
+# ---------------------------------------------------------------- tests on or off
+#
+# An app is scaffolded without most of its tests unless asked for them (--tests,
+# or `tests: true` in the skills repo's config.yaml). It always keeps the
+# security and sign-in tests, the ones that catch an upgrade or an edit
+# quietly breaking audited code, plus what scripts/api_docs.sh (Go) runs and the
+# helpers all of those need.
+KEEP_WITHOUT_TESTS = {
+    # Go: API docs, and the fixtures the route tests share.
+    "server/routes/api_docs_test.go",
+    "server/routes/fixture_test.go",
+    "server/routes/mcp_parity_test.go",
+    "server/routes/monitoring_test.go",
+    # Go: sign-in, sessions, roles, keys, limits, secrets.
+    "server/routes/sessions_test.go",
+    "server/routes/login_links_test.go",
+    "server/routes/invite_links_test.go",
+    "server/routes/two_factor_test.go",
+    "server/routes/passwords_test.go",
+    "server/routes/admin_test.go",
+    "server/routes/api_keys_test.go",
+    "server/middleware/ratelimit_test.go",
+    "server/models/login_token_test.go",
+    "server/models/invite_link_test.go",
+    "server/models/attempts_test.go",
+    "server/models/helpers_test.go",
+    "server/config/secret_test.go",
+    "server/config/helpers_test.go",
+    # Python: the same, and the shared support modules.
+    "app/tests/__init__.py",
+    "app/tests/support.py",
+    "app/tests/route_support.py",
+    "app/tests/test_sessions.py",
+    "app/tests/test_login_tokens.py",
+    "app/tests/test_invite_links.py",
+    "app/tests/test_passwords.py",
+    "app/tests/test_attempts.py",
+    "app/tests/test_rate_limit.py",
+    "app/tests/test_api_keys.py",
+    "app/tests/test_admin_users.py",
+    "app/tests/test_config_secret.py",
+}
+PYTHON_TESTS = "app/tests"
+SKILLS_CONFIG = Path(__file__).resolve().parent.parent.parent / "config.yaml"
+
+
+def tests_by_default(config: Path = SKILLS_CONFIG) -> bool:
+    """`tests:` in the skills repo's config.yaml. No file or no key is off."""
+    try:
+        lines = config.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        key, _, value = line.split("#", 1)[0].partition(":")
+        if key.strip() == "tests":
+            return value.strip().lower() in {"true", "yes", "on"}
+    return False
+
+
+def strip_tests(root: Path) -> None:
+    """Take the tests out of the project at root, in place."""
+    python_tests = root / PYTHON_TESTS
+    tests = list(python_tests.rglob("*")) if python_tests.is_dir() else []
+    for path in sorted(root.rglob("*_test.go")) + sorted(item for item in tests if item.is_file()):
+        if path.relative_to(root).as_posix() not in KEEP_WITHOUT_TESTS:
+            path.unlink()
+    for path in sorted(tests, reverse=True):
+        if path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
+    for path in sorted(root.rglob("testdata"), reverse=True):
+        if path.is_dir() and not any(path.parent.glob("*_test.go")):
+            shutil.rmtree(path)

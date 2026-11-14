@@ -273,8 +273,19 @@ placeholder substitution consistently and will not overwrite a non-empty
 directory:
 
 ```bash
-python3 <skill_dir>/scripts/scaffold.py <target-dir> "<project-name>" --features files,two_factor [--repo URL]
+python3 <skill_dir>/scripts/scaffold.py <target-dir> "<project-name>" --features files,two_factor [--repo URL] [--tests|--no-tests]
 ```
+
+**Tests are off by default.** A new app gets none of the template's tests
+unless the user asks for them ("with tests") or `~/.claude/skills/config.yaml`
+says `tests: true`. Pass `--tests` or `--no-tests` when the request says which;
+leave both out to take the config's default. Don't add tests to the app on your
+own initiative either. The choice is stamped as `tests:` in `.skill-origin.yaml`.
+Without tests, `app/tests/` keeps only the security and sign-in tests
+(sessions, login and invite links, passwords, attempts, rate limit, API keys,
+admin users, the config secret) and their support modules. The list is
+`KEEP_WITHOUT_TESTS` in `scripts/prune.py`.
+
 
 `--repo` is where the source will live, e.g. `https://github.com/you/app` (an ssh
 remote like `git@github.com:you/app.git` works too). Pass it whenever the user names
@@ -392,7 +403,7 @@ ports they ran on. Do not reset either to a shared value.
                               #   @route(...); mcp_tools.py (the tools' calls),
                               #   logs.py (the owner's log API, page events, audit()),
                               #   sessions.py, jobs.py, webhooks.py and metrics.py
-    tests/                    # stdlib unittest: python -m unittest discover app/tests
+    tests/                    # only with --tests; stdlib unittest: python -m unittest discover app/tests
   static/
     index.html                # placeholder account + admin UI, fully data-i18n'd;
                               #   Bootstrap navbar + sidebar, one screen per view, toasts
@@ -635,7 +646,7 @@ scripts/api_docs.sh  # the API reference, for the parts this project kept
 
 (`scripts/api_docs.sh` uses the `.venv` that `scripts/run.sh` makes. Run it once
 in a project scaffolded without some parts: until then its API reference still
-lists them, and `test_api_docs.py` says so.)
+lists them, and `test_api_docs.py` says so in an app with tests.)
 
 (`scripts/login.sh` on its own also works: with no server running it prints
 a link and starts one in that terminal, where Ctrl-C stops it. Add
@@ -767,8 +778,8 @@ them and nothing secret is in them:
 - "Prune now" with `logs.retention_days: 1` removes an older day file
   (copy today's to an older date to have one) and never today.
 
-Then what runs without anyone asking. The route tests in `app/tests` cover the
-refusals; these need a real server:
+Then what runs without anyone asking. The route tests in `app/tests` (with
+`--tests`) cover the refusals; these need a real server:
 
 - **Jobs** shows `purge` and the others as having run moments after the first
   start, and restarting within a few seconds does not run them again,

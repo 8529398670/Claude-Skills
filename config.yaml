@@ -1,0 +1,5 @@
+# Defaults for the skills in this repo. A request's own words win
+# ("with tests" / "no tests" -> scaffold.py --tests / --no-tests).
+
+# Copy the template's test suite into new go-webserver / python-webserver apps.
+tests: false

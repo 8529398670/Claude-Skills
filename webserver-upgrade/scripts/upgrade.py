@@ -112,6 +112,9 @@ class Identity:
     pruned: list[str] = dataclasses.field(default_factory=list)
     # app.repo as the app's defaults.yaml has it. None: no such line.
     repo: str | None = None
+    # Whether the app has the template's tests. Apps stamped before the
+    # choice existed have them.
+    tests: bool = True
 
 
 @dataclasses.dataclass
@@ -229,6 +232,8 @@ def origin_text(identity: Identity, commit: str) -> str:
     lines.append(f"features: [{', '.join(identity.features)}]")
     if identity.pruned:
         lines.append(f"pruned: [{', '.join(identity.pruned)}]")
+    if not identity.tests:
+        lines.append("tests: false")
     return "\n".join(lines) + "\n"
 
 
@@ -360,7 +365,7 @@ def identify(app: Path, features: list[str] | None = None) -> Identity:
         features = parse_features(origin.get("features", ""))
     repo = REPO_LINE.search(defaults)
     return Identity(skill, name, origin.get("slug") or slugify(name), module, number(port), number(host_port), features, parse_features(origin.get("pruned", "")),
-                    repo.group(0).split('"')[1] if repo else None)
+                    repo.group(0).split('"')[1] if repo else None, origin.get("tests", "true").lower() != "false")
 
 
 # ---------------------------------------------------------------- rendering
@@ -460,17 +465,31 @@ def render(commit: str, identity: Identity, table: dict[str, tuple] | None = Non
             arguments += ["--prune", ",".join(identity.pruned) or "none"]
         elif identity.pruned:
             raise Refused(f"{commit} is older than pruning, so it cannot be rendered without {', '.join(identity.pruned)}.")
+        # A commit from before the choice always copied the tests.
+        if "--no-tests" in scaffold.read_text(encoding="utf-8"):
+            arguments.append("--tests" if identity.tests else "--no-tests")
         done = subprocess.run(arguments, capture_output=True, cwd=root)
         if done.returncode != 0:
             raise Refused(f"scaffold.py at {commit} failed: {(done.stderr or done.stdout).decode(errors='replace').strip()}")
         own_table = features_table(scaffold)
         files: dict[str, File] = {}
         out = root / "out"
+        if not identity.tests:
+            strip_tests(out)
         for path in sorted(out.rglob("*")):
             if path.is_file() and not path.is_symlink():
                 mode = 0o755 if path.stat().st_mode & stat.S_IXUSR else 0o644
                 files[path.relative_to(out).as_posix()] = File(path.read_bytes(), mode)
     return normalise(files, identity, own_table if table is None else table), own_table
+
+
+def strip_tests(out: Path) -> None:
+    """Today's prune.strip_tests, so renders of older commits lose them the same way."""
+    spec = importlib.util.spec_from_file_location("prune_now", SKILLS_REPO / "go-webserver" / "scripts" / "prune.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.dont_write_bytecode = True
+    spec.loader.exec_module(module)
+    module.strip_tests(out)
 
 
 def skill_commits(skill: str) -> list[str]:

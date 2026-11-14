@@ -274,8 +274,19 @@ placeholder substitution consistently and will not overwrite a non-empty
 directory:
 
 ```bash
-python3 <skill_dir>/scripts/scaffold.py <target-dir> "<project-name>" [module-path] --features files,two_factor [--repo URL]
+python3 <skill_dir>/scripts/scaffold.py <target-dir> "<project-name>" [module-path] --features files,two_factor [--repo URL] [--tests|--no-tests]
 ```
+
+**Tests are off by default.** A new app gets none of the template's tests
+unless the user asks for them ("with tests") or `~/.claude/skills/config.yaml`
+says `tests: true`. Pass `--tests` or `--no-tests` when the request says which;
+leave both out to take the config's default. Don't add tests to the app on your
+own initiative either. The choice is stamped as `tests:` in `.skill-origin.yaml`.
+Without tests, an app still keeps the security and sign-in tests (sessions,
+login and invite links, two-factor, passwords, admin roles, API keys, rate
+limit, secrets) and the `server/routes` files `scripts/api_docs.sh` runs to
+write the API docs. The list is `KEEP_WITHOUT_TESTS` in `scripts/prune.py`.
+
 
 `--repo` is where the source will live, e.g. `https://github.com/you/app` (an ssh
 remote like `git@github.com:you/app.git` works too). Pass it whenever the user names
@@ -628,7 +639,7 @@ Do not scaffold and hand it over unverified. Actually exercise the flow:
 cd <target-dir>
 go mod tidy
 scripts/api_docs.sh  # the API reference, for the parts this project kept
-go test ./...      # invite links, soft delete, MCP, and the activity log
+go test ./...      # with tests: the whole suite; without: security/auth and the API docs check
 # in config/config.yaml: server.secure_cookies: false   (plain http on localhost only)
 scripts/run.sh
 scripts/login.sh   # from another terminal: a fresh owner login link

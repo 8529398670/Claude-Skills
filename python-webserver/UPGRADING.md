@@ -5,6 +5,12 @@ Read by the `webserver-upgrade` skill. Add an entry whenever
 
 ## After 3731d9a
 
+**New apps leave the tests out (2026-11-14). Nothing changes in existing
+apps.** `scaffold.py` takes `--tests` / `--no-tests`, defaulting to `tests:` in
+`~/.claude/skills/config.yaml` (off). The stamp gets `tests: true|false`; a stamp
+without the key means the app has tests, and updates keep it that way. An app
+stamped `tests: false` keeps only the security and sign-in tests in updates.
+
 **Routes: one declaration per route (2026-11-13). Required, and an app's own
 routes need converting too.** Each route is declared once, as a typed handler
 beside its code, with its method and path first:
