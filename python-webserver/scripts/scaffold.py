@@ -221,7 +221,7 @@ PIECES: dict[str, tuple[str, ...]] = {
 # Files that cannot carry a marker, by what they belong to.
 DATA_FILES: dict[str, tuple[str, ...]] = {
     "webhooks": ("app/tests/webhook_cases.json",),
-    "openapi": ("config/openapi.json",),
+    "openapi": ("config/api.json",),
     "mcp": ("config/mcp.json", "config/mcp.md"),
 }
 TOP_LEVEL_KEY = re.compile(r"^[a-z_]+:")

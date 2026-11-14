@@ -8,7 +8,7 @@ import (
 	strings "strings"
 )
 
-// Markdown is config/api.md: the same reference as openapi.json, as tables a
+// Markdown is config/api.md: the same reference as api.json, as tables a
 // person reads. spec and manifest are in Plain form; manifest is nil when the
 // app has no MCP. A route's MCP tool links into config/mcp.md (MCPMarkdown). The Python template renders the same bytes from the same
 // documents, so keep the two in step.

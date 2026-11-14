@@ -672,7 +672,7 @@ tools, and a test fails while the committed copy is stale, so it can be linked
 from GitHub (the MCP card's "MCP reference" link goes to `<app.repo>/blob/HEAD/config/mcp.json`,
 or to `GET /api/mcp.json` when `app.repo` is empty) and still be right. It names
 no features: scaffolding cuts a pruned feature's tools out by their route's
-`x-feature` in `openapi.json`. See [The API reference](#the-api-reference). The Go and Python templates write
+`x-feature` in `api.json`. See [The API reference](#the-api-reference). The Go and Python templates write
 it byte for byte the same.
 
 ### Where the MCP code is
@@ -1071,11 +1071,11 @@ The rules are in `app/core/maintenance.py`, and the check is in `app/core/mainte
 ## The API reference
 
 The API reference is four files, all written from the code and committed:
-`config/openapi.json` (OpenAPI 3.1), `config/mcp.json` (the MCP tools, see
+`config/api.json` (OpenAPI 3.1), `config/mcp.json` (the MCP tools, see
 [above](#configmcpjson-the-mcp-reference)), and `config/api.md` and
 `config/mcp.md`, the same two again as tables a person reads. The API keys
 and MCP cards on Account link each JSON file and, with `app.repo` set, its
-readable `.md` on the repository's site. Nobody edits them by hand. `GET /api/openapi.json`
+readable `.md` on the repository's site. Nobody edits them by hand. `GET /api/api.json`
 serves the spec to any signed-in caller, session or key: it maps the admin
 surface, and nobody who cannot sign in has a use for it.
 

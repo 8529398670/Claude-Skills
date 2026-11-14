@@ -187,7 +187,7 @@ class Repo(unittest.TestCase):
         run_git(self.app, "commit", "-qm", "start")
 
         base = {"same.go": File(b"old\n"), "both.go": File(b"x\n"), "gone.go": File(b"bye\n")}
-        new = {"same.go": File(b"new\n"), "both.go": File(b"y\n"), "added.go": File(b"hello\n"), "config/openapi.json": File(b"{}\n")}
+        new = {"same.go": File(b"new\n"), "both.go": File(b"y\n"), "added.go": File(b"hello\n"), "config/api.json": File(b"{}\n")}
         self.renders = {"aaaa": base, "bbbb": new}
         self.saved = (upgrade.render, upgrade.resolve_commit)
         upgrade.render = lambda commit, identity, table=None: (self.renders[commit], {})
@@ -221,7 +221,7 @@ class Cycle(Repo):
         output = self.run_command(upgrade.command_prepare)
         self.assertEqual(self.snapshot(), before)
         self.assertIn("both.go", output)
-        self.assertIn("config/openapi.json is new and git would ignore it", output)
+        self.assertIn("config/api.json is new and git would ignore it", output)
 
     def test_apply_refuses_conflict_markers(self):
         self.run_command(upgrade.command_prepare)

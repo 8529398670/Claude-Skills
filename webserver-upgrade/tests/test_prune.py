@@ -105,12 +105,12 @@ class TreeTest(unittest.TestCase):
 
     def test_mcp_json_goes_by_the_route_feature(self) -> None:
         """mcp.json names no features: a tool goes with its route's x-feature in
-        openapi.json, which pruning takes out of that file afterwards."""
+        api.json, which pruning takes out of that file afterwards."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "config").mkdir()
             spec = {"paths": {"/api/me": {"get": {}}, "/api/files": {"x-feature": "a", "get": {}, "post": {}}}}
-            (root / "config" / "openapi.json").write_text(json.dumps(spec))
+            (root / "config" / "api.json").write_text(json.dumps(spec))
             manifest = {
                 "http_only": [{"reason": "bytes", "route": "POST /api/files"}, {"reason": "x", "route": "GET /api/me"}],
                 "tools": [{"name": "whoami", "route": "GET /api/me"}, {"name": "files_list", "route": "GET /api/files"}],

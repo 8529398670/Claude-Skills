@@ -44,7 +44,7 @@ type meReply struct {
 	Repo               string                `json:"repo" jsonschema_description:"app.repo without a trailing / or .git: where the source lives. Empty when it is not set."`
 	Description        string                `json:"description" jsonschema_description:"app.description. Empty when there is none."`
 	ShowAbout          bool                  `json:"show_about" jsonschema_description:"app.show_about: whether the menu has About."` // feature:about
-	OpenapiURL         string                `json:"openapi_url" jsonschema_description:"Where to read this API's reference: config/openapi.json in app.repo, or /api/openapi.json when there is no repo."` // feature:openapi
+	OpenapiURL         string                `json:"openapi_url" jsonschema_description:"Where to read this API's reference: config/api.json in app.repo, or /api/api.json when there is no repo."` // feature:openapi
 	MCPURL             string                `json:"mcp_url" jsonschema_description:"Where to read the MCP reference: config/mcp.json in app.repo, or /api/mcp.json when there is no repo. Only with server.mcp on."` // feature:mcp
 	Shortcuts          map[string]string     `json:"shortcuts" jsonschema_description:"The keyboard shortcuts you changed, by action. Mod is Cmd on a Mac and Ctrl elsewhere."` // feature:shortcuts
 	Themes             []models.Theme        `json:"themes" jsonschema:"nullable" jsonschema_description:"Your themes (see the Theme schema): your own list, else the app's defaults, else null for the built-in ones."` // feature:appearance
@@ -301,13 +301,13 @@ func ( handlers *Handlers ) logout( c fiber.Ctx , in *apidoc.None ) ( reply *okR
 }
 
 // >>> feature:openapi
-// openAPIURL is where the API reference is read: config/openapi.json in
+// openAPIURL is where the API reference is read: config/api.json in
 // app.repo when that is set, so it opens as a page there, else this server's
 // own copy, which needs the same sign-in.
 func ( handlers *Handlers ) openAPIURL() ( result string ) {
-	result = handlers.cfg().RepoFile( "config/openapi.json" )
+	result = handlers.cfg().RepoFile( "config/api.json" )
 	if result == "" {
-		result = "/api/openapi.json"
+		result = "/api/api.json"
 	}
 	return
 }

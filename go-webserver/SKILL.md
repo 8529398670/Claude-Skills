@@ -170,11 +170,11 @@ project.
   may call it, and the Go types of what it takes and gives back, with the limits
   and 400 messages in struct tags. Those types also parse and check every
   request before the handler runs, and are the input schema of the route's
-  MCP tool. `scripts/api_docs.sh` writes `config/openapi.json`, `config/mcp.json`,
+  MCP tool. `scripts/api_docs.sh` writes `config/api.json`, `config/mcp.json`,
   `config/api.md` and `config/mcp.md` (the routes and the tools as tables) from those and the registered MCP
   tools. Nobody edits them by hand: a test fails while one is out of date, or a
   route has no docs, and every reply the tests see is checked against its docs.
-  `GET /api/openapi.json` hands the spec to anyone signed in.
+  `GET /api/api.json` hands the spec to anyone signed in.
 - **Live updates.** `server/stream` is a server-sent events helper that handles
   the write deadline, re-checks access on open streams and ends them on
   shutdown. The Logs screen's Live button runs on it, with no polling.
@@ -291,7 +291,7 @@ write the API docs. The list is `KEEP_WITHOUT_TESTS` in `scripts/prune.py`.
 `--repo` is where the source will live, e.g. `https://github.com/you/app` (an ssh
 remote like `git@github.com:you/app.git` works too). Pass it whenever the user names
 a repository or a GitHub account. It becomes `app.repo`, which the API keys card and
-the About screen link to (`<repo>/blob/HEAD/config/openapi.json` for the API
+the About screen link to (`<repo>/blob/HEAD/config/api.json` for the API
 reference). Left out, a `github.com/...` module path is used; otherwise it stays
 empty and can be set later in Settings.
 
@@ -335,7 +335,7 @@ ports they ran on. Do not reset either to a shared value.
 <target-dir>/
   main.go                     # wiring only + the manage/config/version subcommands,
                               #   and the go:embed of static/, config/*.yaml and
-                              #   config/openapi.json
+                              #   config/api.json
   go.mod / go.sum             # pinned deps, so the first build is reproducible
   config/
     config.yaml               # THE config: server, docker, build -- no secret
@@ -343,7 +343,7 @@ ports they ran on. Do not reset either to a shared value.
                               #   editable live from the Settings screen)
     secret.key                # the key that encrypts the database (written by
                               #   scaffold.py; gitignored, 0600) -- back it up
-    openapi.json              # the API reference, as OpenAPI 3.1
+    api.json                  # the API reference, as OpenAPI 3.1
     mcp.json                  # the MCP tools
     api.md                    # every route, as tables to read
     mcp.md                    # every MCP tool, as tables to read;
@@ -435,7 +435,7 @@ ports they ran on. Do not reset either to a shared value.
     run.sh, run.bat           # local run: (re)starts the server; with args, the CLI
     login.sh, login.bat       # the owner's login link, from whatever is live
                               # (starts the server right there if nothing is)
-    api_docs.sh               # rewrites config/openapi.json, mcp.json, api.md and mcp.md
+    api_docs.sh               # rewrites config/api.json, mcp.json, api.md and mcp.md
     build.sh                  # cross-compiles single-file portable binaries
     lib.sh                    # shared by run.sh and login.sh (sourced)
   docker/
@@ -785,7 +785,7 @@ Then the features an admin and the owner lean on:
   sees no addresses, and only the owner reaches the owner's,
 - a failed webhook delivery has a **Resend** button that adds a new row and leaves
   the failed one listed,
-- `/api/openapi.json` is 401 signed out and 200 signed in.
+- `/api/api.json` is 401 signed out and 200 signed in.
 
 Then the logs, because the point of them is that nobody but the owner sees
 them and nothing secret is in them:

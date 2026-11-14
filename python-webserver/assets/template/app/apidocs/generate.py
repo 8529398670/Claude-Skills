@@ -41,7 +41,7 @@ def every_route() -> list[tuple[str, str, Any]]:
 
 
 def spec() -> tuple[dict[str, Any], list[str]]:
-    """openapi.json, and what is wrong with the docs."""
+    """api.json, and what is wrong with the docs."""
     return apidocs.build(every_route())
 
 
@@ -51,7 +51,7 @@ def documents() -> dict[str, str]:
     if problems:
         raise SystemExit("\n".join(problems))
     files: dict[str, str] = {}
-    files["openapi.json"] = apidocs.encode(document)  # feature:openapi
+    files["api.json"] = apidocs.encode(document)  # feature:openapi
     manifest_document = None
     # >>> feature:mcp
     from app.mcp import manifest

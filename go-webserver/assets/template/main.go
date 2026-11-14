@@ -82,13 +82,13 @@ var (
 	// >>> feature:openapi
 	// Embedded only, unlike language.yaml: it describes the routes compiled
 	// into this binary, so a copy on disk could only disagree with them.
-	//go:embed config/openapi.json
+	//go:embed config/api.json
 	embeddedOpenAPI []byte
 	// <<< feature:openapi
 
 	// >>> feature:mcp
 	// The tools /mcp offers, written by scripts/api_docs.sh from the
-	// registered tools; embedded for the same reason as openapi.json.
+	// registered tools; embedded for the same reason as api.json.
 	//go:embed config/mcp.json
 	embeddedMCPManifest []byte
 	// <<< feature:mcp

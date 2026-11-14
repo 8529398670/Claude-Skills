@@ -138,7 +138,7 @@ func ( tool *Tool ) Listing() ( listed fiber.Map ) {
 }
 
 // RouteName is the HTTP route the tool stands for, as "METHOD /path/{param}"
-// the way config/openapi.json writes it.
+// the way config/api.json writes it.
 func ( tool *Tool ) RouteName() ( route string ) {
 	route = apidoc.RouteOf( tool.route )
 	return

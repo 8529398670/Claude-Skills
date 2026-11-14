@@ -1,4 +1,4 @@
-// Package apidoc writes the API reference -- config/openapi.json and
+// Package apidoc writes the API reference -- config/api.json and
 // config/api.md -- from the code, so nobody edits either by hand.
 //
 // Every route is declared once, next to its handler, in a // @route(...)
@@ -25,7 +25,7 @@ import (
 // Title heads both files.
 const Title = "{{PROJECT_NAME}} API"
 
-// Version is info.version in openapi.json.
+// Version is info.version in api.json.
 const Version = "1.0.0"
 
 // About is the opening paragraph of both files.
@@ -106,7 +106,7 @@ func SpecPath( path string ) ( result string ) {
 	return
 }
 
-// Build is openapi.json for these routes, and what is wrong with the docs: a
+// Build is api.json for these routes, and what is wrong with the docs: a
 // route that was not mounted with Mount, so has no declaration.
 func Build( routes []Route ) ( spec map[string]any , problems []string ) {
 	builder := newSchemas()

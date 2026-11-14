@@ -172,10 +172,10 @@ project.
   400 messages in `Annotated[..., Meta(...)]`. Those types also parse and
   check every request before the handler runs, and are the input schema of
   the route's MCP tool. `scripts/api_docs.sh` writes
-  `config/openapi.json`, `config/mcp.json`, `config/api.md` and
+  `config/api.json`, `config/mcp.json`, `config/api.md` and
   `config/mcp.md` (the routes and the tools as tables) from those and the registered MCP tools. Nobody edits them by hand: a
   test fails while one is out of date, or a route has no docs, and every reply
-  the route tests see is checked against its docs. `GET /api/openapi.json`
+  the route tests see is checked against its docs. `GET /api/api.json`
   hands the spec to anyone signed in.
 - **Live updates are server-sent events, by hand.** A hub with a client cap, a
   small dropping queue per client, a heartbeat and an auth re-check every 15
@@ -290,7 +290,7 @@ admin users, the config secret) and their support modules. The list is
 `--repo` is where the source will live, e.g. `https://github.com/you/app` (an ssh
 remote like `git@github.com:you/app.git` works too). Pass it whenever the user names
 a repository or a GitHub account. It becomes `app.repo`, which the API keys card and
-the About screen link to (`<repo>/blob/HEAD/config/openapi.json` for the API
+the About screen link to (`<repo>/blob/HEAD/config/api.json` for the API
 reference). Left out, it stays empty and can be set later in Settings.
 
 This copies `assets/template/`, replacing `{{PROJECT_NAME}}` and
@@ -337,7 +337,7 @@ ports they ran on. Do not reset either to a shared value.
                               #   editable live from the Settings screen)
     secret.key                # the key that encrypts the database (written by
                               #   scaffold.py; gitignored, 0600) -- back it up
-    openapi.json              # the API reference, as OpenAPI 3.1
+    api.json                  # the API reference, as OpenAPI 3.1
     mcp.json                  # the MCP tools
     api.md                    # every route, as tables to read
     mcp.md                    # every MCP tool, as tables to read;
@@ -430,7 +430,7 @@ ports they ran on. Do not reset either to a shared value.
     run.sh, run.bat           # local run: (re)starts the server; with args, the CLI
     login.sh, login.bat       # the owner's login link, from whatever is live
                               # (starts the server right there if nothing is)
-    api_docs.sh               # rewrites config/openapi.json, mcp.json, api.md and mcp.md
+    api_docs.sh               # rewrites config/api.json, mcp.json, api.md and mcp.md
     lib.sh                    # shared by run.sh and login.sh (sourced)
   docker/
     Dockerfile                # built with the project root as context
@@ -811,7 +811,7 @@ Then what runs without anyone asking. The route tests in `app/tests` (with
 - with `server.maintenance: full`, a browser that is not the owner gets the
   maintenance page and the owner's session still works, and an admin can make a
   key for a user on All keys that the user sees as made by them,
-- `/api/openapi.json` is 401 signed out and 200 signed in,
+- `/api/api.json` is 401 signed out and 200 signed in,
 - `/api/ready` is 200; with `metrics.enabled` on, `/metrics` is 401 anonymous,
   403 for a browser or a user key, and 200 for an admin key,
 - a forced 500 shows a reference, and that reference pasted into the Logs search

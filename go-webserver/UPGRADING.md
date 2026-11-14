@@ -5,6 +5,19 @@ Read by the `webserver-upgrade` skill. Add an entry whenever
 
 ## After 3731d9a
 
+**`config/openapi.json` is now `config/api.json`, served at `GET /api/api.json`
+(2026-11-14). Required.** The four generated files now pair up: `api.json` and
+`api.md` for the routes, `mcp.json` and `mcp.md` for the MCP tools, and the
+server hands out `/api/api.json` beside `/api/mcp.json`. `/api/openapi.json` is
+gone (404): an API client or script that fetched it must fetch `/api/api.json`.
+`git mv config/openapi.json config/api.json`, then take every
+`openapi.json` -> `api.json` change: the `//go:embed` in main.go, the `@route` in `server/routes/openapi.go`, `openAPIURL` in account.go, `server/apidoc`, the About link and
+`spec_link`/`api_link` in language.yaml, keys.js, `scripts/api_docs.sh`, and the
+tests. An app's own route descriptions that name `config/openapi.json` change the
+same way. Then run `scripts/api_docs.sh`. A `.gitignore` or `.dockerignore`
+exception for `config/openapi.json` names `config/api.json` instead.
+`/api/me`'s `openapi_url` keeps its name; its value now ends in `api.json`.
+
 **The MCP tools get their own readable page (2026-11-14). Optional, cheap.**
 `scripts/api_docs.sh` now also writes `config/mcp.md`: the MCP tools section
 that used to end `config/api.md`, moved to its own file (each tool's route

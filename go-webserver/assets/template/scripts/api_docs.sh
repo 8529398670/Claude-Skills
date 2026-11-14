@@ -2,7 +2,7 @@
 # Rewrite the route table and the API reference from the code:
 #
 #   server/routes/routes_generated.go   the route table, from the // @route(...) declaration of each handler
-#   config/openapi.json                 every route, from those declarations
+#   config/api.json                 every route, from those declarations
 #   config/mcp.json                     every MCP tool, from the mcp= in their routes' declarations
 #   config/api.md                       every route, as tables to read
 #   config/mcp.md                       every MCP tool, as tables to read

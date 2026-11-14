@@ -11,7 +11,7 @@ import (
 // arguments, the route it stands for, and the routes that stay HTTP only.
 // scripts/api_docs.sh writes it from the registered tools, and
 // api_docs_test.go fails while it is out of date. Signed-in callers only,
-// like openapi.json.
+// like api.json.
 //
 // @route("GET /api/mcp.json", summary="The MCP tools: every tool /mcp has, its arguments, and the route it stands for",
 //     tag="Monitoring", feature="mcp", reply_type="application/json",

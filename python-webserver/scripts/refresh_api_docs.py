@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rewrite the template's config/openapi.json, config/mcp.json, config/api.md and config/mcp.md.
+"""Rewrite the template's config/api.json, config/mcp.json, config/api.md and config/mcp.md.
 
 They are written from the code, but the template itself cannot run: it is full
 of {{PLACEHOLDERS}} that only scaffold.py fills in. So this scaffolds a project
@@ -28,7 +28,7 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent.parent
 TEMPLATE = SKILL_DIR / "assets" / "template"
 NAME = "Refresh"
-FILES = ("openapi.json", "mcp.json", "api.md", "mcp.md")
+FILES = ("api.json", "mcp.json", "api.md", "mcp.md")
 
 
 def main() -> None:

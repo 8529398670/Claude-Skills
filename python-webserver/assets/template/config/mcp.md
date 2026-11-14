@@ -812,7 +812,7 @@ Switch to another theme from your list (or the defaults), by its id.
 
 ## set_themes
 
-Replace your whole list of color themes (1 to 40) and pick the one you use. themes: null goes back to following the app's defaults. A theme is the Theme schema in the API reference (config/openapi.json): id, name, mode light|dark, accent, second, and optional colors as #rrggbb. whoami shows the current list.
+Replace your whole list of color themes (1 to 40) and pick the one you use. themes: null goes back to following the app's defaults. A theme is the Theme schema in the API reference (config/api.json): id, name, mode light|dark, accent, second, and optional colors as #rrggbb. whoami shows the current list.
 
 |  |  |
 |---|---|
@@ -873,8 +873,8 @@ Routes an API key may call that have no tool, and why.
 
 | Route | Why |
 |---|---|
+| [`GET /api/api.json`](api.md#get-apiapijson) | The API reference itself; GET /api/mcp.json is the MCP one. |
 | [`GET /api/mcp.json`](api.md#get-apimcpjson) | The MCP reference itself; tools/list gives the same list. |
-| [`GET /api/openapi.json`](api.md#get-apiopenapijson) | The API reference itself; GET /api/mcp.json is the MCP one. |
 | [`GET /metrics`](api.md#get-metrics) | Scraped by Prometheus over HTTP. |
 | [`POST /api/files/{file_id}/chunks/{index}`](api.md#post-apifilesfile_idchunksindex) | File bytes: MCP messages are JSON, and clients cap their size. files_start_upload says where to send each piece, with the same key. |
 | [`POST /api/logout`](api.md#post-apilogout) | Ends a browser session; a key has none to end. |

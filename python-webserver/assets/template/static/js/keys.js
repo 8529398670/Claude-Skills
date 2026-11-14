@@ -28,7 +28,7 @@ const Keys = {
 
     Dom.show( Dom.get( "api-keys-panel" ) , true );
     // >>> feature:openapi
-    // What a key can call: openapi.json in app.repo, else the server's own.
+    // What a key can call: api.json in app.repo, else the server's own.
     if ( me.openapi_url ) {
       Dom.get( "key-spec-link" ).setAttribute( "href" , me.openapi_url );
       Dom.show( Dom.get( "key-spec-line" ) , true );

@@ -105,7 +105,7 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 	} , handlers.setMyTheme , handlers.Guard.RequireLogin )
 	apidoc.Mount( app , "POST" , "/api/account/themes" , apidoc.Op{
 		Summary: "Replace your own themes",
-		Description: "Replace your whole list of color themes (1 to 40) and pick the one you use. themes: null goes back to following the app's defaults. A theme is the Theme schema in the API reference (config/openapi.json): id, name, mode light|dark, accent, second, and optional colors as #rrggbb.",
+		Description: "Replace your whole list of color themes (1 to 40) and pick the one you use. themes: null goes back to following the app's defaults. A theme is the Theme schema in the API reference (config/api.json): id, name, mode light|dark, accent, second, and optional colors as #rrggbb.",
 		Tag: "Account",
 		Feature: "appearance",
 		Errors: []int{ 400 , 401 , 403 },
@@ -424,6 +424,16 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 		Errors: []int{ 400 , 401 , 403 , 404 },
 	} , handlers.revokeUserSession , handlers.Guard.RequireAdmin )
 	// <<< feature:sessions
+	// >>> feature:openapi
+	apidoc.MountStream( app , "GET" , "/api/api.json" , apidoc.Op{
+		Summary: "This document",
+		Tag: "Monitoring",
+		Feature: "openapi",
+		MCPHTTP: "The API reference itself; GET /api/mcp.json is the MCP one.",
+		ReplyType: "application/json",
+		Errors: []int{ 401 , 404 },
+	} , handlers.getOpenAPI , handlers.Guard.RequireLogin )
+	// <<< feature:openapi
 	// >>> feature:files
 	apidoc.Mount( app , "GET" , "/api/files" , apidoc.Op{
 		Summary: "List your files",
@@ -649,16 +659,6 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 		Tag: "Account",
 		Errors: []int{ 401 },
 	} , handlers.getMe , handlers.Guard.RequireLogin )
-	// >>> feature:openapi
-	apidoc.MountStream( app , "GET" , "/api/openapi.json" , apidoc.Op{
-		Summary: "This document",
-		Tag: "Monitoring",
-		Feature: "openapi",
-		MCPHTTP: "The API reference itself; GET /api/mcp.json is the MCP one.",
-		ReplyType: "application/json",
-		Errors: []int{ 401 , 404 },
-	} , handlers.getOpenAPI , handlers.Guard.RequireLogin )
-	// <<< feature:openapi
 	// >>> feature:jobs
 	apidoc.Mount( app , "GET" , "/api/owner/jobs" , apidoc.Op{
 		Summary: "Background jobs",
@@ -1267,7 +1267,7 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 	server.Register( mcp.ForRoute( "POST /api/account/themes" , handlers.setMyThemes , mcp.Tool{
 		Name: "set_themes",
 		Title: "Replace your own themes",
-		Description: "Replace your whole list of color themes (1 to 40) and pick the one you use. themes: null goes back to following the app's defaults. A theme is the Theme schema in the API reference (config/openapi.json): id, name, mode light|dark, accent, second, and optional colors as #rrggbb. whoami shows the current list.",
+		Description: "Replace your whole list of color themes (1 to 40) and pick the one you use. themes: null goes back to following the app's defaults. A theme is the Theme schema in the API reference (config/api.json): id, name, mode light|dark, accent, second, and optional colors as #rrggbb. whoami shows the current list.",
 	} , nil ) )
 	// <<< feature:appearance
 	server.Register( mcp.ForRoute( "GET /api/me" , handlers.getMe , mcp.Tool{

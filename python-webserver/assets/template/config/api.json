@@ -569,7 +569,7 @@
             "type": "string"
           },
           "openapi_url": {
-            "description": "Where to read this API's reference: config/openapi.json in app.repo, or /api/openapi.json when there is no repo.",
+            "description": "Where to read this API's reference: config/api.json in app.repo, or /api/api.json when there is no repo.",
             "type": "string"
           },
           "password_blocked": {
@@ -2469,7 +2469,7 @@
     },
     "/api/account/themes": {
       "post": {
-        "description": "Replace your whole list of color themes (1 to 40) and pick the one you use. themes: null goes back to following the app's defaults. A theme is the Theme schema in the API reference (config/openapi.json): id, name, mode light|dark, accent, second, and optional colors as #rrggbb.",
+        "description": "Replace your whole list of color themes (1 to 40) and pick the one you use. themes: null goes back to following the app's defaults. A theme is the Theme schema in the API reference (config/api.json): id, name, mode light|dark, accent, second, and optional colors as #rrggbb.",
         "operationId": "post_api_account_themes",
         "requestBody": {
           "content": {
@@ -6239,6 +6239,49 @@
       },
       "x-feature": "sessions"
     },
+    "/api/api.json": {
+      "get": {
+        "operationId": "get_api_api_json",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "503": {
+            "$ref": "#/components/responses/E503"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "This document",
+        "tags": [
+          "Monitoring"
+        ],
+        "x-mcp-http": "The API reference itself; GET /api/mcp.json is the MCP one."
+      },
+      "x-feature": "openapi"
+    },
     "/api/files": {
       "get": {
         "description": "Your uploaded files, a page at a time: id, name, type, size, state (uploading or ready) and when. next is the offset of the following page, or null on the last one.",
@@ -8582,49 +8625,6 @@
           "Account"
         ]
       }
-    },
-    "/api/openapi.json": {
-      "get": {
-        "operationId": "get_api_openapi_json",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/E401"
-          },
-          "404": {
-            "$ref": "#/components/responses/E404"
-          },
-          "429": {
-            "$ref": "#/components/responses/E429"
-          },
-          "503": {
-            "$ref": "#/components/responses/E503"
-          }
-        },
-        "security": [
-          {
-            "sessionCookie": []
-          },
-          {
-            "apiKey": []
-          }
-        ],
-        "summary": "This document",
-        "tags": [
-          "Monitoring"
-        ],
-        "x-mcp-http": "The API reference itself; GET /api/mcp.json is the MCP one."
-      },
-      "x-feature": "openapi"
     },
     "/api/owner/jobs": {
       "get": {

@@ -24,13 +24,13 @@ One line, as a comment at its end:
 
     webhooks "app/server/webhooks"  // feature:webhooks
 
-config/openapi.json has no comments, so a path carries a key instead, which
+config/api.json has no comments, so a path carries a key instead, which
 the API docs' generator writes from the route's Feature (Go) or feature (Python):
 
     "x-feature": "webhooks"
 
 config/mcp.json is written from the registered tools, so it names no features:
-each tool and http_only entry goes with the openapi.json path its route is on.
+each tool and http_only entry goes with the api.json path its route is on.
 config/api.md and config/mcp.md are left as they are. All of them are written from the code by the
 project's scripts/api_docs.sh, so a project that lost parts runs that once to
 bring them in line with what is left.
@@ -47,7 +47,7 @@ from pathlib import Path
 # What prune_tree reads. Anything else is left alone.
 SUFFIXES = {".go", ".py", ".js", ".css", ".html", ".yaml", ".yml", ".sh", ".bat", ".md", ".txt"}
 NAMES = {"Dockerfile"}
-OPENAPI = "config/openapi.json"
+OPENAPI = "config/api.json"
 MCP_JSON = "config/mcp.json"
 API_MD = "config/api.md"
 MCP_MD = "config/mcp.md"
@@ -122,7 +122,7 @@ def prune_text(text: str, removed: set[str], where: str = "") -> str:
 
 
 def prune_spec(text: str, removed: set[str]) -> str:
-    """openapi.json without the paths of removed features, the schemas nothing
+    """api.json without the paths of removed features, the schemas nothing
     refers to any more, or tags nothing uses. Written the way the app's own
     generator writes it, so a project with every part matches it exactly."""
     spec = json.loads(text)
@@ -194,7 +194,7 @@ def prune_tree(root: Path, removed: set[str], data_files: dict[str, tuple[str, .
     empty set too: a project with everything still loses the markers. data_files
     are the files that cannot carry a marker, by feature."""
     # Read before anything is cut: mcp.json's tools go by the x-feature of
-    # their route, which pruning takes out of openapi.json.
+    # their route, which pruning takes out of api.json.
     spec_path = root / OPENAPI
     features = route_features(spec_path.read_text(encoding="utf-8")) if spec_path.is_file() else {}
     for name, paths in (data_files or {}).items():

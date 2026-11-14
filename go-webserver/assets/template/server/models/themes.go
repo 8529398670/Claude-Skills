@@ -34,7 +34,7 @@ const (
 )
 
 // Theme is one of them, as stored and as the API carries it (the Theme schema
-// in config/openapi.json; see server/apidoc for the tags).
+// in config/api.json; see server/apidoc for the tags).
 type Theme struct {
 	ID         string            `json:"id" jsonschema_description:"Lower-case letters, digits, - and _, up to 32."`
 	Name       string            `json:"name" jsonschema_description:"1 to 60 characters."`

@@ -11,7 +11,7 @@ import (
 
 func specFile( t *testing.T ) ( raw []byte ) {
 	t.Helper()
-	raw , err := os.ReadFile( "../../config/openapi.json" )
+	raw , err := os.ReadFile( "../../config/api.json" )
 	if err != nil { t.Fatal( err ) }
 	return
 }
@@ -20,11 +20,11 @@ func TestTheSpecIsForSignedInCallers( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	fixture.handlers.OpenAPI = specFile( t )
 	stranger := fixture.browser()
-	if status , _ := stranger.do( t , http.MethodGet , "/api/openapi.json" , nil ); status != fiber.StatusUnauthorized {
+	if status , _ := stranger.do( t , http.MethodGet , "/api/api.json" , nil ); status != fiber.StatusUnauthorized {
 		t.Fatalf( "status %d" , status )
 	}
 	alice := fixture.signIn( t , fixture.alice.ID )
-	status , reply := alice.do( t , http.MethodGet , "/api/openapi.json" , nil )
+	status , reply := alice.do( t , http.MethodGet , "/api/api.json" , nil )
 	if status != fiber.StatusOK || reply[ "openapi" ] != "3.1.0" {
 		t.Fatalf( "%d %v" , status , reply )
 	}

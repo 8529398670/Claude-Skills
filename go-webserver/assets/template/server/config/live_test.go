@@ -239,7 +239,7 @@ func TestRepoIsLiveAndCleaned( t *testing.T ) {
 	if _ , err := holder.Save( currentVersion( t , path ) , map[string]any{ "app.repo": "" } ); err != nil {
 		t.Fatal( err )
 	}
-	if holder.Get().RepoFile( "config/openapi.json" ) != "" {
+	if holder.Get().RepoFile( "config/api.json" ) != "" {
 		t.Fatal( "no repo should mean no link" )
 	}
 	if _ , err := holder.Save( currentVersion( t , path ) , map[string]any{ "app.repo": "https://github.com/you/app.git/" } ); err != nil {
@@ -249,7 +249,7 @@ func TestRepoIsLiveAndCleaned( t *testing.T ) {
 	if cfg.Repo != "https://github.com/you/app" {
 		t.Fatalf( "repo not cleaned: %q" , cfg.Repo )
 	}
-	if link := cfg.RepoFile( "/config/openapi.json" ); link != "https://github.com/you/app/blob/HEAD/config/openapi.json" {
+	if link := cfg.RepoFile( "/config/api.json" ); link != "https://github.com/you/app/blob/HEAD/config/api.json" {
 		t.Fatalf( "link: %q" , link )
 	}
 	for _ , bad := range []string{ "http://github.com/you/app" , "github.com/you/app" , "https://github.com/you/app?x=1" , "javascript:alert(1)" } {

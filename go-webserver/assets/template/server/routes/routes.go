@@ -85,7 +85,7 @@ type Handlers struct {
 	ErrorPages *errorpage.Pages
 	// <<< feature:maintenance
 	// >>> feature:openapi
-	// OpenAPI is config/openapi.json, set by main.go.
+	// OpenAPI is config/api.json, set by main.go.
 	OpenAPI []byte
 	// <<< feature:openapi
 	// >>> feature:mcp
