@@ -1,12 +1,12 @@
 // Package apidoc writes the API reference -- config/openapi.json and
 // config/api.md -- from the code, so nobody edits either by hand.
 //
-// Every route's handler declares its docs once, with Doc, in a *_api.go file
-// next to it: a summary, who may call it, and the Go types of what it takes and
-// gives back. The struct tags on those types carry the rest (see schema.go).
-// Build walks the routes the app really registers and pairs each with its
-// handler's docs, so the paths and methods come from the route table and a
-// route without docs, or docs without a route, is reported.
+// Every route is declared once, next to its handler, with Handle or Stream
+// (see route.go): a summary, who may call it, and the Go types of what it
+// takes and gives back. The struct tags on those types carry the rest (see
+// reflect.go). Build walks the routes the app really registers, each mounted
+// with Get, Post or Delete, so the paths and methods come from the route
+// table and a route mounted any other way is reported.
 //
 // Nothing here runs while the server is up. scripts/api_docs.sh runs
 // TestAPIDocsAreCurrent with -update, which writes the files; the same test
@@ -21,7 +21,6 @@ import (
 	sort "sort"
 	strconv "strconv"
 	strings "strings"
-	sync "sync"
 )
 
 // Title heads both files.
@@ -53,10 +52,8 @@ const (
 	Owner = "owner"
 )
 
-// Op is one route's docs.
+// Op is one route's docs: what its types do not say.
 type Op struct {
-	// Method picks the route when one handler serves several methods.
-	Method      string
 	Summary     string
 	Description string
 	Tag         string
@@ -67,18 +64,23 @@ type Op struct {
 	Feature string
 	// MCPHTTP is why a route an API key may call has no MCP tool.
 	MCPHTTP string
-	// Params is a struct whose fields carry `path:"name"`, `query:"name"` or
-	// `header:"name"`. A path parameter it leaves out is a plain string.
-	Params any
-	// Body is the request body's type. BodyType is its content type when it
-	// is not JSON; such a body is raw bytes and Body stays nil.
-	Body     any
+	// NoCSRF lets a browser session's POST through without its csrf_token.
+	// Only for a route the page calls before it has one.
+	NoCSRF bool
+	// RawBody is the type of a JSON body the handler reads itself (a
+	// JSON-RPC message, say): documented, but neither parsed nor checked,
+	// and no csrf_token is looked for in it.
+	RawBody any
+	// BodyType is the body's content type when it is not JSON: raw bytes
+	// the handler reads itself. A browser session then sends its csrf token
+	// in the X-CSRF-Token header.
 	BodyType string
-	// Status is the success status, 200 when zero. Reply is that reply's
-	// type; ReplyType its content type when it is not JSON (then Reply is
-	// nil and the reply is text, or bytes for application/octet-stream).
+	// Status is the success status, 200 when zero. ReplyType is the content
+	// type of what a Stream route writes: text, bytes for
+	// application/octet-stream, or application/json for a JSON object the
+	// docs do not describe. A Stream route without one answers with its
+	// status alone.
 	Status           int
-	Reply            any
 	ReplyType        string
 	ReplyDescription string
 	// Errors are the error statuses the route can answer with, besides 429
@@ -88,34 +90,16 @@ type Op struct {
 
 // Route is one entry of the app's route table.
 type Route struct {
-	Method  string
-	Path    string
-	Handler any
+	Method string
+	Path   string
+	// Name is the route table's name for the route: Post, Get and Delete
+	// mark the routes they mount with it.
+	Name string
 }
 
-type entry struct {
-	op   Op
-	used bool
-}
-
-var registry = map[string][]*entry{}
-
-// building keeps two Builds from marking the same registry at once.
-var building sync.Mutex
-
-// Doc records a handler's docs. Use it at package level, so it runs before
-// any test does:
-//
-//	var _ = apidoc.Doc( (*Handlers).GetMe , apidoc.Op{ ... } )
-func Doc( handler any , op Op ) ( result struct{} ) {
-	name := HandlerName( handler )
-	registry[ name ] = append( registry[ name ] , &entry{ op: op } )
-	return
-}
-
-// HandlerName is the function behind a handler: the same for a method value
-// (handlers.GetMe, which is what a route holds) and a method expression
-// ((*Handlers).GetMe, which is what Doc is given).
+// HandlerName is the function behind a route's declaration: the same for a
+// method value (handlers.GetMe, which is what Post and Get are given) and a
+// method expression ((*Handlers).GetMe).
 func HandlerName( handler any ) ( name string ) {
 	value := reflect.ValueOf( handler )
 	if value.Kind() != reflect.Func { return }
@@ -135,54 +119,34 @@ func SpecPath( path string ) ( result string ) {
 	return
 }
 
-// Build is openapi.json for these routes, and what is wrong with the docs:
-// a route nobody documented, or docs for a route that is not registered.
+// Build is openapi.json for these routes, and what is wrong with the docs: a
+// route that was not mounted with Get, Post or Delete, so has no declaration.
 func Build( routes []Route ) ( spec map[string]any , problems []string ) {
-	building.Lock()
-	defer building.Unlock()
-	for _ , entries := range registry {
-		for _ , found := range entries { found.used = false }
-	}
 	builder := newSchemas()
 	paths := map[string]any{}
 	tags := map[string]bool{}
 	for _ , route := range routes {
-		name := HandlerName( route.Handler )
 		path := SpecPath( route.Path )
 		label := route.Method + " " + path
-		if strings.Contains( name , ".func" ) {
-			problems = append( problems , label + ": its handler is an unnamed function; give it a name and docs" )
+		if strings.HasPrefix( route.Name , "apidoc:" ) == false {
+			problems = append( problems , label + ": not declared; mount it with apidoc.Get, Post or Delete" )
 			continue
 		}
-		var chosen *entry
-		for _ , found := range registry[ name ] {
-			if found.op.Method == "" || found.op.Method == route.Method {
-				chosen = found
-				if found.op.Method != "" { break }
-			}
-		}
-		if chosen == nil {
-			problems = append( problems , label + ": no docs; add apidoc.Doc( " + shortName( name ) + " , ... ) next to it" )
+		found := lookup( strings.TrimPrefix( route.Name , "apidoc:" ) )
+		if found == nil {
+			problems = append( problems , label + ": its declaration is missing" )
 			continue
 		}
-		chosen.used = true
 		item , _ := paths[ path ].( map[string]any )
 		if item == nil {
 			item = map[string]any{}
 			paths[ path ] = item
 		}
-		if chosen.op.Feature != "" { item[ "x-feature" ] = chosen.op.Feature }
-		operation , operation_problems := builder.operation( route.Method , path , chosen.op )
+		if found.op.Feature != "" { item[ "x-feature" ] = found.op.Feature }
+		operation , operation_problems := builder.operation( route.Method , path , found )
 		for _ , problem := range operation_problems { problems = append( problems , label + ": " + problem ) }
 		item[ strings.ToLower( route.Method ) ] = operation
-		tags[ chosen.op.Tag ] = true
-	}
-	for name , entries := range registry {
-		for _ , found := range entries {
-			if found.used == false {
-				problems = append( problems , "docs for " + shortName( name ) + " " + found.op.Method + ", which is no route's handler" )
-			}
-		}
+		tags[ found.op.Tag ] = true
 	}
 	sort.Strings( problems )
 	builder.named( reflect.TypeOf( ErrorReply{} ) )
@@ -260,7 +224,7 @@ var errorMeanings = map[int]string{
 // ErrorReply is the body of every error.
 type ErrorReply struct {
 	Error     string `json:"error"`
-	RequestID string `json:"request_id,omitempty" doc:"On a 5xx: the reference that finds this failure in the log."`
+	RequestID string `json:"request_id,omitempty" jsonschema_description:"On a 5xx: the reference that finds this failure in the log."`
 }
 
 func ( ErrorReply ) APIName() ( name string ) { name = "Error"; return }
@@ -268,12 +232,13 @@ func ( ErrorReply ) APIName() ( name string ) { name = "Error"; return }
 // MaintenanceReply is the body of a 503 in maintenance mode.
 type MaintenanceReply struct {
 	Error       string `json:"error"`
-	Maintenance string `json:"maintenance" enum:"read_only|full"`
+	Maintenance string `json:"maintenance" jsonschema:"enum=read_only,enum=full"`
 }
 
 func ( MaintenanceReply ) APIName() ( name string ) { name = "Maintenance"; return }
 
-func ( builder *schemas ) operation( method string , path string , op Op ) ( operation map[string]any , problems []string ) {
+func ( builder *schemas ) operation( method string , path string , typed *declared ) ( operation map[string]any , problems []string ) {
+	op := typed.op
 	operation = map[string]any{
 		"summary":     op.Summary,
 		"operationId": strings.Trim( notWord.ReplaceAllString( strings.ToLower( method + " " + path ) , "_" ) , "_" ),
@@ -294,14 +259,18 @@ func ( builder *schemas ) operation( method string , path string , op Op ) ( ope
 	}
 	if op.Role != "" { operation[ "x-required-role" ] = op.Role }
 	if op.MCPHTTP != "" { operation[ "x-mcp-http" ] = op.MCPHTTP }
-	parameters , parameter_problems := builder.parameters( path , op.Params )
+	parameters , parameter_problems := builder.parameters( path , typed )
 	problems = append( problems , parameter_problems... )
 	if len( parameters ) > 0 { operation[ "parameters" ] = parameters }
 	switch {
 	case op.BodyType != "":
 		operation[ "requestBody" ] = map[string]any{ "required": true , "content": map[string]any{ op.BodyType: map[string]any{ "schema": rawSchema( op.BodyType ) } } }
-	case op.Body != nil:
-		operation[ "requestBody" ] = map[string]any{ "required": true , "content": jsonContent( builder.of( reflect.TypeOf( op.Body ) ) ) }
+	case op.RawBody != nil:
+		operation[ "requestBody" ] = map[string]any{ "required": true , "content": jsonContent( builder.typed( reflect.TypeOf( op.RawBody ) ) ) }
+	case method != "GET":
+		if body , has_body := builder.bodySchema( typed.input , op ); has_body {
+			operation[ "requestBody" ] = map[string]any{ "required": true , "content": jsonContent( body ) }
+		}
 	}
 	status := op.Status
 	if status == 0 { status = 200 }
@@ -311,10 +280,8 @@ func ( builder *schemas ) operation( method string , path string , op Op ) ( ope
 	switch {
 	case op.ReplyType != "":
 		reply[ "content" ] = map[string]any{ op.ReplyType: map[string]any{ "schema": rawSchema( op.ReplyType ) } }
-	case op.Reply != nil:
-		reply[ "content" ] = jsonContent( builder.of( reflect.TypeOf( op.Reply ) ) )
-	default:
-		problems = append( problems , "no Reply" )
+	case typed.reply != nil && typed.reply != reflect.TypeOf( None{} ):
+		reply[ "content" ] = jsonContent( builder.typed( typed.reply ) )
 	}
 	responses := map[string]any{ strconv.Itoa( status ): reply }
 	statuses := append( []int{ 429 , 503 } , op.Errors... )
@@ -329,28 +296,15 @@ func ( builder *schemas ) operation( method string , path string , op Op ) ( ope
 	return
 }
 
-func ( builder *schemas ) parameters( path string , params any ) ( result []any , problems []string ) {
-	declared := map[string]map[string]any{}
-	order := []string{}
-	if params != nil {
-		kind := reflect.TypeOf( params )
-		for index := 0 ; index < kind.NumField() ; index++ {
-			field := kind.Field( index )
-			place , name := "" , ""
-			for _ , candidate := range []string{ "path" , "query" , "header" } {
-				if value := field.Tag.Get( candidate ); value != "" { place , name = candidate , value }
-			}
-			if place == "" {
-				problems = append( problems , "parameter field " + field.Name + " has no path, query or header tag" )
-				continue
-			}
-			parameter := map[string]any{ "name": name , "in": place , "schema": builder.field( field , false ) }
-			if doc := field.Tag.Get( "doc" ); doc != "" { parameter[ "description" ] = doc }
-			if place == "path" { parameter[ "required" ] = true }
-			declared[ place + " " + name ] = parameter
-			order = append( order , place + " " + name )
-		}
-	}
+// csrfHeader is where a browser session's csrf token rides on a route whose
+// body is raw bytes.
+var csrfHeader = map[string]any{ "name": "X-CSRF-Token" , "in": "header" , "description": "From GET /api/me. Browser sessions only." , "schema": map[string]any{ "type": "string" } }
+
+// parameters are the route's path parameters, in the path's order, then its
+// query parameters in the request type's, then the csrf header of a raw body
+// a browser session may send.
+func ( builder *schemas ) parameters( path string , typed *declared ) ( result []any , problems []string ) {
+	declared , order := builder.urlParameters( typed.input )
 	for _ , match := range specParameter.FindAllStringSubmatch( path , -1 ) {
 		key := "path " + match[ 1 ]
 		if parameter , found := declared[ key ]; found {
@@ -369,6 +323,7 @@ func ( builder *schemas ) parameters( path string , params any ) ( result []any 
 			result = append( result , parameter )
 		}
 	}
+	if typed.op.BodyType != "" && typed.op.Access != Public && typed.op.NoCSRF == false { result = append( result , csrfHeader ) }
 	return
 }
 
@@ -377,7 +332,13 @@ func jsonContent( schema map[string]any ) ( content map[string]any ) {
 	return
 }
 
+// rawSchema is what a body the handler reads or writes itself is: bytes,
+// text, or a JSON object the docs leave undescribed.
 func rawSchema( content_type string ) ( schema map[string]any ) {
+	if content_type == "application/json" {
+		schema = map[string]any{ "type": "object" }
+		return
+	}
 	schema = map[string]any{ "type": "string" }
 	if content_type == "application/octet-stream" { schema[ "format" ] = "binary" }
 	return

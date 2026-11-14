@@ -1,16 +1,18 @@
 # whole-file feature:openapi
 """Hands out config/openapi.json, which scripts/api_docs.sh writes from the
-routes and the docs each handler declares (the *_api.py files);
+routes as each handler declares them (@route, see app/apidocs);
 app/tests/test_api_docs.py fails while it is out of date. Signed-in callers
 only: it maps the admin surface, and nobody who cannot sign in has a use for
 it."""
 from __future__ import annotations
 
 from functools import cache
+from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.apidocs import route
 from app.core import assets
 
 
@@ -19,5 +21,9 @@ def spec() -> bytes:
     return assets.OPENAPI_SPEC.read_bytes()
 
 
-async def get_openapi(request: Request) -> Response:
-    return Response(spec(), media_type="application/json")
+@route(
+    summary="This document", tag="Monitoring", feature="openapi",
+    mcp_http="The API reference itself; GET /api/mcp.json is the MCP one.", errors=(401, 404),
+)
+async def get_openapi(request: Request) -> dict[str, Any]:
+    return Response(spec(), media_type="application/json")  # type: ignore[return-value]

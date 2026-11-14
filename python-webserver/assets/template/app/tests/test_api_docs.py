@@ -1,6 +1,6 @@
 """The API reference is written from the code: config/openapi.json and
-config/api.md from the docs each handler declares with doc() (the *_api.py
-files), and config/mcp.json from the registered MCP tools. scripts/api_docs.sh
+config/api.md from each handler's @route(...) declaration and its request and
+reply types, and config/mcp.json from the registered MCP tools. scripts/api_docs.sh
 (python -m app.apidocs) rewrites them; these fail while a committed file is
 out of date, or a route has no docs. Go's twin is
 server/routes/api_docs_test.go, and the two write the same bytes.

@@ -1,15 +1,11 @@
 package routes
 
 import (
-	slices "slices"
+	reflect "reflect"
 	sort "sort"
-	strconv "strconv"
 	strings "strings"
+	sync "sync"
 	time "time"
-
-	fiber "github.com/gofiber/fiber/v3"
-
-	mcp "{{MODULE_PATH}}/server/mcp" // feature:mcp
 )
 
 // Every list the API hands out is paged the same way: ?limit= and ?offset= in,
@@ -28,7 +24,7 @@ import (
 //
 // A list a screen can sort also takes ?sort=<field>&dir=asc|desc, and one it can
 // search takes ?q=, both on the whole list before it is cut, since the browser
-// only ever holds a page of it. See sendSorted and matchRows.
+// only ever holds a page of it. See sortedPage and matchRows.
 
 const (
 	pageDefault       = 200
@@ -37,81 +33,143 @@ const (
 	pageOffsetMessage = "offset must be 0 or more"
 )
 
-// >>> feature:mcp
-// pageArgs is the arguments of a paged MCP tool.
-type pageArgs struct {
-	Limit  *int `json:"limit"`
-	Offset *int `json:"offset"`
+// Page is the query every paged list takes, and an MCP list tool's
+// arguments.
+type Page struct {
+	Limit  int `json:"limit,omitempty" query:"limit" jsonschema:"minimum=1,maximum=1000,default=200" jsonschema_description:"Rows to return. Default 200." error:"limit must be 1-1000"`
+	Offset int `json:"offset,omitempty" query:"offset" jsonschema:"minimum=0" jsonschema_description:"Rows to skip: the next value of the previous page." error:"offset must be 0 or more"`
 }
-// <<< feature:mcp
 
-// >>> feature:mcp
-// pageSchema is the input schema of a paged MCP tool. Both are optional.
-var pageSchema = fiber.Map{
-	"type": "object",
-	"properties": fiber.Map{
-		"limit":  fiber.Map{ "type": "integer" , "minimum": 1 , "maximum": pageMax , "description": "Rows to return. Default 200." },
-		"offset": fiber.Map{ "type": "integer" , "minimum": 0 , "description": "Rows to skip: the next value of the previous page." },
-	},
-	"additionalProperties": false,
+// Direction is the ?dir= of a list a screen can sort.
+type Direction struct {
+	Dir string `json:"dir,omitempty" query:"dir" jsonschema:"enum=asc,enum=desc" jsonschema_description:"Default asc." error:"dir must be asc or desc"`
 }
-// <<< feature:mcp
 
-// pageBody cuts one page out of rows, which must already be in their final
-// order. name is the field the rows go under.
-func pageBody[ T any ]( name string , rows []T , limit int , offset int ) ( body fiber.Map ) {
+// Paged is what every paged reply carries beside its rows.
+type Paged struct {
+	Next  *int `json:"next" jsonschema_description:"Offset of the next page, or null on the last one."`
+	Total int  `json:"total"`
+}
+
+// cutPage is one page of rows, which must already be in their final order.
+func cutPage[ T any ]( rows []T , page Page ) ( cut []T , paged Paged ) {
+	limit := page.Limit
+	if limit == 0 { limit = pageDefault }
 	total := len( rows )
-	start := min( offset , total )
+	start := min( page.Offset , total )
 	end := min( start + limit , total )
-	body = fiber.Map{ name: rows[ start:end ] , "next": nil , "total": total }
+	cut = rows[ start:end ]
+	if cut == nil { cut = []T{} }
+	paged.Total = total
 	if end < total {
-		body[ "next" ] = end
+		next := end
+		paged.Next = &next
 	}
 	return
 }
 
-// sendPage answers a list route with the page its query asks for.
-func sendPage[ T any ]( c fiber.Ctx , name string , rows []T ) ( err error ) {
-	limit := pageDefault
-	if raw := c.Query( "limit" ); raw != "" {
-		parsed , parse_err := strconv.Atoi( raw )
-		if parse_err != nil || parsed < 1 || parsed > pageMax {
-			err = badRequest( c , pageLimitMessage )
-			return
-		}
-		limit = parsed
+// sortedPage is cutPage for a list a screen can sort: field is a row field
+// by its JSON name, already checked against the route's sort enum.
+func sortedPage[ T any ]( rows []T , field string , direction Direction , page Page ) ( cut []T , paged Paged ) {
+	if field != "" {
+		rows = sortRows( rows , field , direction.Dir == "desc" )
 	}
-	offset := 0
-	if raw := c.Query( "offset" ); raw != "" {
-		parsed , parse_err := strconv.Atoi( raw )
-		if parse_err != nil || parsed < 0 {
-			err = badRequest( c , pageOffsetMessage )
-			return
-		}
-		offset = parsed
-	}
-	err = c.JSON( pageBody( name , rows , limit , offset ) )
+	cut , paged = cutPage( rows , page )
 	return
 }
 
-// matchRows keeps the rows with query in one of fields, in any case. An empty
-// query keeps them all. Here rather than in the browser, like sorting.
-func matchRows( rows []fiber.Map , query string , fields ...string ) ( matched []fiber.Map ) {
+// rowField is a typed row's field by its JSON name, for sorting and
+// searching. Rows are structs (or pointers to them).
+func rowField( row any , name string ) ( value any ) {
+	found := reflect.ValueOf( row )
+	for found.Kind() == reflect.Pointer {
+		if found.IsNil() { return }
+		found = found.Elem()
+	}
+	if found.Kind() == reflect.Map {
+		if item := found.MapIndex( reflect.ValueOf( name ) ); item.IsValid() { value = item.Interface() }
+		return
+	}
+	if found.Kind() != reflect.Struct { return }
+	index , known := jsonFieldIndex( found.Type() )[ name ]
+	if known == false { return }
+	field , err := found.FieldByIndexErr( index )
+	if err != nil { return }
+	value = field.Interface()
+	return
+}
+
+var fieldIndexes sync.Map
+
+func jsonFieldIndex( kind reflect.Type ) ( index map[string][]int ) {
+	if cached , found := fieldIndexes.Load( kind ); found {
+		index = cached.( map[string][]int )
+		return
+	}
+	index = map[string][]int{}
+	for _ , field := range reflect.VisibleFields( kind ) {
+		if field.IsExported() == false || field.Anonymous { continue }
+		name := strings.Split( field.Tag.Get( "json" ) , "," )[ 0 ]
+		if name == "-" { continue }
+		if name == "" { name = field.Name }
+		if _ , taken := index[ name ]; taken == false { index[ name ] = field.Index }
+	}
+	fieldIndexes.Store( kind , index )
+	return
+}
+
+// matchRows keeps the rows with query in one of fields, in any case. An
+// empty query keeps them all. Here rather than in the browser, like sorting.
+func matchRows[ T any ]( rows []T , query string , fields ...string ) ( matched []T ) {
 	wanted := strings.ToLower( strings.TrimSpace( query ) )
 	if wanted == "" {
 		matched = rows
 		return
 	}
-	matched = []fiber.Map{}
+	matched = []T{}
 	for _ , row := range rows {
 		for _ , field := range fields {
-			text , is_text := row[ field ].( string )
+			text , is_text := rowField( row , field ).( string )
 			if is_text && strings.Contains( strings.ToLower( text ) , wanted ) {
 				matched = append( matched , row )
 				break
 			}
 		}
 	}
+	return
+}
+
+// sortRows orders rows by one field. Rows without it go last whichever way the
+// list runs, because "never used" is not the oldest date. Rows that tie stay in
+// the list's own order, so a page holds still.
+func sortRows[ T any ]( rows []T , field string , descending bool ) ( sorted []T ) {
+	type keyed struct {
+		key sortKey
+		row T
+	}
+	present := []keyed{}
+	absent := []T{}
+	for _ , row := range rows {
+		key := sortKeyOf( rowField( row , field ) )
+		if key.missing {
+			absent = append( absent , row )
+		} else {
+			present = append( present , keyed{ key , row } )
+		}
+	}
+	before := func( a sortKey , b sortKey ) ( result bool ) {
+		result = a.text < b.text || ( a.text == b.text && a.number < b.number )
+		return
+	}
+	sort.SliceStable( present , func( i int , j int ) bool {
+		if descending { return before( present[ j ].key , present[ i ].key ) }
+		return before( present[ i ].key , present[ j ].key )
+	} )
+	sorted = make( []T , 0 , len( rows ) )
+	for _ , item := range present {
+		sorted = append( sorted , item.row )
+	}
+	sorted = append( sorted , absent... )
 	return
 }
 
@@ -128,6 +186,11 @@ func sortKeyOf( value any ) ( key sortKey ) {
 	case string:
 		key = sortKey{ text: strings.ToLower( typed ) , missing: typed == "" }
 	case time.Time:
+		// A typed row leaves out a date it does not have (omitzero).
+		if typed.IsZero() {
+			key.missing = true
+			return
+		}
 		key.number = float64( typed.UnixMicro() )
 	case *time.Time:
 		if typed == nil {
@@ -149,83 +212,3 @@ func sortKeyOf( value any ) ( key sortKey ) {
 	return
 }
 
-// sortRows orders rows by one field. Rows without it go last whichever way the
-// list runs, because "never used" is not the oldest date. Rows that tie stay in
-// the list's own order, so a page holds still.
-func sortRows( rows []fiber.Map , field string , descending bool ) ( sorted []fiber.Map ) {
-	type keyed struct {
-		key sortKey
-		row fiber.Map
-	}
-	present := []keyed{}
-	absent := []fiber.Map{}
-	for _ , row := range rows {
-		key := sortKeyOf( row[ field ] )
-		if key.missing {
-			absent = append( absent , row )
-		} else {
-			present = append( present , keyed{ key , row } )
-		}
-	}
-	before := func( a sortKey , b sortKey ) ( result bool ) {
-		result = a.text < b.text || ( a.text == b.text && a.number < b.number )
-		return
-	}
-	sort.SliceStable( present , func( i int , j int ) bool {
-		if descending { return before( present[ j ].key , present[ i ].key ) }
-		return before( present[ i ].key , present[ j ].key )
-	} )
-	sorted = make( []fiber.Map , 0 , len( rows ) )
-	for _ , item := range present {
-		sorted = append( sorted , item.row )
-	}
-	sorted = append( sorted , absent... )
-	return
-}
-
-// sendSorted is sendPage for a list a screen can sort. fields are the row fields
-// it may be sorted by, and anything else is refused rather than ignored, so a
-// typo does not look like a list in its own order.
-func sendSorted( c fiber.Ctx , name string , rows []fiber.Map , fields ...string ) ( err error ) {
-	direction := c.Query( "dir" )
-	if direction != "" && direction != "asc" && direction != "desc" {
-		err = badRequest( c , "dir must be asc or desc" )
-		return
-	}
-	if field := c.Query( "sort" ); field != "" {
-		if slices.Contains( fields , field ) == false {
-			err = badRequest( c , "sort must be one of: " + strings.Join( fields , ", " ) )
-			return
-		}
-		rows = sortRows( rows , field , direction == "desc" )
-	}
-	err = sendPage( c , name , rows )
-	return
-}
-
-// >>> feature:mcp
-// toolPage is sendPage for an MCP tool, so the two doors page the same way.
-func toolPage[ T any ]( call *mcp.Call , name string , load func() ( []T , error ) ) ( result any , err error ) {
-	var args pageArgs
-	if err = call.Bind( &args ); err != nil { return }
-	limit , offset := pageDefault , 0
-	if args.Limit != nil {
-		limit = *args.Limit
-	}
-	if args.Offset != nil {
-		offset = *args.Offset
-	}
-	if limit < 1 || limit > pageMax {
-		err = mcp.Refuse( pageLimitMessage )
-		return
-	}
-	if offset < 0 {
-		err = mcp.Refuse( pageOffsetMessage )
-		return
-	}
-	rows , err := load()
-	if err != nil { return }
-	result = pageBody( name , rows , limit , offset )
-	return
-}
-// <<< feature:mcp

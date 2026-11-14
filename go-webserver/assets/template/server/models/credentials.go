@@ -16,6 +16,9 @@ type Revoked struct {
 	Passwords  int `json:"passwords"` // feature:passwords
 }
 
+// APIName names it in the API docs (see server/apidoc).
+func ( Revoked ) APIName() ( name string ) { name = "Revoked"; return }
+
 // RevokeAllCredentials is the "this account may be compromised" operation:
 // every session is deleted, the live login link is deleted, the password
 // is removed, and every live API key is revoked, in one transaction.

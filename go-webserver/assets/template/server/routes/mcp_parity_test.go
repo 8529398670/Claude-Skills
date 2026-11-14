@@ -23,7 +23,8 @@ import (
 // your own password, PIN and two-factor, other people's files and the owner's
 // screens, which need a browser session. config/openapi.json says which
 // routes take a key (their security lists apiKey); each of those has an MCP
-// tool naming it in Route, or an "x-mcp-http" reason for staying HTTP only.
+// tool made for it with mcp.ForRoute, or an "x-mcp-http" reason for staying
+// HTTP only.
 
 type specOperation struct {
 	Method   string
@@ -74,18 +75,18 @@ func TestEveryKeyRouteIsAnMCPTool( t *testing.T ) {
 	problems := []string{}
 	covered := map[string]bool{}
 	for _ , tool := range fixture.handlers.MCP.Tools() {
-		operation , found := operations[ tool.Route ]
+		operation , found := operations[ tool.RouteName() ]
 		switch {
-		case tool.Route == "":
-			problems = append( problems , "tool " + tool.Name + " has no Route" )
+		case tool.RouteName() == "":
+			problems = append( problems , "tool " + tool.Name + " stands for a route that is not mounted" )
 		case found == false:
-			problems = append( problems , "tool " + tool.Name + " names " + tool.Route + ", which is not in config/openapi.json" )
+			problems = append( problems , "tool " + tool.Name + " names " + tool.RouteName() + ", which is not in config/openapi.json" )
 		case operation.KeyOK == false:
-			problems = append( problems , "tool " + tool.Name + " names " + tool.Route + ", which an API key may not call" )
+			problems = append( problems , "tool " + tool.Name + " names " + tool.RouteName() + ", which an API key may not call" )
 		case operation.HTTPOnly != "":
-			problems = append( problems , tool.Route + " has a tool (" + tool.Name + ") and an x-mcp-http reason; drop one" )
+			problems = append( problems , tool.RouteName() + " has a tool (" + tool.Name + ") and an x-mcp-http reason; drop one" )
 		}
-		covered[ tool.Route ] = true
+		covered[ tool.RouteName() ] = true
 	}
 	for name , operation := range operations {
 		if operation.KeyOK && covered[ name ] == false && operation.HTTPOnly == "" {
@@ -148,7 +149,7 @@ func mcpManifest( tools []*mcp.Tool , operations map[string]specOperation ) ( ra
 	listed := []fiber.Map{}
 	for _ , tool := range tools {
 		entry := tool.Listing()
-		entry[ "route" ] = tool.Route
+		entry[ "route" ] = tool.RouteName()
 		entry[ "adminOnly" ] = tool.AdminOnly
 		listed = append( listed , entry )
 	}

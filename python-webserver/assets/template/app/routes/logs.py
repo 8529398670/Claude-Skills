@@ -20,14 +20,19 @@ import json
 import threading
 import time
 from collections import deque
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from typing import Annotated, ClassVar
 
+from msgspec import Meta
+from starlette.responses import Response, StreamingResponse
+
+from app.apidocs import OWNER, PATH, QUERY, SESSION_ONLY, Reply, route
+from app.apidocs import Request as RequestType
 from app.core import logs, request_id, sse
 from app.core.config import trusted_proxy_networks
 from app.core.middleware import client_ip
-from app.core.security import actor_from, check_csrf, decrypt_cookie, log_actor, still_owner
+from app.core.security import actor_from, decrypt_cookie, log_actor, still_owner
 from app.models import ip_names, users
-from app.routes.helpers import PAGE_DEFAULT, PAGE_LIMIT_MESSAGE, PAGE_MAX, bad_request, conflict, error, forbidden, get_config, get_store, read_json, run, whole_number
+from app.routes.helpers import PAGE_DEFAULT, DateTime, Limit, Refused, error, get_config, get_store, run
 
 # Page events a browser may send per call, and per account per minute.
 EVENTS_PER_CALL = 50
@@ -57,119 +62,193 @@ def _settings(logger: logs.Logger) -> dict[str, Any]:
     }
 
 
-async def _query(request: Request, text: str = "") -> logs.Query:
+def _query(request: Request, text: str = "") -> logs.Query:
     """A search that knows what the owner calls each address, which reading a
-    day, searching and downloading all need."""
-    return logs.Query(text, await run(ip_names.load_namer, get_store(request)))
+    day, searching and downloading all need. Reads SQLite: from a worker
+    thread, or through run()."""
+    return logs.Query(text, ip_names.load_namer(get_store(request)))
 
 
-async def list_log_days(request: Request) -> Response:
+# The Logs screen's search, which the routes that read the log take.
+Search = Annotated[str, QUERY, Meta(description="The Logs screen's search.")]
+
+
+class LogSearch(RequestType):
+    q: Search = ""
+
+
+class LogDays(Reply):
+    """The days on record, as the Logs screen lists them."""
+
+    api_name: ClassVar[str] = "LogDays"
+    days: list[dict[str, Any]]
+    total_bytes: int
+    dropped: int
+    settings: dict[str, Any]
+
+
+@route(summary="The days on record", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs", errors=(404,))
+def list_log_days(request: Request, body: LogSearch) -> LogDays:
     logger = get_logs(request)
-    days, total = await run(logger.days, await _query(request, request.query_params.get("q", "")))
-    return JSONResponse({"days": days, "total_bytes": total, "dropped": logger.dropped, "settings": _settings(logger)})
+    days, total = logger.days(_query(request, body.q))
+    return LogDays(days=days, total_bytes=total, dropped=logger.dropped, settings=_settings(logger))
 
 
-async def get_log_day(request: Request) -> Response:
-    day = request.path_params["date"]
-    if not logs.valid_day(day):
-        return bad_request("bad_day")
-    before = whole_number(request.query_params.get("before"), -1)
-    if before is None or (before < 0 and request.query_params.get("before")):
-        return bad_request("before must be a line number")
-    limit = whole_number(request.query_params.get("limit"), PAGE_DEFAULT)
-    if limit is None or not 1 <= limit <= PAGE_MAX:
-        return bad_request(PAGE_LIMIT_MESSAGE)
-    query = await _query(request, request.query_params.get("q", ""))
-    records, following = await run(get_logs(request).read_day, day, query, before, limit)
-    return JSONResponse({"date": day, "entries": records, "next": following})
+class DatePath(RequestType):
+    """The day a route under .../days/{date} acts on. valid_day checks it:
+    it must be a real date, which no limit can say."""
+
+    date: Annotated[str, PATH, Meta(description="The day's date, from GET /api/owner/logs/days.")]
 
 
-async def download_log_day(request: Request) -> Response:
+class GetLogDay(DatePath):
+    q: Search = ""
+    before: Annotated[int, QUERY, Meta(ge=0, extra={"error": "before must be a line number"})] | None = None
+    limit: Limit = PAGE_DEFAULT
+
+
+class LogDay(Reply):
+    api_name: ClassVar[str] = "LogDay"
+    date: str
+    entries: list[dict[str, Any]]
+    next: int | None
+
+
+@route(summary="One day's entries", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs", errors=(400, 404))
+def get_log_day(request: Request, body: GetLogDay) -> LogDay:
+    if not logs.valid_day(body.date):
+        raise Refused(400, "bad_day")
+    before = -1 if body.before is None else body.before
+    records, following = get_logs(request).read_day(body.date, _query(request, body.q), before, body.limit)
+    return LogDay(date=body.date, entries=records, next=following)
+
+
+@route(
+    summary="One day's entries as a file", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs",
+    reply_type="application/x-ndjson", errors=(400, 404),
+)
+async def download_log_day(request: Request, body: DatePath) -> Response:
     """A day as plain JSON lines, decrypted: the file a person can grep, or
     hand to whatever reads logs. Each line has ip_name beside the address, as
     named when this was asked for. Starlette walks the generator in a worker
     thread, so the file reads stay off the event loop."""
-    day = request.path_params["date"]
+    day = body.date
     if not logs.valid_day(day):
-        return bad_request("bad_day")
+        raise Refused(400, "bad_day")
     return StreamingResponse(
-        get_logs(request).download(day, await _query(request)),
+        get_logs(request).download(day, await run(_query, request)),
         media_type="application/x-ndjson",
         headers={"Content-Disposition": f'attachment; filename="logs-{day}.jsonl"'},
     )
 
 
-async def delete_log_day(request: Request) -> Response:
-    body = await read_json(request)
-    if body is None:
-        return bad_request("malformed request body")
-    if not check_csrf(request, body.get("csrf_token")):
-        return forbidden("invalid csrf token")
-    day = request.path_params["date"]
+class DeletedReply(Reply):
+    deleted: bool
+
+
+@route(summary="Delete one day", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs", errors=(400, 403, 404, 409))
+def delete_log_day(request: Request, body: DatePath) -> DeletedReply:
     try:
-        await run(get_logs(request).delete_day, day)
+        get_logs(request).delete_day(body.date)
     except logs.BadDayError as refusal:
-        return bad_request(str(refusal))
+        raise Refused(400, str(refusal)) from None
     except logs.TodayError as refusal:
-        return conflict(str(refusal))
-    audit(request, logs.KIND_ADMIN, "log day deleted", {"date": day})
-    return JSONResponse({"deleted": True})
+        raise Refused(409, str(refusal)) from None
+    audit(request, logs.KIND_ADMIN, "log day deleted", {"date": body.date})
+    return DeletedReply(deleted=True)
 
 
-async def prune_logs(request: Request) -> Response:
-    body = await read_json(request)
-    if body is None:
-        return bad_request("malformed request body")
-    if not check_csrf(request, body.get("csrf_token")):
-        return forbidden("invalid csrf token")
-    result = await run(get_logs(request).prune)
+class PruneResult(Reply):
+    """What Logger.prune did."""
+
+    api_name: ClassVar[str] = "PruneResult"
+    compressed: int
+    deleted: int
+    bytes_before: int
+    bytes_after: int
+
+
+@route(summary="Apply the retention rules now", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs", errors=(400, 403, 404))
+def prune_logs(request: Request) -> PruneResult:
+    result = get_logs(request).prune()
     audit(request, logs.KIND_ADMIN, "logs pruned", {"compressed": result["compressed"], "deleted": result["deleted"]})
-    return JSONResponse(result)
+    return PruneResult(**result)
 
 
-async def list_ip_names(request: Request) -> Response:
+class IPName(Reply):
+    target: str
+    name: str
+    created_at: DateTime
+
+
+class IPNames(Reply):
+    api_name: ClassVar[str] = "IPNames"
+    names: list[IPName]
+
+
+@route(summary="What the owner calls addresses", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs", errors=(403, 404))
+def list_ip_names(request: Request) -> IPNames:
     """Everything the owner has named. It is short by nature, so unlike the lists
     people's activity grows, it comes whole."""
-    names = await run(ip_names.list_names, get_store(request))
-    return JSONResponse({"names": names})
+    return IPNames(names=[IPName(**record) for record in ip_names.list_names(get_store(request))])
 
 
-async def set_ip_name(request: Request) -> Response:
+# An address or a range, checked by clean_target: no limit can say what an
+# address is.
+Target = Annotated[str, Meta(description="An address, or a range such as 10.0.0.0/24.", examples=["10.0.0.0/24"], extra={"error": "bad_ip_target"})]
+
+
+class SetIPName(RequestType):
+    target: Target
+    name: Annotated[str, Meta(min_length=1, max_length=ip_names.NAME_MAX, extra={"error": "bad_ip_name"})]
+
+
+class SetIPNameReply(Reply):
+    target: str
+    name: str
+
+
+@route(
+    summary="Name an address or a range, or rename one", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs",
+    errors=(400, 403, 404),
+)
+def set_ip_name(request: Request, body: SetIPName) -> SetIPNameReply:
     """Names an address or a range, or renames one. The answer gives the target
     as stored, which may not be how it was typed."""
-    body = await read_json(request)
-    if body is None:
-        return bad_request("malformed request body")
-    if not check_csrf(request, body.get("csrf_token")):
-        return forbidden("invalid csrf token")
-    target = ip_names.clean_target(body.get("target"))
+    target = ip_names.clean_target(body.target)
     if target is None:
-        return bad_request("bad_ip_target")
-    name = body.get("name")
-    if not ip_names.valid_name(name):
-        return bad_request("bad_ip_name")
-    await run(ip_names.set_name, get_store(request), target, name)
+        raise Refused(400, "bad_ip_target")
+    if not ip_names.valid_name(body.name):
+        raise Refused(400, "bad_ip_name")
+    ip_names.set_name(get_store(request), target, body.name)
     audit(request, logs.KIND_ADMIN, "ip name set", {"target": target})
-    return JSONResponse({"target": target, "name": name.strip()})
+    return SetIPNameReply(target=target, name=body.name.strip())
 
 
-async def delete_ip_name(request: Request) -> Response:
+class DeleteIPName(RequestType):
+    target: Target
+
+
+@route(
+    summary="Take a name off an address or a range", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs",
+    errors=(400, 403, 404),
+)
+def delete_ip_name(request: Request, body: DeleteIPName) -> DeletedReply:
     """Takes a name away. Its target is in the body, because a range has a slash
     in it."""
-    body = await read_json(request)
-    if body is None:
-        return bad_request("malformed request body")
-    if not check_csrf(request, body.get("csrf_token")):
-        return forbidden("invalid csrf token")
-    target = ip_names.clean_target(body.get("target"))
+    target = ip_names.clean_target(body.target)
     if target is None:
-        return bad_request("bad_ip_target")
-    await run(ip_names.delete_name, get_store(request), target)
+        raise Refused(400, "bad_ip_target")
+    ip_names.delete_name(get_store(request), target)
     audit(request, logs.KIND_ADMIN, "ip name removed", {"target": target})
-    return JSONResponse({"deleted": True})
+    return DeletedReply(deleted=True)
 
 
-async def stream_log_changes(request: Request) -> Response:
+@route(
+    summary="New log entries as they happen", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs",
+    reply_type="text/event-stream", errors=(404,),
+)
+async def stream_log_changes(request: Request, body: LogSearch) -> Response:
     """The Logs screen's live tail: "something changed" nudges, and logs.js
     runs its normal refresh. Sending the entries themselves would need a
     second filter and paging path through the same data. This route is under
@@ -240,23 +319,30 @@ def _ip(request: Request) -> str:
     return client_ip(request.scope, cfg, trusted_proxy_networks(cfg))
 
 
-async def record_ui_events(request: Request) -> Response:
+class RecordUIEvents(RequestType):
+    tab: str
+    # Each is checked on its own below: one a browser got wrong is skipped,
+    # not the batch refused.
+    events: Annotated[list[dict[str, Any]], Meta(extra={"error": "events must be a list"})]
+
+
+class RecordUIEventsReply(Reply):
+    accepted: int
+
+
+@route(
+    summary="Record what happened on the page", tag="Account", feature="logs",
+    mcp_http="The browser's own activity reports (track.js), not an action.", errors=(400, 401, 403, 404),
+)
+def record_ui_events(request: Request, body: RecordUIEvents) -> RecordUIEventsReply:
     """A batch from track.js. The server stamps each with its own time, the
     signed-in account, the address and the user agent, so a browser can
     describe what it did but not who did it or when it arrived."""
-    body = await read_json(request)
-    if body is None:
-        return bad_request("malformed request body")
-    if not check_csrf(request, body.get("csrf_token")):
-        return forbidden("invalid csrf token")
-    events = body.get("events")
-    if not isinstance(events, list):
-        return bad_request("events must be a list")
-    events = events[:EVENTS_PER_CALL]
+    events = body.events[:EVENTS_PER_CALL]
     actor = actor_from(request)
     allowed = _budget.take(actor.user.id, len(events))
     logger = get_logs(request)
-    tab = logs.truncate(body.get("tab", ""), 32)
+    tab = logs.truncate(body.tab, 32)
     who, ip, ua = log_actor(actor), _ip(request), logs.truncate(request.headers.get("user-agent", ""), 300)
     accepted = 0
     for index, event in enumerate(events):
@@ -287,7 +373,7 @@ async def record_ui_events(request: Request) -> Response:
             )
         )
         accepted += 1
-    return JSONResponse({"accepted": accepted})
+    return RecordUIEventsReply(accepted=accepted)
 
 
 # ---------------------------------------------------------------------------

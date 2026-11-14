@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rewrite the API reference from the code:
 #
-#   config/openapi.json   every route, from the doc() calls in app/routes/*_api.py
+#   config/openapi.json   every route, from its @route(...) declaration in app/routes
 #   config/mcp.json       every MCP tool, from app/routes/mcp_tools.py
 #   config/api.md         both, as tables to read
 #

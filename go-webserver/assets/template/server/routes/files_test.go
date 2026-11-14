@@ -327,3 +327,25 @@ func TestStorageSaysWhatIsUsedAndWhatIsLeft( t *testing.T ) {
 		t.Fatalf( "files off: %d" , status )
 	}
 }
+
+// A download answers HEAD as it answers GET, with no csrf token asked of a
+// browser session, and a piece's number is checked before anything is read.
+func TestADownloadAnswersHeadAndAPieceNeedsItsNumber( t *testing.T ) {
+	fixture := newFilesFixture( t )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	content := []byte( "hello" )
+	file_id := uploaded( t , alice , "a.txt" , content )
+	response , body := raw( t , alice , http.MethodHead , "/api/files/" + file_id + "/download" , nil , nil )
+	if response.StatusCode != 200 || len( body ) != 0 || response.Header.Get( "Content-Length" ) != fmt.Sprint( len( content ) ) {
+		t.Fatalf( "%d %q %v" , response.StatusCode , body , response.Header )
+	}
+
+	_ , reply := send( t , alice , "/api/files" , fiber.Map{ "name": "b.txt" , "size": 1 } )
+	for _ , index := range []string{ "-1" , "x" } {
+		response , body = raw( t , alice , http.MethodPost , "/api/files/" + reply[ "id" ].( string ) + "/chunks/" + index , []byte( "x" ) , map[ string ]string{ "X-CSRF-Token": alice.csrf( t ) } )
+		if response.StatusCode != 400 || strings.Contains( string( body ) , "bad piece number" ) == false { t.Fatalf( "%s: %d %s" , index , response.StatusCode , body ) }
+	}
+	if response , _ = raw( t , alice , http.MethodPost , "/api/files/" + reply[ "id" ].( string ) + "/chunks/0" , []byte( "x" ) , nil ); response.StatusCode != 403 {
+		t.Fatalf( "no csrf header: %d" , response.StatusCode )
+	}
+}

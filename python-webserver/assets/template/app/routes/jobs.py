@@ -4,36 +4,64 @@ starting one now (app/core/jobs.py). A run is started and answered at once;
 the page reads the outcome from the list."""
 from __future__ import annotations
 
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from typing import Annotated, ClassVar
 
+import msgspec
+from msgspec import UNSET, Meta, UnsetType
+from starlette.requests import Request
+
+from app.apidocs import OWNER, PATH, SESSION_ONLY, Reply, route
+from app.apidocs import Request as RequestType
 from app.core import jobs
 from app.core.logs import KIND_ADMIN
-from app.core.security import check_csrf
-from app.routes.helpers import bad_request, conflict, forbidden, not_found, read_json, run
+from app.routes.admin import DateTime, OkReply
+from app.routes.helpers import Refused
 from app.routes.logs import audit
+
+
+class Job(Reply, kw_only=True):
+    """A background job as the Jobs screen lists it (jobs.Registry.rows)."""
+
+    api_name: ClassVar[str] = "Job"
+    name: str
+    interval_seconds: int
+    running: bool
+    interrupted: bool
+    runs: int
+    next_due: DateTime
+    last_started: DateTime | UnsetType = UNSET
+    last_finished: DateTime | UnsetType = UNSET
+    last_ok: bool | None | UnsetType = UNSET
+    last_note: str | UnsetType = UNSET
+    last_error: str | UnsetType = UNSET
+
+
+class JobsReply(Reply):
+    jobs: list[Job]
 
 
 def get_jobs(request: Request) -> jobs.Registry:
     return request.app.state.jobs
 
 
-async def list_jobs(request: Request) -> Response:
-    return JSONResponse({"jobs": await run(get_jobs(request).rows)})
+@route(summary="Background jobs", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="jobs", errors=(404,))
+def list_jobs(request: Request) -> JobsReply:
+    """Reads SQLite, so a plain function: it runs in a worker thread."""
+    return JobsReply(jobs=msgspec.convert(get_jobs(request).rows(), list[Job]))
 
 
-async def run_job(request: Request) -> Response:
-    body = await read_json(request)
-    if body is None:
-        return bad_request("malformed request body")
-    if not check_csrf(request, body.get("csrf_token")):
-        return forbidden("invalid csrf token")
-    name = request.path_params["name"]
+class JobNamePath(RequestType):
+    name: Annotated[str, PATH, Meta(description="The job's name, from GET /api/owner/jobs.")]
+
+
+@route(summary="Run a job now", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="jobs", status=202, errors=(400, 403, 404, 409))
+async def run_job(request: Request, body: JobNamePath) -> OkReply:
+    """A coroutine: the run is a task on the event loop."""
     try:
-        get_jobs(request).run_now(name)
+        get_jobs(request).run_now(body.name)
     except jobs.UnknownJobError:
-        return not_found("not found")
+        raise Refused(404, "not found") from None
     except jobs.JobRunningError:
-        return conflict("job already running")
-    audit(request, KIND_ADMIN, "job_run", {"name": name})
-    return JSONResponse({"ok": True}, status_code=202)
+        raise Refused(409, "job already running") from None
+    audit(request, KIND_ADMIN, "job_run", {"name": body.name})
+    return OkReply(ok=True)

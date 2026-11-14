@@ -6,6 +6,7 @@ import (
 
 	fiber "github.com/gofiber/fiber/v3"
 
+	apidoc "{{MODULE_PATH}}/server/apidoc"
 	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
@@ -14,18 +15,72 @@ import (
 // Joining through an invite link (see models/invite_link.go; managing links
 // is invite_links.go). Everything here is public -- holding the link is the
 // permission -- so every POST is held to the same rule as /api/login: a JSON
-// body from one of this site's own pages (sameOriginJSON). The credential
+// body from one of this site's own pages (sameOrigin( joinElsewhere ), in
+// routes.go). The credential
 // travels in the body, never a query string, and the page that carries it in
 // its path is served with no-referrer.
 //
 // A bad, expired, switched-off, or orphaned link always answers 404
 // invite_link_invalid, whichever of those it was.
 
+// joinRequest is what every step of joining sends; each step reads the
+// fields it needs.
 type joinRequest struct {
 	Credential  string `json:"credential"`
+	DisplayName string `json:"display_name,omitempty"`
+	UserID      uint64 `json:"user_id,omitempty"`
+	Pin         string `json:"pin,omitempty"`
+}
+
+// joinElsewhere is what a join route says to a request that did not come
+// from this site's own page.
+const joinElsewhere = "invite links must be used from this site's own page"
+
+type joinInfoReply struct {
+	Label     string `json:"label"`
+	Remaining int    `json:"remaining"`
+}
+
+// joinMatch is an account the link made whose name is close to the one typed.
+type joinMatch struct {
+	ID          uint64 `json:"id"`
 	DisplayName string `json:"display_name"`
-	UserID      uint64 `json:"user_id"`
-	Pin         string `json:"pin"`
+	HasPIN      bool   `json:"has_pin"`
+}
+
+type joinMatchReply struct {
+	Matches   []joinMatch `json:"matches"`
+	CanCreate bool        `json:"can_create"`
+}
+
+// joinedReply is how joining ends: signed in, or a two-factor code is needed
+// first, as with signInReply.
+type joinedReply struct {
+	Ok          bool   `json:"ok,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	TwoFactor   bool   `json:"two_factor,omitempty"`
+	Challenge   string `json:"challenge,omitempty"`
+}
+
+type joined struct {
+	Ok          bool   `json:"ok"`
+	DisplayName string `json:"display_name"`
+}
+
+func ( joinedReply ) APIName() ( name string ) { name = "Joined"; return }
+
+func ( joinedReply ) APIOneOf() ( shapes []any ) {
+	shapes = []any{ joined{} , twoFactorNeeded{} }
+	return
+}
+
+func ( joinedReply ) APIDoc() ( text string ) { text = "Either the sign-in finished, or a two-factor code is needed."; return }
+
+// newJoinedReply is joinedReply for a sign-in signIn has ended.
+func newJoinedReply( display_name string , challenge string ) ( reply *joinedReply ) {
+	reply = &joinedReply{ Ok: true , DisplayName: display_name }
+	if challenge != "" { reply = &joinedReply{ TwoFactor: true , Challenge: challenge } }
+	return
 }
 
 // ShowJoinPage answers a visit to an invite link with the ordinary app page,
@@ -43,56 +98,55 @@ func ( handlers *Handlers ) ShowJoinPage( c fiber.Ctx ) ( err error ) {
 	return
 }
 
-// joinLink checks the request and decodes the body, then loads the link.
-// link is nil whenever a response has already been written.
-func ( handlers *Handlers ) joinLink( c fiber.Ctx , body *joinRequest ) ( link *models.InviteLink , err error ) {
-	if sameOriginJSON( c ) == false {
-		err = forbidden( c , "invite links must be used from this site's own page" )
-		return
-	}
-	if c.Bind().JSON( body ) != nil {
-		err = badRequest( c , "malformed request body" )
-		return
-	}
-	link , load_err := models.LoadInviteLink( handlers.Store , body.Credential )
+// joinLink is the link a request names, or the refusal every bad, expired,
+// switched-off or orphaned one gets.
+func ( handlers *Handlers ) joinLink( credential string ) ( link *models.InviteLink , refused *refusal ) {
+	link , load_err := models.LoadInviteLink( handlers.Store , credential )
 	if load_err != nil {
 		link = nil
-		err = notFound( c , "invite_link_invalid" )
+		refused = refuse( fiber.StatusNotFound , "invite_link_invalid" )
 	}
 	return
 }
 
-func ( handlers *Handlers ) JoinInfo( c fiber.Ctx ) ( err error ) {
-	var body joinRequest
-	link , err := handlers.joinLink( c , &body )
-	if link == nil { return }
-	err = c.JSON( fiber.Map{ "label": link.Label , "remaining": link.Remaining() } )
-	return
+// JoinInfo is what the join page shows before anyone types a name.
+func ( handlers *Handlers ) JoinInfo() *apidoc.Endpoint[ joinRequest , joinInfoReply ] {
+	return apidoc.Handle( apidoc.Op{ Summary: "What an invite link is" , Tag: "Invite links" , Access: apidoc.Public , Feature: "invite_links" , Errors: []int{ 404 } },
+		func( c fiber.Ctx , in *joinRequest ) ( reply *joinInfoReply , err error ) {
+			link , refused := handlers.joinLink( in.Credential )
+			if refused != nil {
+				err = refused
+				return
+			}
+			reply = &joinInfoReply{ Label: link.Label , Remaining: link.Remaining() }
+			return
+		} )
 }
 
 // JoinMatch is the "did you mean...?": the accounts from this link whose
 // names are close to what was typed. The page always shows this step before
 // creating anyone, even with no matches, because a typo would otherwise use
 // up a place.
-func ( handlers *Handlers ) JoinMatch( c fiber.Ctx ) ( err error ) {
-	var body joinRequest
-	link , err := handlers.joinLink( c , &body )
-	if link == nil { return }
-	if models.ValidDisplayName( body.DisplayName ) == false {
-		err = badRequest( c , "display name must be 1-80 characters" )
-		return
-	}
-	matches , match_err := models.InviteMatches( handlers.Store , link , body.DisplayName )
-	if match_err != nil {
-		err = serverError( c , match_err )
-		return
-	}
-	rows := []fiber.Map{}
-	for _ , user := range matches {
-		rows = append( rows , fiber.Map{ "id": user.ID , "display_name": user.DisplayName , "has_pin": user.HasPin() } )
-	}
-	err = c.JSON( fiber.Map{ "matches": rows , "can_create": link.Remaining() > 0 } )
-	return
+func ( handlers *Handlers ) JoinMatch() *apidoc.Endpoint[ joinRequest , joinMatchReply ] {
+	return apidoc.Handle( apidoc.Op{ Summary: "Accounts matching a name" , Tag: "Invite links" , Access: apidoc.Public , Feature: "invite_links" , Errors: []int{ 400 , 404 } },
+		func( c fiber.Ctx , in *joinRequest ) ( reply *joinMatchReply , err error ) {
+			link , refused := handlers.joinLink( in.Credential )
+			if refused != nil {
+				err = refused
+				return
+			}
+			if models.ValidDisplayName( in.DisplayName ) == false {
+				err = refuse( fiber.StatusBadRequest , "display name must be 1-80 characters" )
+				return
+			}
+			matches , err := models.InviteMatches( handlers.Store , link , in.DisplayName )
+			if err != nil { return }
+			reply = &joinMatchReply{ Matches: []joinMatch{} , CanCreate: link.Remaining() > 0 }
+			for _ , user := range matches {
+				reply.Matches = append( reply.Matches , joinMatch{ ID: user.ID , DisplayName: user.DisplayName , HasPIN: user.HasPin() } )
+			}
+			return
+		} )
 }
 
 // JoinClaim signs in as an account this link created -- the same person on
@@ -102,83 +156,97 @@ func ( handlers *Handlers ) JoinMatch( c fiber.Ctx ) ( err error ) {
 // can pick any name on it, and that must not walk around the password. The
 // person signs in with it instead. An account with two-factor on still has to
 // give its code after this, PIN or not.
-func ( handlers *Handlers ) JoinClaim( c fiber.Ctx ) ( err error ) {
-	var body joinRequest
-	link , err := handlers.joinLink( c , &body )
-	if link == nil { return }
-	user , account_err := models.InviteAccount( handlers.Store , link , body.UserID )
-	if account_err != nil {
-		err = notFound( c , "no_such_account" )
-		return
-	}
-	if user.HasPin() {
-		if handlers.Pins.Reserve( user.ID ) == false {
-			err = c.Status( fiber.StatusTooManyRequests ).JSON( fiber.Map{ "error": "pin_locked" } )
-			return
-		}
-		ok := user.CheckPin( body.Pin )
-		outcome := models.AttemptFailed
-		if ok { outcome = models.AttemptPassed }
-		handlers.Pins.Settle( user.ID , outcome )
-		if ok == false {
-			handlers.auditAs( c , handlers.logUser( user.ID , "anon" ) , logs.KindAuth , logs.LevelWarn , "wrong pin on an invite link" , fiber.Map{ "link_id": link.ID } )
-			code := "pin_wrong"
-			if body.Pin == "" { code = "pin_needed" }
-			err = forbidden( c , code )
-			return
-		}
-	// >>> feature:passwords
-	} else if user.PasswordUsable( handlers.cfg().PasswordsEnabled ) {
-		err = forbidden( c , "use_password" )
-		return
-	// <<< feature:passwords
-	}
+func ( handlers *Handlers ) JoinClaim() *apidoc.Endpoint[ joinRequest , joinedReply ] {
+	return apidoc.Handle( apidoc.Op{ Summary: "Sign in as an existing account" , Tag: "Invite links" , Access: apidoc.Public , Feature: "invite_links" , Errors: []int{ 400 , 403 , 404 } },
+		func( c fiber.Ctx , in *joinRequest ) ( reply *joinedReply , err error ) {
+			link , refused := handlers.joinLink( in.Credential )
+			if refused != nil {
+				err = refused
+				return
+			}
+			user , account_err := models.InviteAccount( handlers.Store , link , in.UserID )
+			if account_err != nil {
+				err = refuse( fiber.StatusNotFound , "no_such_account" )
+				return
+			}
+			if user.HasPin() {
+				if handlers.Pins.Reserve( user.ID ) == false {
+					err = refuse( fiber.StatusTooManyRequests , "pin_locked" )
+					return
+				}
+				ok := user.CheckPin( in.Pin )
+				outcome := models.AttemptFailed
+				if ok { outcome = models.AttemptPassed }
+				handlers.Pins.Settle( user.ID , outcome )
+				if ok == false {
+					handlers.auditAs( c , handlers.logUser( user.ID , "anon" ) , logs.KindAuth , logs.LevelWarn , "wrong pin on an invite link" , fiber.Map{ "link_id": link.ID } )
+					code := "pin_wrong"
+					if in.Pin == "" { code = "pin_needed" }
+					err = refuse( fiber.StatusForbidden , code )
+					return
+				}
+			// >>> feature:passwords
+			} else if user.PasswordUsable( handlers.cfg().PasswordsEnabled ) {
+				err = refuse( fiber.StatusForbidden , "use_password" )
+				return
+			// <<< feature:passwords
+			}
 
-	signed , _ , claim_err := models.ClaimInviteAccount( handlers.Store , body.Credential , user.ID , handlers.signInRules() )
-	switch {
-	case errors.Is( claim_err , models.ErrInviteLinkInvalid ):
-		err = notFound( c , "invite_link_invalid" )
-		return
-	case errors.Is( claim_err , models.ErrNotInviteAccount ):
-		err = notFound( c , "no_such_account" )
-		return
-	case claim_err != nil:
-		err = serverError( c , claim_err )
-		return
-	}
-	message := "signed back in through an invite link"
-	if signed.Challenge != "" { message = "invite link accepted, waiting for a code" } // feature:two_factor
-	handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , fiber.Map{ "link_id": link.ID } )
-	err = handlers.signInResponse( c , signed , fiber.Map{ "ok": true , "display_name": user.DisplayName } , fiber.StatusOK )
-	return
+			signed , _ , claim_err := models.ClaimInviteAccount( handlers.Store , in.Credential , user.ID , handlers.signInRules() )
+			switch {
+			case errors.Is( claim_err , models.ErrInviteLinkInvalid ):
+				err = refuse( fiber.StatusNotFound , "invite_link_invalid" )
+				return
+			case errors.Is( claim_err , models.ErrNotInviteAccount ):
+				err = refuse( fiber.StatusNotFound , "no_such_account" )
+				return
+			case claim_err != nil:
+				err = claim_err
+				return
+			}
+			message := "signed back in through an invite link"
+			if signed.Challenge != "" { message = "invite link accepted, waiting for a code" } // feature:two_factor
+			handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , fiber.Map{ "link_id": link.ID } )
+			challenge , err := handlers.signIn( c , signed )
+			if err != nil { return }
+			reply = newJoinedReply( user.DisplayName , challenge )
+			return
+		} )
 }
 
 // JoinCreate makes a new account through the link, if it has places left,
 // and signs it in.
-func ( handlers *Handlers ) JoinCreate( c fiber.Ctx ) ( err error ) {
-	var body joinRequest
-	link , err := handlers.joinLink( c , &body )
-	if link == nil { return }
-	if models.ValidDisplayName( body.DisplayName ) == false {
-		err = badRequest( c , "display name must be 1-80 characters" )
-		return
-	}
+func ( handlers *Handlers ) JoinCreate() *apidoc.Endpoint[ joinRequest , joinedReply ] {
+	return apidoc.Handle( apidoc.Op{ Summary: "Join as a new account" , Tag: "Invite links" , Access: apidoc.Public , Feature: "invite_links" , Status: fiber.StatusCreated , Errors: []int{ 400 , 404 , 409 } },
+		func( c fiber.Ctx , in *joinRequest ) ( reply *joinedReply , err error ) {
+			link , refused := handlers.joinLink( in.Credential )
+			if refused != nil {
+				err = refused
+				return
+			}
+			if models.ValidDisplayName( in.DisplayName ) == false {
+				err = refuse( fiber.StatusBadRequest , "display name must be 1-80 characters" )
+				return
+			}
 
-	session_credential , user , join_err := models.JoinInviteLink( handlers.Store , body.Credential , body.DisplayName , handlers.cfg().SessionTTL )
-	switch {
-	case errors.Is( join_err , models.ErrInviteLinkInvalid ):
-		err = notFound( c , "invite_link_invalid" )
-		return
-	case errors.Is( join_err , models.ErrInviteLinkFull ):
-		err = c.Status( fiber.StatusConflict ).JSON( fiber.Map{ "error": "invite_link_full" } )
-		return
-	case join_err != nil:
-		err = serverError( c , join_err )
-		return
-	}
-	handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , "joined through an invite link" , fiber.Map{ "link_id": link.ID } )
-	handlers.Webhooks.Emit( models.EventUserCreated , map[string]any{ "user_id": user.ID , "display_name": user.DisplayName , "role": user.Role , "invite_link_id": link.ID } ) // feature:webhooks
-	signed := &models.SignIn{ UserID: user.ID , SessionCredential: session_credential }
-	err = handlers.signInResponse( c , signed , fiber.Map{ "ok": true , "display_name": user.DisplayName } , fiber.StatusCreated )
-	return
+			session_credential , user , join_err := models.JoinInviteLink( handlers.Store , in.Credential , in.DisplayName , handlers.cfg().SessionTTL )
+			switch {
+			case errors.Is( join_err , models.ErrInviteLinkInvalid ):
+				err = refuse( fiber.StatusNotFound , "invite_link_invalid" )
+				return
+			case errors.Is( join_err , models.ErrInviteLinkFull ):
+				err = refuse( fiber.StatusConflict , "invite_link_full" )
+				return
+			case join_err != nil:
+				err = join_err
+				return
+			}
+			handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , "joined through an invite link" , fiber.Map{ "link_id": link.ID } )
+			handlers.Webhooks.Emit( models.EventUserCreated , map[string]any{ "user_id": user.ID , "display_name": user.DisplayName , "role": user.Role , "invite_link_id": link.ID } ) // feature:webhooks
+			signed := &models.SignIn{ UserID: user.ID , SessionCredential: session_credential }
+			challenge , err := handlers.signIn( c , signed )
+			if err != nil { return }
+			reply = newJoinedReply( user.DisplayName , challenge )
+			return
+		} )
 }

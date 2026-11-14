@@ -22,13 +22,13 @@ from starlette.requests import Request  # feature:mcp|metrics|passwords|two_fact
 from starlette.responses import Response  # feature:mcp|metrics|passwords|two_factor|invite_links|webhooks
 from starlette.routing import BaseRoute, Route
 
+from app.apidocs.route import mounted
 from app.core.config import Config
 from app.core.security import RequireAdmin, RequireLogin, RequireSession
 from app.core.security import Guard  # feature:mcp|metrics|passwords|two_factor|invite_links|webhooks
 from app.core.security import RequireOwner  # feature:logs|settings|jobs|webhooks|passwords
 from app.core.security import RequireAPIKey  # feature:mcp|metrics
 from app.core.static_files import StaticServer
-from app.mcp.protocol import Server as MCPServer  # feature:mcp
 from app.routes import (
     account,
     admin,
@@ -40,7 +40,6 @@ from app.routes import (
     join,  # feature:invite_links
     logs,  # feature:logs
     mcp_manifest,  # feature:mcp
-    mcp_tools,  # feature:mcp
     meta,
     metrics,  # feature:metrics
     openapi,  # feature:openapi
@@ -132,6 +131,7 @@ def group(*guards: type) -> Callable[..., Route]:
     middleware = [Middleware(guard) for guard in guards]
 
     def route(path: str, endpoint: Callable, methods: Sequence[str] = ("GET",)) -> Route:
+        mounted(endpoint, methods[0], path)
         return Route(path, endpoint, methods=list(methods), middleware=middleware)
 
     return route
@@ -144,8 +144,10 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
     public = group()
     # >>> feature:invite_links
     # Joining through an invite link: holding the link is the permission.
-    public_invites = group(RequireInviteLinks)
+    public_invites = group(RequireInviteLinks, auth.SameOriginJoin)
     # <<< feature:invite_links
+    # Signing in: only as JSON from one of this site's own pages.
+    sign_in = group(auth.SameOriginLogin)
     signed_in = group(RequireLogin)
     pin_sessions = group(RequireInviteLinks, RequireLogin, RequireSession)  # feature:invite_links
     # >>> feature:api_keys
@@ -186,7 +188,7 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
     # Passwords and 2FA change how an account signs in, so setting them needs
     # a browser session, like the PIN: a key that could set a password could
     # turn itself into a session.
-    password_login = group(RequirePasswords)  # feature:passwords
+    password_login = group(RequirePasswords, auth.SameOriginLogin)  # feature:passwords
     my_password = group(RequirePasswords, RequireLogin, RequireSession)  # feature:passwords
     owner_passwords = group(RequirePasswords, RequireOwner)  # feature:passwords
     my_two_factor = group(RequireTwoFactor, RequireLogin, RequireSession)  # feature:two_factor
@@ -198,9 +200,9 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
         # Opening a login link only shows a page; the link is spent by the
         # POST that page sends when the person confirms. See auth.py.
         public("/login/{credential:path}", static_server.serve_login_page),
-        public("/api/login", auth.redeem_login_link, ["POST"]),
+        sign_in("/api/login", auth.redeem_login_link, ["POST"]),
         public("/api/login/options", passwords.login_options),  # feature:passwords
-        public("/api/login/two-factor", two_factor.finish_sign_in, ["POST"]),  # feature:two_factor
+        sign_in("/api/login/two-factor", two_factor.finish_sign_in, ["POST"]),  # feature:two_factor
         password_login("/api/login/password", passwords.password_login, ["POST"]),  # feature:passwords
         public("/api/language", meta.get_language),
         public("/api/health", meta.get_health),
@@ -368,10 +370,10 @@ def build_routes(static_server: StaticServer, cfg: Config) -> list[BaseRoute]:
     # Always registered: server.mcp and auth.api_keys can be switched while
     # the server runs, so RequireMCP checks them per request and answers 404
     # when either is off -- without API keys nothing could authenticate to it.
-    mcp = MCPServer(mcp_tools.build_registry())
     routes += [
-        group(RequireMCP, RequireAPIKey)("/mcp", mcp.endpoint, ["POST"]),
-        group(RequireMCP)("/mcp", mcp.method_not_allowed, ["GET", "DELETE"]),
+        group(RequireMCP, RequireAPIKey)("/mcp", mcp_manifest.mcp_endpoint, ["POST"]),
+        group(RequireMCP)("/mcp", mcp_manifest.mcp_no_stream),
+        group(RequireMCP)("/mcp", mcp_manifest.mcp_no_sessions, ["DELETE"]),
     ]
     # <<< feature:mcp
 

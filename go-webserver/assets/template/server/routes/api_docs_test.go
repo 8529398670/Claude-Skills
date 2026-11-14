@@ -19,8 +19,8 @@ import (
 )
 
 // The API reference is written from the code: config/openapi.json and
-// config/api.md from the docs each handler declares with apidoc.Doc (the
-// *_api.go files), and config/mcp.json from the registered MCP tools.
+// config/api.md from each route's declaration (apidoc.Handle or Stream, next
+// to its handler), and config/mcp.json from the registered MCP tools.
 // scripts/api_docs.sh runs TestAPIDocsAreCurrent with -update to rewrite
 // them; without it, the test fails while a committed file is out of date.
 var updateAPIDocs = flag.Bool( "update" , false , "rewrite config/openapi.json, config/mcp.json and config/api.md from the code" )
@@ -51,8 +51,8 @@ func newParityFixture( t *testing.T ) ( fixture *monitored ) {
 }
 
 // apiSpec is openapi.json as the code describes it, built from the route
-// table of the app with everything on. A route without docs, or docs without
-// a route, fails the test that asked.
+// table of the app with everything on. A route mounted without a
+// declaration fails the test that asked.
 func apiSpec( t *testing.T ) ( spec map[string]any , fixture *monitored ) {
 	t.Helper()
 	fixture = newParityFixture( t )
@@ -70,7 +70,7 @@ func documentedRoutes( app *fiber.App ) ( routes []apidoc.Route ) {
 		if route.Method != http.MethodGet && route.Method != http.MethodPost && route.Method != http.MethodDelete { continue }
 		if route.Path == "/fail" || route.Path == "/panic" { continue } // newMonitored's own
 		if notDocumented[ route.Method + " " + route.Path ] { continue }
-		routes = append( routes , apidoc.Route{ Method: route.Method , Path: route.Path , Handler: route.Handlers[ len( route.Handlers ) - 1 ] } )
+		routes = append( routes , apidoc.Route{ Method: route.Method , Path: route.Path , Name: route.Name } )
 	}
 	return
 }
@@ -100,7 +100,7 @@ func checkReplies( t *testing.T ) ( handler fiber.Handler ) {
 	return
 }
 
-// Every route has docs, and every doc has a route.
+// Every route is declared.
 func TestEveryRouteIsDocumented( t *testing.T ) {
 	apiSpec( t )
 }

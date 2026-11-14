@@ -12,21 +12,44 @@ rather than being silently signed in as whoever the link belongs to.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
+from msgspec import Meta
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 
+from app.apidocs import PUBLIC, Reply, one_of, route
+from app.apidocs import Request as RequestType
+from app.apidocs.route import reply_response
 from app.core.config import Config
 from app.core.logs import KIND_AUTH, LEVEL_INFO, LEVEL_WARN, anonymous
 from app.core.middleware import client_ip, trusted_for  # feature:sessions
-from app.core.security import set_session_cookie
+from app.core.security import Guard, set_session_cookie
 from app.models import login_tokens
 from app.models import sessions  # feature:sessions
 from app.models.sign_in import SignIn, SignInRules
 from app.routes.account import destroy_cookie_session
-from app.routes.helpers import bad_request, forbidden, get_config, get_store, read_json, run
+from app.routes.helpers import bad_request, forbidden, get_config, get_store, run
 from app.routes.logs import audit_as, user_actor
+
+
+class SignedIn(Reply):
+    ok: bool
+
+
+class TwoFactorChallenge(Reply):
+    """A sign-in that waits for a code: the page asks for it and sends it
+    with the challenge to /api/login/two-factor."""
+
+    two_factor: bool
+    challenge: str
+
+
+# What every way of signing in answers.
+SIGN_IN = one_of(
+    "SignIn", SignedIn, TwoFactorChallenge,
+    doc="Either the sign-in finished, or a two-factor code is needed: send it with the challenge to /api/login/two-factor.",
+)
 
 
 def same_origin_json(request: Request) -> bool:
@@ -38,22 +61,42 @@ def same_origin_json(request: Request) -> bool:
     return request.headers.get("sec-fetch-site", "same-origin") == "same-origin"
 
 
+class SameOriginLogin(Guard):
+    """Refuses a sign-in that is not JSON from one of this site's own pages,
+    before its body is read. It goes in front of each public sign-in route."""
+
+    message = "login must be submitted from this site's own login page"
+
+    def refuse(self, request: Request) -> Response | None:
+        return None if same_origin_json(request) else forbidden(self.message)
+
+
+# >>> feature:invite_links
+class SameOriginJoin(SameOriginLogin):
+    """SameOriginLogin for the invite-link routes."""
+
+    message = "invite links must be used from this site's own page"
+
+
+# <<< feature:invite_links
+
+
 def sign_in_rules(cfg: Config) -> SignInRules:
     return SignInRules(session_ttl_seconds=cfg.session_ttl_seconds, two_factor=cfg.two_factor_enabled)  # feature:two_factor
     return SignInRules(session_ttl_seconds=cfg.session_ttl_seconds)  # feature:!two_factor
 
 
-async def sign_in_response(request: Request, signed: SignIn, payload: dict[str, Any], status: int) -> Response:
+async def sign_in_response(request: Request, signed: SignIn, payload: Any, status: int) -> Response:
     """How every way of signing in ends. A challenge goes back to the page,
     which asks for the code, and nothing changes in this browser yet.
     Otherwise this browser switches to the new session: the one it had is
     ended server-side, not merely replaced in the cookie jar."""
     # >>> feature:two_factor
     if signed.challenge:
-        return JSONResponse({"two_factor": True, "challenge": signed.challenge})
+        return reply_response(TwoFactorChallenge(two_factor=True, challenge=signed.challenge))
     # <<< feature:two_factor
     await destroy_cookie_session(request)
-    response = JSONResponse(payload, status_code=status)
+    response = reply_response(payload, status)
     set_session_cookie(response, get_config(request), signed.session_credential)
     await _remember_client(request, signed.session_credential)  # feature:sessions
     return response
@@ -75,7 +118,12 @@ async def _remember_client(request: Request, credential: str) -> None:
 
 
 # <<< feature:sessions
-async def redeem_login_link(request: Request) -> Response:
+class RedeemLoginLink(RequestType):
+    credential: Annotated[str, Meta(extra={"error": "invalid login link"})]
+
+
+@route(summary="Redeem a login link", tag="Sign-in", access=PUBLIC, errors=(400, 403))
+async def redeem_login_link(request: Request, body: RedeemLoginLink) -> SIGN_IN:
     """The one state-changing route with no CSRF token -- there is no session
     yet to hold one -- so it is guarded differently. A forged login signs a
     victim's browser in to the *attacker's* account, after which anything the
@@ -84,13 +132,7 @@ async def redeem_login_link(request: Request) -> Response:
     that tries needs a CORS preflight this server never approves.
     Sec-Fetch-Site, which every current browser sends, refuses the rest
     outright."""
-    if not same_origin_json(request):
-        return forbidden("login must be submitted from this site's own login page")
-    body = await read_json(request)
-    if body is None:
-        return bad_request("malformed request body")
-    credential = body.get("credential")
-    credential = credential.strip().strip("/") if isinstance(credential, str) else ""
+    credential = body.credential.strip().strip("/")
 
     store, cfg = get_store(request), get_config(request)
     # Expired, already spent, never existed, wrong secret, or a disabled
@@ -103,4 +145,4 @@ async def redeem_login_link(request: Request) -> Response:
     message = "login link accepted, waiting for a code" if signed.challenge else "signed in with a login link"  # feature:two_factor
     message = "signed in with a login link"  # feature:!two_factor
     audit_as(request, await run(user_actor, store, signed.user_id, "session"), KIND_AUTH, LEVEL_INFO, message)
-    return await sign_in_response(request, signed, {"ok": True}, 200)
+    return await sign_in_response(request, signed, SignedIn(ok=True), 200)

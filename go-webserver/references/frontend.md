@@ -725,7 +725,7 @@ them rather than by writing them again.
   in `dom.js` for the field types.
 - **Editing something after it is made** is a POST verb route, like every other
   change (`/api/keys/:id/rename`), never PUT or PATCH, which the spec test would
-  not see. Give it docs (`apidoc.Doc` in its `*_api.go`), and an `expect` so its undo
+  not see. Declare it with `apidoc.Handle` (its docs come from its types), and an `expect` so its undo
   can answer 409, as `RenameUser` does.
 - **`Dom.when( value , fallback )`** is a table cell's time: "3 hours ago", or a
   date past a month, with the exact time on hover. `fallback` is what a missing

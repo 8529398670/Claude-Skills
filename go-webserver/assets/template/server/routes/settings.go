@@ -2,12 +2,11 @@
 package routes
 
 import (
-	bytes "bytes"
-	json "encoding/json"
 	errors "errors"
 
 	fiber "github.com/gofiber/fiber/v3"
 
+	apidoc "{{MODULE_PATH}}/server/apidoc"
 	config "{{MODULE_PATH}}/server/config"
 	logs "{{MODULE_PATH}}/server/logs"
 )
@@ -21,72 +20,81 @@ import (
 // is never part of either -- it is not in config.yaml, and the screen only
 // says where secret.key is.
 
-func ( handlers *Handlers ) GetSettings( c fiber.Ctx ) ( err error ) {
-	snapshot , snapshot_err := handlers.Settings.Snapshot()
-	if snapshot_err != nil {
-		err = serverError( c , snapshot_err )
-		return
-	}
-	err = c.JSON( snapshot )
-	return
+// settingsSnapshot is the whole Settings screen, as config.Holder reads it.
+type settingsSnapshot config.Snapshot
+
+func ( settingsSnapshot ) APIName() ( name string ) { name = "SettingsSnapshot"; return }
+
+func ( handlers *Handlers ) GetSettings() *apidoc.Endpoint[ apidoc.None , settingsSnapshot ] {
+	return apidoc.Handle( apidoc.Op{ Summary: "config.yaml, as a form" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "settings" , Errors: []int{ 404 } },
+		func( c fiber.Ctx , in *apidoc.None ) ( reply *settingsSnapshot , err error ) {
+			snapshot , err := handlers.Settings.Snapshot()
+			if err != nil { return }
+			shown := settingsSnapshot( snapshot )
+			reply = &shown
+			return
+		} )
 }
 
 type saveSettingsRequest struct {
-	CSRFToken string         `json:"csrf_token"`
-	Version   string         `json:"version"`
-	Changes   map[string]any `json:"changes"`
+	Version string         `json:"version"`
+	Changes map[string]any `json:"changes" jsonschema_description:"Setting paths and their new values."`
 }
+
+// settingsResult is what a save changed, by apply mode (config.ApplyResult).
+type settingsResult struct {
+	Changes   []map[string]any `json:"changes" jsonschema:"nullable"`
+	Applied   []string         `json:"applied" jsonschema:"nullable"`
+	Restart   []string         `json:"restart" jsonschema:"nullable"`
+	Scripts   []string         `json:"scripts" jsonschema:"nullable"`
+	Unchanged []string         `json:"unchanged" jsonschema:"nullable"`
+	Version   string           `json:"version"`
+}
+
+func ( settingsResult ) APIName() ( name string ) { name = "SettingsResult"; return }
 
 // SaveSettings applies {version, changes: {"section.key": value}}. version
 // is the one GetSettings returned; a file changed since is a 409 with the
 // current version, so the page can offer to reload rather than overwrite.
-func ( handlers *Handlers ) SaveSettings( c fiber.Ctx ) ( err error ) {
-	var body saveSettingsRequest
-	// UseNumber, so an int arrives as an int: a float64 would let 1.5 through
-	// as 1.
-	decoder := json.NewDecoder( bytes.NewReader( c.Body() ) )
-	decoder.UseNumber()
-	if decoder.Decode( &body ) != nil || body.Changes == nil {
-		err = badRequest( c , "malformed request body" )
-		return
-	}
-	if handlers.Guard.CheckCSRF( c , body.CSRFToken ) == false {
-		err = forbidden( c , "invalid csrf token" )
-		return
-	}
-
-	result , save_err := handlers.Settings.Save( body.Version , body.Changes )
-	var changed *config.ConflictError
-	var validation *config.ValidationError
-	var unknown *config.UnknownSettingError
-	switch {
-	case errors.As( save_err , &changed ):
-		err = conflict( c , "settings_changed" , fiber.Map{ "version": changed.Version } )
-	case errors.Is( save_err , config.ErrStale ):
-		err = conflict( c , "settings_stale" , nil )
-	case errors.Is( save_err , config.ErrReadOnly ):
-		err = conflict( c , "settings_read_only" , nil )
-	case errors.Is( save_err , config.ErrFileOnly ):
-		err = forbidden( c , "settings_file_only" )
-	case errors.Is( save_err , config.ErrLocked ):
-		err = forbidden( c , "settings_locked" )
-	case errors.As( save_err , &validation ):
-		err = c.Status( fiber.StatusBadRequest ).JSON( fiber.Map{ "error": "invalid_settings" , "problems": validation.Problems } )
-	case errors.As( save_err , &unknown ):
-		err = c.Status( fiber.StatusBadRequest ).JSON( fiber.Map{ "error": "unknown_setting" , "key": unknown.Key } )
-	case errors.Is( save_err , config.ErrHandEdit ):
-		err = c.Status( fiber.StatusBadRequest ).JSON( fiber.Map{ "error": "settings_hand_edit" , "problems": []string{ save_err.Error() } } )
-	case save_err != nil:
-		err = save_err
-	default:
-		if len( result.Changes ) > 0 {
-			handlers.audit( c , logs.KindAdmin , "settings changed" , fiber.Map{
-				"changes": result.Changes,
-				"restart": result.Restart,
-				"scripts": result.Scripts,
-			} )
-		}
-		err = c.JSON( result )
-	}
-	return
+// A number arrives as json.Number, so an int stays an int: a float64 would
+// let 1.5 through as 1.
+func ( handlers *Handlers ) SaveSettings() *apidoc.Endpoint[ saveSettingsRequest , settingsResult ] {
+	return apidoc.Handle( apidoc.Op{ Summary: "Save settings" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "settings" , Errors: []int{ 400 , 403 , 404 , 409 } },
+		func( c fiber.Ctx , in *saveSettingsRequest ) ( reply *settingsResult , err error ) {
+			result , save_err := handlers.Settings.Save( in.Version , in.Changes )
+			var changed *config.ConflictError
+			var validation *config.ValidationError
+			var unknown *config.UnknownSettingError
+			switch {
+			case errors.As( save_err , &changed ):
+				err = refuse( fiber.StatusConflict , "settings_changed" , fiber.Map{ "version": changed.Version } )
+			case errors.Is( save_err , config.ErrStale ):
+				err = refuse( fiber.StatusConflict , "settings_stale" )
+			case errors.Is( save_err , config.ErrReadOnly ):
+				err = refuse( fiber.StatusConflict , "settings_read_only" )
+			case errors.Is( save_err , config.ErrFileOnly ):
+				err = refuse( fiber.StatusForbidden , "settings_file_only" )
+			case errors.Is( save_err , config.ErrLocked ):
+				err = refuse( fiber.StatusForbidden , "settings_locked" )
+			case errors.As( save_err , &validation ):
+				err = refuse( fiber.StatusBadRequest , "invalid_settings" , fiber.Map{ "problems": validation.Problems } )
+			case errors.As( save_err , &unknown ):
+				err = refuse( fiber.StatusBadRequest , "unknown_setting" , fiber.Map{ "key": unknown.Key } )
+			case errors.Is( save_err , config.ErrHandEdit ):
+				err = refuse( fiber.StatusBadRequest , "settings_hand_edit" , fiber.Map{ "problems": []string{ save_err.Error() } } )
+			case save_err != nil:
+				err = save_err
+			default:
+				if len( result.Changes ) > 0 {
+					handlers.audit( c , logs.KindAdmin , "settings changed" , fiber.Map{
+						"changes": result.Changes,
+						"restart": result.Restart,
+						"scripts": result.Scripts,
+					} )
+				}
+				reply = &settingsResult{ Applied: result.Live , Restart: result.Restart , Scripts: result.Scripts , Unchanged: result.Unchanged , Version: result.Version }
+				if result.Changes != nil { reply.Changes , err = jsonObjects( result.Changes ) }
+			}
+			return
+		} )
 }

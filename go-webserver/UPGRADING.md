@@ -3,6 +3,102 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 3731d9a
+
+**Typed routes: one declaration per route (2026-11-13). Required, and an app's
+own routes need converting too.** Each route is now declared once, as a typed
+handler beside its code: `apidoc.Handle[In, Out]( op , fn )`, mounted with
+`apidoc.Get/Post/Delete`. The request and reply types parse and check every
+request, encode the reply, and are the only source of `config/openapi.json`,
+`api.md`, and each MCP tool's input schema. The template has no `*_api.go`
+files and no hand-written `InputSchema` left.
+
+- **Framework.**
+  - New: `server/apidoc/route.go` (Handle, Stream, Post/Get/Delete, the
+    request checks, MCP argument decoding) and `server/apidoc/reflect.go`
+    (schemas from `github.com/invopop/jsonschema v0.14.0`, new in `go.mod`).
+  - New: `server/mcp/route.go` (`mcp.ForRoute`, `mcp.Answer`).
+  - Removed: `server/apidoc/schema.go`, `apidoc.Doc`, `Op.Method`/`Params`/`Body`/`Reply`,
+    `mcp.Tool.InputSchema`/`Route`, and `Call.Bind`.
+  - Added to `Op`: `NoCSRF` and `RawBody`.
+  - `refusal` gains `Error`/`Send`/`Refused`, so a handler returns it as its
+    error.
+  - Pagination is typed: `Page`, `Direction`, `Paged`, `cutPage`,
+    `sortedPage`, with `matchRows`/`sortRows` over typed rows. `sendPage`,
+    `sendSorted` and `toolPage` are gone.
+  - CSRF is checked by the framework (body `csrf_token`, or `X-CSRF-Token` for
+    a raw body), so handlers no longer call `CheckCSRF`. `routes.go` sets
+    `apidoc.CheckCSRF`.
+- **Every template route and tool converted.** Named schemas moved out of
+  `schemas_api.go` next to their routes or models: `models.LoginLinkInfo`,
+  `models.Revoked` and `models.Theme` carry `APIName`.
+- **Doc changes, all from the code now being the docs.**
+  - Every JSON request body has `additionalProperties: false`.
+  - Limits that only the handlers knew are now documented: `display_name` and
+    label lengths, the login-link and invite maximums, webhook name/url/events.
+  - A field the code required is required in the docs. `role` on create-user
+    is one.
+  - An optional pointer / `| None` field may be null.
+  - Path ids are integers or strings with a description of where they come
+    from, and `?limit` has `default: 200`.
+  - A reply field the route always sends is required. That covers `User`,
+    `Me`, `Revoked`, `Job`, the log and settings schemas, and more.
+  - Replies that were `allOf [X, {extra}]` are one flat object: `NewAPIKey`,
+    the create-invite-link, create-file and create-webhook replies, and the
+    admin file rows. `JoinPath` is gone.
+  - The `/mcp` 405s document no body.
+  - MCP tools take their route's whole request, so the list tools gain
+    `q`/`sort`/`dir`, and some tools gain `limit`/`offset` too.
+- **Behavior changes.**
+  - An unknown body field is a 400 "unknown field: x" (it was ignored).
+  - A body value of the wrong JSON type, or `null` where null is not allowed,
+    is "malformed request body". Some routes gave a field message before.
+  - A required field that is missing answers its own message, or
+    "x is required". Some handlers read a missing field as "" before:
+    `credential`, two-factor `code`, `pin` (send `""` to clear it),
+    `theme_id`, `shortcuts`.
+  - A path id of 0 is 400 "invalid ... id" (it was 404).
+  - `?live=` on the key lists takes only `true`.
+  - Theme button choices are case-sensitive.
+  - MCP tools run their route's handler, so they now also write the audit
+    log and fire the webhooks the route does.
+  - A malformed or unknown MCP argument is JSON-RPC invalid params, and a
+    field's own message is a tool error.
+
+**Converting an app's own routes** (they stop compiling, since `apidoc.Doc` is
+gone). For each `apidoc.Doc( (*Handlers).X , apidoc.Op{...} )` in an app
+`*_api.go`:
+
+1. **Request type.** Turn the handler's request struct into the route's
+   request type:
+   - add `path:"id"` / `query:"q"` fields for what it read from `c.Params` /
+     `c.Query`;
+   - move the doc struct's tags onto it:
+     `doc` → `jsonschema_description`;
+     `enum:"a|b"` → `jsonschema:"enum=a,enum=b"`;
+     `minimum`/`maximum`/`minLength`/`maxLength` → `jsonschema:"..."`;
+   - put each hand check's 400 text in `error:"..."`;
+   - drop `CSRFToken`.
+2. **Reply type.** Replace the `fiber.Map` reply with a reply struct, taking
+   the reply doc struct's fields and tags. A field the handler always sends
+   has no `omitempty`.
+3. **Handler.** Make the handler
+   `func ( handlers *Handlers ) X() *apidoc.Endpoint[ xRequest , xReply ] { return apidoc.Handle( apidoc.Op{ ...the old Op, less Params/Body/Reply... } , func( c fiber.Ctx , in *xRequest ) ( reply *xReply , err error ) { ... } ) }`.
+   - Delete the bind, the CSRF check, the id parsing and the checks the type
+     now makes.
+   - Return `refuse(...)` as the error.
+   - Bytes and streams use `apidoc.Stream` with `Op.ReplyType`.
+4. **Mount.** In `routes.go`, change `group.Post( "/p" , mw , handlers.X )` to
+   `apidoc.Post( group , "/p" , handlers.X , mw )`.
+5. **MCP tool.** Replace its `&mcp.Tool{ Route , InputSchema , Call }` with
+   `mcp.ForRoute( handlers.X , mcp.Tool{ Name , Title , Description , flags } , nil )`.
+   Pass a call only to add to the reply.
+6. **Finish.** Delete the `*_api.go` file, then run `scripts/api_docs.sh` and
+   `go test ./...`. Tests that post unknown fields, or that rely on the
+   behavior changes above, need updating.
+
+`server/routes/admin.go` is the worked example.
+
 ## After 5c06754
 
 **Security fixes S1-S8 (2026-11-13 review).** All fixes, so every app gets all

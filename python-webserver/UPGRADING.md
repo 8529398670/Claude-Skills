@@ -3,6 +3,104 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 3731d9a
+
+**Typed routes: one declaration per route (2026-11-13). Required, and an app's
+own routes need converting too.** Each route is now declared once, as a typed
+handler beside its code: `@route(**op)` on a function whose second parameter's
+type is the request and whose return type is the reply, both msgspec Structs.
+They parse and check every request, encode the reply, and are the only source
+of `config/openapi.json`, `api.md`, and each MCP tool's input schema. The
+template has no `*_api.py` files and no hand-written `input_schema` left.
+
+- **Framework.**
+  - New: `msgspec==0.22.0` in `requirements.txt`. It has wheels for musl,
+    glibc, macOS and Windows.
+  - New: `app/apidocs/route.py` (`route`, `Request`, `Reply`, `PATH`, `QUERY`,
+    the request checks, `reply_response`, MCP argument decoding) and
+    `app/apidocs/reflect.py` (schemas from `msgspec.json.schema_components`,
+    `Schemas`, `one_of`).
+  - Removed: `app/apidocs/schema.py`, `doc()`, `load_docs`, the TypedDict
+    schemas, `Op.method`/`params`/`body`/`reply`, `Tool.input_schema`/`route`,
+    and `Call.bind`.
+  - New: `Tool.for_route`.
+  - Added to `Op`: `no_csrf` and `raw_body`.
+  - Removed from `helpers.py`: `read_json`, `parse_id`, `whole_number`,
+    `send_page`, `page_body` and `emit`. Added: `Page`, `Dir`, `Paged`,
+    `Limit`, `Offset`, `cut_page`, `sorted_page`, `field_of` and `DateTime`.
+  - CSRF is checked by the framework (body `csrf_token`, or `X-CSRF-Token` for
+    a raw body), so handlers no longer call `check_csrf`.
+  - Same-origin sign-in is a guard: `auth.SameOriginLogin` / `SameOriginJoin`.
+- **Every template route and tool converted.** Named schemas are `Reply`
+  Structs with `api_name` / `api_doc` ClassVars, next to their routes.
+- **Doc changes, all from the code now being the docs.**
+  - Every JSON request body has `additionalProperties: false`.
+  - Limits that only the handlers knew are now documented: `display_name` and
+    label lengths, the login-link and invite maximums, webhook name/url/events.
+  - A field the code required is required in the docs. `role` on create-user
+    is one.
+  - An optional pointer / `| None` field may be null.
+  - Path ids are integers or strings with a description of where they come
+    from, and `?limit` has `default: 200`.
+  - A reply field the route always sends is required. That covers `User`,
+    `Me`, `Revoked`, `Job`, the log and settings schemas, and more.
+  - Replies that were `allOf [X, {extra}]` are one flat object: `NewAPIKey`,
+    the create-invite-link, create-file and create-webhook replies, and the
+    admin file rows. `JoinPath` is gone.
+  - The `/mcp` 405s document no body.
+  - MCP tools take their route's whole request, so the list tools gain
+    `q`/`sort`/`dir`, and some tools gain `limit`/`offset` too.
+- **Behavior changes.**
+  - An unknown body field is a 400 "unknown field: x" (it was ignored).
+  - A body value of the wrong JSON type, or `null` where null is not allowed,
+    is "malformed request body". Some routes gave a field message before.
+  - A required field that is missing answers its own message, or
+    "x is required". Some handlers read a missing field as "" before:
+    `credential`, two-factor `code`, `pin` (send `""` to clear it),
+    `theme_id`, `shortcuts`.
+  - A path id of 0 is 400 "invalid ... id" (it was 404).
+  - `?live=` on the key lists takes only `true`.
+  - Theme button choices are case-sensitive.
+  - MCP tools run their route's handler, so they now also write the audit
+    log and fire the webhooks the route does.
+  - A malformed or unknown MCP argument is JSON-RPC invalid params, and a
+    field's own message is a tool error.
+
+**Converting an app's own routes** (their docs are gone with `doc()`, and
+`test_api_docs.py` fails until they are declared). For each `doc(module.x, ...)`
+in an app `*_api.py`:
+
+1. **Request type.** Write the route's request type, a
+   `class XRequest(Request)`:
+   - turn the body TypedDict's fields into Struct fields, with a default for
+     each optional one;
+   - add `Annotated[int, PATH]` / `Annotated[str, QUERY]` fields for what it
+     read from the URL;
+   - `Field(doc=..., minimum=..., enum=...)` becomes
+     `Meta(description=..., ge=...)` / `Literal[...]`;
+   - put each hand check's 400 text in `Meta(extra={"error": "..."})`;
+   - drop `csrf_token`.
+2. **Reply type.** Write a `class XReply(Reply)` from the reply TypedDict. A
+   field the handler always sends has no default.
+3. **Handler.** Decorate the handler, or its `*_checked` helper, with
+   `@route(...the old doc() fields, less params/body/reply...)`, as
+   `def x(request: Request, body: XRequest) -> XReply`.
+   - Make it a plain function if an MCP tool calls it: it runs in a worker
+     thread.
+   - Delete the `read_json`, the CSRF check, the id parsing and the checks
+     the type now makes.
+   - Return the reply Struct, and `raise Refused(...)` to refuse.
+   - Bytes and streams return their Response, with `reply_type=`.
+   - `await emit(...)` becomes `request.app.state.webhooks.emit(...)`.
+4. **MCP tool.** Replace `Tool(route=..., input_schema=..., call=...)` with
+   `Tool.for_route(module.x, name=..., title=..., description=..., ...)`.
+   Pass `call=` only to add to the reply.
+5. **Finish.** Delete the `*_api.py` file, then run `scripts/api_docs.sh` and
+   the tests. Tests that post unknown fields, or that rely on the behavior
+   changes above, need updating.
+
+`app/routes/admin.py` is the worked example.
+
 ## After 5c06754
 
 **Security fixes S1-S8 (2026-11-13 review).** All fixes, so every app gets all

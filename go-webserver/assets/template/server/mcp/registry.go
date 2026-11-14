@@ -2,25 +2,25 @@
 package mcp
 
 import (
-	bytes "bytes"
 	json "encoding/json"
 	fmt "fmt"
 
 	fiber "github.com/gofiber/fiber/v3"
 
+	apidoc "{{MODULE_PATH}}/server/apidoc"
 	security "{{MODULE_PATH}}/server/security"
 )
 
 // Tool is one thing an agent can do through /mcp.
 //
 // Adding one is the MCP version of adding a route: write it next to the
-// others in server/routes/mcp_tools.go, calling the same helper the matching
-// HTTP handler calls, so a rule enforced there holds whichever door a change
-// comes through. The rules match the rest of the template:
+// others in server/routes/mcp_tools.go with ForRoute, so it runs the route's
+// own handler and a rule enforced there holds whichever door a change comes
+// through. The rules match the rest of the template:
 //
-//   - One tool per route an API key may call. Route names it, and
-//     mcp_parity_test.go fails until every key-callable route in the API
-//     docs has a tool, or an MCPHTTP reason in its apidoc.Doc for staying
+//   - One tool per route an API key may call. ForRoute ties it to its route,
+//     and mcp_parity_test.go fails until every key-callable route in the API
+//     docs has a tool, or an MCPHTTP reason in its declaration for staying
 //     HTTP only (file bytes, for one: MCP messages are JSON, and clients cap
 //     their size, so uploads and downloads go over /api/files with the same
 //     key and the tool hands back the addresses).
@@ -39,15 +39,12 @@ type Tool struct {
 	Name        string
 	Title       string
 	Description string
-	// InputSchema is the JSON Schema of the arguments object. Nil means the
-	// tool takes none.
-	InputSchema fiber.Map
 	ReadOnly    bool
 	Destructive bool
 	AdminOnly   bool
-	// Route is the HTTP route this tool is the MCP door to, as
-	// "METHOD /path/{param}" the way config/openapi.json writes it.
-	Route string
+	// route is the declared route ForRoute made this tool for: its input
+	// schema, and the HTTP route it is the MCP door to.
+	route string
 	// Enabled, when set, is asked on every call: a tool for a feature that is
 	// switched off answers exactly like one that does not exist. Nil is always.
 	Enabled func() bool
@@ -55,28 +52,12 @@ type Tool struct {
 }
 
 // Call is what a tool gets: the request (for anything the handler would
-// read), who is calling at which effective role, and its raw arguments.
+// read), who is calling at which effective role, and its raw arguments,
+// which ForRoute checks and decodes into the route's request type.
 type Call struct {
 	Ctx   fiber.Ctx
 	Actor *security.Actor
 	Args  json.RawMessage
-}
-
-// Bind decodes the arguments into a struct, strictly: an unknown field is an
-// error, the same rule config.yaml follows, so a misspelt argument is reported
-// rather than silently ignored. Its error turns into a JSON-RPC
-// invalid-params reply.
-func ( call *Call ) Bind( out any ) ( err error ) {
-	raw := call.Args
-	if len( bytes.TrimSpace( raw ) ) == 0 || bytes.Equal( bytes.TrimSpace( raw ) , []byte( "null" ) ) {
-		raw = json.RawMessage( "{}" )
-	}
-	decoder := json.NewDecoder( bytes.NewReader( raw ) )
-	decoder.DisallowUnknownFields()
-	if decode_err := decoder.Decode( out ); decode_err != nil {
-		err = &invalidArgs{ message: "invalid arguments: " + decode_err.Error() }
-	}
-	return
 }
 
 // Refusal is a tool saying no for a reason the caller should read -- "no such
@@ -107,10 +88,13 @@ func ( invalid *invalidArgs ) Error() ( result string ) {
 	return
 }
 
-// Register adds a tool. A duplicate name is a programming error and panics at
-// startup, where it is noticed, rather than one tool silently shadowing
-// another.
+// Register adds a tool made with ForRoute. A duplicate name is a programming
+// error and panics at startup, where it is noticed, rather than one tool
+// silently shadowing another.
 func ( server *Server ) Register( tool *Tool ) {
+	if tool.route == "" {
+		panic( fmt.Sprintf( "mcp: tool %q was not made with ForRoute" , tool.Name ) )
+	}
 	if _ , exists := server.by_name[ tool.Name ]; exists {
 		panic( fmt.Sprintf( "mcp: tool %q registered twice" , tool.Name ) )
 	}
@@ -133,10 +117,9 @@ func ( server *Server ) Tools() ( tools []*Tool ) {
 
 // Listing is the tool as tools/list describes it.
 func ( tool *Tool ) Listing() ( listed fiber.Map ) {
-	schema := tool.InputSchema
-	if schema == nil {
-		schema = fiber.Map{ "type": "object" , "properties": fiber.Map{} , "additionalProperties": false }
-	}
+	declared , err := apidoc.InputSchema( tool.route )
+	if err != nil { panic( err ) }
+	schema := fiber.Map( declared )
 	listed = fiber.Map{
 		"name":        tool.Name,
 		"title":       tool.Title,
@@ -151,6 +134,13 @@ func ( tool *Tool ) Listing() ( listed fiber.Map ) {
 			"openWorldHint": false,
 		},
 	}
+	return
+}
+
+// RouteName is the HTTP route the tool stands for, as "METHOD /path/{param}"
+// the way config/openapi.json writes it.
+func ( tool *Tool ) RouteName() ( route string ) {
+	route = apidoc.RouteOf( tool.route )
 	return
 }
 

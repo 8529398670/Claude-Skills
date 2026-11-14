@@ -110,8 +110,10 @@ func TestAKeyThatReopensOrGrowsAnInviteLinkOwnsIt( t *testing.T ) {
 	if err != nil { t.Fatal( err ) }
 	_ , link := inviteLink( t , fixture )
 	models.RevokeInviteLink( fixture.store , link.ID )
-	for _ , route := range []string{ "/rename" , "/limits" , "/switch-on" } {
-		status , reply := fixture.withKey( t , credential , http.MethodPost , "/api/admin/invite-links/" + link.ID + route , fiber.Map{ "label": "x" , "max_uses": 999 } )
+	// Each route its own body: a field it does not take is refused.
+	for _ , each := range []struct{ route string ; body fiber.Map }{ { "/rename" , fiber.Map{ "label": "x" } } , { "/limits" , fiber.Map{ "max_uses": 999 } } , { "/switch-on" , fiber.Map{} } } {
+		route := each.route
+		status , reply := fixture.withKey( t , credential , http.MethodPost , "/api/admin/invite-links/" + link.ID + route , each.body )
 		if status != fiber.StatusOK { t.Fatalf( "%s: %d %v" , route , status , reply ) }
 	}
 	stored , _ := models.GetInviteLink( fixture.store , link.ID )

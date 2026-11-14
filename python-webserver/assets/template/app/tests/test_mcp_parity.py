@@ -61,19 +61,19 @@ class MCPParity(RoutesTestCase):
         spec = operations(api_spec()[0])
         problems, covered = [], set()
         for tool in build_registry().tools():
-            operation = spec.get(tool.route)
-            if not tool.route:
+            operation = spec.get(tool.route_name())
+            if not tool.route_name():
                 problems.append(f"tool {tool.name} has no route")
             elif operation is None:
-                problems.append(f"tool {tool.name} names {tool.route}, which has no API docs")
+                problems.append(f"tool {tool.name} names {tool.route_name()}, which has no API docs")
             elif not operation["key_ok"]:
-                problems.append(f"tool {tool.name} names {tool.route}, which an API key may not call")
+                problems.append(f"tool {tool.name} names {tool.route_name()}, which an API key may not call")
             elif operation["http_only"]:
-                problems.append(f"{tool.route} has a tool ({tool.name}) and an x-mcp-http reason; drop one")
-            covered.add(tool.route)
+                problems.append(f"{tool.route_name()} has a tool ({tool.name}) and an x-mcp-http reason; drop one")
+            covered.add(tool.route_name())
         for name, operation in spec.items():
             if operation["key_ok"] and name not in covered and not operation["http_only"]:
-                problems.append(f"{name} takes an API key but has no MCP tool: add one in mcp_tools.py, or an mcp_http reason in its doc()")
+                problems.append(f"{name} takes an API key but has no MCP tool: add one in mcp_tools.py, or an mcp_http reason in its @route(...)")
             if not operation["key_ok"] and operation["http_only"]:
                 problems.append(f"{name} has an x-mcp-http reason but no key may call it; drop the reason")
         self.assertEqual(sorted(problems), [])

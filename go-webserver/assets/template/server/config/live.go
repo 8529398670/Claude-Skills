@@ -589,7 +589,7 @@ type KeyState struct {
 	// Locked: not editable here (see Locked).
 	Locked bool `json:"locked"`
 	// FileOnly: a path, set only in config.yaml (see FileOnly). Locked too.
-	FileOnly bool `json:"file_only"`
+	FileOnly bool `json:"file_only" jsonschema_description:"A path: change it in config.yaml, never here."`
 }
 
 type SectionState struct {
@@ -603,7 +603,7 @@ type SectionState struct {
 type Snapshot struct {
 	File        string         `json:"file"`
 	SecretFile  string         `json:"secret_file"`
-	Version     string         `json:"version"`
+	Version     string         `json:"version" jsonschema_description:"Send it back when saving: a changed file is refused with a 409."`
 	Writable    bool           `json:"writable"`
 	Stale       bool           `json:"stale"`
 	InContainer bool           `json:"in_container"`

@@ -165,10 +165,12 @@ project.
 - **Maintenance mode.** `server.maintenance` is `none`, `read_only` or `full`,
   applied live from Settings. Everyone but the owner's browser session gets a
   503 with `Retry-After`: a page in a browser, JSON for a script.
-- **An API reference written from the code.** Each handler declares its docs
-  once, in a `*_api.go` file beside it: a summary, who may call it, and Go
-  types for what it takes and gives back, with the details in struct tags.
-  `scripts/api_docs.sh` writes `config/openapi.json`, `config/mcp.json` and
+- **An API reference written from the code.** Each route is declared once,
+  as a typed handler (`apidoc.Handle`) beside its code: a summary, who may
+  call it, and the Go types of what it takes and gives back, with the limits
+  and 400 messages in struct tags. Those types also parse and check every
+  request before the handler runs, and are the input schema of the route's
+  MCP tool. `scripts/api_docs.sh` writes `config/openapi.json`, `config/mcp.json` and
   `config/api.md` (all of it as tables) from those and the registered MCP
   tools. Nobody edits them by hand: a test fails while one is out of date, or a
   route has no docs, and every reply the tests see is checked against its docs.
@@ -486,22 +488,25 @@ but stay consistent with the patterns already there:
   managing API keys, setting your own password, PIN or two-factor, reaching
   other people's files and the owner's screens, which need a browser session
   (`RequireSession`). So a feature's routes take API keys by
-  default, and each one a key may call gets a tool calling the same helper, with
-  `Route` naming the route. A route with no use to an agent (file bytes: MCP
+  default, and each one a key may call gets a tool made from the route itself
+  (`mcp.ForRoute`). A route with no use to an agent (file bytes: MCP
   messages are JSON, and clients cap their size) gets `MCPHTTP: "<why>"` in its
-  `apidoc.Doc` instead, and its tool hands back the address --
+  `apidoc.Op` instead, and its tool hands back the address --
   `files_start_upload` and `files_download_url` are the pattern.
   `go test ./server/routes` fails until every key route is covered, and until
-  each Doc's `Access` matches what the guards really do. Then run
+  each route's `Access` matches what the guards really do. Then run
   `scripts/api_docs.sh`, which rewrites `config/mcp.json` (committed, linked
   from the MCP card as the MCP reference) with the rest of the API reference;
   the same tests fail while it is stale.
 - **New MCP tools** go in `server/routes/mcp_tools_<feature>.go`, registered
-  from `registerMCPTools` in `mcp_tools.go`. Pull the HTTP handler's body into
-  a helper both call (the way `meRow`, `setUserDisabled` and `createFile` are), so the two doors share one set of
-  rules and refuse in the same words. Set `AdminOnly` only when the matching route is
-  admin-only. Read arguments with `call.Bind` (strict), return an object, and say no
-  with `mcp.Refuse( "..." )`. Set `ReadOnly`/`Destructive` honestly; clients use them to decide when to ask the
+  from `registerMCPTools` in `mcp_tools.go`, as
+  `server.Register( mcp.ForRoute( handlers.X , mcp.Tool{ Name , Title , Description , ... } , nil ) )`.
+  The tool runs the route's own handler, so the two doors share one set of
+  rules and refuse in the same words, and its arguments are the route's
+  request type, checked the same way: there is no schema to write. Pass a call
+  instead of nil only to add to the reply (`withLoginLinkURL` adds `login_url`).
+  Set `AdminOnly` only when the matching route is admin-only, and
+  `ReadOnly`/`Destructive` honestly; clients use them to decide when to ask the
   person first.
 - **Group middleware is mounted on a path prefix,** not on the routes written
   under it: `app.Group( "/api" , mw )` puts `mw` in front of every later route
@@ -551,14 +556,22 @@ but stay consistent with the patterns already there:
 - **A new event** goes in the list in `server/models/webhook.go`, and is sent with
   `handlers.Webhooks.Emit( name , data )` where the thing happens. Ids and names only
   in `data`, since it leaves the server, and never rename one once it has shipped.
-- **A new route** gets its docs next to it: an `apidoc.Doc( (*Handlers).Name , apidoc.Op{ ... } )`
-  in the area's `server/routes/<area>_api.go`, with types for its body and reply whose struct
-  tags say what each field is (`doc:"..."`, `minimum`, `enum`, `omitempty` for optional;
-  `server/apidoc/schema.go` lists them). Then run `scripts/api_docs.sh`. `go test ./server/routes`
-  fails until the route has docs, until it has an MCP tool or an `MCPHTTP` reason (see above),
-  and when a reply a test gets has a field the docs lack or lacks one they promise. A route that
-  changes something must not be a GET, or `read_only` maintenance will not stop it.
-- **A new list route** answers with `sendPage( c , "rows" , rows )`, and its screen
+- **A new route** is one declaration, next to its code: a request type, a reply type, and
+  a method returning `apidoc.Handle( apidoc.Op{ Summary , Tag , Access , Role , Feature , Errors , ... } , func( c fiber.Ctx , in *Req ) ( reply *Reply , err error ) { ... } )`,
+  mounted in `routes.go` with `apidoc.Post( group , "/path/:id" , handlers.X , middleware... )`
+  (`apidoc.Get`, `apidoc.Delete`). A field tagged `path:"id"` or `query:"q"` comes from the URL,
+  any other from the JSON body; `jsonschema:"minLength=1,maxLength=80"`, `enum=`, `minimum=`,
+  `jsonschema_description:"..."` and `error:"the 400 it answers"` say the rest
+  (`server/apidoc/reflect.go` lists them), `omitempty` makes it optional and a pointer may be null.
+  The framework refuses a bad request before the handler runs (malformed JSON, a missing
+  csrf_token, an unknown field, a value that breaks a limit) and encodes the reply; the handler
+  returns the reply or `refuse( status , "..." )`. `admin.go` is the worked example. Then run
+  `scripts/api_docs.sh`. `go test ./server/routes` fails until it has an MCP tool or an `MCPHTTP`
+  reason (see above), and when a reply a test gets has a field the docs lack or lacks one they
+  promise. A route that changes something must not be a GET, or `read_only` maintenance will not
+  stop it. One that writes its own reply (bytes, a stream) is `apidoc.Stream` with `Op.ReplyType`.
+- **A new list route** takes `Page` (and `Direction`, after its own `sort` enum) in its request,
+  answers a reply embedding `Paged`, filled by `cutPage` or `sortedPage`, and its screen
   uses `Pager.load`: a plain `forEach` would stop at the first page.
 - **A new page with a path of its own** needs a route using `handlers.Static.ServeIndex`
   before the catch-all. There is no `index.html` fallback, so an unknown path is a 404.

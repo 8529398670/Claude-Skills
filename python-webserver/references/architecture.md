@@ -629,7 +629,7 @@ It is the API keys in another shape, not a new way in:
   Accounts, login links, devices and invite links have tools
   (`app/routes/mcp_tools_accounts.py`).
   Everything else a key may call has a tool naming its route, or an
-  `mcp_http` reason in its `doc()` for staying HTTP only (logout,
+  `mcp_http` reason in its `@route(...)` for staying HTTP only (logout,
   the references themselves, `/metrics`, the browser's own activity reports,
   and file bytes). `app/tests/test_mcp_parity.py` holds the two lists together, and calls every route
   with an admin key to check the docs' `security` against the guards.
@@ -988,10 +988,11 @@ sends SIGKILL.
 Every list route takes `?limit=` (default 200, at most 1000) and `?offset=`, and
 answers `{"users": [...], "next": 200, "total": 431}`. The rows sit under a name
 of their own, `next` is the offset of the following page or `null` on the last
-one, and `total` counts every row. A bad value is a 400. The MCP list tools take
-the same two arguments and answer the same shape. Use `send_page( request , "users" , rows )` and `page_body` in
-`app/routes/helpers.py`, and `_page` in `app/routes/mcp_tools.py`, for a new list, so
-it pages the same way.
+one, and `total` counts every row. A bad value is a 400. The MCP list tools are
+the routes themselves, so they take the same arguments and answer the same shape.
+For a new list, base its request on `Page` (with `dir: Dir = ""` last, after its
+own `sort` Literal), its reply on `Paged`, and fill it with `cut_page` or
+`sorted_page` from `app/routes/helpers.py`, so it pages the same way.
 
 **It is an offset, not a cursor.** Most lists sort on a field that is encrypted
 at rest, so each page reads the whole list anyway and a cursor would save
@@ -1073,12 +1074,44 @@ again as tables a person reads. Nobody edits them by hand. `GET /api/openapi.jso
 serves the spec to any signed-in caller, session or key: it maps the admin
 surface, and nobody who cannot sign in has a use for it.
 
-**Where the docs live.** Every route's handler declares its docs once, in
-`app/routes/<area>_api.py` next to the handler's own file: `doc(account.create_my_login_link, summary=..., tag=..., ...)` with a summary, a tag, who may
-call it, and TypedDicts for its body and reply. A key is required unless `NotRequired[...]`; `Annotated[T, Field(...)]` carries the details: `doc`, `enum`, `format`, `minimum`/`maximum`, `min_length`/`max_length`, `default`, `example` and `nullable`. `T | None` may be null; `@schema(name=...)` makes a named schema, `@schema(doc=...)` a description, `one_of(name, A, B)` a union, and inheriting a named TypedDict makes allOf. `app/apidocs/schema.py` has the full list.
+**Where the docs live.** Nowhere of their own: every route is declared once, as a
+typed handler beside its code (`app/apidocs/route.py`):
+
+```python
+class CreateUser(Request):
+    display_name: Annotated[str, Meta(min_length=1, max_length=80, extra={"error": "display name must be 1-80 characters"})]
+    role: Annotated[Literal["admin", "user"], Meta(extra={"error": "role must be admin or user"})]
+    max_uses: MaxUses | None = None
+    expires_in_minutes: ExpiresInMinutes | None = None
+
+@route(summary="Create an account and its login link", tag="Admin", role=ADMIN, status=201, errors=(400, 401, 403))
+def create_user(request: Request, body: CreateUser) -> CreateUserReply:
+    ...
+```
+
+mounted like any other route. The second parameter's type is the whole of what the route
+takes: a field marked `Annotated[T, PATH]` or `Annotated[T, QUERY]` comes from the URL, the
+rest from the JSON body. The return type is what it answers. They are msgspec Structs:
+`msgspec.json.schema_components` turns them into JSON Schema and `app/apidocs/reflect.py` puts
+that in the docs' shape, the same shape Go writes. A field is required unless it has a default,
+`T | None` may be null, `Literal[...]` is an enum, and `Meta` carries `min_length`/`max_length`,
+`ge`/`le`, `pattern`, `description`, `examples` and `extra_json_schema` (a `format`). A Reply
+with `api_name` (a ClassVar) is a named schema, `api_doc` its description; `one_of(name, A, B)`
+a union. msgspec is pinned in `requirements.txt`: it ships wheels for Alpine, glibc Linux, macOS
+and Windows.
+
+**The same types check every request,** before the handler runs and in this order (Go's,
+word for word): the body is a JSON object ("malformed request body"), a browser session's POST
+carries its csrf_token (403), a URL value reads as its type, no field is unknown (400 "unknown
+field: x"), then each field in declaration order: present if required, the right JSON type
+("malformed request body"), within its limits. A missing field or a broken limit answers the
+field's `Meta(extra={"error": ...})` ("x is required" / "x is invalid" / "x must be one of: ..."
+without one). The handler gets the checked Struct and returns the reply, or raises `Refused`.
+The MCP tool for the route (`Tool.for_route`) takes the same type as its arguments, URL fields
+included, so its input schema and its checks are the route's.
 
 **How it is built.** `apidocs.build` (`app/apidocs`) walks the route table the app really
-registers and pairs each route with its handler's docs, so paths and methods
+registers and pairs each route with its declaration, so paths and methods
 come from the code that serves them. The pages at `/login/*` and `/join/*` and
 the catch-alls are the only routes left out. `operationId`, path parameters and
 the shared error replies are worked out; everything else comes from the docs.
@@ -1090,7 +1123,7 @@ A route a key may call either has an MCP tool or a `mcp_http` reason, one line
 on why it stays HTTP only (see [MCP](#mcp-the-api-keys-for-agents)). `feature`
 becomes `x-feature` on the path, which scaffolding reads to cut a part out.
 
-**What keeps it honest.** `app/tests/test_api_docs.py`: `test_every_route_is_documented` fails while a route has no doc, a doc has no route, or a handler is a lambda; `test_the_api_docs_are_current` fails while a committed file differs from what the code says (`scripts/api_docs.sh`, which is `python -m app.apidocs`, rewrites them, needing nothing but the app's requirements). And `RoutesTestCase.check_reply` holds each 2xx JSON reply a route test gets against the documented schema, so a field the docs promise but a handler leaves out, or one it sends that the docs never mention, fails whichever test saw it.
+**What keeps it honest.** `app/tests/test_api_docs.py`: `test_every_route_is_documented` fails while a route's endpoint was not declared with `@route`; `test_the_api_docs_are_current` fails while a committed file differs from what the code says (`scripts/api_docs.sh`, which is `python -m app.apidocs`, rewrites them, needing nothing but the app's requirements). And `RoutesTestCase.check_reply` holds each 2xx JSON reply a route test gets against the documented schema. Since a handler returns its declared reply type, the docs cannot drift from it; this is the safety net for what the types cannot say.
 
 **Scaffolding.** The template ships the three files for a project with every
 part. A project scaffolded without some parts runs `scripts/api_docs.sh` once,
@@ -1105,13 +1138,13 @@ code is `app/core/webhooks.py`, `app/models/webhooks.py` and the Webhooks routes
 session, and no MCP tools: an endpoint sends what happens here to somewhere else,
 so a leaked key must not be able to add one.
 
-**It is an outbox.** `await emit( request , event , data )` from `app/routes/helpers.py` writes one delivery row per endpoint that wants the
+**It is an outbox.** `request.app.state.webhooks.emit(event, data)` (a route's handler runs in a worker thread) writes one delivery row per endpoint that wants the
 event and returns. The `webhooks` background job sends them, so a slow receiver
 never holds up a request and a restart loses nothing. An emit asks for a run
 straight away; when one is already going, a later run picks the row up, within
 about a minute. Retries wait 1 minute, 5 minutes, 30 minutes, 2 hours and 12
 hours, and the sixth failure gives up. Finished deliveries stay listed for 7 days.
-Each run sends at most 50. An MCP tool, already in a worker thread, calls `call.request.app.state.webhooks.emit(...)`.
+Each run sends at most 50. An MCP tool runs its route's handler, so it fires the same events.
 
 **Delivery is at least once.** A crash between the send and recording it sends it
 again, so a receiver dedupes on `X-Webhook-Delivery`. A retry sends the same bytes

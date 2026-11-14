@@ -6,6 +6,7 @@ import (
 
 	fiber "github.com/gofiber/fiber/v3"
 
+	apidoc "{{MODULE_PATH}}/server/apidoc"
 	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
@@ -13,6 +14,39 @@ import (
 
 type loginRequest struct {
 	Credential string `json:"credential"`
+}
+
+// signInReply is how a sign-in answers: done, or a two-factor code is needed
+// first (see signIn).
+type signInReply struct {
+	Ok        bool   `json:"ok,omitempty"`
+	TwoFactor bool   `json:"two_factor,omitempty"`
+	Challenge string `json:"challenge,omitempty"`
+}
+
+type signedIn struct {
+	Ok bool `json:"ok"`
+}
+
+type twoFactorNeeded struct {
+	TwoFactor bool   `json:"two_factor"`
+	Challenge string `json:"challenge"`
+}
+
+func ( signInReply ) APIName() ( name string ) { name = "SignIn"; return }
+
+func ( signInReply ) APIOneOf() ( shapes []any ) {
+	shapes = []any{ signedIn{} , twoFactorNeeded{} }
+	return
+}
+
+func ( signInReply ) APIDoc() ( text string ) { text = "Either the sign-in finished, or a two-factor code is needed: send it with the challenge to /api/login/two-factor."; return }
+
+// newSignInReply is signInReply for a sign-in signIn has ended.
+func newSignInReply( challenge string ) ( reply *signInReply ) {
+	reply = &signInReply{ Ok: true }
+	if challenge != "" { reply = &signInReply{ TwoFactor: true , Challenge: challenge } }
+	return
 }
 
 // ShowLoginPage answers a visit to a login link with the ordinary app page,
@@ -48,24 +82,20 @@ func ( handlers *Handlers ) signInRules() ( rules models.SignInRules ) {
 	return
 }
 
-// signInResponse is how every way of signing in ends. A challenge goes back to
-// the page, which asks for the code, and nothing changes in this browser yet.
-// Otherwise this browser switches to the new session: the one it had is ended
-// server-side, not merely replaced in the cookie jar.
-func ( handlers *Handlers ) signInResponse( c fiber.Ctx , signed *models.SignIn , payload fiber.Map , status int ) ( err error ) {
+// signIn is how every way of signing in ends. A challenge goes back to the
+// page, which asks for the code, and nothing changes in this browser yet: it
+// answers the challenge. Otherwise this browser switches to the new session:
+// the one it had is ended server-side, not merely replaced in the cookie jar.
+func ( handlers *Handlers ) signIn( c fiber.Ctx , signed *models.SignIn ) ( challenge string , err error ) {
 	// >>> feature:two_factor
 	if signed.Challenge != "" {
-		err = c.JSON( fiber.Map{ "two_factor": true , "challenge": signed.Challenge } )
+		challenge = signed.Challenge
 		return
 	}
 	// <<< feature:two_factor
 	handlers.destroyCookieSession( c )
-	if cookie_err := handlers.Guard.SetSessionCookie( c , signed.SessionCredential ); cookie_err != nil {
-		err = serverError( c , cookie_err )
-		return
-	}
+	if err = handlers.Guard.SetSessionCookie( c , signed.SessionCredential ); err != nil { return }
 	models.RecordSessionDevice( handlers.Store , signed.SessionCredential , c.IP() , logs.Truncate( c.Get( fiber.HeaderUserAgent ) , models.SessionUserAgentMax ) ) // feature:sessions
-	err = c.Status( status ).JSON( payload )
 	return
 }
 
@@ -81,37 +111,52 @@ func ( handlers *Handlers ) signInResponse( c fiber.Ctx , signed *models.SignIn 
 // a JSON body is what blocks that: an HTML form cannot send one, and a
 // cross-origin fetch that tries needs a CORS preflight this server never
 // approves. Sec-Fetch-Site, which every current browser sends, refuses the
-// rest outright.
-func ( handlers *Handlers ) RedeemLoginLink( c fiber.Ctx ) ( err error ) {
-	if sameOriginJSON( c ) == false {
-		err = forbidden( c , "login must be submitted from this site's own login page" )
-		return
-	}
-	var body loginRequest
-	if c.Bind().JSON( &body ) != nil {
-		err = badRequest( c , "malformed request body" )
-		return
-	}
+// rest outright. Both are sameOrigin's, in front of it in routes.go, so they
+// hold before the body is read.
+func ( handlers *Handlers ) RedeemLoginLink() *apidoc.Endpoint[ loginRequest , signInReply ] {
+	return apidoc.Handle( apidoc.Op{ Summary: "Redeem a login link" , Tag: "Sign-in" , Access: apidoc.Public , Errors: []int{ 400 , 403 } },
+		func( c fiber.Ctx , in *loginRequest ) ( reply *signInReply , err error ) {
+			credential := strings.Trim( strings.TrimSpace( in.Credential ) , "/" )
+			signed , redeem_err := models.RedeemLoginToken( handlers.Store , credential , handlers.signInRules() )
+			if redeem_err != nil {
+				// Expired, already spent, never existed, wrong secret, or a disabled
+				// account all get the same answer. Telling them apart would let
+				// someone probe which links are real.
+				if errors.Is( redeem_err , models.ErrLoginTokenInvalid ) {
+					handlers.auditAs( c , logs.Anonymous() , logs.KindAuth , logs.LevelWarn , "login link refused" , nil )
+					err = refuse( fiber.StatusBadRequest , "invalid login link" )
+					return
+				}
+				err = redeem_err
+				return
+			}
 
-	credential := strings.Trim( strings.TrimSpace( body.Credential ) , "/" )
-	signed , redeem_err := models.RedeemLoginToken( handlers.Store , credential , handlers.signInRules() )
-	if redeem_err != nil {
-		// Expired, already spent, never existed, wrong secret, or a disabled
-		// account all get the same answer. Telling them apart would let
-		// someone probe which links are real.
-		if errors.Is( redeem_err , models.ErrLoginTokenInvalid ) {
-			handlers.auditAs( c , logs.Anonymous() , logs.KindAuth , logs.LevelWarn , "login link refused" , nil )
-			err = badRequest( c , "invalid login link" )
+			message := "signed in with a login link"
+			if signed.Challenge != "" { message = "login link accepted, waiting for a code" } // feature:two_factor
+			handlers.auditAs( c , handlers.logUser( signed.UserID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , nil )
+			challenge , err := handlers.signIn( c , signed )
+			if err != nil { return }
+			reply = newSignInReply( challenge )
+			return
+		} )
+}
+
+// loginElsewhere is what a sign-in route says to a request that did not come
+// from this site's own page.
+const loginElsewhere = "login must be submitted from this site's own login page"
+
+// sameOrigin refuses, with message, a request that is not JSON from one of
+// this site's own pages (sameOriginJSON). It goes in front of each public
+// route a browser posts to before it has a session to hold a CSRF token.
+func sameOrigin( message string ) ( handler fiber.Handler ) {
+	handler = func( c fiber.Ctx ) ( err error ) {
+		if sameOriginJSON( c ) == false {
+			err = forbidden( c , message )
 			return
 		}
-		err = serverError( c , redeem_err )
+		err = c.Next()
 		return
 	}
-
-	message := "signed in with a login link"
-	if signed.Challenge != "" { message = "login link accepted, waiting for a code" } // feature:two_factor
-	handlers.auditAs( c , handlers.logUser( signed.UserID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , nil )
-	err = handlers.signInResponse( c , signed , fiber.Map{ "ok": true } , fiber.StatusOK )
 	return
 }
 

@@ -138,7 +138,7 @@ func TestThemesRefuseBadShapes( t *testing.T ) {
 	// is the default and is not stored.
 	theme = good()
 	theme[ "overrides" ] = fiber.Map{ "btnDanger": "#AA0000" , "btnWarningFg": "#000000" }
-	theme[ "button" ] = fiber.Map{ "shape": "Pill" , "depth": "glossy" }
+	theme[ "button" ] = fiber.Map{ "shape": "pill" , "depth": "glossy" }
 	plain := themeList( "b" )[ 0 ]
 	plain[ "button" ] = fiber.Map{}
 	if status , reply := send( t , alice , "/api/account/themes" , fiber.Map{ "themes": []fiber.Map{ theme , plain } } ); status != fiber.StatusOK {

@@ -81,8 +81,8 @@ A login link for yourself
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `expires_in_minutes` | integer | no | 0 to 525600 | 0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise. |
-| `max_uses` | integer | no | 0 to 1000 | Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1. |
+| `expires_in_minutes` | integer or null | no | 0 to 525600 | 0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise. |
+| `max_uses` | integer or null | no | 0 to 1000 | Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1. |
 
 **Reply 200**: Success
 
@@ -180,7 +180,7 @@ Change your display name
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `display_name` | string | yes |  |  |
+| `display_name` | string | yes | 1 to 80 characters |  |
 | `expect` | string or null | no |  |  |
 
 **Reply 200**: Success
@@ -204,8 +204,8 @@ Your signed-in devices
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `limit` | query | integer | no | 1 to 1000 | Rows to return. Default 200. |
-| `offset` | query | integer | no | at least 0 |  |
+| `limit` | query | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
+| `offset` | query | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 
 **Reply 200**: Success
 
@@ -254,15 +254,15 @@ This device included. Empty clears the name.
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `session_id` | path | string | yes |  |  |
+| `session_id` | path | string | yes |  | The device's id, from GET /api/account/sessions or GET /api/admin/users/{user_id}/sessions (list_my_sessions or admin_list_user_sessions over MCP). |
 
 **Request body**
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `expect` | string | no |  | The name you think it has. Answers 409 if it has another. |
-| `label` | string | yes |  | At most 80 characters. |
+| `expect` | string or null | no |  | The name you think it has. Answers 409 if it has another. |
+| `label` | string | yes | at most 80 characters | At most 80 characters. |
 
 **Reply 200**: Success
 
@@ -285,7 +285,7 @@ Sign out one device
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `session_id` | path | string | yes |  |  |
+| `session_id` | path | string | yes |  | The device's id, from GET /api/account/sessions or GET /api/admin/users/{user_id}/sessions (list_my_sessions or admin_list_user_sessions over MCP). |
 
 **Request body**
 
@@ -526,8 +526,8 @@ Everyone's names
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `limit` | query | integer | no | 1 to 1000 | Rows to return. Default 200. |
-| `offset` | query | integer | no | at least 0 |  |
+| `limit` | query | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
+| `offset` | query | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 
 **Reply 200**: Success
 
@@ -656,8 +656,8 @@ Every key in the app
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `limit` | query | integer | no | 1 to 1000 | Rows to return. Default 200. |
-| `offset` | query | integer | no | at least 0 |  |
+| `limit` | query | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
+| `offset` | query | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 | `q` | query | string | no |  | Keep keys whose name or owner contains this, in any case. |
 | `live` | query | string | no | one of `true` | Leave out revoked and expired keys. |
 | `sort` | query | string | no | one of `display_name`, `name`, `role`, `last_used_at`, `expires_at`, `created_at` | Field to sort the whole list by. Rows without it go last. |
@@ -690,7 +690,7 @@ Any admin may do this for an ordinary user, and only the owner for another admin
 | `expires_in_days` | integer or null | no | 0 to 3650 | Absent or null: the configured default. 0: never expires. |
 | `name` | string | yes | 1 to 80 characters |  |
 | `role` | string | no | one of `admin`, `user`; default `user` |  |
-| `user_id` | integer | yes |  |  |
+| `user_id` | integer | yes | at least 1 |  |
 
 **Reply 201**: Success
 
@@ -709,7 +709,7 @@ Delete anyone's key
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `key_id` | path | string | yes |  |  |
+| `key_id` | path | string | yes |  | The key's id, from GET /api/keys (GET /api/admin/keys for anyone's). |
 
 **Request body**
 
@@ -736,7 +736,7 @@ Change when anyone's key expires
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `key_id` | path | string | yes |  |  |
+| `key_id` | path | string | yes |  | The key's id, from GET /api/keys (GET /api/admin/keys for anyone's). |
 
 **Request body**
 
@@ -747,7 +747,7 @@ Change when anyone's key expires
 
 **Reply 200**: Success
 
-An empty object.
+[`APIKey`](#apikey).
 
 ### POST /api/admin/keys/{key_id}/rename
 
@@ -762,15 +762,15 @@ Rename anyone's key
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `key_id` | path | string | yes |  |  |
+| `key_id` | path | string | yes |  | The key's id, from GET /api/keys (GET /api/admin/keys for anyone's). |
 
 **Request body**
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `expect` | string | no |  | The name you think it has. Answers 409 if it has another. |
-| `name` | string | yes |  | 1-80 characters. |
+| `expect` | string or null | no |  | The name you think it has. Answers 409 if it has another. |
+| `name` | string | yes | 1 to 80 characters | 1-80 characters. |
 
 **Reply 200**: Success
 
@@ -792,7 +792,7 @@ Undo deleting anyone's key
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `key_id` | path | string | yes |  |  |
+| `key_id` | path | string | yes |  | The key's id, from GET /api/keys (GET /api/admin/keys for anyone's). |
 
 **Request body**
 
@@ -817,7 +817,7 @@ Revoke anyone's key
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `key_id` | path | string | yes |  |  |
+| `key_id` | path | string | yes |  | The key's id, from GET /api/keys (GET /api/admin/keys for anyone's). |
 
 **Request body**
 
@@ -844,8 +844,8 @@ Your API keys
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `limit` | query | integer | no | 1 to 1000 | Rows to return. Default 200. |
-| `offset` | query | integer | no | at least 0 |  |
+| `limit` | query | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
+| `offset` | query | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 | `q` | query | string | no |  | Keep keys whose name contains this, in any case. |
 | `live` | query | string | no | one of `true` | Leave out revoked and expired keys. |
 | `sort` | query | string | no | one of `name`, `role`, `last_used_at`, `expires_at`, `created_at` | Field to sort the whole list by. Rows without it go last. |
@@ -894,7 +894,7 @@ Delete one of your keys
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `key_id` | path | string | yes |  |  |
+| `key_id` | path | string | yes |  | The key's id, from GET /api/keys (GET /api/admin/keys for anyone's). |
 
 **Request body**
 
@@ -921,7 +921,7 @@ Change when one of your keys expires
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `key_id` | path | string | yes |  |  |
+| `key_id` | path | string | yes |  | The key's id, from GET /api/keys (GET /api/admin/keys for anyone's). |
 
 **Request body**
 
@@ -932,7 +932,7 @@ Change when one of your keys expires
 
 **Reply 200**: Success
 
-An empty object.
+[`APIKey`](#apikey).
 
 ### POST /api/keys/{key_id}/rename
 
@@ -947,15 +947,15 @@ Rename one of your keys
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `key_id` | path | string | yes |  |  |
+| `key_id` | path | string | yes |  | The key's id, from GET /api/keys (GET /api/admin/keys for anyone's). |
 
 **Request body**
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `expect` | string | no |  | The name you think it has. Answers 409 if it has another. |
-| `name` | string | yes |  | 1-80 characters. |
+| `expect` | string or null | no |  | The name you think it has. Answers 409 if it has another. |
+| `name` | string | yes | 1 to 80 characters | 1-80 characters. |
 
 **Reply 200**: Success
 
@@ -977,7 +977,7 @@ Undo deleting one of your keys
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `key_id` | path | string | yes |  |  |
+| `key_id` | path | string | yes |  | The key's id, from GET /api/keys (GET /api/admin/keys for anyone's). |
 
 **Request body**
 
@@ -1002,7 +1002,7 @@ Revoke one of your keys
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `key_id` | path | string | yes |  |  |
+| `key_id` | path | string | yes |  | The key's id, from GET /api/keys (GET /api/admin/keys for anyone's). |
 
 **Request body**
 
@@ -1068,8 +1068,8 @@ Every account's files
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `limit` | query | integer | no | 1 to 1000 | Rows to return. Default 200. |
-| `offset` | query | integer | no | at least 0 |  |
+| `limit` | query | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
+| `offset` | query | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 | `q` | query | string | no |  | Keep files whose name or owner contains this, in any case. |
 | `sort` | query | string | no | one of `name`, `user_name`, `size`, `created_at` | Field to sort the whole list by. Rows without it go last. |
 | `dir` | query | string | no | one of `asc`, `desc` | Default asc. |
@@ -1078,7 +1078,15 @@ Every account's files
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `files` | array of [`File`](#file) + object | yes |  |  |
+| `files` | array of object | yes |  |  |
+| `files[].chunks` | integer | yes |  |  |
+| `files[].created_at` | string (date-time) | yes |  |  |
+| `files[].id` | string | yes |  |  |
+| `files[].name` | string | yes |  |  |
+| `files[].received` | integer | yes |  |  |
+| `files[].size` | integer | yes |  |  |
+| `files[].state` | string | yes | one of `uploading`, `ready` |  |
+| `files[].type` | string | yes |  |  |
 | `files[].user_id` | integer | yes |  |  |
 | `files[].user_name` | string | yes |  |  |
 | `next` | integer or null | yes |  | Offset of the next page, or null on the last one. |
@@ -1097,7 +1105,7 @@ Delete anyone's file
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `file_id` | path | string | yes |  |  |
+| `file_id` | path | string | yes |  | The file's id, from GET /api/admin/files (admin_list_files over MCP). |
 
 **Request body**
 
@@ -1126,7 +1134,7 @@ Written to the activity log when the file is someone else's.
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `file_id` | path | string | yes |  |  |
+| `file_id` | path | string | yes |  | The file's id, from GET /api/admin/files (admin_list_files over MCP). |
 
 **Reply 200**: The file, always as an attachment
 
@@ -1145,14 +1153,14 @@ Rename any file
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `file_id` | path | string | yes |  |  |
+| `file_id` | path | string | yes |  | The file's id, from GET /api/admin/files (admin_list_files over MCP). |
 
 **Request body**
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `expect` | string | no |  | The name you think it has. Answers 409 if it has another. |
+| `expect` | string or null | no |  | The name you think it has. Answers 409 if it has another. |
 | `name` | string | yes |  | Cleaned like an upload's name. 1-255 bytes. |
 
 **Reply 200**: Success
@@ -1175,7 +1183,7 @@ Put back a deleted file
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `file_id` | path | string | yes |  |  |
+| `file_id` | path | string | yes |  | The file's id, from GET /api/admin/files (admin_list_files over MCP). |
 
 **Request body**
 
@@ -1219,8 +1227,8 @@ Your files, newest first
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `limit` | query | integer | no | 1 to 1000 | Rows to return. Default 200. |
-| `offset` | query | integer | no | at least 0 |  |
+| `limit` | query | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
+| `offset` | query | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 | `q` | query | string | no |  | Keep files whose name contains this, in any case. |
 | `sort` | query | string | no | one of `name`, `size`, `created_at` | Field to sort the whole list by. Rows without it go last. |
 | `dir` | query | string | no | one of `asc`, `desc` | Default asc. |
@@ -1256,11 +1264,17 @@ Then send each piece in order and finish. A file over files.max_file_bytes, or o
 
 **Reply 201**: Created
 
-Every field of [`File`](#file), plus these:
-
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `chunk_bytes` | integer | yes |  | Every piece but the last is exactly this long. |
+| `chunks` | integer | yes |  |  |
+| `created_at` | string (date-time) | yes |  |  |
+| `id` | string | yes |  |  |
+| `name` | string | yes |  |  |
+| `received` | integer | yes |  |  |
+| `size` | integer | yes |  |  |
+| `state` | string | yes | one of `uploading`, `ready` |  |
+| `type` | string | yes |  |  |
 
 ### GET /api/files/{file_id}
 
@@ -1278,15 +1292,21 @@ received is where to resume an upload.
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `file_id` | path | string | yes |  |  |
+| `file_id` | path | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
 
 **Reply 200**: Success
-
-Every field of [`File`](#file), plus these:
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `chunk_bytes` | integer | yes |  | Every piece but the last is exactly this long. |
+| `chunks` | integer | yes |  |  |
+| `created_at` | string (date-time) | yes |  |  |
+| `id` | string | yes |  |  |
+| `name` | string | yes |  |  |
+| `received` | integer | yes |  |  |
+| `size` | integer | yes |  |  |
+| `state` | string | yes | one of `uploading`, `ready` |  |
+| `type` | string | yes |  |  |
 
 ### POST /api/files/{file_id}/chunks/{index}
 
@@ -1304,7 +1324,7 @@ The body is the raw bytes. Pieces go in order, from 0. A browser session sends i
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `file_id` | path | string | yes |  |  |
+| `file_id` | path | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
 | `index` | path | integer | yes | at least 0 |  |
 | `X-CSRF-Token` | header | string | no |  | From GET /api/me. Browser sessions only. |
 
@@ -1334,7 +1354,7 @@ It can be restored for ten minutes.
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `file_id` | path | string | yes |  |  |
+| `file_id` | path | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
 
 **Request body**
 
@@ -1362,7 +1382,7 @@ Download one of your files
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `file_id` | path | string | yes |  |  |
+| `file_id` | path | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
 
 **Reply 200**: The file, always as an attachment
 
@@ -1382,7 +1402,7 @@ Finish an upload
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `file_id` | path | string | yes |  |  |
+| `file_id` | path | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
 
 **Request body**
 
@@ -1408,14 +1428,14 @@ Rename one of your files
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `file_id` | path | string | yes |  |  |
+| `file_id` | path | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
 
 **Request body**
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `expect` | string | no |  | The name you think it has. Answers 409 if it has another. |
+| `expect` | string or null | no |  | The name you think it has. Answers 409 if it has another. |
 | `name` | string | yes |  | Cleaned like an upload's name. 1-255 bytes. |
 
 **Reply 200**: Success
@@ -1439,7 +1459,7 @@ Put back a file you deleted
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `file_id` | path | string | yes |  |  |
+| `file_id` | path | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
 
 **Request body**
 
@@ -1524,8 +1544,8 @@ Every account
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `limit` | query | integer | no | 1 to 1000 | Rows to return. Default 200. |
-| `offset` | query | integer | no | at least 0 |  |
+| `limit` | query | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
+| `offset` | query | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 | `q` | query | string | no |  | Keep accounts whose name or username contains this, in any case. |
 | `sort` | query | string | no | one of `display_name`, `role`, `disabled`, `created_at` | Field to sort the whole list by. Rows without it go last. |
 | `dir` | query | string | no | one of `asc`, `desc` | Default asc. |
@@ -1553,10 +1573,10 @@ Create an account and its login link
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `display_name` | string | yes |  |  |
-| `expires_in_minutes` | integer | no | 0 to 525600 | 0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise. |
-| `max_uses` | integer | no | 0 to 1000 | Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1. |
-| `role` | string | no | one of `admin`, `user` |  |
+| `display_name` | string | yes | 1 to 80 characters |  |
+| `expires_in_minutes` | integer or null | no | 0 to 525600 | 0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise. |
+| `max_uses` | integer or null | no | 0 to 1000 | Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1. |
+| `role` | string | yes | one of `admin`, `user` |  |
 
 **Reply 201**: Success
 
@@ -1583,7 +1603,7 @@ Stop an account's login link working
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `user_id` | path | string | yes |  |  |
+| `user_id` | path | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 **Request body**
 
@@ -1612,7 +1632,7 @@ Delete an account
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `user_id` | path | string | yes |  |  |
+| `user_id` | path | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 **Request body**
 
@@ -1641,7 +1661,7 @@ Disable or enable an account
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `user_id` | path | string | yes |  |  |
+| `user_id` | path | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 **Request body**
 
@@ -1670,15 +1690,15 @@ A new login link for an account
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `user_id` | path | string | yes |  |  |
+| `user_id` | path | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 **Request body**
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `expires_in_minutes` | integer | no | 0 to 525600 | 0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise. |
-| `max_uses` | integer | no | 0 to 1000 | Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1. |
+| `expires_in_minutes` | integer or null | no | 0 to 525600 | 0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise. |
+| `max_uses` | integer or null | no | 0 to 1000 | Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1. |
 
 **Reply 200**: Success
 
@@ -1706,15 +1726,15 @@ Only the owner can rename an admin.
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `user_id` | path | string | yes |  |  |
+| `user_id` | path | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 **Request body**
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `display_name` | string | yes |  | 1-80 characters. |
-| `expect` | string | no |  | The name you think they have. Answers 409 if it is another. |
+| `display_name` | string | yes | 1 to 80 characters | 1-80 characters. |
+| `expect` | string or null | no |  | The name you think they have. Answers 409 if it is another. |
 
 **Reply 200**: Success
 
@@ -1737,7 +1757,7 @@ Turn off an account's two-factor
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `user_id` | path | string | yes |  |  |
+| `user_id` | path | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 **Request body**
 
@@ -1765,7 +1785,7 @@ End every credential an account holds
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `user_id` | path | string | yes |  |  |
+| `user_id` | path | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 **Request body**
 
@@ -1796,7 +1816,7 @@ Only the owner can take an admin's rights away. Becoming an admin ends the accou
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `user_id` | path | string | yes |  |  |
+| `user_id` | path | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 **Request body**
 
@@ -1828,9 +1848,9 @@ The owner's are the owner's alone, and only the owner sees addresses.
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `user_id` | path | integer | yes |  |  |
-| `limit` | query | integer | no | 1 to 1000 | Rows to return. Default 200. |
-| `offset` | query | integer | no | at least 0 |  |
+| `user_id` | path | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
+| `limit` | query | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
+| `offset` | query | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 
 **Reply 200**: Success
 
@@ -1854,8 +1874,8 @@ Sign out one of an account's devices
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `user_id` | path | integer | yes |  |  |
-| `session_id` | path | string | yes |  |  |
+| `user_id` | path | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
+| `session_id` | path | string | yes |  | The device's id, from GET /api/account/sessions or GET /api/admin/users/{user_id}/sessions (list_my_sessions or admin_list_user_sessions over MCP). |
 
 **Request body**
 
@@ -1900,8 +1920,8 @@ Every invite link
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `limit` | query | integer | no | 1 to 1000 | Rows to return. Default 200. |
-| `offset` | query | integer | no | at least 0 |  |
+| `limit` | query | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
+| `offset` | query | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 | `q` | query | string | no |  | Keep links whose label or maker contains this, in any case. |
 | `sort` | query | string | no | one of `label`, `used`, `expires_at` | Field to sort the whole list by. Rows without it go last. |
 | `dir` | query | string | no | one of `asc`, `desc` | Default asc. |
@@ -1929,13 +1949,25 @@ Create an invite link
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `days` | integer | yes |  |  |
-| `label` | string | yes |  |  |
-| `max_uses` | integer | yes |  |  |
+| `days` | integer | yes | 1 to 365 |  |
+| `label` | string | yes | 1 to 80 characters |  |
+| `max_uses` | integer | yes | 1 to 1000 |  |
 
 **Reply 201**: Success
 
-Every field of [`InviteLink`](#invitelink) and [`JoinPath`](#joinpath).
+| Field | Type | Required | Limits | Description |
+|---|---|---|---|---|
+| `created_by` | integer | yes |  |  |
+| `created_by_name` | string | no |  |  |
+| `expires_at` | string (date-time) | yes |  |  |
+| `id` | string | yes |  |  |
+| `join_path` | string | yes |  | The link to hand out, shown in this response only. A credential: treat it like a password. |
+| `label` | string | yes |  |  |
+| `live` | boolean | yes |  |  |
+| `max_uses` | integer | yes |  |  |
+| `remaining` | integer | yes |  |  |
+| `revoked` | boolean | yes |  |  |
+| `used` | integer | yes |  |  |
 
 ### POST /api/admin/invite-links/{link_id}/delete
 
@@ -1951,7 +1983,7 @@ Delete an invite link
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `link_id` | path | string | yes |  |  |
+| `link_id` | path | string | yes |  | The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP). |
 
 **Request body**
 
@@ -1979,19 +2011,19 @@ Change a link's places and expiry
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `link_id` | path | string | yes |  |  |
+| `link_id` | path | string | yes |  | The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP). |
 
 **Request body**
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `days` | integer | no | 1 to 365 | Counted from now. Leave out to keep the expiry. |
+| `days` | integer or null | no | 1 to 365 | Counted from now. Leave out to keep the expiry. |
 | `max_uses` | integer | yes | 1 to 1000 | Not fewer than have joined. |
 
 **Reply 200**: Success
 
-An empty object.
+[`InviteLink`](#invitelink).
 
 ### POST /api/admin/invite-links/{link_id}/rename
 
@@ -2007,15 +2039,15 @@ Rename a link
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `link_id` | path | string | yes |  |  |
+| `link_id` | path | string | yes |  | The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP). |
 
 **Request body**
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `expect` | string | no |  | The label you think it has. Answers 409 if it has another. |
-| `label` | string | yes |  | 1-80 characters. |
+| `expect` | string or null | no |  | The label you think it has. Answers 409 if it has another. |
+| `label` | string | yes | 1 to 80 characters | 1-80 characters. |
 
 **Reply 200**: Success
 
@@ -2038,7 +2070,7 @@ Undo deleting an invite link
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `link_id` | path | string | yes |  |  |
+| `link_id` | path | string | yes |  | The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP). |
 
 **Request body**
 
@@ -2064,7 +2096,7 @@ Switch an invite link off
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `link_id` | path | string | yes |  |  |
+| `link_id` | path | string | yes |  | The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP). |
 
 **Request body**
 
@@ -2092,7 +2124,7 @@ Switch a link back on
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `link_id` | path | string | yes |  |  |
+| `link_id` | path | string | yes |  | The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP). |
 
 **Request body**
 
@@ -2102,7 +2134,7 @@ Switch a link back on
 
 **Reply 200**: Success
 
-An empty object.
+[`InviteLink`](#invitelink).
 
 ### POST /api/join/claim
 
@@ -2196,7 +2228,10 @@ Accounts matching a name
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `can_create` | boolean | yes |  |  |
-| `matches` | array of [`Member`](#member) | yes |  |  |
+| `matches` | array of object | yes |  |  |
+| `matches[].display_name` | string | yes |  |  |
+| `matches[].has_pin` | boolean | yes |  |  |
+| `matches[].id` | integer | yes |  |  |
 
 ## Owner
 
@@ -2245,7 +2280,7 @@ Run a job now
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `name` | path | string | yes |  |  |
+| `name` | path | string | yes |  | The job's name, from GET /api/owner/jobs. |
 
 **Request body**
 
@@ -2291,10 +2326,10 @@ One day's entries
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `date` | path | string | yes |  |  |
+| `date` | path | string | yes |  | The day's date, from GET /api/owner/logs/days. |
 | `q` | query | string | no |  | The Logs screen's search. |
-| `before` | query | integer | no |  |  |
-| `limit` | query | integer | no |  |  |
+| `before` | query | integer or null | no | at least 0 |  |
+| `limit` | query | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
 
 **Reply 200**: Success
 
@@ -2313,7 +2348,7 @@ Delete one day
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `date` | path | string | yes |  |  |
+| `date` | path | string | yes |  | The day's date, from GET /api/owner/logs/days. |
 
 **Request body**
 
@@ -2340,7 +2375,7 @@ One day's entries as a file
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `date` | path | string | yes |  |  |
+| `date` | path | string | yes |  | The day's date, from GET /api/owner/logs/days. |
 
 **Reply 200**: Success
 
@@ -2373,15 +2408,15 @@ Name an address or a range, or rename one
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `name` | string | yes | at most 80 characters |  |
+| `name` | string | yes | 1 to 80 characters |  |
 | `target` | string | yes | e.g. `10.0.0.0/24` | An address, or a range such as 10.0.0.0/24. |
 
 **Reply 200**: Success
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `name` | string | no |  |  |
-| `target` | string | no |  |  |
+| `name` | string | yes |  |  |
+| `target` | string | yes |  |  |
 
 ### POST /api/owner/logs/ip-names/delete
 
@@ -2403,7 +2438,7 @@ Take a name off an address or a range
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `deleted` | boolean | no |  |  |
+| `deleted` | boolean | yes |  |  |
 
 ### POST /api/owner/logs/prune
 
@@ -2490,7 +2525,7 @@ Allow or block an account's password
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `user_id` | path | string | yes |  |  |
+| `user_id` | path | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 **Request body**
 
@@ -2536,8 +2571,8 @@ Webhooks
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `limit` | query | integer | no | 1 to 1000 | Rows to return. Default 200. |
-| `offset` | query | integer | no | at least 0 |  |
+| `limit` | query | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
+| `offset` | query | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 | `q` | query | string | no |  | Keep webhooks whose name or address contains this, in any case. |
 | `sort` | query | string | no | one of `name`, `url`, `enabled` | Field to sort the whole list by. Rows without it go last. |
 | `dir` | query | string | no | one of `asc`, `desc` | Default asc. |
@@ -2565,16 +2600,20 @@ Create a webhook
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
 | `events` | array of string | yes |  |  |
-| `name` | string | yes |  |  |
-| `url` | string | yes |  |  |
+| `name` | string | yes | 1 to 80 characters |  |
+| `url` | string | yes | 1 to 2000 characters |  |
 
 **Reply 201**: Success
 
-Every field of [`Webhook`](#webhook), plus these:
-
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
+| `created_at` | string (date-time) | yes |  |  |
+| `enabled` | boolean | yes |  |  |
+| `events` | array of string | yes |  |  |
+| `id` | string | yes |  |  |
+| `name` | string | yes |  |  |
 | `secret` | string | yes |  | Shown in this response only. |
+| `url` | string | yes |  |  |
 
 ### GET /api/owner/webhooks/events
 
@@ -2604,7 +2643,7 @@ Delete a webhook
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `webhook_id` | path | string | yes |  |  |
+| `webhook_id` | path | string | yes |  | The webhook's id, from GET /api/owner/webhooks. |
 
 **Request body**
 
@@ -2631,9 +2670,9 @@ Recent deliveries
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `webhook_id` | path | string | yes |  |  |
-| `limit` | query | integer | no | 1 to 1000 | Rows to return. Default 200. |
-| `offset` | query | integer | no | at least 0 |  |
+| `webhook_id` | path | string | yes |  | The webhook's id, from GET /api/owner/webhooks. |
+| `limit` | query | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
+| `offset` | query | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 
 **Reply 200**: Success
 
@@ -2658,8 +2697,8 @@ A new delivery with the same body. The failed one stays listed.
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `webhook_id` | path | string | yes |  |  |
-| `delivery_id` | path | string | yes |  |  |
+| `webhook_id` | path | string | yes |  | The webhook's id, from GET /api/owner/webhooks. |
+| `delivery_id` | path | string | yes |  | The delivery's id, from GET /api/owner/webhooks/{webhook_id}/deliveries. |
 
 **Request body**
 
@@ -2686,7 +2725,7 @@ Switch a webhook on or off
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `webhook_id` | path | string | yes |  |  |
+| `webhook_id` | path | string | yes |  | The webhook's id, from GET /api/owner/webhooks. |
 
 **Request body**
 
@@ -2714,15 +2753,15 @@ Rename a webhook
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `webhook_id` | path | string | yes |  |  |
+| `webhook_id` | path | string | yes |  | The webhook's id, from GET /api/owner/webhooks. |
 
 **Request body**
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
-| `expect` | string | no |  | The name you think it has. Answers 409 if it has another. |
-| `name` | string | yes |  | 1-80 characters. |
+| `expect` | string or null | no |  | The name you think it has. Answers 409 if it has another. |
+| `name` | string | yes | 1 to 80 characters | 1-80 characters. |
 
 **Reply 200**: Success
 
@@ -2744,7 +2783,7 @@ Undo deleting a webhook
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `webhook_id` | path | string | yes |  |  |
+| `webhook_id` | path | string | yes |  | The webhook's id, from GET /api/owner/webhooks. |
 
 **Request body**
 
@@ -2769,7 +2808,7 @@ Replace a webhook's signing secret
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `webhook_id` | path | string | yes |  |  |
+| `webhook_id` | path | string | yes |  | The webhook's id, from GET /api/owner/webhooks. |
 
 **Request body**
 
@@ -2796,7 +2835,7 @@ Change a webhook's address and events
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `webhook_id` | path | string | yes |  |  |
+| `webhook_id` | path | string | yes |  | The webhook's id, from GET /api/owner/webhooks. |
 
 **Request body**
 
@@ -2804,10 +2843,10 @@ Change a webhook's address and events
 |---|---|---|---|---|
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
 | `events` | array of string | yes |  |  |
-| `expect` | object | no |  | What you think it has now. Answers 409 if it has something else. |
+| `expect` | object or null | no |  | What you think it has now. Answers 409 if it has something else. |
 | `expect.events` | array of string | yes |  |  |
 | `expect.url` | string | yes |  |  |
-| `url` | string | yes |  | Checked like a new webhook's. |
+| `url` | string | yes | 1 to 2000 characters | Checked like a new webhook's. |
 
 **Reply 200**: Success
 
@@ -2828,7 +2867,7 @@ Send a test event
 
 | Name | In | Type | Required | Limits | Description |
 |---|---|---|---|---|---|
-| `webhook_id` | path | string | yes |  |  |
+| `webhook_id` | path | string | yes |  | The webhook's id, from GET /api/owner/webhooks. |
 
 **Request body**
 
@@ -2924,10 +2963,6 @@ Refused: this server has no stream
 
 **Reply 405**: Success
 
-| Field | Type | Required | Limits | Description |
-|---|---|---|---|---|
-| `ok` | boolean | yes |  |  |
-
 ### POST /mcp
 
 Model Context Protocol, at the key's role
@@ -2956,10 +2991,6 @@ Refused: this server keeps no sessions
 | Errors | 404, 429, 503 |
 
 **Reply 405**: Success
-
-| Field | Type | Required | Limits | Description |
-|---|---|---|---|---|
-| `ok` | boolean | yes |  |  |
 
 ### GET /metrics
 
@@ -3022,10 +3053,10 @@ The shapes the routes above refer to by name.
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `names` | array of object | no |  |  |
-| `names[].created_at` | string (date-time) | no |  |  |
-| `names[].name` | string | no |  |  |
-| `names[].target` | string | no |  |  |
+| `names` | array of object | yes |  |  |
+| `names[].created_at` | string (date-time) | yes |  |  |
+| `names[].name` | string | yes |  |  |
+| `names[].target` | string | yes |  |  |
 
 ### InviteLink
 
@@ -3033,7 +3064,7 @@ The shapes the routes above refer to by name.
 |---|---|---|---|---|
 | `created_by` | integer | yes |  |  |
 | `created_by_name` | string | no |  |  |
-| `expires_at` | string (date-time) | no |  |  |
+| `expires_at` | string (date-time) | yes |  |  |
 | `id` | string | yes |  |  |
 | `label` | string | yes |  |  |
 | `live` | boolean | yes |  |  |
@@ -3051,18 +3082,12 @@ The shapes the routes above refer to by name.
 | `last_error` | string | no |  |  |
 | `last_finished` | string (date-time) | no |  |  |
 | `last_note` | string | no |  |  |
-| `last_ok` | boolean | no |  |  |
+| `last_ok` | boolean or null | no |  |  |
 | `last_started` | string (date-time) | no |  |  |
 | `name` | string | yes |  |  |
 | `next_due` | string (date-time) | yes |  |  |
 | `running` | boolean | yes |  |  |
 | `runs` | integer | yes |  |  |
-
-### JoinPath
-
-| Field | Type | Required | Limits | Description |
-|---|---|---|---|---|
-| `join_path` | string | yes |  | The link to hand out, shown in this response only. A credential: treat it like a password. |
 
 ### Joined
 
@@ -3088,16 +3113,16 @@ One of these:
 |---|---|---|---|---|
 | `date` | string | yes |  |  |
 | `entries` | array of object | yes |  |  |
-| `next` | integer or null | no |  |  |
+| `next` | integer or null | yes |  |  |
 
 ### LogDays
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `days` | array of object | yes |  |  |
-| `dropped` | integer | no |  |  |
-| `settings` | object | no |  |  |
-| `total_bytes` | integer | no |  |  |
+| `dropped` | integer | yes |  |  |
+| `settings` | object | yes |  |  |
+| `total_bytes` | integer | yes |  |  |
 
 ### LoginLink
 
@@ -3122,42 +3147,42 @@ One of these:
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `account_role` | string | yes |  |  |
-| `announcement` | string | no |  | server.announcement. Empty when there is none. |
+| `announcement` | string | yes |  | server.announcement. Empty when there is none. |
 | `api_key_id` | string | no |  | API keys only. |
 | `api_key_name` | string | no |  | API keys only. |
-| `api_keys_enabled` | boolean | no |  |  |
-| `auth` | string | no |  |  |
+| `api_keys_enabled` | boolean | yes |  |  |
+| `auth` | string | yes |  |  |
 | `authenticated` | boolean | yes |  |  |
 | `csrf_token` | string | no |  | Browser sessions only. |
-| `description` | string | no |  | app.description. Empty when there is none. |
+| `description` | string | yes |  | app.description. Empty when there is none. |
 | `display_name` | string | yes |  |  |
-| `files_enabled` | boolean | no |  | files.enabled: whether the Files screen and routes are on. |
-| `has_password` | boolean | no |  |  |
-| `has_pin` | boolean | no |  |  |
+| `files_enabled` | boolean | yes |  | files.enabled: whether the Files screen and routes are on. |
+| `has_password` | boolean | yes |  |  |
+| `has_pin` | boolean | yes |  |  |
 | `id` | integer | yes |  |  |
-| `invite_links_enabled` | boolean | no |  | Whether invite links are on. |
+| `invite_links_enabled` | boolean | yes |  | Whether invite links are on. |
 | `is_owner` | boolean | yes |  |  |
-| `login_link` | [`LoginLink`](#loginlink) or null | no |  | Your own live login link, or null. |
-| `logs_enabled` | boolean | no |  |  |
-| `logs_ui_clicks` | boolean | no |  |  |
+| `login_link` | [`LoginLink`](#loginlink) or null | yes |  | Your own live login link, or null. |
+| `logs_enabled` | boolean | yes |  |  |
+| `logs_ui_clicks` | boolean | yes |  |  |
 | `maintenance` | string | yes | one of `none`, `read_only`, `full` |  |
-| `mcp_enabled` | boolean | no |  | server.mcp: whether POST /mcp answers. |
-| `mcp_url` | string | no |  | Where to read the MCP reference: config/mcp.json in app.repo, or /api/mcp.json when there is no repo. Only with server.mcp on. |
-| `openapi_url` | string | no |  | Where to read this API's reference: config/openapi.json in app.repo, or /api/openapi.json when there is no repo. |
-| `password_blocked` | boolean | no |  |  |
-| `passwords_enabled` | boolean | no |  |  |
-| `repo` | string | no |  | app.repo without a trailing / or .git: where the source lives. Empty when it is not set. |
+| `mcp_enabled` | boolean | yes |  | server.mcp: whether POST /mcp answers. |
+| `mcp_url` | string | yes |  | Where to read the MCP reference: config/mcp.json in app.repo, or /api/mcp.json when there is no repo. Only with server.mcp on. |
+| `openapi_url` | string | yes |  | Where to read this API's reference: config/openapi.json in app.repo, or /api/openapi.json when there is no repo. |
+| `password_blocked` | boolean | yes |  |  |
+| `passwords_enabled` | boolean | yes |  |  |
+| `repo` | string | yes |  | app.repo without a trailing / or .git: where the source lives. Empty when it is not set. |
 | `role` | string | yes |  | The effective role: never higher than an API key's own. |
-| `shortcuts` | map of string | no |  | The keyboard shortcuts you changed, by action. Mod is Cmd on a Mac and Ctrl elsewhere. |
-| `show_about` | boolean | no |  | app.show_about: whether the menu has About. |
-| `theme_id` | string | no |  | The theme you use. Empty: the first. |
-| `themes` | array of object or null | no |  | Your themes (see the Theme schema): your own list, else the app's defaults, else null for the built-in ones. |
-| `themes_custom` | boolean | no |  | Whether you have your own list rather than following the defaults. |
-| `two_factor` | boolean | no |  |  |
-| `two_factor_enabled` | boolean | no |  |  |
-| `username` | string | no |  |  |
-| `version` | string | no |  | The running build. dev when none was stamped. |
-| `webhooks_enabled` | boolean | no |  | webhooks.enabled: whether webhooks are sent. |
+| `shortcuts` | map of string | yes |  | The keyboard shortcuts you changed, by action. Mod is Cmd on a Mac and Ctrl elsewhere. |
+| `show_about` | boolean | yes |  | app.show_about: whether the menu has About. |
+| `theme_id` | string | yes |  | The theme you use. Empty: the first. |
+| `themes` | array of [`Theme`](#theme) or null | yes |  | Your themes (see the Theme schema): your own list, else the app's defaults, else null for the built-in ones. |
+| `themes_custom` | boolean | yes |  | Whether you have your own list rather than following the defaults. |
+| `two_factor` | boolean | yes |  |  |
+| `two_factor_enabled` | boolean | yes |  |  |
+| `username` | string | yes |  |  |
+| `version` | string | yes |  | The running build. dev when none was stamped. |
+| `webhooks_enabled` | boolean | yes |  | webhooks.enabled: whether webhooks are sent. |
 
 ### Member
 
@@ -3168,29 +3193,41 @@ One of these:
 
 ### NewAPIKey
 
-Every field of [`APIKey`](#apikey), plus these:
-
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
+| `created_at` | string (date-time) | yes |  |  |
+| `created_by` | integer | no |  | The admin who made this key for its owner. Absent if the owner made it. |
+| `created_by_name` | string | no |  |  |
 | `credential` | string | yes |  | Shown in this response only, and never recoverable. |
+| `display_name` | string | no |  | The key's owner. On the admin list only. |
+| `expired` | boolean | yes |  |  |
+| `expires_at` | string (date-time) | no |  |  |
+| `id` | string | yes |  |  |
+| `last_used_at` | string (date-time) | no |  |  |
+| `live` | boolean | yes |  |  |
+| `name` | string | yes |  |  |
+| `revoked` | boolean | yes |  |  |
+| `revoked_at` | string (date-time) | no |  |  |
+| `role` | string | yes | one of `admin`, `user` |  |
+| `user_id` | integer | yes |  |  |
 
 ### PruneResult
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `bytes_after` | integer | no |  |  |
-| `bytes_before` | integer | no |  |  |
-| `compressed` | integer | no |  |  |
-| `deleted` | integer | no |  |  |
+| `bytes_after` | integer | yes |  |  |
+| `bytes_before` | integer | yes |  |  |
+| `compressed` | integer | yes |  |  |
+| `deleted` | integer | yes |  |  |
 
 ### Revoked
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `api_keys` | integer | no |  |  |
-| `login_links` | integer | no |  |  |
-| `passwords` | integer | no |  |  |
-| `sessions` | integer | no |  |  |
+| `api_keys` | integer | yes |  |  |
+| `login_links` | integer | yes |  |  |
+| `passwords` | integer | yes |  |  |
+| `sessions` | integer | yes |  |  |
 
 ### Session
 
@@ -3210,43 +3247,43 @@ Every field of [`APIKey`](#apikey), plus these:
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `applied` | array of string or null | no |  |  |
-| `changes` | array of object or null | no |  |  |
-| `restart` | array of string or null | no |  |  |
-| `scripts` | array of string or null | no |  |  |
-| `unchanged` | array of string or null | no |  |  |
-| `version` | string | no |  |  |
+| `applied` | array of string or null | yes |  |  |
+| `changes` | array of object or null | yes |  |  |
+| `restart` | array of string or null | yes |  |  |
+| `scripts` | array of string or null | yes |  |  |
+| `unchanged` | array of string or null | yes |  |  |
+| `version` | string | yes |  |  |
 
 ### SettingsSnapshot
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `error` | object or null | no |  |  |
-| `error.at` | string (date-time) | no |  |  |
-| `error.message` | string | no |  |  |
-| `error.origin` | string | no |  |  |
-| `file` | string | no |  |  |
-| `in_container` | boolean | no |  |  |
-| `secret_file` | string | no |  |  |
-| `sections` | array of object | no |  |  |
-| `sections[].help` | string | no |  |  |
-| `sections[].keys` | array of object | no |  |  |
-| `sections[].keys[].apply` | string | no |  |  |
-| `sections[].keys[].default` | any | no |  |  |
-| `sections[].keys[].file_only` | boolean | no |  | A path: change it in config.yaml, never here. |
-| `sections[].keys[].help` | string | no |  |  |
-| `sections[].keys[].in_file` | boolean | no |  |  |
-| `sections[].keys[].key` | string | no |  |  |
-| `sections[].keys[].locked` | boolean | no |  |  |
-| `sections[].keys[].name` | string | no |  |  |
-| `sections[].keys[].pending_restart` | boolean | no |  |  |
-| `sections[].keys[].running` | any | no |  |  |
-| `sections[].keys[].type` | string | no |  |  |
-| `sections[].keys[].value` | any | no |  |  |
-| `sections[].name` | string | no |  |  |
-| `stale` | boolean | no |  |  |
-| `version` | string | no |  | Send it back when saving: a changed file is refused with a 409. |
-| `writable` | boolean | no |  |  |
+| `error` | object or null | yes |  |  |
+| `error.at` | string (date-time) | yes |  |  |
+| `error.message` | string | yes |  |  |
+| `error.origin` | string | yes |  |  |
+| `file` | string | yes |  |  |
+| `in_container` | boolean | yes |  |  |
+| `secret_file` | string | yes |  |  |
+| `sections` | array of object | yes |  |  |
+| `sections[].help` | string | yes |  |  |
+| `sections[].keys` | array of object | yes |  |  |
+| `sections[].keys[].apply` | string | yes |  |  |
+| `sections[].keys[].default` | any | yes |  |  |
+| `sections[].keys[].file_only` | boolean | yes |  | A path: change it in config.yaml, never here. |
+| `sections[].keys[].help` | string | yes |  |  |
+| `sections[].keys[].in_file` | boolean | yes |  |  |
+| `sections[].keys[].key` | string | yes |  |  |
+| `sections[].keys[].locked` | boolean | yes |  |  |
+| `sections[].keys[].name` | string | yes |  |  |
+| `sections[].keys[].pending_restart` | boolean | yes |  |  |
+| `sections[].keys[].running` | any | yes |  |  |
+| `sections[].keys[].type` | string | yes |  |  |
+| `sections[].keys[].value` | any | yes |  |  |
+| `sections[].name` | string | yes |  |  |
+| `stale` | boolean | yes |  |  |
+| `version` | string | yes |  | Send it back when saving: a changed file is refused with a 409. |
+| `writable` | boolean | yes |  |  |
 
 ### SignIn
 
@@ -3271,19 +3308,19 @@ One of these:
 |---|---|---|---|---|
 | `accent` | string | yes |  | The main color: what you can press. |
 | `background` | string | no |  | The page. Left out: the mode's own. |
-| `button` | object | no |  | How the theme's buttons look. A choice left out is the default (rounded, normal, raised, normal). |
+| `button` | object or null | no |  | How the theme's buttons look. A choice left out is the default (rounded, normal, raised, normal). |
 | `button.case` | string | no | one of `normal`, `upper` |  |
 | `button.depth` | string | no | one of `flat`, `raised`, `glossy` |  |
 | `button.shape` | string | no | one of `square`, `soft`, `rounded`, `pill` |  |
 | `button.weight` | string | no | one of `normal`, `medium`, `bold` |  |
-| `dark` | object | no |  | A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped. |
+| `dark` | object or null | no |  | A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped. |
 | `dark.accent` | string | yes |  | The main color: what you can press. |
 | `dark.background` | string | no |  | The page. Left out: the mode's own. |
 | `dark.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `dark.second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `dark.surface` | string | no |  | Cards. Left out: the mode's own. |
 | `id` | string | yes |  | Lower-case letters, digits, - and _, up to 32. |
-| `light` | object | no |  | A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in. |
+| `light` | object or null | no |  | A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in. |
 | `light.accent` | string | yes |  | The main color: what you can press. |
 | `light.background` | string | no |  | The page. Left out: the mode's own. |
 | `light.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
@@ -3299,17 +3336,17 @@ One of these:
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `created_at` | string (date-time) | no |  |  |
+| `created_at` | string (date-time) | yes |  |  |
 | `disabled` | boolean | yes |  |  |
 | `display_name` | string | yes |  |  |
-| `has_password` | boolean | no |  |  |
+| `has_password` | boolean | yes |  |  |
 | `id` | integer | yes |  |  |
-| `login_link` | [`LoginLink`](#loginlink) or null | no |  | The account's live login link, or null. |
+| `login_link` | [`LoginLink`](#loginlink) or null | yes |  | The account's live login link, or null. |
 | `owner` | boolean | yes |  |  |
-| `password_blocked` | boolean | no |  |  |
+| `password_blocked` | boolean | yes |  |  |
 | `role` | string | yes | one of `admin`, `user` |  |
-| `two_factor` | boolean | no |  |  |
-| `username` | string | no |  | Empty until a password is set. |
+| `two_factor` | boolean | yes |  |  |
+| `username` | string | yes |  | Empty until a password is set. |
 
 ### Webhook
 
@@ -3333,7 +3370,7 @@ One of these:
 | `id` | string | yes |  |  |
 | `last_error` | string | no |  |  |
 | `last_status` | integer | no |  |  |
-| `next_attempt_at` | string (date-time) | no |  |  |
+| `next_attempt_at` | string (date-time) | yes |  |  |
 | `status` | string | yes |  |  |
 
 ## MCP tools
@@ -3423,7 +3460,7 @@ People with an active account, a page at a time: id and display name. Use the id
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `limit` | integer | no | 1 to 1000 | Rows to return. Default 200. |
+| `limit` | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
 | `offset` | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 
 ### admin_list_users
@@ -3440,8 +3477,11 @@ Accounts, a page at a time, including disabled ones, with each one's role and wh
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `limit` | integer | no | 1 to 1000 | Rows to return. Default 200. |
+| `dir` | string | no | one of `asc`, `desc` | Default asc. |
+| `limit` | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
 | `offset` | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
+| `q` | string | no |  | Keep accounts whose name or username contains this, in any case. |
+| `sort` | string | no | one of `display_name`, `role`, `disabled`, `created_at` | Field to sort the whole list by. Rows without it go last. |
 
 ### admin_set_user_disabled
 
@@ -3458,7 +3498,7 @@ Switch an account off (disabled: true) or back on (false). Disabling signs it ou
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `disabled` | boolean | yes |  |  |
-| `user_id` | integer | yes | at least 1 | The account's id, from list_team or admin_list_users. |
+| `user_id` | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 ### admin_revoke_access
 
@@ -3474,7 +3514,7 @@ For an account that may be compromised: ends every session and voids its live lo
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `user_id` | integer | yes | at least 1 | The account's id, from list_team or admin_list_users. |
+| `user_id` | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 ### rename_account
 
@@ -3490,8 +3530,8 @@ Change your own display name (1-80 characters). expect, when given, is the name 
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `display_name` | string | yes |  |  |
-| `expect` | string | no |  | The current name, from whoami. Optional. |
+| `display_name` | string | yes | 1 to 80 characters |  |
+| `expect` | string or null | no |  |  |
 
 ### set_shortcuts
 
@@ -3507,7 +3547,7 @@ Replace your changed keyboard shortcuts: action name to binding, such as "search
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `shortcuts` | map of string | yes |  |  |
+| `shortcuts` | map of string | yes |  | Action name to binding, such as "search": "Mod+K". Mod is Cmd on a Mac and Ctrl elsewhere. Only changed shortcuts are listed; an empty binding switches that key off. Replaces the whole set; {} puts every key back to its default. |
 
 ### set_themes
 
@@ -3523,8 +3563,33 @@ Replace your whole list of color themes (1 to 40) and pick the one you use. them
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `theme_id` | string | no |  |  |
-| `themes` | array of object or null | yes |  |  |
+| `theme_id` | string | no |  | The theme you use. |
+| `themes` | array of object or null | no |  | Your whole list, 1 to 40 themes. null goes back to following the app's defaults. |
+| `themes[].accent` | string | yes |  | The main color: what you can press. |
+| `themes[].background` | string | no |  | The page. Left out: the mode's own. |
+| `themes[].button` | object or null | no |  | How the theme's buttons look. A choice left out is the default (rounded, normal, raised, normal). |
+| `themes[].button.case` | string | no | one of `normal`, `upper` |  |
+| `themes[].button.depth` | string | no | one of `flat`, `raised`, `glossy` |  |
+| `themes[].button.shape` | string | no | one of `square`, `soft`, `rounded`, `pill` |  |
+| `themes[].button.weight` | string | no | one of `normal`, `medium`, `bold` |  |
+| `themes[].dark` | object or null | no |  | A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped. |
+| `themes[].dark.accent` | string | yes |  | The main color: what you can press. |
+| `themes[].dark.background` | string | no |  | The page. Left out: the mode's own. |
+| `themes[].dark.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `themes[].dark.second` | string | yes |  | Says where you are: active nav item, headings, info. |
+| `themes[].dark.surface` | string | no |  | Cards. Left out: the mode's own. |
+| `themes[].id` | string | yes |  | Lower-case letters, digits, - and _, up to 32. |
+| `themes[].light` | object or null | no |  | A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in. |
+| `themes[].light.accent` | string | yes |  | The main color: what you can press. |
+| `themes[].light.background` | string | no |  | The page. Left out: the mode's own. |
+| `themes[].light.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `themes[].light.second` | string | yes |  | Says where you are: active nav item, headings, info. |
+| `themes[].light.surface` | string | no |  | Cards. Left out: the mode's own. |
+| `themes[].mode` | string | yes | one of `light`, `dark` |  |
+| `themes[].name` | string | yes |  | 1 to 60 characters. |
+| `themes[].overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `themes[].second` | string | yes |  | Says where you are: active nav item, headings, info. |
+| `themes[].surface` | string | no |  | Cards. Left out: the mode's own. |
 
 ### set_theme
 
@@ -3540,7 +3605,7 @@ Switch to another theme from your list (or the defaults), by its id.
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `theme_id` | string | yes |  |  |
+| `theme_id` | string | yes |  | A theme's id. Empty for the first in the list. |
 
 ### admin_get_theme_defaults
 
@@ -3571,7 +3636,32 @@ Replace the theme list everyone without their own list sees, 1 to 40 themes in t
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `themes` | array of object or null | yes |  |  |
+| `themes` | array of object or null | no |  | 1 to 40 themes. null goes back to the built-in ones. |
+| `themes[].accent` | string | yes |  | The main color: what you can press. |
+| `themes[].background` | string | no |  | The page. Left out: the mode's own. |
+| `themes[].button` | object or null | no |  | How the theme's buttons look. A choice left out is the default (rounded, normal, raised, normal). |
+| `themes[].button.case` | string | no | one of `normal`, `upper` |  |
+| `themes[].button.depth` | string | no | one of `flat`, `raised`, `glossy` |  |
+| `themes[].button.shape` | string | no | one of `square`, `soft`, `rounded`, `pill` |  |
+| `themes[].button.weight` | string | no | one of `normal`, `medium`, `bold` |  |
+| `themes[].dark` | object or null | no |  | A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped. |
+| `themes[].dark.accent` | string | yes |  | The main color: what you can press. |
+| `themes[].dark.background` | string | no |  | The page. Left out: the mode's own. |
+| `themes[].dark.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `themes[].dark.second` | string | yes |  | Says where you are: active nav item, headings, info. |
+| `themes[].dark.surface` | string | no |  | Cards. Left out: the mode's own. |
+| `themes[].id` | string | yes |  | Lower-case letters, digits, - and _, up to 32. |
+| `themes[].light` | object or null | no |  | A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in. |
+| `themes[].light.accent` | string | yes |  | The main color: what you can press. |
+| `themes[].light.background` | string | no |  | The page. Left out: the mode's own. |
+| `themes[].light.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `themes[].light.second` | string | yes |  | Says where you are: active nav item, headings, info. |
+| `themes[].light.surface` | string | no |  | Cards. Left out: the mode's own. |
+| `themes[].mode` | string | yes | one of `light`, `dark` |  |
+| `themes[].name` | string | yes |  | 1 to 60 characters. |
+| `themes[].overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `themes[].second` | string | yes |  | Says where you are: active nav item, headings, info. |
+| `themes[].surface` | string | no |  | Cards. Left out: the mode's own. |
 
 ### create_my_login_link
 
@@ -3587,8 +3677,8 @@ A link that signs your own account in on a browser or another device. Only a key
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `expires_in_minutes` | integer | no | at least 0 | How long the link works. Leave it out for the configured default; 0 never expires. |
-| `max_uses` | integer | no | at least 0 | How many sign-ins the link allows. Leave it out for once; 0 is unlimited until it expires. |
+| `expires_in_minutes` | integer or null | no | 0 to 525600 | 0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise. |
+| `max_uses` | integer or null | no | 0 to 1000 | Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1. |
 
 ### cancel_my_login_link
 
@@ -3619,9 +3709,9 @@ Make a new account and its first login link, to hand to the person. role is admi
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `display_name` | string | yes |  | 1-80 characters. |
-| `expires_in_minutes` | integer | no | at least 0 | How long the link works. Leave it out for the configured default; 0 never expires. |
-| `max_uses` | integer | no | at least 0 | How many sign-ins the link allows. Leave it out for once; 0 is unlimited until it expires. |
+| `display_name` | string | yes | 1 to 80 characters |  |
+| `expires_in_minutes` | integer or null | no | 0 to 525600 | 0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise. |
+| `max_uses` | integer or null | no | 0 to 1000 | Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1. |
 | `role` | string | yes | one of `admin`, `user` |  |
 
 ### admin_reissue_login
@@ -3638,9 +3728,9 @@ For someone who lost their device or their link: a fresh login link for their ac
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `expires_in_minutes` | integer | no | at least 0 | How long the link works. Leave it out for the configured default; 0 never expires. |
-| `max_uses` | integer | no | at least 0 | How many sign-ins the link allows. Leave it out for once; 0 is unlimited until it expires. |
-| `user_id` | integer | yes | at least 1 | The account's id, from list_team or admin_list_users. |
+| `expires_in_minutes` | integer or null | no | 0 to 525600 | 0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise. |
+| `max_uses` | integer or null | no | 0 to 1000 | Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1. |
+| `user_id` | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 ### admin_cancel_login_link
 
@@ -3656,7 +3746,7 @@ Void an account's live login link without making a new one: a link that went som
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `user_id` | integer | yes | at least 1 | The account's id, from list_team or admin_list_users. |
+| `user_id` | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 ### admin_rename_user
 
@@ -3672,9 +3762,9 @@ Change another account's display name (1-80 characters). Only the owner renames 
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `display_name` | string | yes |  |  |
-| `expect` | string | no |  | The current name, from admin_list_users. Optional. |
-| `user_id` | integer | yes | at least 1 | The account's id, from list_team or admin_list_users. |
+| `display_name` | string | yes | 1 to 80 characters | 1-80 characters. |
+| `expect` | string or null | no |  | The name you think they have. Answers 409 if it is another. |
+| `user_id` | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 ### admin_set_user_role
 
@@ -3691,7 +3781,7 @@ Make an account an admin or an ordinary user. Only the owner takes an admin's ri
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `role` | string | yes | one of `admin`, `user` |  |
-| `user_id` | integer | yes | at least 1 | The account's id, from list_team or admin_list_users. |
+| `user_id` | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 ### admin_delete_user
 
@@ -3707,7 +3797,7 @@ Remove an account for good, with its sessions, login link and API keys. Cannot b
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `user_id` | integer | yes | at least 1 | The account's id, from list_team or admin_list_users. |
+| `user_id` | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 ### admin_reset_two_factor
 
@@ -3723,7 +3813,7 @@ For someone who lost both their phone and their recovery codes: switches their t
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `user_id` | integer | yes | at least 1 | The account's id, from list_team or admin_list_users. |
+| `user_id` | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 ### list_my_sessions
 
@@ -3739,7 +3829,7 @@ Where your account is signed in, a page at a time: id, when it started and was l
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `limit` | integer | no | 1 to 1000 | Rows to return. Default 200. |
+| `limit` | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
 | `offset` | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
 
 ### label_my_session
@@ -3756,9 +3846,9 @@ Give one of your devices a name (at most 80 characters; empty clears it). expect
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `expect` | string | no |  |  |
-| `label` | string | yes |  |  |
-| `session_id` | string | yes |  | The device's id, from list_my_sessions or admin_list_user_sessions. |
+| `expect` | string or null | no |  | The name you think it has. Answers 409 if it has another. |
+| `label` | string | yes | at most 80 characters | At most 80 characters. |
+| `session_id` | string | yes |  | The device's id, from GET /api/account/sessions or GET /api/admin/users/{user_id}/sessions (list_my_sessions or admin_list_user_sessions over MCP). |
 
 ### revoke_my_session
 
@@ -3774,7 +3864,7 @@ End one of your signed-in sessions; that browser has to sign in again.
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `session_id` | string | yes |  | The device's id, from list_my_sessions or admin_list_user_sessions. |
+| `session_id` | string | yes |  | The device's id, from GET /api/account/sessions or GET /api/admin/users/{user_id}/sessions (list_my_sessions or admin_list_user_sessions over MCP). |
 
 ### revoke_my_other_sessions
 
@@ -3805,7 +3895,9 @@ Where an account is signed in: every session, with when it started and was last 
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `user_id` | integer | yes | at least 1 | The account's id, from list_team or admin_list_users. |
+| `limit` | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
+| `offset` | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
+| `user_id` | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 ### admin_revoke_user_session
 
@@ -3821,8 +3913,8 @@ End one of an account's sessions, rather than all of them with admin_revoke_acce
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `session_id` | string | yes |  | The device's id, from list_my_sessions or admin_list_user_sessions. |
-| `user_id` | integer | yes | at least 1 | The account's id, from list_team or admin_list_users. |
+| `session_id` | string | yes |  | The device's id, from GET /api/account/sessions or GET /api/admin/users/{user_id}/sessions (list_my_sessions or admin_list_user_sessions over MCP). |
+| `user_id` | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 ### admin_create_invite_link
 
@@ -3839,7 +3931,7 @@ One link for a group: each person who opens it joins as a new user, up to max_us
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `days` | integer | yes | 1 to 365 |  |
-| `label` | string | yes |  | 1-80 characters; people see it on the join page. |
+| `label` | string | yes | 1 to 80 characters |  |
 | `max_uses` | integer | yes | 1 to 1000 |  |
 
 ### admin_rename_invite_link
@@ -3856,9 +3948,9 @@ Change the label people see on an invite link's join page (1-80 characters). exp
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `expect` | string | no |  |  |
-| `label` | string | yes |  |  |
-| `link_id` | string | yes |  | The id from admin_list_invite_links. |
+| `expect` | string or null | no |  | The label you think it has. Answers 409 if it has another. |
+| `label` | string | yes | 1 to 80 characters | 1-80 characters. |
+| `link_id` | string | yes |  | The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP). |
 
 ### admin_set_invite_link_limits
 
@@ -3874,9 +3966,9 @@ Set how many people the link may take in (never fewer than have joined) and, whe
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `days` | integer | no | 1 to 365 | Leave it out to keep the expiry. |
-| `link_id` | string | yes |  | The id from admin_list_invite_links. |
-| `max_uses` | integer | yes | 1 to 1000 |  |
+| `days` | integer or null | no | 1 to 365 | Counted from now. Leave out to keep the expiry. |
+| `link_id` | string | yes |  | The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP). |
+| `max_uses` | integer | yes | 1 to 1000 | Not fewer than have joined. |
 
 ### admin_switch_on_invite_link
 
@@ -3892,7 +3984,7 @@ Undo admin_revoke_invite_link: anyone still holding the link can use it again. T
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `link_id` | string | yes |  | The id from admin_list_invite_links. |
+| `link_id` | string | yes |  | The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP). |
 
 ### admin_delete_invite_link
 
@@ -3908,7 +4000,7 @@ Take an invite link off the list and stop it working. The accounts it made stay.
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `link_id` | string | yes |  | The id from admin_list_invite_links. |
+| `link_id` | string | yes |  | The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP). |
 
 ### admin_restore_invite_link
 
@@ -3924,7 +4016,7 @@ Bring back an invite link deleted in the last few minutes, working as before. Th
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `link_id` | string | yes |  | The id from admin_list_invite_links. |
+| `link_id` | string | yes |  | The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP). |
 
 ### files_list
 
@@ -3940,8 +4032,11 @@ Your uploaded files, a page at a time: id, name, type, size, state (uploading or
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `limit` | integer | no | 1 to 1000 | Rows to return. Default 200. |
+| `dir` | string | no | one of `asc`, `desc` | Default asc. |
+| `limit` | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
 | `offset` | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
+| `q` | string | no |  | Keep files whose name contains this, in any case. |
+| `sort` | string | no | one of `name`, `size`, `created_at` | Field to sort the whole list by. Rows without it go last. |
 
 ### files_get
 
@@ -3957,7 +4052,7 @@ One file: its details, and for an unfinished upload how many pieces have arrived
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `file_id` | string | yes |  | The file's id, from files_list or files_start_upload. |
+| `file_id` | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
 
 ### files_start_upload
 
@@ -3973,9 +4068,9 @@ Reserve room for a file and get where to send it. The bytes do not go through MC
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `name` | string | yes |  | The file's name, as it should be shown. |
-| `size` | integer | yes | at least 1 | Exact size in bytes. |
-| `type` | string | no |  | Its media type, such as application/pdf. Optional. |
+| `name` | string | yes |  |  |
+| `size` | integer | yes | at least 0 |  |
+| `type` | string | no |  | Shown in the list. Downloads are always application/octet-stream. |
 
 ### files_finish_upload
 
@@ -3991,7 +4086,7 @@ Seal an upload once every piece has arrived; the file is then ready to download.
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `file_id` | string | yes |  | The file's id, from files_list or files_start_upload. |
+| `file_id` | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
 
 ### files_download_url
 
@@ -4007,7 +4102,7 @@ The address of one of your files. GET it over HTTP with the same Authorization: 
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `file_id` | string | yes |  | The file's id, from files_list or files_start_upload. |
+| `file_id` | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
 
 ### files_rename
 
@@ -4023,9 +4118,9 @@ Give one of your files a new name. expect, when given, is the name you think it 
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `expect` | string | no |  |  |
-| `file_id` | string | yes |  | The file's id, from files_list or files_start_upload. |
-| `name` | string | yes |  |  |
+| `expect` | string or null | no |  | The name you think it has. Answers 409 if it has another. |
+| `file_id` | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
+| `name` | string | yes |  | Cleaned like an upload's name. 1-255 bytes. |
 
 ### files_delete
 
@@ -4041,7 +4136,7 @@ Move one of your files to the bin. files_restore brings it back for a while; aft
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `file_id` | string | yes |  | The file's id, from files_list or files_start_upload. |
+| `file_id` | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
 
 ### files_restore
 
@@ -4057,7 +4152,7 @@ Bring back a file you deleted, while it is still in the bin and your storage quo
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `file_id` | string | yes |  | The file's id, from files_list or files_start_upload. |
+| `file_id` | string | yes |  | The file's id, from GET /api/files (files_list over MCP). |
 
 ### my_storage
 
@@ -4088,8 +4183,11 @@ Every account's files, a page at a time, with whose each one is (user_id, user_n
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `limit` | integer | no | 1 to 1000 | Rows to return. Default 200. |
+| `dir` | string | no | one of `asc`, `desc` | Default asc. |
+| `limit` | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
 | `offset` | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
+| `q` | string | no |  | Keep files whose name or owner contains this, in any case. |
+| `sort` | string | no | one of `name`, `user_name`, `size`, `created_at` | Field to sort the whole list by. Rows without it go last. |
 
 ### admin_storage
 
@@ -4120,8 +4218,11 @@ Group invite links, a page at a time: label, places used and left, expiry, and w
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `limit` | integer | no | 1 to 1000 | Rows to return. Default 200. |
+| `dir` | string | no | one of `asc`, `desc` | Default asc. |
+| `limit` | integer | no | 1 to 1000; default `200` | Rows to return. Default 200. |
 | `offset` | integer | no | at least 0 | Rows to skip: the next value of the previous page. |
+| `q` | string | no |  | Keep links whose label or maker contains this, in any case. |
+| `sort` | string | no | one of `label`, `used`, `expires_at` | Field to sort the whole list by. Rows without it go last. |
 
 ### admin_revoke_invite_link
 
@@ -4137,7 +4238,7 @@ Stop an invite link from letting anyone else join or sign in through it. Account
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
-| `link_id` | string | yes |  | The id from admin_list_invite_links. |
+| `link_id` | string | yes |  | The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP). |
 
 ### HTTP only
 

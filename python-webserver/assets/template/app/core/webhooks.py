@@ -198,8 +198,9 @@ def _attempt(cfg: Config, hook: models.Webhook | None, delivery: models.Delivery
 
 class Dispatcher:
     """The outbox's two ends. emit is synchronous and writes to the database,
-    so a handler reaches it through await run(...) (helpers.emit), like any
-    other model call. It works from any thread."""
+    so a handler calls it from its worker thread (a plain-function @route
+    handler runs in one), or through await run(...), like any other model
+    call. It works from any thread."""
 
     def __init__(self, store: Store, settings: Holder) -> None:
         self.store = store

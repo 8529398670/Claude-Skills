@@ -11,7 +11,7 @@ import (
 	models "{{MODULE_PATH}}/server/models"
 )
 
-func TestPageBodyCutsAndPointsAtTheNextPage( t *testing.T ) {
+func TestCutPageCutsAndPointsAtTheNextPage( t *testing.T ) {
 	rows := []int{ 1 , 2 , 3 , 4 , 5 }
 	cases := []struct {
 		limit , offset int
@@ -25,12 +25,14 @@ func TestPageBodyCutsAndPointsAtTheNextPage( t *testing.T ) {
 		{ 2 , 99 , 0 , nil },
 	}
 	for _ , item := range cases {
-		body := pageBody( "rows" , rows , item.limit , item.offset )
-		if got := len( body[ "rows" ].( []int ) ); got != item.count {
-			t.Fatalf( "limit %d offset %d: %d rows" , item.limit , item.offset , got )
+		cut , paged := cutPage( rows , Page{ Limit: item.limit , Offset: item.offset } )
+		var next any
+		if paged.Next != nil { next = *paged.Next }
+		if len( cut ) != item.count {
+			t.Fatalf( "limit %d offset %d: %d rows" , item.limit , item.offset , len( cut ) )
 		}
-		if body[ "next" ] != item.next || body[ "total" ] != 5 {
-			t.Fatalf( "limit %d offset %d: %v" , item.limit , item.offset , body )
+		if next != item.next || paged.Total != 5 {
+			t.Fatalf( "limit %d offset %d: %v %v" , item.limit , item.offset , next , paged.Total )
 		}
 	}
 }

@@ -93,9 +93,9 @@ class EditInviteLinkTest(RoutesTestCase):
     def test_a_key_that_reopens_or_grows_a_link_owns_it(self) -> None:
         credential, key = api_keys.issue_api_key(self.store, self.owner.id, "script", users.ROLE_ADMIN, 3600)
         invite_links.revoke_invite_link(self.store, self.link.id)
-        for route in ("/rename", "/limits", "/switch-on"):
+        for route, body in (("/rename", {"label": "x"}), ("/limits", {"max_uses": 999}), ("/switch-on", {})):
             with self.subTest(route):
-                status, reply = self.call("POST", self.base + route, key=credential, body={"label": "x", "max_uses": 999})
+                status, reply = self.call("POST", self.base + route, key=credential, body=body)
                 self.assertEqual(status, 200, reply)
         stored = self.stored()
         self.assertIsNone(stored.revoked_at)

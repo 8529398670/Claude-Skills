@@ -7,8 +7,8 @@ with every part into a temporary folder, writes its API reference the way its
 scripts/api_docs.sh does, and copies the three files back with the project's
 name put back as {{PROJECT_NAME}}.
 
-Run it after changing a route's docs (app/routes/*_api.py), an MCP tool, or
-app/apidocs. webserver-upgrade/scripts/check_features.py fails while the
+Run it after changing a route's declaration (@route on its handler), an MCP
+tool, or app/apidocs. webserver-upgrade/scripts/check_features.py fails while the
 template's copies are out of date. The go-webserver skill has the same script,
 and the two templates' files are identical.
 

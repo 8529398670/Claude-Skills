@@ -6,10 +6,15 @@ from __future__ import annotations
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.apidocs import ADMIN, KEY_ONLY, route
 from app.core.metrics import CONTENT_TYPE
 from app.routes.helpers import run
 
 
+@route(
+    summary="Prometheus metrics", tag="Monitoring", access=KEY_ONLY, role=ADMIN, feature="metrics",
+    mcp_http="Scraped by Prometheus over HTTP.", reply_type="text/plain", errors=(401, 403, 404),
+)
 async def get_metrics(request: Request) -> Response:
     state = request.app.state
     records = await run(state.jobs.records)

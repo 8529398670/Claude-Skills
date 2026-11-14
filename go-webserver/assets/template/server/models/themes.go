@@ -33,38 +33,45 @@ const (
 	metaThemeDefaultsKey = "theme_defaults"
 )
 
+// Theme is one of them, as stored and as the API carries it (the Theme schema
+// in config/openapi.json; see server/apidoc for the tags).
 type Theme struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Mode       string            `json:"mode"`
-	Accent     string            `json:"accent"`
-	Second     string            `json:"second"`
-	Background string            `json:"background,omitempty"`
-	Surface    string            `json:"surface,omitempty"`
-	Overrides  map[string]string `json:"overrides,omitempty"`
-	Button     *ThemeButton      `json:"button,omitempty"`
+	ID         string            `json:"id" jsonschema_description:"Lower-case letters, digits, - and _, up to 32."`
+	Name       string            `json:"name" jsonschema_description:"1 to 60 characters."`
+	Mode       string            `json:"mode" jsonschema:"enum=light,enum=dark"`
+	Accent     string            `json:"accent" jsonschema_description:"The main color: what you can press."`
+	Second     string            `json:"second" jsonschema_description:"Says where you are: active nav item, headings, info."`
+	Background string            `json:"background,omitempty" jsonschema_description:"The page. Left out: the mode's own."`
+	Surface    string            `json:"surface,omitempty" jsonschema_description:"Cards. Left out: the mode's own."`
+	Overrides  map[string]string `json:"overrides,omitempty" jsonschema_description:"Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."`
+	Button     *ThemeButton      `json:"button,omitempty" jsonschema_description:"How the theme's buttons look. A choice left out is the default (rounded, normal, raised, normal)."`
 	// The colors kept for the mode not in use (Theme.setMode in theme.js): a
 	// light theme's Dark, a dark theme's Light. Switching mode swaps them in.
-	Light *ThemeColors `json:"light,omitempty"`
-	Dark  *ThemeColors `json:"dark,omitempty"`
+	Light *ThemeColors `json:"light,omitempty" jsonschema_description:"A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in."`
+	Dark  *ThemeColors `json:"dark,omitempty" jsonschema_description:"A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped."`
 }
+
+// APIName and APIDoc name it in the API docs (see server/apidoc).
+func ( Theme ) APIName() ( name string ) { name = "Theme"; return }
+
+func ( Theme ) APIDoc() ( text string ) { text = "A color scheme on the Appearance screen. Colors are #rrggbb. Anything not given is worked out by static/js/theme.js at readable contrast."; return }
 
 // ThemeColors is one mode's colors, kept on a theme while the other is in use.
 type ThemeColors struct {
-	Accent     string            `json:"accent"`
-	Second     string            `json:"second"`
-	Background string            `json:"background,omitempty"`
-	Surface    string            `json:"surface,omitempty"`
-	Overrides  map[string]string `json:"overrides,omitempty"`
+	Accent     string            `json:"accent" jsonschema_description:"The main color: what you can press."`
+	Second     string            `json:"second" jsonschema_description:"Says where you are: active nav item, headings, info."`
+	Background string            `json:"background,omitempty" jsonschema_description:"The page. Left out: the mode's own."`
+	Surface    string            `json:"surface,omitempty" jsonschema_description:"Cards. Left out: the mode's own."`
+	Overrides  map[string]string `json:"overrides,omitempty" jsonschema_description:"Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."`
 }
 
 // ThemeButton is how a theme's buttons look; each choice is one of
 // ThemeButtonChoices, and an empty one is the default (Bootstrap's own).
 type ThemeButton struct {
-	Shape  string `json:"shape,omitempty"`
-	Weight string `json:"weight,omitempty"`
-	Depth  string `json:"depth,omitempty"`
-	Case   string `json:"case,omitempty"`
+	Shape  string `json:"shape,omitempty" jsonschema:"enum=square,enum=soft,enum=rounded,enum=pill"`
+	Weight string `json:"weight,omitempty" jsonschema:"enum=normal,enum=medium,enum=bold"`
+	Depth  string `json:"depth,omitempty" jsonschema:"enum=flat,enum=raised,enum=glossy"`
+	Case   string `json:"case,omitempty" jsonschema:"enum=normal,enum=upper"`
 }
 
 var (

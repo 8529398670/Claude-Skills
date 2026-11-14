@@ -69,6 +69,7 @@
         "additionalProperties": false,
         "properties": {
           "limit": {
+            "default": 200,
             "description": "Rows to return. Default 200.",
             "maximum": 1000,
             "minimum": 1,
@@ -98,7 +99,16 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "dir": {
+            "description": "Default asc.",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "type": "string"
+          },
           "limit": {
+            "default": 200,
             "description": "Rows to return. Default 200.",
             "maximum": 1000,
             "minimum": 1,
@@ -108,6 +118,20 @@
             "description": "Rows to skip: the next value of the previous page.",
             "minimum": 0,
             "type": "integer"
+          },
+          "q": {
+            "description": "Keep accounts whose name or username contains this, in any case.",
+            "type": "string"
+          },
+          "sort": {
+            "description": "Field to sort the whole list by. Rows without it go last.",
+            "enum": [
+              "display_name",
+              "role",
+              "disabled",
+              "created_at"
+            ],
+            "type": "string"
           }
         },
         "type": "object"
@@ -132,14 +156,14 @@
             "type": "boolean"
           },
           "user_id": {
-            "description": "The account's id, from list_team or admin_list_users.",
+            "description": "The account's id, from GET /api/admin/users (admin_list_users over MCP).",
             "minimum": 1,
             "type": "integer"
           }
         },
         "required": [
-          "user_id",
-          "disabled"
+          "disabled",
+          "user_id"
         ],
         "type": "object"
       },
@@ -160,7 +184,7 @@
         "additionalProperties": false,
         "properties": {
           "user_id": {
-            "description": "The account's id, from list_team or admin_list_users.",
+            "description": "The account's id, from GET /api/admin/users (admin_list_users over MCP).",
             "minimum": 1,
             "type": "integer"
           }
@@ -187,11 +211,15 @@
         "additionalProperties": false,
         "properties": {
           "display_name": {
+            "maxLength": 80,
+            "minLength": 1,
             "type": "string"
           },
           "expect": {
-            "description": "The current name, from whoami. Optional.",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -219,6 +247,7 @@
             "additionalProperties": {
               "type": "string"
             },
+            "description": "Action name to binding, such as \"search\": \"Mod+K\". Mod is Cmd on a Mac and Ctrl elsewhere. Only changed shortcuts are listed; an empty binding switches that key off. Replaces the whole set; {} puts every key back to its default.",
             "type": "object"
           }
         },
@@ -244,21 +273,197 @@
         "additionalProperties": false,
         "properties": {
           "theme_id": {
+            "description": "The theme you use.",
             "type": "string"
           },
           "themes": {
-            "items": {
-              "type": "object"
-            },
-            "type": [
-              "array",
-              "null"
+            "description": "Your whole list, 1 to 40 themes. null goes back to following the app's defaults.",
+            "oneOf": [
+              {
+                "items": {
+                  "description": "A color scheme on the Appearance screen. Colors are #rrggbb. Anything not given is worked out by static/js/theme.js at readable contrast.",
+                  "properties": {
+                    "accent": {
+                      "description": "The main color: what you can press.",
+                      "type": "string"
+                    },
+                    "background": {
+                      "description": "The page. Left out: the mode's own.",
+                      "type": "string"
+                    },
+                    "button": {
+                      "description": "How the theme's buttons look. A choice left out is the default (rounded, normal, raised, normal).",
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "case": {
+                              "enum": [
+                                "normal",
+                                "upper"
+                              ],
+                              "type": "string"
+                            },
+                            "depth": {
+                              "enum": [
+                                "flat",
+                                "raised",
+                                "glossy"
+                              ],
+                              "type": "string"
+                            },
+                            "shape": {
+                              "enum": [
+                                "square",
+                                "soft",
+                                "rounded",
+                                "pill"
+                              ],
+                              "type": "string"
+                            },
+                            "weight": {
+                              "enum": [
+                                "normal",
+                                "medium",
+                                "bold"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "dark": {
+                      "description": "A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped.",
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "accent": {
+                              "description": "The main color: what you can press.",
+                              "type": "string"
+                            },
+                            "background": {
+                              "description": "The page. Left out: the mode's own.",
+                              "type": "string"
+                            },
+                            "overrides": {
+                              "additionalProperties": {
+                                "type": "string"
+                              },
+                              "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                              "type": "object"
+                            },
+                            "second": {
+                              "description": "Says where you are: active nav item, headings, info.",
+                              "type": "string"
+                            },
+                            "surface": {
+                              "description": "Cards. Left out: the mode's own.",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "accent",
+                            "second"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "description": "Lower-case letters, digits, - and _, up to 32.",
+                      "type": "string"
+                    },
+                    "light": {
+                      "description": "A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in.",
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "accent": {
+                              "description": "The main color: what you can press.",
+                              "type": "string"
+                            },
+                            "background": {
+                              "description": "The page. Left out: the mode's own.",
+                              "type": "string"
+                            },
+                            "overrides": {
+                              "additionalProperties": {
+                                "type": "string"
+                              },
+                              "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                              "type": "object"
+                            },
+                            "second": {
+                              "description": "Says where you are: active nav item, headings, info.",
+                              "type": "string"
+                            },
+                            "surface": {
+                              "description": "Cards. Left out: the mode's own.",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "accent",
+                            "second"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "mode": {
+                      "enum": [
+                        "light",
+                        "dark"
+                      ],
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "1 to 60 characters.",
+                      "type": "string"
+                    },
+                    "overrides": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                      "type": "object"
+                    },
+                    "second": {
+                      "description": "Says where you are: active nav item, headings, info.",
+                      "type": "string"
+                    },
+                    "surface": {
+                      "description": "Cards. Left out: the mode's own.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "accent",
+                    "id",
+                    "mode",
+                    "name",
+                    "second"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
             ]
           }
         },
-        "required": [
-          "themes"
-        ],
         "type": "object"
       },
       "name": "set_themes",
@@ -278,6 +483,7 @@
         "additionalProperties": false,
         "properties": {
           "theme_id": {
+            "description": "A theme's id. Empty for the first in the list.",
             "type": "string"
           }
         },
@@ -321,18 +527,193 @@
         "additionalProperties": false,
         "properties": {
           "themes": {
-            "items": {
-              "type": "object"
-            },
-            "type": [
-              "array",
-              "null"
+            "description": "1 to 40 themes. null goes back to the built-in ones.",
+            "oneOf": [
+              {
+                "items": {
+                  "description": "A color scheme on the Appearance screen. Colors are #rrggbb. Anything not given is worked out by static/js/theme.js at readable contrast.",
+                  "properties": {
+                    "accent": {
+                      "description": "The main color: what you can press.",
+                      "type": "string"
+                    },
+                    "background": {
+                      "description": "The page. Left out: the mode's own.",
+                      "type": "string"
+                    },
+                    "button": {
+                      "description": "How the theme's buttons look. A choice left out is the default (rounded, normal, raised, normal).",
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "case": {
+                              "enum": [
+                                "normal",
+                                "upper"
+                              ],
+                              "type": "string"
+                            },
+                            "depth": {
+                              "enum": [
+                                "flat",
+                                "raised",
+                                "glossy"
+                              ],
+                              "type": "string"
+                            },
+                            "shape": {
+                              "enum": [
+                                "square",
+                                "soft",
+                                "rounded",
+                                "pill"
+                              ],
+                              "type": "string"
+                            },
+                            "weight": {
+                              "enum": [
+                                "normal",
+                                "medium",
+                                "bold"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "dark": {
+                      "description": "A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped.",
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "accent": {
+                              "description": "The main color: what you can press.",
+                              "type": "string"
+                            },
+                            "background": {
+                              "description": "The page. Left out: the mode's own.",
+                              "type": "string"
+                            },
+                            "overrides": {
+                              "additionalProperties": {
+                                "type": "string"
+                              },
+                              "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                              "type": "object"
+                            },
+                            "second": {
+                              "description": "Says where you are: active nav item, headings, info.",
+                              "type": "string"
+                            },
+                            "surface": {
+                              "description": "Cards. Left out: the mode's own.",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "accent",
+                            "second"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "description": "Lower-case letters, digits, - and _, up to 32.",
+                      "type": "string"
+                    },
+                    "light": {
+                      "description": "A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in.",
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "accent": {
+                              "description": "The main color: what you can press.",
+                              "type": "string"
+                            },
+                            "background": {
+                              "description": "The page. Left out: the mode's own.",
+                              "type": "string"
+                            },
+                            "overrides": {
+                              "additionalProperties": {
+                                "type": "string"
+                              },
+                              "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                              "type": "object"
+                            },
+                            "second": {
+                              "description": "Says where you are: active nav item, headings, info.",
+                              "type": "string"
+                            },
+                            "surface": {
+                              "description": "Cards. Left out: the mode's own.",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "accent",
+                            "second"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "mode": {
+                      "enum": [
+                        "light",
+                        "dark"
+                      ],
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "1 to 60 characters.",
+                      "type": "string"
+                    },
+                    "overrides": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                      "type": "object"
+                    },
+                    "second": {
+                      "description": "Says where you are: active nav item, headings, info.",
+                      "type": "string"
+                    },
+                    "surface": {
+                      "description": "Cards. Left out: the mode's own.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "accent",
+                    "id",
+                    "mode",
+                    "name",
+                    "second"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
             ]
           }
         },
-        "required": [
-          "themes"
-        ],
         "type": "object"
       },
       "name": "admin_set_theme_defaults",
@@ -352,14 +733,22 @@
         "additionalProperties": false,
         "properties": {
           "expires_in_minutes": {
-            "description": "How long the link works. Leave it out for the configured default; 0 never expires.",
+            "description": "0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise.",
+            "maximum": 525600,
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "max_uses": {
-            "description": "How many sign-ins the link allows. Leave it out for once; 0 is unlimited until it expires.",
+            "description": "Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1.",
+            "maximum": 1000,
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "type": "object"
@@ -399,18 +788,27 @@
         "additionalProperties": false,
         "properties": {
           "display_name": {
-            "description": "1-80 characters.",
+            "maxLength": 80,
+            "minLength": 1,
             "type": "string"
           },
           "expires_in_minutes": {
-            "description": "How long the link works. Leave it out for the configured default; 0 never expires.",
+            "description": "0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise.",
+            "maximum": 525600,
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "max_uses": {
-            "description": "How many sign-ins the link allows. Leave it out for once; 0 is unlimited until it expires.",
+            "description": "Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1.",
+            "maximum": 1000,
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "role": {
             "enum": [
@@ -443,17 +841,25 @@
         "additionalProperties": false,
         "properties": {
           "expires_in_minutes": {
-            "description": "How long the link works. Leave it out for the configured default; 0 never expires.",
+            "description": "0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise.",
+            "maximum": 525600,
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "max_uses": {
-            "description": "How many sign-ins the link allows. Leave it out for once; 0 is unlimited until it expires.",
+            "description": "Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1.",
+            "maximum": 1000,
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "user_id": {
-            "description": "The account's id, from list_team or admin_list_users.",
+            "description": "The account's id, from GET /api/admin/users (admin_list_users over MCP).",
             "minimum": 1,
             "type": "integer"
           }
@@ -480,7 +886,7 @@
         "additionalProperties": false,
         "properties": {
           "user_id": {
-            "description": "The account's id, from list_team or admin_list_users.",
+            "description": "The account's id, from GET /api/admin/users (admin_list_users over MCP).",
             "minimum": 1,
             "type": "integer"
           }
@@ -507,21 +913,27 @@
         "additionalProperties": false,
         "properties": {
           "display_name": {
+            "description": "1-80 characters.",
+            "maxLength": 80,
+            "minLength": 1,
             "type": "string"
           },
           "expect": {
-            "description": "The current name, from admin_list_users. Optional.",
-            "type": "string"
+            "description": "The name you think they have. Answers 409 if it is another.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "user_id": {
-            "description": "The account's id, from list_team or admin_list_users.",
+            "description": "The account's id, from GET /api/admin/users (admin_list_users over MCP).",
             "minimum": 1,
             "type": "integer"
           }
         },
         "required": [
-          "user_id",
-          "display_name"
+          "display_name",
+          "user_id"
         ],
         "type": "object"
       },
@@ -549,14 +961,14 @@
             "type": "string"
           },
           "user_id": {
-            "description": "The account's id, from list_team or admin_list_users.",
+            "description": "The account's id, from GET /api/admin/users (admin_list_users over MCP).",
             "minimum": 1,
             "type": "integer"
           }
         },
         "required": [
-          "user_id",
-          "role"
+          "role",
+          "user_id"
         ],
         "type": "object"
       },
@@ -577,7 +989,7 @@
         "additionalProperties": false,
         "properties": {
           "user_id": {
-            "description": "The account's id, from list_team or admin_list_users.",
+            "description": "The account's id, from GET /api/admin/users (admin_list_users over MCP).",
             "minimum": 1,
             "type": "integer"
           }
@@ -604,7 +1016,7 @@
         "additionalProperties": false,
         "properties": {
           "user_id": {
-            "description": "The account's id, from list_team or admin_list_users.",
+            "description": "The account's id, from GET /api/admin/users (admin_list_users over MCP).",
             "minimum": 1,
             "type": "integer"
           }
@@ -631,6 +1043,7 @@
         "additionalProperties": false,
         "properties": {
           "limit": {
+            "default": 200,
             "description": "Rows to return. Default 200.",
             "maximum": 1000,
             "minimum": 1,
@@ -661,19 +1074,25 @@
         "additionalProperties": false,
         "properties": {
           "expect": {
-            "type": "string"
+            "description": "The name you think it has. Answers 409 if it has another.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "label": {
+            "description": "At most 80 characters.",
+            "maxLength": 80,
             "type": "string"
           },
           "session_id": {
-            "description": "The device's id, from list_my_sessions or admin_list_user_sessions.",
+            "description": "The device's id, from GET /api/account/sessions or GET /api/admin/users/{user_id}/sessions (list_my_sessions or admin_list_user_sessions over MCP).",
             "type": "string"
           }
         },
         "required": [
-          "session_id",
-          "label"
+          "label",
+          "session_id"
         ],
         "type": "object"
       },
@@ -694,7 +1113,7 @@
         "additionalProperties": false,
         "properties": {
           "session_id": {
-            "description": "The device's id, from list_my_sessions or admin_list_user_sessions.",
+            "description": "The device's id, from GET /api/account/sessions or GET /api/admin/users/{user_id}/sessions (list_my_sessions or admin_list_user_sessions over MCP).",
             "type": "string"
           }
         },
@@ -737,8 +1156,20 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "limit": {
+            "default": 200,
+            "description": "Rows to return. Default 200.",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Rows to skip: the next value of the previous page.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "user_id": {
-            "description": "The account's id, from list_team or admin_list_users.",
+            "description": "The account's id, from GET /api/admin/users (admin_list_users over MCP).",
             "minimum": 1,
             "type": "integer"
           }
@@ -765,18 +1196,18 @@
         "additionalProperties": false,
         "properties": {
           "session_id": {
-            "description": "The device's id, from list_my_sessions or admin_list_user_sessions.",
+            "description": "The device's id, from GET /api/account/sessions or GET /api/admin/users/{user_id}/sessions (list_my_sessions or admin_list_user_sessions over MCP).",
             "type": "string"
           },
           "user_id": {
-            "description": "The account's id, from list_team or admin_list_users.",
+            "description": "The account's id, from GET /api/admin/users (admin_list_users over MCP).",
             "minimum": 1,
             "type": "integer"
           }
         },
         "required": [
-          "user_id",
-          "session_id"
+          "session_id",
+          "user_id"
         ],
         "type": "object"
       },
@@ -802,7 +1233,8 @@
             "type": "integer"
           },
           "label": {
-            "description": "1-80 characters; people see it on the join page.",
+            "maxLength": 80,
+            "minLength": 1,
             "type": "string"
           },
           "max_uses": {
@@ -812,9 +1244,9 @@
           }
         },
         "required": [
+          "days",
           "label",
-          "max_uses",
-          "days"
+          "max_uses"
         ],
         "type": "object"
       },
@@ -835,19 +1267,26 @@
         "additionalProperties": false,
         "properties": {
           "expect": {
-            "type": "string"
+            "description": "The label you think it has. Answers 409 if it has another.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "label": {
+            "description": "1-80 characters.",
+            "maxLength": 80,
+            "minLength": 1,
             "type": "string"
           },
           "link_id": {
-            "description": "The id from admin_list_invite_links.",
+            "description": "The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP).",
             "type": "string"
           }
         },
         "required": [
-          "link_id",
-          "label"
+          "label",
+          "link_id"
         ],
         "type": "object"
       },
@@ -868,16 +1307,20 @@
         "additionalProperties": false,
         "properties": {
           "days": {
-            "description": "Leave it out to keep the expiry.",
+            "description": "Counted from now. Leave out to keep the expiry.",
             "maximum": 365,
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "link_id": {
-            "description": "The id from admin_list_invite_links.",
+            "description": "The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP).",
             "type": "string"
           },
           "max_uses": {
+            "description": "Not fewer than have joined.",
             "maximum": 1000,
             "minimum": 1,
             "type": "integer"
@@ -906,7 +1349,7 @@
         "additionalProperties": false,
         "properties": {
           "link_id": {
-            "description": "The id from admin_list_invite_links.",
+            "description": "The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP).",
             "type": "string"
           }
         },
@@ -932,7 +1375,7 @@
         "additionalProperties": false,
         "properties": {
           "link_id": {
-            "description": "The id from admin_list_invite_links.",
+            "description": "The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP).",
             "type": "string"
           }
         },
@@ -958,7 +1401,7 @@
         "additionalProperties": false,
         "properties": {
           "link_id": {
-            "description": "The id from admin_list_invite_links.",
+            "description": "The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP).",
             "type": "string"
           }
         },
@@ -983,7 +1426,16 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "dir": {
+            "description": "Default asc.",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "type": "string"
+          },
           "limit": {
+            "default": 200,
             "description": "Rows to return. Default 200.",
             "maximum": 1000,
             "minimum": 1,
@@ -993,6 +1445,19 @@
             "description": "Rows to skip: the next value of the previous page.",
             "minimum": 0,
             "type": "integer"
+          },
+          "q": {
+            "description": "Keep files whose name contains this, in any case.",
+            "type": "string"
+          },
+          "sort": {
+            "description": "Field to sort the whole list by. Rows without it go last.",
+            "enum": [
+              "name",
+              "size",
+              "created_at"
+            ],
+            "type": "string"
           }
         },
         "type": "object"
@@ -1014,7 +1479,7 @@
         "additionalProperties": false,
         "properties": {
           "file_id": {
-            "description": "The file's id, from files_list or files_start_upload.",
+            "description": "The file's id, from GET /api/files (files_list over MCP).",
             "type": "string"
           }
         },
@@ -1040,16 +1505,14 @@
         "additionalProperties": false,
         "properties": {
           "name": {
-            "description": "The file's name, as it should be shown.",
             "type": "string"
           },
           "size": {
-            "description": "Exact size in bytes.",
-            "minimum": 1,
+            "minimum": 0,
             "type": "integer"
           },
           "type": {
-            "description": "Its media type, such as application/pdf. Optional.",
+            "description": "Shown in the list. Downloads are always application/octet-stream.",
             "type": "string"
           }
         },
@@ -1076,7 +1539,7 @@
         "additionalProperties": false,
         "properties": {
           "file_id": {
-            "description": "The file's id, from files_list or files_start_upload.",
+            "description": "The file's id, from GET /api/files (files_list over MCP).",
             "type": "string"
           }
         },
@@ -1102,7 +1565,7 @@
         "additionalProperties": false,
         "properties": {
           "file_id": {
-            "description": "The file's id, from files_list or files_start_upload.",
+            "description": "The file's id, from GET /api/files (files_list over MCP).",
             "type": "string"
           }
         },
@@ -1128,13 +1591,18 @@
         "additionalProperties": false,
         "properties": {
           "expect": {
-            "type": "string"
+            "description": "The name you think it has. Answers 409 if it has another.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "file_id": {
-            "description": "The file's id, from files_list or files_start_upload.",
+            "description": "The file's id, from GET /api/files (files_list over MCP).",
             "type": "string"
           },
           "name": {
+            "description": "Cleaned like an upload's name. 1-255 bytes.",
             "type": "string"
           }
         },
@@ -1161,7 +1629,7 @@
         "additionalProperties": false,
         "properties": {
           "file_id": {
-            "description": "The file's id, from files_list or files_start_upload.",
+            "description": "The file's id, from GET /api/files (files_list over MCP).",
             "type": "string"
           }
         },
@@ -1187,7 +1655,7 @@
         "additionalProperties": false,
         "properties": {
           "file_id": {
-            "description": "The file's id, from files_list or files_start_upload.",
+            "description": "The file's id, from GET /api/files (files_list over MCP).",
             "type": "string"
           }
         },
@@ -1230,7 +1698,16 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "dir": {
+            "description": "Default asc.",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "type": "string"
+          },
           "limit": {
+            "default": 200,
             "description": "Rows to return. Default 200.",
             "maximum": 1000,
             "minimum": 1,
@@ -1240,6 +1717,20 @@
             "description": "Rows to skip: the next value of the previous page.",
             "minimum": 0,
             "type": "integer"
+          },
+          "q": {
+            "description": "Keep files whose name or owner contains this, in any case.",
+            "type": "string"
+          },
+          "sort": {
+            "description": "Field to sort the whole list by. Rows without it go last.",
+            "enum": [
+              "name",
+              "user_name",
+              "size",
+              "created_at"
+            ],
+            "type": "string"
           }
         },
         "type": "object"
@@ -1278,7 +1769,16 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "dir": {
+            "description": "Default asc.",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "type": "string"
+          },
           "limit": {
+            "default": 200,
             "description": "Rows to return. Default 200.",
             "maximum": 1000,
             "minimum": 1,
@@ -1288,6 +1788,19 @@
             "description": "Rows to skip: the next value of the previous page.",
             "minimum": 0,
             "type": "integer"
+          },
+          "q": {
+            "description": "Keep links whose label or maker contains this, in any case.",
+            "type": "string"
+          },
+          "sort": {
+            "description": "Field to sort the whole list by. Rows without it go last.",
+            "enum": [
+              "label",
+              "used",
+              "expires_at"
+            ],
+            "type": "string"
           }
         },
         "type": "object"
@@ -1309,7 +1822,7 @@
         "additionalProperties": false,
         "properties": {
           "link_id": {
-            "description": "The id from admin_list_invite_links.",
+            "description": "The link's id, from GET /api/admin/invite-links (admin_list_invite_links over MCP).",
             "type": "string"
           }
         },

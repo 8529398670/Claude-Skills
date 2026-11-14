@@ -8,20 +8,30 @@ than about who you can hand work to.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import ClassVar
 
 from starlette.requests import Request
-from starlette.responses import Response
 
-from app.core.db import Store
+from app.apidocs import Reply, route
 from app.models import users
-from app.routes.helpers import get_store, run, send_page
+from app.routes.helpers import Page, Paged, cut_page, get_store
 
 
-async def list_team(request: Request) -> Response:
-    return send_page(request, "members", await run(team_rows, get_store(request)))
+class Member(Reply):
+    """Someone with an active account, as anyone signed in may see them."""
+
+    api_name: ClassVar[str] = "Member"
+    id: int
+    display_name: str
 
 
-def team_rows(store: Store) -> list[dict[str, Any]]:
-    """Shared with the MCP list_team tool."""
-    return [{"id": user.id, "display_name": user.display_name} for user in users.list_users(store) if not user.disabled]
+class ListTeamReply(Paged):
+    members: list[Member]
+
+
+@route(summary="Everyone's names", tag="Account", errors=(400, 401))
+def list_team(request: Request, body: Page) -> ListTeamReply:
+    """Over HTTP and as the MCP list_team tool."""
+    rows = [Member(id=user.id, display_name=user.display_name) for user in users.list_users(get_store(request)) if not user.disabled]
+    page = cut_page(rows, body)
+    return ListTeamReply(members=page.pop("rows"), **page)

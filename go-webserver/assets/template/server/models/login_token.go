@@ -84,20 +84,25 @@ func OnceLink( ttl time.Duration ) ( options LoginLinkOptions ) {
 // configured defaults fill the gaps. MaxUses: nil means once, 0 unlimited.
 // ExpiresInMinutes: nil means the configured default, 0 never.
 type LoginLinkRequest struct {
-	MaxUses          *int `json:"max_uses,omitempty"`
-	ExpiresInMinutes *int `json:"expires_in_minutes,omitempty"`
+	MaxUses          *int `json:"max_uses,omitempty" jsonschema:"minimum=0,maximum=1000" jsonschema_description:"Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1." error:"max_uses must be 0 (unlimited) or 1-1000, expires_in_minutes 0 (never) or 1-525600"`
+	ExpiresInMinutes *int `json:"expires_in_minutes,omitempty" jsonschema:"minimum=0,maximum=525600" jsonschema_description:"0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise." error:"max_uses must be 0 (unlimited) or 1-1000, expires_in_minutes 0 (never) or 1-525600"`
 }
 
 // LoginLinkInfo is a link as the UI shows it. ExpiresAt is nil when it
 // never expires.
 type LoginLinkInfo struct {
-	MaxUses    int        `json:"max_uses"`
+	MaxUses    int        `json:"max_uses" jsonschema_description:"Sign-ins it allows. 0 when unlimited."`
 	Unlimited  bool       `json:"unlimited"`
-	Uses       int        `json:"uses"`
+	Uses       int        `json:"uses" jsonschema_description:"Sign-ins so far."`
 	CreatedAt  time.Time  `json:"created_at"`
-	ExpiresAt  *time.Time `json:"expires_at"`
+	ExpiresAt  *time.Time `json:"expires_at" jsonschema_description:"null when it never expires."`
 	LastUsedAt *time.Time `json:"last_used_at"`
 }
+
+// APIName and APIDoc name it in the API docs (see server/apidoc).
+func ( LoginLinkInfo ) APIName() ( name string ) { name = "LoginLink"; return }
+
+func ( LoginLinkInfo ) APIDoc() ( text string ) { text = "A login link that can still be used. One per account at most."; return }
 
 func ( token *LoginToken ) maxUses() ( result int ) {
 	result = token.MaxUses

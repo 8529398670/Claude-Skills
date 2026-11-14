@@ -625,7 +625,7 @@ It is the API keys in another shape, not a new way in:
   Accounts, login links, devices and invite links have tools
   (`server/routes/mcp_tools_accounts.go`).
   Everything else a key may call has a tool naming its route, or an
-  `MCPHTTP` reason in its `apidoc.Doc` for staying HTTP only (logout,
+  `MCPHTTP` reason in its `apidoc.Op` for staying HTTP only (logout,
   the references themselves, `/metrics`, the browser's own activity reports,
   and file bytes). `server/routes/mcp_parity_test.go` holds the two lists together, and calls every route
   with an admin key to check the docs' `security` against the guards.
@@ -955,10 +955,11 @@ screen is not showing, as `logs.js` does.
 Every list route takes `?limit=` (default 200, at most 1000) and `?offset=`, and
 answers `{"users": [...], "next": 200, "total": 431}`. The rows sit under a name
 of their own, `next` is the offset of the following page or `null` on the last
-one, and `total` counts every row. A bad value is a 400. The MCP list tools take
-the same two arguments and answer the same shape. Use `sendPage( c , "users" , rows )` and `toolPage` in
-`server/routes/pagination.go` for a new list, so
-it pages the same way.
+one, and `total` counts every row. A bad value is a 400. The MCP list tools are
+the routes themselves, so they take the same arguments and answer the same shape.
+For a new list, put `Page` in its request type (and `Direction` last, after its
+own `sort` enum), embed `Paged` in its reply, and fill it with `cutPage` or
+`sortedPage` from `server/routes/pagination.go`, so it pages the same way.
 
 **It is an offset, not a cursor.** Most lists sort on a field that is encrypted
 at rest, so each page reads the whole list anyway and a cursor would save
@@ -1040,13 +1041,43 @@ again as tables a person reads. Nobody edits them by hand. `GET /api/openapi.jso
 serves the spec to any signed-in caller, session or key: it maps the admin
 surface, and nobody who cannot sign in has a use for it.
 
-**Where the docs live.** Every route's handler declares its docs once, in
-`server/routes/<area>_api.go` next to the handler's own file: `apidoc.Doc( (*Handlers).CreateMyLoginLink , apidoc.Op{ ... } )` with a summary, a tag, who may
-call it, and Go struct types for its body and reply. Struct tags carry the details: `json` names a field and `omitempty` makes it optional, then `doc`, `enum`, `format`, `minimum`/`maximum`, `minLength`/`maxLength`, `default`, `example` and `nullable`. A pointer may be null; a type with an `APIName` method is a named schema, one with `APIOneOf` is a union, one with `APIDoc` has a description, and embedding a named type makes allOf. `server/apidoc/schema.go` has the full list.
+**Where the docs live.** Nowhere of their own: every route is declared once, as a
+typed handler beside its code (`server/apidoc/route.go`):
+
+```go
+type createUserRequest struct {
+	DisplayName string `json:"display_name" jsonschema:"minLength=1,maxLength=80" error:"display name must be 1-80 characters"`
+	Role        string `json:"role" jsonschema:"enum=admin,enum=user" error:"role must be admin or user"`
+	models.LoginLinkRequest
+}
+
+func ( handlers *Handlers ) CreateUser() *apidoc.Endpoint[ createUserRequest , createUserReply ] {
+	return apidoc.Handle( apidoc.Op{ Summary: "Create an account and its login link" , Tag: "Admin" , Role: apidoc.Admin , Status: 201 , Errors: []int{ 400 , 401 , 403 } },
+		func( c fiber.Ctx , in *createUserRequest ) ( reply *createUserReply , err error ) { ... } )
+}
+```
+
+mounted with `apidoc.Post( admin , "/users" , handlers.CreateUser )`. The request type is the
+whole of what the route takes: a field tagged `path:"name"` or `query:"name"` comes from the URL,
+the rest from the JSON body. The reply type is what it answers. github.com/invopop/jsonschema
+turns both into JSON Schema and `server/apidoc/reflect.go` puts that in the docs' shape: `json`
+names a field and `omitempty` makes it optional, a pointer may be null, and the `jsonschema` tag
+carries `minLength`/`maxLength`, `minimum`/`maximum`, `enum`, `pattern`, `format`, `default`
+and `example`, with `jsonschema_description` for the description. A type with an `APIName`
+method is a named schema, one with `APIOneOf` a union, one with `APIDoc` has a description.
+
+**The same types check every request,** before the handler runs and in this order: the body is
+a JSON object ("malformed request body"), a browser session's POST carries its csrf_token (403),
+a URL value reads as its type, no field is unknown (400 "unknown field: x"), then each field in
+declaration order: present if required, the right JSON type ("malformed request body"), within its
+limits. A missing field or a broken limit answers the field's `error` tag ("x is required" / "x
+is invalid" / "x must be one of: ..." without one). The handler gets the checked value and returns
+the reply, or a refusal. The MCP tool for the route (`mcp.ForRoute`) takes the same type as its
+arguments, URL fields included, so its input schema and its checks are the route's.
 
 **How it is built.** `apidoc.Build` (`server/apidoc`) walks the route table the app really
-registers and pairs each route with its handler's docs, so paths and methods
-come from the code that serves them. The pages at `/login/*` and `/join/*` and
+registers and pairs each route with its declaration (`apidoc.Post` names the route after its
+handler), so paths and methods come from the code that serves them. The pages at `/login/*` and `/join/*` and
 the catch-alls are the only routes left out. `operationId`, path parameters and
 the shared error replies are worked out; everything else comes from the docs.
 The Go and Python templates write all three files byte for byte the same.
@@ -1057,7 +1088,7 @@ A route a key may call either has an MCP tool or a `MCPHTTP` reason, one line
 on why it stays HTTP only (see [MCP](#mcp-the-api-keys-for-agents)). `Feature`
 becomes `x-feature` on the path, which scaffolding reads to cut a part out.
 
-**What keeps it honest.** `server/routes/api_docs_test.go`: `TestEveryRouteIsDocumented` fails while a route has no Doc, a Doc has no route, or a handler is an unnamed function; `TestAPIDocsAreCurrent` fails while a committed file differs from what the code says (`scripts/api_docs.sh` runs it with `-update`). And every test app has `checkReplies` in front of its routes: each 2xx JSON reply is held against the documented schema, so a field the docs promise but a handler leaves out, or one it sends that the docs never mention, fails whichever test saw it.
+**What keeps it honest.** `server/routes/api_docs_test.go`: `TestEveryRouteIsDocumented` fails while a route is mounted without a declaration (not through `apidoc.Get/Post/Delete`); `TestAPIDocsAreCurrent` fails while a committed file differs from what the code says (`scripts/api_docs.sh` runs it with `-update`). And every test app has `checkReplies` in front of its routes: each 2xx JSON reply is held against the documented schema. Since a handler returns its declared reply type, the docs cannot drift from it; this is the safety net for what the types cannot say, such as a field left out by `omitempty`.
 
 **Scaffolding.** The template ships the three files for a project with every
 part. A project scaffolded without some parts runs `scripts/api_docs.sh` once,

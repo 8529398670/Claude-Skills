@@ -1,13 +1,12 @@
 """The API reference -- config/openapi.json and config/api.md -- written from
 the code, so nobody edits either by hand.
 
-Every route's handler declares its docs once, with doc(), in an *_api.py file
-next to it (app/routes/account_api.py for app/routes/account.py): a summary,
-who may call it, and the types of what it takes and gives back. Those types
-are TypedDicts whose fields carry the rest (see schema.py). build() walks the
-routes the app really registers and pairs each with its handler's docs, so the
-paths and methods come from the route table, and a route without docs, or
-docs without a route, is reported.
+Every route is declared once, by @route(...) on its handler (see route.py): a
+summary, who may call it, and the types of what it takes and gives back,
+which are msgspec Structs (see reflect.py for how a type becomes JSON Schema).
+The same types check every request before the handler sees it. build() walks
+the routes the app really registers, so the paths and methods come from the
+route table, and a route whose handler was not declared is reported.
 
 Nothing here runs while the server is up. scripts/api_docs.sh runs
 app/tests/test_api_docs.py with --update, which writes the files; the same
@@ -16,15 +15,15 @@ and the two write the same bytes.
 """
 from __future__ import annotations
 
-import importlib
 import json
-import pkgutil
 import re
-from dataclasses import dataclass, field
-from typing import Annotated, Any, Callable, NotRequired, TypedDict
+from dataclasses import dataclass
+from typing import Annotated, Any, ClassVar, Literal
 
-from app.apidocs.schema import Field, OneOf, Schemas, one_of, schema  # noqa: F401  (the public names)
-from app.apidocs.schema import operation as schema_operation
+from msgspec import UNSET, Meta, UnsetType
+
+from app.apidocs.reflect import OneOf, Schemas, one_of  # noqa: F401  (the public names)
+from app.apidocs.route import NoInput, PATH, QUERY, Reply, Request, declared_of, route  # noqa: F401  (the public names)
 
 TITLE = "{{PROJECT_NAME}} API"
 VERSION = "1.0.0"
@@ -47,13 +46,12 @@ OWNER = "owner"
 
 @dataclass
 class Op:
-    """One route's docs. The fields match Go's apidoc.Op."""
+    """One route's docs, given to @route(...). The fields match Go's
+    apidoc.Op."""
 
     summary: str = ""
     tag: str = ""
     description: str = ""
-    # method picks the route when one handler serves several methods.
-    method: str = ""
     access: str = SIGNED
     role: str = ""
     # feature is the optional part of the template the route belongs to; it
@@ -61,48 +59,32 @@ class Op:
     feature: str = ""
     # mcp_http is why a route an API key may call has no MCP tool.
     mcp_http: str = ""
-    # params is a TypedDict whose fields carry Field(path=...), Field(query=...)
-    # or Field(header=...). A path parameter it leaves out is a plain string.
-    params: Any = None
-    # body is the request body's type; body_type its content type when it is
-    # not JSON, when it is raw bytes and body stays None.
-    body: Any = None
+    # no_csrf lets a browser session's POST through without its csrf_token.
+    # Only for a route the page calls before it has one.
+    no_csrf: bool = False
+    # raw_body is the type of a JSON body the handler reads itself (a
+    # JSON-RPC message, say): documented, but neither parsed nor checked, and
+    # no csrf_token is looked for in it.
+    raw_body: Any = None
+    # body_type is the request body's content type when it is not JSON: raw
+    # bytes the handler reads itself. A browser session's csrf token then
+    # comes in the X-CSRF-Token header.
     body_type: str = ""
-    # status is the success status. reply is that reply's type; reply_type its
-    # content type when it is not JSON (then reply is None, and the reply is
-    # text, or bytes for application/octet-stream).
+    # status is the success status. reply_type is its content type when it
+    # is not JSON: text, or bytes for application/octet-stream, which the
+    # handler returns as its own Response.
     status: int = 200
-    reply: Any = None
     reply_type: str = ""
     reply_description: str = ""
     # errors are the error statuses the route can answer with, besides 429
     # and 503, which every route can.
     errors: tuple[int, ...] = ()
-    used: bool = field(default=False, repr=False)
-
-
-_registry: dict[str, list[Op]] = {}
-
-
-def doc(handler: Callable, **fields: Any) -> None:
-    """Record a handler's docs: doc(account.me, summary=..., tag=..., ...)."""
-    _registry.setdefault(handler_name(handler), []).append(Op(**fields))
 
 
 def handler_name(handler: Any) -> str:
-    """The function behind a handler, the same for a bound method (what a
-    route holds) and the plain function (what doc() may be given)."""
+    """The function behind a handler, for saying which one is undeclared."""
     function = getattr(handler, "__func__", handler)
     return f"{getattr(function, '__module__', '')}.{getattr(function, '__qualname__', '')}"
-
-
-def load_docs() -> None:
-    """Import every *_api module in app.routes, where the doc() calls are."""
-    import app.routes as package
-
-    for module in pkgutil.iter_modules(package.__path__):
-        if module.name.endswith("_api"):
-            importlib.import_module(f"app.routes.{module.name}")
 
 
 ROUTE_PARAMETER = re.compile(r"\{(\w+):\w+\}")
@@ -117,44 +99,25 @@ def spec_path(path: str) -> str:
 
 def build(routes: list[tuple[str, str, Any]]) -> tuple[dict[str, Any], list[str]]:
     """openapi.json for these (method, path, endpoint) routes, and what is
-    wrong with the docs: a route nobody documented, or docs for a route that
-    is not registered."""
-    load_docs()
-    for entries in _registry.values():
-        for entry in entries:
-            entry.used = False
+    wrong with the docs: a route whose handler was not declared with @route."""
     builder = Schemas()
     paths: dict[str, Any] = {}
     tags: set[str] = set()
     problems: list[str] = []
     for method, raw_path, handler in routes:
-        name = handler_name(handler)
         path = spec_path(raw_path)
         label = f"{method} {path}"
-        if "<lambda>" in name or "<locals>" in name:
-            problems.append(f"{label}: its handler is an unnamed function; give it a name and docs")
+        declared = declared_of(handler)
+        if declared is None:
+            problems.append(f"{label}: no docs; declare {handler_name(handler)} with @route(...)")
             continue
-        chosen = None
-        for entry in _registry.get(name, []):
-            if entry.method in ("", method):
-                chosen = entry
-                if entry.method:
-                    break
-        if chosen is None:
-            problems.append(f"{label}: no docs; add doc( {short_name(name)} , ... ) in an *_api.py next to it")
-            continue
-        chosen.used = True
         item = paths.setdefault(path, {})
-        if chosen.feature:
-            item["x-feature"] = chosen.feature
-        operation, operation_problems = schema_operation(builder, method, path, chosen)
+        if declared.op.feature:
+            item["x-feature"] = declared.op.feature
+        found, operation_problems = operation(builder, method, path, declared)
         problems += [f"{label}: {problem}" for problem in operation_problems]
-        item[method.lower()] = operation
-        tags.add(chosen.tag)
-    for name, entries in _registry.items():
-        for entry in entries:
-            if not entry.used:
-                problems.append(f"docs for {short_name(name)} {entry.method}, which is no route's handler")
+        item[method.lower()] = found
+        tags.add(declared.op.tag)
     problems.sort()
     builder.named(ErrorReply)
     builder.named(MaintenanceReply)
@@ -182,8 +145,90 @@ def build(routes: list[tuple[str, str, Any]]) -> tuple[dict[str, Any], list[str]
     return spec, problems
 
 
-def short_name(name: str) -> str:
-    return name.rsplit(".", 2)[-2] + "." + name.rsplit(".", 1)[-1] if name.count(".") > 1 else name
+def operation(builder: Schemas, method: str, path: str, declared: Any) -> tuple[dict[str, Any], list[str]]:
+    """One operation of openapi.json, and what is wrong with its docs."""
+    from app.apidocs.reflect import typed
+    from app.apidocs.route import body_schema
+
+    op = declared.op
+    problems: list[str] = []
+    result: dict[str, Any] = {"summary": op.summary, "operationId": operation_id(method, path), "tags": [op.tag]}
+    if not op.summary:
+        problems.append("no summary")
+    if not op.tag:
+        problems.append("no tag")
+    if op.description:
+        result["description"] = op.description
+    if op.access == PUBLIC:
+        result["security"] = []
+    elif op.access == SESSION_ONLY:
+        result["security"] = [{"sessionCookie": []}]
+    elif op.access == KEY_ONLY:
+        result["security"] = [{"apiKey": []}]
+    else:
+        result["security"] = [{"sessionCookie": []}, {"apiKey": []}]
+    if op.role:
+        result["x-required-role"] = op.role
+    if op.mcp_http:
+        result["x-mcp-http"] = op.mcp_http
+    found, parameter_problems = parameters(builder, path, declared)
+    problems += parameter_problems
+    if found:
+        result["parameters"] = found
+    if op.body_type:
+        result["requestBody"] = {"required": True, "content": {op.body_type: {"schema": raw_schema(op.body_type)}}}
+    elif op.raw_body is not None:
+        result["requestBody"] = {"required": True, "content": json_content(typed(builder, op.raw_body))}
+    elif method != "GET":
+        body, has_body = body_schema(builder, declared)
+        if has_body:
+            result["requestBody"] = {"required": True, "content": json_content(body)}
+    reply: dict[str, Any] = {"description": op.reply_description or "Success"}
+    if op.reply_type:
+        reply["content"] = {op.reply_type: {"schema": raw_schema(op.reply_type)}}
+    elif declared.reply not in (None, type(None)):
+        # A route whose handler returns None answers with its status alone.
+        reply["content"] = json_content(typed(builder, declared.reply))
+    responses: dict[str, Any] = {str(op.status): reply}
+    for code in (429, 503, *op.errors):
+        if code not in ERROR_MEANINGS:
+            problems.append(f"error status {code} has no shared response")
+            continue
+        responses[str(code)] = ref(f"E{code}", "responses")
+    result["responses"] = responses
+    return result, problems
+
+
+def parameters(builder: Schemas, path: str, declared: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    """The route's path parameters in the path's order, then its query
+    parameters in the request type's field order. A path parameter the type
+    leaves out is a plain string."""
+    from app.apidocs.route import url_parameters
+
+    problems: list[str] = []
+    found, order = url_parameters(builder, declared)
+    result = []
+    for name in SPEC_PARAMETER.findall(path):
+        key = f"path {name}"
+        if key in found:
+            result.append(found.pop(key))
+            continue
+        result.append({"name": name, "in": "path", "required": True, "schema": {"type": "string"}})
+    for key in order:
+        if key in found:
+            if key.startswith("path "):
+                problems.append(f"path parameter {key[5:]} is not in the path")
+                continue
+            result.append(found[key])
+    op = declared.op
+    if op.body_type and op.access != PUBLIC and not op.no_csrf:
+        result.append(CSRF_HEADER)
+    return result, problems
+
+
+# Where a browser session's csrf token rides on a route whose body is raw
+# bytes.
+CSRF_HEADER = {"name": "X-CSRF-Token", "in": "header", "description": "From GET /api/me. Browser sessions only.", "schema": {"type": "string"}}
 
 
 # The order tags appear in, in both files. A tag not listed here comes after
@@ -207,20 +252,20 @@ ERROR_MEANINGS = {
 }
 
 
-@schema(name="Error")
-class ErrorReply(TypedDict):
+class ErrorReply(Reply, kw_only=True):
     """The body of every error."""
 
+    api_name: ClassVar[str] = "Error"
     error: str
-    request_id: NotRequired[Annotated[str, Field(doc="On a 5xx: the reference that finds this failure in the log.")]]
+    request_id: Annotated[str, Meta(description="On a 5xx: the reference that finds this failure in the log.")] | UnsetType = UNSET
 
 
-@schema(name="Maintenance")
-class MaintenanceReply(TypedDict):
+class MaintenanceReply(Reply):
     """The body of a 503 in maintenance mode."""
 
+    api_name: ClassVar[str] = "Maintenance"
     error: str
-    maintenance: Annotated[str, Field(enum=("read_only", "full"))]
+    maintenance: Literal["read_only", "full"]
 
 
 def json_content(schema_: dict[str, Any]) -> dict[str, Any]:

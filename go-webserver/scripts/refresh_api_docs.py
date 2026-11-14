@@ -6,7 +6,7 @@ of {{PLACEHOLDERS}} that only scaffold.py fills in. So this scaffolds a project
 with every part into a temporary folder, runs its scripts/api_docs.sh, and copies
 the three files back with the project's name put back as {{PROJECT_NAME}}.
 
-Run it after changing a route's docs (server/routes/*_api.go), an MCP tool, or
+Run it after changing a route's declaration (apidoc.Handle), an MCP tool, or
 server/apidoc. webserver-upgrade/scripts/check_features.py fails while the
 template's copies are out of date. The python-webserver skill has the same
 script, and the two templates' files are identical.

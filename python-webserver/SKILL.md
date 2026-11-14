@@ -166,10 +166,12 @@ project.
 - **Maintenance mode.** `server.maintenance` is `none`, `read_only` or `full`,
   applied live from Settings. Everyone but the owner's browser session gets a
   503 with `Retry-After`: a page in a browser, JSON for a script.
-- **An API reference written from the code.** Each handler declares its docs
-  once, in an `*_api.py` file beside it: a summary, who may call it, and
-  TypedDicts for what it takes and gives back, with the details in
-  `Annotated[..., Field(...)]`. `scripts/api_docs.sh` writes
+- **An API reference written from the code.** Each route is declared once,
+  as a typed handler (`@route`) beside its code: a summary, who may call it,
+  and the msgspec types of what it takes and gives back, with the limits and
+  400 messages in `Annotated[..., Meta(...)]`. Those types also parse and
+  check every request before the handler runs, and are the input schema of
+  the route's MCP tool. `scripts/api_docs.sh` writes
   `config/openapi.json`, `config/mcp.json` and `config/api.md` (all of it as
   tables) from those and the registered MCP tools. Nobody edits them by hand: a
   test fails while one is out of date, or a route has no docs, and every reply
@@ -486,23 +488,26 @@ but stay consistent with the patterns already there:
   managing API keys, setting your own password, PIN or two-factor, reaching
   other people's files and the owner's screens, which need a browser session
   (`RequireSession`). So a feature's routes take API keys by
-  default, and each one a key may call gets a tool calling the same helper, with
-  `route` naming the route. A route with no use to an agent (file bytes: MCP
+  default, and each one a key may call gets a tool made from the route itself
+  (`Tool.for_route`). A route with no use to an agent (file bytes: MCP
   messages are JSON, and clients cap their size) gets `mcp_http="<why>"` in its
-  `doc()` instead, and its tool hands back the address -- `files_start_upload`
+  `@route(...)` instead, and its tool hands back the address -- `files_start_upload`
   and `files_download_url` are the pattern. `app/tests/test_mcp_parity.py`
-  fails until every key route is covered, and until each doc's `access`
+  fails until every key route is covered, and until each route's `access`
   matches what the guards really do. Then run `scripts/api_docs.sh`, which
   rewrites `config/mcp.json` (committed, linked from the MCP card as the MCP
   reference) with the rest of the API reference; `test_api_docs.py` fails
   while it is stale.
 - **New MCP tools** go in `app/routes/mcp_tools_<feature>.py`, registered
-  from `build_registry` in `mcp_tools.py`. Pull the HTTP handler's body into
-  a helper both call (the way `me_row`, `set_disabled_checked` and `create_file_checked` are), so the two doors share one set of
-  rules and refuse in the same words. Set `admin_only` only when the matching route is
-  admin-only. Read arguments with `call.bind({...})` (strict), return an object, and say no
-  with `raise Refusal("...")`. Set `read_only`/`destructive` honestly; clients use them to decide when to ask the
-  person first.
+  from `build_registry` in `mcp_tools.py`, as
+  `registry.register(Tool.for_route(module.handler, name=..., title=..., description=..., ...))`.
+  The tool runs the route's own handler (so make it a plain function, not a
+  coroutine), the two doors share one set of rules and refuse in the same
+  words, and its arguments are the route's request type, checked the same way:
+  there is no schema to write. Pass `call=` only to add to the reply
+  (`_with_route_login_url` adds `login_url`). Set `admin_only` only when the
+  matching route is admin-only, and `read_only`/`destructive` honestly; clients
+  use them to decide when to ask the person first.
 - **Log what matters, never what is secret.** Requests and page activity are
   logged for free. A new action worth an audit line (something changed,
   someone was let in or refused) calls
@@ -564,18 +569,28 @@ but stay consistent with the patterns already there:
   and a series in `/metrics` for nothing. It can be cut off when the server
   stops, so make it safe to run again from the start. `app/core/jobs.py`.
 - **A new event** goes in the list in `app/models/webhooks.py`, and is sent with
-  `await emit( request , name , data )` where the thing happens. Ids and names only in
+  `request.app.state.webhooks.emit(name, data)` where the thing happens. Ids and names only in
   `data`, since it leaves the server, and never rename one once it has shipped.
-- **A new route** gets its docs next to it: a `doc(module.handler, summary=..., tag=..., ...)`
-  in the area's `app/routes/<area>_api.py`, with TypedDicts for its body and reply whose
-  fields say what each is (`Annotated[int, Field(doc=..., minimum=0)]`, `NotRequired[...]`
-  for optional; `app/apidocs/schema.py` lists them). Then run `scripts/api_docs.sh`.
-  `test_api_docs.py` fails until the route has docs, `test_mcp_parity.py` until it has an
-  MCP tool or an `mcp_http` reason (see above), and any route test when a reply has a
-  field the docs lack or lacks one they promise. A route that changes something must not
-  be a GET, or `read_only` maintenance will not stop it.
-- **A new list route** answers with `send_page( request , "rows" , rows )`, and its
-  screen uses `Pager.load`: a plain `forEach` would stop at the first page.
+- **A new route** is one declaration, next to its code: a request type (a
+  `app.apidocs.Request` Struct), a reply type (a `Reply` Struct), and the handler
+  `@route(summary=..., tag=..., access=..., role=..., feature=..., errors=(...))`
+  `def x(request: Request, body: XRequest) -> XReply:`, mounted in `app/routes/__init__.py`
+  like any route. A field marked `Annotated[int, PATH]` or `Annotated[str, QUERY]` comes from
+  the URL, any other from the JSON body; `Meta(min_length=1, max_length=80)`, `Literal[...]`,
+  `Meta(ge=0)`, `Meta(description=...)` and `Meta(extra={"error": "the 400 it answers"})` say
+  the rest (`app/apidocs/reflect.py` lists them), a default makes it optional and `T | None`
+  may be null. The framework refuses a bad request before the handler runs (malformed JSON, a
+  missing csrf_token, an unknown field, a value that breaks a limit) and encodes the reply; the
+  handler returns the reply or raises `Refused`. `admin.py` is the worked example. Then run
+  `scripts/api_docs.sh`. `test_mcp_parity.py` fails until it has an MCP tool or an
+  `mcp_http` reason (see above), and any route test when a reply has a field the docs lack
+  or lacks one they promise. A route that changes something must not be a GET, or
+  `read_only` maintenance will not stop it. One that sends bytes or a stream returns its
+  Response, with `reply_type=...`.
+- **A new list route** takes a request based on `Page` (with `dir: Dir = ""` last, after
+  its own `sort` Literal), answers a reply based on `Paged`, filled by `cut_page` or
+  `sorted_page`, and its screen uses `Pager.load`: a plain `forEach` would stop at the
+  first page.
 - **A new page with a path of its own** needs a route before the catch-all, as
   `serve_login_page` has. There is no `index.html` fallback, so an unknown path is a 404.
 - **New live data** is a `sse.Hub` on `app.state`, created in `build_app` and
