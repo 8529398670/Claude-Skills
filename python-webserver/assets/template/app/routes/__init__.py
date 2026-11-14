@@ -38,7 +38,8 @@ from app.apidocs import ADMIN, KEY_ONLY, OWNER, PUBLIC, SESSION_ONLY
 from app.apidocs.route import Declared, declared_of
 from app.core.security import RequireAdmin, RequireLogin, RequireSession
 from app.core.security import Guard
-from app.core.security import RequireAPIKey, RequireOwner
+from app.core.security import RequireAPIKey  # feature:mcp|metrics
+from app.core.security import RequireOwner
 from app.core.static_files import StaticServer
 from app.routes import (
     account,
@@ -212,7 +213,7 @@ def guards_of(declared: Declared) -> tuple[type, ...]:
     if op.feature in FEATURE_GUARDS and not declared.no_switch:
         guards.append(FEATURE_GUARDS[op.feature])
     if op.access == KEY_ONLY:
-        guards.append(RequireAPIKey)
+        guards.append(RequireAPIKey)  # feature:mcp|metrics
         if op.role == ADMIN:
             guards.append(RequireAdmin)
     elif op.access != PUBLIC:
