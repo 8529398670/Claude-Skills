@@ -6,7 +6,6 @@ import (
 
 	fiber "github.com/gofiber/fiber/v3"
 
-	apidoc "{{MODULE_PATH}}/server/apidoc"
 	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
@@ -99,7 +98,7 @@ func ( handlers *Handlers ) signIn( c fiber.Ctx , signed *models.SignIn ) ( chal
 	return
 }
 
-// RedeemLoginLink signs in with a login link. Redeeming a valid link is the
+// redeemLoginLink signs in with a login link. Redeeming a valid link is the
 // login; there is nothing to phish out of a user beyond the link itself, which
 // dies on first use. An account with two-factor on goes on to give a code (see
 // two_factor.go).
@@ -113,32 +112,33 @@ func ( handlers *Handlers ) signIn( c fiber.Ctx , signed *models.SignIn ) ( chal
 // approves. Sec-Fetch-Site, which every current browser sends, refuses the
 // rest outright. Both are sameOrigin's, in front of it in routes.go, so they
 // hold before the body is read.
-func ( handlers *Handlers ) RedeemLoginLink() *apidoc.Endpoint[ loginRequest , signInReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Redeem a login link" , Tag: "Sign-in" , Access: apidoc.Public , Errors: []int{ 400 , 403 } },
-		func( c fiber.Ctx , in *loginRequest ) ( reply *signInReply , err error ) {
-			credential := strings.Trim( strings.TrimSpace( in.Credential ) , "/" )
-			signed , redeem_err := models.RedeemLoginToken( handlers.Store , credential , handlers.signInRules() )
-			if redeem_err != nil {
-				// Expired, already spent, never existed, wrong secret, or a disabled
-				// account all get the same answer. Telling them apart would let
-				// someone probe which links are real.
-				if errors.Is( redeem_err , models.ErrLoginTokenInvalid ) {
-					handlers.auditAs( c , logs.Anonymous() , logs.KindAuth , logs.LevelWarn , "login link refused" , nil )
-					err = refuse( fiber.StatusBadRequest , "invalid login link" )
-					return
-				}
-				err = redeem_err
-				return
-			}
-
-			message := "signed in with a login link"
-			if signed.Challenge != "" { message = "login link accepted, waiting for a code" } // feature:two_factor
-			handlers.auditAs( c , handlers.logUser( signed.UserID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , nil )
-			challenge , err := handlers.signIn( c , signed )
-			if err != nil { return }
-			reply = newSignInReply( challenge )
+//
+// @route("POST /api/login", summary="Redeem a login link",
+//     tag="Sign-in", access=PUBLIC, use=[sameOrigin( loginElsewhere )],
+// )
+func ( handlers *Handlers ) redeemLoginLink( c fiber.Ctx , in *loginRequest ) ( reply *signInReply , err error ) {
+	credential := strings.Trim( strings.TrimSpace( in.Credential ) , "/" )
+	signed , redeem_err := models.RedeemLoginToken( handlers.Store , credential , handlers.signInRules() )
+	if redeem_err != nil {
+		// Expired, already spent, never existed, wrong secret, or a disabled
+		// account all get the same answer. Telling them apart would let
+		// someone probe which links are real.
+		if errors.Is( redeem_err , models.ErrLoginTokenInvalid ) {
+			handlers.auditAs( c , logs.Anonymous() , logs.KindAuth , logs.LevelWarn , "login link refused" , nil )
+			err = refuse( fiber.StatusBadRequest , "invalid login link" )
 			return
-		} )
+		}
+		err = redeem_err
+		return
+	}
+
+	message := "signed in with a login link"
+	if signed.Challenge != "" { message = "login link accepted, waiting for a code" } // feature:two_factor
+	handlers.auditAs( c , handlers.logUser( signed.UserID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , nil )
+	challenge , err := handlers.signIn( c , signed )
+	if err != nil { return }
+	reply = newSignInReply( challenge )
+	return
 }
 
 // loginElsewhere is what a sign-in route says to a request that did not come

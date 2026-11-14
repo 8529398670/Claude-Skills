@@ -1,6 +1,8 @@
 # whole-file feature:metrics
-"""GET /metrics (app/core/metrics.py). Who may read it is decided where it is
-registered: see RequireMetrics in routes/__init__.py."""
+"""GET /metrics (app/core/metrics.py): an admin-level key, nothing else.
+RequireAPIKey comes before RequireAdmin, so a signed-in browser is refused
+however high its role: this is for a scraper, and a page has no reason to read
+it. RequireMetrics (routes/__init__.py) answers 404 while it is off."""
 from __future__ import annotations
 
 from starlette.requests import Request
@@ -12,8 +14,9 @@ from app.routes.helpers import run
 
 
 @route(
-    summary="Prometheus metrics", tag="Monitoring", access=KEY_ONLY, role=ADMIN, feature="metrics",
-    mcp_http="Scraped by Prometheus over HTTP.", reply_type="text/plain", errors=(401, 403, 404),
+    "GET /metrics", summary="Prometheus metrics",
+    tag="Monitoring", access=KEY_ONLY, role=ADMIN, feature="metrics", reply_type="text/plain",
+    mcp_http="Scraped by Prometheus over HTTP.",
 )
 async def get_metrics(request: Request) -> Response:
     state = request.app.state

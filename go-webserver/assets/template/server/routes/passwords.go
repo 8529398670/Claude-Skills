@@ -68,69 +68,71 @@ func ( handlers *Handlers ) RequirePasswords( c fiber.Ctx ) ( err error ) {
 	return
 }
 
-// GetLoginOptions is what the signed-out page needs to know. Public, and the
+// getLoginOptions is what the signed-out page needs to know. Public, and the
 // same for everyone: the salt is not a secret, and there is deliberately
 // nothing here that depends on a username.
-func ( handlers *Handlers ) GetLoginOptions() *apidoc.Endpoint[ apidoc.None , loginOptionsReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "What sign-in offers" , Tag: "Sign-in" , Access: apidoc.Public , Feature: "passwords" },
-		func( c fiber.Ctx , in *apidoc.None ) ( reply *loginOptionsReply , err error ) {
-			reply = &loginOptionsReply{
-				Passwords: handlers.cfg().PasswordsEnabled,
-				TwoFactor: handlers.cfg().TwoFactorEnabled, // feature:two_factor
-			}
-			if handlers.cfg().PasswordsEnabled {
-				if reply.Salt , err = models.InstallSalt( handlers.Store ); err != nil { return }
-			}
-			return
-		} )
+//
+// @route("GET /api/login/options", summary="What sign-in offers",
+//     tag="Sign-in", access=PUBLIC, feature="passwords", no_switch=True,
+// )
+func ( handlers *Handlers ) getLoginOptions( c fiber.Ctx , in *apidoc.None ) ( reply *loginOptionsReply , err error ) {
+	reply = &loginOptionsReply{
+		Passwords: handlers.cfg().PasswordsEnabled,
+		TwoFactor: handlers.cfg().TwoFactorEnabled, // feature:two_factor
+	}
+	if handlers.cfg().PasswordsEnabled {
+		if reply.Salt , err = models.InstallSalt( handlers.Store ); err != nil { return }
+	}
+	return
 }
 
-// PasswordLogin signs in with a password. Unknown name, wrong password, a
+// passwordLogin signs in with a password. Unknown name, wrong password, a
 // blocked or disabled account: all the same answer, after the same bcrypt. No
 // CSRF token, for the same reason as /api/login.
-func ( handlers *Handlers ) PasswordLogin() *apidoc.Endpoint[ passwordLoginRequest , signInReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Sign in with a password" , Tag: "Sign-in" , Access: apidoc.Public , Feature: "passwords" , Errors: []int{ 400 , 403 , 404 } },
-		func( c fiber.Ctx , in *passwordLoginRequest ) ( reply *signInReply , err error ) {
-			name := models.NormalizeUsername( in.Username )
-			if len( name ) > 64 { name = name[ :64 ] }
-			address := c.IP()
-			// Reserved before the password is checked, so guesses sent in parallel
-			// cannot all get past the lockout (see models.AttemptGuard).
-			if handlers.PasswordNames.Reserve( name ) == false {
-				err = refuse( fiber.StatusTooManyRequests , "login_locked" )
-				return
-			}
-			if handlers.PasswordAddresses.Reserve( address ) == false {
-				handlers.PasswordNames.Settle( name , models.AttemptVoid )
-				err = refuse( fiber.StatusTooManyRequests , "login_locked" )
-				return
-			}
-			name_outcome , address_outcome := models.AttemptVoid , models.AttemptVoid
-			defer func() {
-				handlers.PasswordNames.Settle( name , name_outcome )
-				handlers.PasswordAddresses.Settle( address , address_outcome )
-			}()
+//
+// @route("POST /api/login/password", summary="Sign in with a password",
+//     tag="Sign-in", access=PUBLIC, feature="passwords", use=[sameOrigin( loginElsewhere )],
+// )
+func ( handlers *Handlers ) passwordLogin( c fiber.Ctx , in *passwordLoginRequest ) ( reply *signInReply , err error ) {
+	name := models.NormalizeUsername( in.Username )
+	if len( name ) > 64 { name = name[ :64 ] }
+	address := c.IP()
+	// Reserved before the password is checked, so guesses sent in parallel
+	// cannot all get past the lockout (see models.AttemptGuard).
+	if handlers.PasswordNames.Reserve( name ) == false {
+		err = refuse( fiber.StatusTooManyRequests , "login_locked" )
+		return
+	}
+	if handlers.PasswordAddresses.Reserve( address ) == false {
+		handlers.PasswordNames.Settle( name , models.AttemptVoid )
+		err = refuse( fiber.StatusTooManyRequests , "login_locked" )
+		return
+	}
+	name_outcome , address_outcome := models.AttemptVoid , models.AttemptVoid
+	defer func() {
+		handlers.PasswordNames.Settle( name , name_outcome )
+		handlers.PasswordAddresses.Settle( address , address_outcome )
+	}()
 
-			var signed *models.SignIn
-			user := models.CheckPassword( handlers.Store , name , in.PasswordDigest )
-			if user != nil {
-				if signed , err = models.StartPasswordSignIn( handlers.Store , user , handlers.signInRules() ); err != nil { return }
-			}
-			if signed == nil {
-				name_outcome , address_outcome = models.AttemptFailed , models.AttemptFailed
-				handlers.auditAs( c , logs.Anonymous() , logs.KindAuth , logs.LevelWarn , "password refused" , nil )
-				err = refuse( fiber.StatusBadRequest , "invalid_login" )
-				return
-			}
-			name_outcome = models.AttemptPassed
-			message := "signed in with a password"
-			if signed.Challenge != "" { message = "password accepted, waiting for a code" } // feature:two_factor
-			handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , nil )
-			challenge , err := handlers.signIn( c , signed )
-			if err != nil { return }
-			reply = newSignInReply( challenge )
-			return
-		} )
+	var signed *models.SignIn
+	user := models.CheckPassword( handlers.Store , name , in.PasswordDigest )
+	if user != nil {
+		if signed , err = models.StartPasswordSignIn( handlers.Store , user , handlers.signInRules() ); err != nil { return }
+	}
+	if signed == nil {
+		name_outcome , address_outcome = models.AttemptFailed , models.AttemptFailed
+		handlers.auditAs( c , logs.Anonymous() , logs.KindAuth , logs.LevelWarn , "password refused" , nil )
+		err = refuse( fiber.StatusBadRequest , "invalid_login" )
+		return
+	}
+	name_outcome = models.AttemptPassed
+	message := "signed in with a password"
+	if signed.Challenge != "" { message = "password accepted, waiting for a code" } // feature:two_factor
+	handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , nil )
+	challenge , err := handlers.signIn( c , signed )
+	if err != nil { return }
+	reply = newSignInReply( challenge )
+	return
 }
 
 // sessionID is the id of the session this request came with, to leave it
@@ -142,74 +144,76 @@ func ( handlers *Handlers ) sessionID( c fiber.Ctx ) ( session_id string ) {
 	return
 }
 
-// SetPassword sets the account's username and password, or with an empty
+// setPassword sets the account's username and password, or with an empty
 // password_digest removes the password. Session only: a key that could set one
 // could turn itself into a session.
-func ( handlers *Handlers ) SetPassword() *apidoc.Endpoint[ setPasswordRequest , setPasswordReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Set or clear your password" , Tag: "Account" , Access: apidoc.SessionOnly , Feature: "passwords" , Errors: []int{ 400 , 401 , 403 , 404 , 409 } },
-		func( c fiber.Ctx , in *setPasswordRequest ) ( reply *setPasswordReply , err error ) {
-			user_id := security.UserFrom( c ).ID
-			// >>> feature:two_factor
-			cfg := handlers.cfg()
-			if handlers.Codes.Reserve( user_id ) == false {
-				err = refuse( fiber.StatusTooManyRequests , "two_factor_locked" )
-				return
-			}
-			// Reserved before the code is checked (see models.AttemptGuard). A right
-			// code here forgives nothing, as before: only a wrong one counts.
-			code_outcome := models.AttemptVoid
-			defer func() { handlers.Codes.Settle( user_id , code_outcome ) }()
-			// <<< feature:two_factor
-			set_err := models.SetPassword( handlers.Store , user_id , in.Username , in.PasswordDigest , handlers.sessionID( c ) , in.Code , cfg.TwoFactorEnabled , cfg.SecretKey ) // feature:two_factor
-			set_err := models.SetPassword( handlers.Store , user_id , in.Username , in.PasswordDigest , handlers.sessionID( c ) ) // feature:!two_factor
-			switch {
-			case errors.Is( set_err , models.ErrBadUsername ):
-				err = refuse( fiber.StatusBadRequest , "bad_username" )
-				return
-			case errors.Is( set_err , models.ErrBadDigest ):
-				err = refuse( fiber.StatusBadRequest , "bad_digest" )
-				return
-			case errors.Is( set_err , models.ErrUsernameTaken ):
-				err = refuse( fiber.StatusConflict , "username_taken" )
-				return
-			case errors.Is( set_err , models.ErrPasswordBlocked ):
-				err = refuse( fiber.StatusForbidden , "password_blocked" )
-				return
-			// >>> feature:two_factor
-			case errors.Is( set_err , models.ErrWrongCode ):
-				code_outcome = models.AttemptFailed
-				err = refuse( fiber.StatusForbidden , "two_factor_wrong" )
-				return
-			// <<< feature:two_factor
-			case set_err != nil:
-				err = set_err
-				return
-			}
-			message := "password changed"
-			if in.PasswordDigest == "" { message = "password removed" }
-			handlers.audit( c , logs.KindAuth , message , nil )
-			reply = &setPasswordReply{ Ok: true , HasPassword: in.PasswordDigest != "" }
-			return
-		} )
+//
+// @route("POST /api/account/password", summary="Set or clear your password",
+//     tag="Account", access=SESSION_ONLY, feature="passwords", errors=(409,),
+// )
+func ( handlers *Handlers ) setPassword( c fiber.Ctx , in *setPasswordRequest ) ( reply *setPasswordReply , err error ) {
+	user_id := security.UserFrom( c ).ID
+	// >>> feature:two_factor
+	cfg := handlers.cfg()
+	if handlers.Codes.Reserve( user_id ) == false {
+		err = refuse( fiber.StatusTooManyRequests , "two_factor_locked" )
+		return
+	}
+	// Reserved before the code is checked (see models.AttemptGuard). A right
+	// code here forgives nothing, as before: only a wrong one counts.
+	code_outcome := models.AttemptVoid
+	defer func() { handlers.Codes.Settle( user_id , code_outcome ) }()
+	// <<< feature:two_factor
+	set_err := models.SetPassword( handlers.Store , user_id , in.Username , in.PasswordDigest , handlers.sessionID( c ) , in.Code , cfg.TwoFactorEnabled , cfg.SecretKey ) // feature:two_factor
+	set_err := models.SetPassword( handlers.Store , user_id , in.Username , in.PasswordDigest , handlers.sessionID( c ) ) // feature:!two_factor
+	switch {
+	case errors.Is( set_err , models.ErrBadUsername ):
+		err = refuse( fiber.StatusBadRequest , "bad_username" )
+		return
+	case errors.Is( set_err , models.ErrBadDigest ):
+		err = refuse( fiber.StatusBadRequest , "bad_digest" )
+		return
+	case errors.Is( set_err , models.ErrUsernameTaken ):
+		err = refuse( fiber.StatusConflict , "username_taken" )
+		return
+	case errors.Is( set_err , models.ErrPasswordBlocked ):
+		err = refuse( fiber.StatusForbidden , "password_blocked" )
+		return
+	// >>> feature:two_factor
+	case errors.Is( set_err , models.ErrWrongCode ):
+		code_outcome = models.AttemptFailed
+		err = refuse( fiber.StatusForbidden , "two_factor_wrong" )
+		return
+	// <<< feature:two_factor
+	case set_err != nil:
+		err = set_err
+		return
+	}
+	message := "password changed"
+	if in.PasswordDigest == "" { message = "password removed" }
+	handlers.audit( c , logs.KindAuth , message , nil )
+	reply = &setPasswordReply{ Ok: true , HasPassword: in.PasswordDigest != "" }
+	return
 }
 
-// SetPasswordAccess is the owner's per-account switch (RequireOwner).
+// setPasswordAccess is the owner's per-account switch (RequireOwner).
 // {allowed: false} stops this account's password working and stops it setting
 // one.
-func ( handlers *Handlers ) SetPasswordAccess() *apidoc.Endpoint[ passwordAccessRequest , passwordAccessReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Allow or block an account's password" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "passwords" , Errors: []int{ 400 , 403 , 404 } },
-		func( c fiber.Ctx , in *passwordAccessRequest ) ( reply *passwordAccessReply , err error ) {
-			block_err := models.SetPasswordBlocked( handlers.Store , in.UserID , in.Allowed == false )
-			if errors.Is( block_err , db.ErrNotFound ) {
-				err = refuse( fiber.StatusNotFound , "no such user" )
-				return
-			}
-			if block_err != nil {
-				err = block_err
-				return
-			}
-			handlers.audit( c , logs.KindAdmin , "password access set" , fiber.Map{ "user_id": in.UserID , "allowed": in.Allowed } )
-			reply = &passwordAccessReply{ Ok: true , PasswordBlocked: in.Allowed == false }
-			return
-		} )
+//
+// @route("POST /api/owner/users/{user_id}/password-access", summary="Allow or block an account's password",
+//     tag="Owner", role=OWNER, feature="passwords",
+// )
+func ( handlers *Handlers ) setPasswordAccess( c fiber.Ctx , in *passwordAccessRequest ) ( reply *passwordAccessReply , err error ) {
+	block_err := models.SetPasswordBlocked( handlers.Store , in.UserID , in.Allowed == false )
+	if errors.Is( block_err , db.ErrNotFound ) {
+		err = refuse( fiber.StatusNotFound , "no such user" )
+		return
+	}
+	if block_err != nil {
+		err = block_err
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "password access set" , fiber.Map{ "user_id": in.UserID , "allowed": in.Allowed } )
+	reply = &passwordAccessReply{ Ok: true , PasswordBlocked: in.Allowed == false }
+	return
 }

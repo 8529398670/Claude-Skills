@@ -10,7 +10,7 @@ import msgspec
 from msgspec import UNSET, Meta, UnsetType
 from starlette.requests import Request
 
-from app.apidocs import OWNER, PATH, SESSION_ONLY, Reply, route
+from app.apidocs import OWNER, PATH, Reply, route
 from app.apidocs import Request as RequestType
 from app.core import jobs
 from app.core.logs import KIND_ADMIN
@@ -44,7 +44,7 @@ def get_jobs(request: Request) -> jobs.Registry:
     return request.app.state.jobs
 
 
-@route(summary="Background jobs", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="jobs", errors=(404,))
+@route("GET /api/owner/jobs", summary="Background jobs", tag="Owner", role=OWNER, feature="jobs")
 def list_jobs(request: Request) -> JobsReply:
     """Reads SQLite, so a plain function: it runs in a worker thread."""
     return JobsReply(jobs=msgspec.convert(get_jobs(request).rows(), list[Job]))
@@ -54,7 +54,10 @@ class JobNamePath(RequestType):
     name: Annotated[str, PATH, Meta(description="The job's name, from GET /api/owner/jobs.")]
 
 
-@route(summary="Run a job now", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="jobs", status=202, errors=(400, 403, 404, 409))
+@route(
+    "POST /api/owner/jobs/{name}/run", summary="Run a job now",
+    tag="Owner", role=OWNER, feature="jobs", status=202, errors=(409,),
+)
 async def run_job(request: Request, body: JobNamePath) -> OkReply:
     """A coroutine: the run is a task on the event loop."""
     try:

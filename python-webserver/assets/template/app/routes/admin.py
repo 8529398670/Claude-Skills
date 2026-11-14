@@ -30,6 +30,10 @@ from app.models import two_factor  # feature:two_factor
 from app.models import webhooks  # feature:webhooks
 from app.routes.helpers import DateTime, Dir, Page, Paged, Refused, act_on_refusals, get_config, get_store, sorted_page
 from app.routes.logs import audit
+from app.routes.mcp_tools_accounts import with_login_url  # feature:mcp
+# >>> feature:two_factor
+from app.routes.mcp_tools_accounts import two_factor_on  # feature:mcp
+# <<< feature:two_factor
 
 # The two things every route that mints a login link may ask for, both
 # optional (see login_tokens.resolve_link).
@@ -98,7 +102,13 @@ class ListUsersReply(Paged):
     users: list[UserRow]
 
 
-@route(summary="Every account", tag="Admin", role=ADMIN, errors=(400, 401, 403))
+@route(
+    "GET /api/admin/users", summary="List users",
+    tag="Admin", role=ADMIN,
+    description="Accounts, a page at a time, including disabled ones, with each one's role and which is the "
+    "owner. next is the offset of the following page, or null on the last one.",
+    mcp="admin_list_users", read_only=True,  # feature:mcp
+)
 def list_users(request: Request, body: ListUsers) -> ListUsersReply:
     """Every account, a page at a time. ?q= keeps the accounts whose name or
     username contains it, in any case. Here and not in the browser, which only
@@ -184,7 +194,17 @@ class CreateUserReply(LoginLinkReply):
     user_id: int
 
 
-@route(summary="Create an account and its login link", tag="Admin", role=ADMIN, status=201, errors=(400, 401, 403))
+@route(
+    "POST /api/admin/users", summary="Create an account",
+    tag="Admin", role=ADMIN, status=201,
+    description="Make a new account and its first login link, to hand to the person. role is admin or user. "
+    "Answers with user_id and the link.",
+    mcp_note="Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), "  # feature:mcp
+    "expires_at and max_uses. Any older link the account could still use stops working; its signed-in "  # feature:mcp
+    "devices stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs "  # feature:mcp
+    "out every device it signed in.",  # feature:mcp
+    mcp="admin_create_user", call=with_login_url,  # feature:mcp
+)
 def create_user(request: Request, body: CreateUser) -> CreateUserReply:
     """The signup process: an admin names someone, and gets back a login link
     to hand them -- once by default, or reusable (see
@@ -208,7 +228,16 @@ class ReissueLogin(UserIDPath):
     expires_in_minutes: ExpiresInMinutes | None = None
 
 
-@route(summary="A new login link for an account", tag="Admin", role=ADMIN, errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/users/{user_id}/reissue-login", summary="A new login link for an account",
+    tag="Admin", role=ADMIN, errors=(404,),
+    description="For someone who lost their device or their link: a fresh login link for their account.",
+    mcp_note="Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), "  # feature:mcp
+    "expires_at and max_uses. Any older link the account could still use stops working; its signed-in "  # feature:mcp
+    "devices stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs "  # feature:mcp
+    "out every device it signed in.",  # feature:mcp
+    mcp="admin_reissue_login", call=with_login_url,  # feature:mcp
+)
 def reissue_login(request: Request, body: ReissueLogin) -> LoginLinkReply:
     """Covers the only real failure mode of this auth model: someone lost
     their cookie or their device, and there is no password reset to fall back
@@ -233,7 +262,15 @@ class CancelLoginLinkReply(Reply):
     removed: Annotated[int, Meta(description="Links removed: 0 or 1.")]
 
 
-@route(summary="Stop an account's login link working", tag="Admin", role=ADMIN, errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/users/{user_id}/cancel-login-link", summary="Stop an account's login link working",
+    tag="Admin", role=ADMIN, errors=(404,),
+    description="Void an account's live login link without making a new one: a link that went somewhere it "
+    "should not have.",
+    mcp_note="Devices it already signed in stay signed in; admin_revoke_access ends those too. Answers with "  # feature:mcp
+    "removed: 0 or 1.",  # feature:mcp
+    mcp="admin_cancel_login_link", destructive=True,  # feature:mcp
+)
 def cancel_login_link(request: Request, body: UserIDPath) -> CancelLoginLinkReply:
     """Stop an account's live login link working, without making a new one:
     a reusable link that went somewhere it should not have. Sessions it
@@ -259,7 +296,14 @@ class SetUserDisabled(UserIDPath):
     disabled: Annotated[bool, Meta(extra={"error": "disabled must be true or false"})]
 
 
-@route(summary="Disable or enable an account", tag="Admin", role=ADMIN, errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/users/{user_id}/disabled", summary="Disable or enable a user",
+    tag="Admin", role=ADMIN, errors=(404,),
+    description="Switch an account off (disabled: true) or back on (false). Disabling signs it out "
+    "everywhere and voids its live login link; its API keys stop working while it is off. Reversible. The "
+    "owner and your own account cannot be disabled.",
+    mcp="admin_set_user_disabled",  # feature:mcp
+)
 def set_user_disabled(request: Request, body: SetUserDisabled) -> OkReply:
     """Switch an account off, or back on, over HTTP and as the MCP
     admin_set_user_disabled tool."""
@@ -292,7 +336,15 @@ class RevokeAccessReply(Reply):
     revoked: Revoked
 
 
-@route(summary="End every credential an account holds", tag="Admin", role=ADMIN, errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/users/{user_id}/revoke-access", summary="Revoke a user's access",
+    tag="Admin", role=ADMIN, errors=(404,),
+    description="For an account that may be compromised: ends every session and voids its live login link "
+    "and every API key it holds, at once.",
+    mcp_note="The account stays enabled; admin_reissue_login lets its owner back in. The owner and your own "  # feature:mcp
+    "account cannot be revoked.",  # feature:mcp
+    mcp="admin_revoke_access", destructive=True,  # feature:mcp
+)
 def revoke_access(request: Request, body: UserIDPath) -> RevokeAccessReply:
     """The response to "this account may be compromised": every session,
     live login link, and live API key it holds stops working at once. The
@@ -330,7 +382,14 @@ class RenameUserReply(Reply):
     display_name: str
 
 
-@route(summary="Rename someone else", description="Only the owner can rename an admin.", tag="Admin", role=ADMIN, errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/admin/users/{user_id}/rename", summary="Rename someone",
+    tag="Admin", role=ADMIN, errors=(404, 409),
+    description="Change another account's display name (1-80 characters). Only the owner renames an admin. "
+    "expect, when given, is the name you think it has now; if it changed meanwhile the rename is refused "
+    "with the current name.",
+    mcp="admin_rename_user",  # feature:mcp
+)
 def rename_user(request: Request, body: RenameUser) -> RenameUserReply:
     """An admin renaming someone else. Who may rename whom lives in
     credentials.rename_user_as."""
@@ -359,9 +418,12 @@ class SetUserRoleReply(Reply):
 
 
 @route(
-    summary="Change an account's role",
-    description="Only the owner can take an admin's rights away. Becoming an admin ends the account's sessions and live login link.",
-    tag="Admin", role=ADMIN, errors=(400, 401, 403, 404),
+    "POST /api/admin/users/{user_id}/role", summary="Change an account's role",
+    tag="Admin", role=ADMIN, errors=(404,),
+    description="Make an account an admin or an ordinary user. Only the owner takes an admin's rights away; "
+    "the owner is always an admin, and nobody changes their own role. Becoming an admin ends the account's "
+    "sessions and live login link.",
+    mcp="admin_set_user_role",  # feature:mcp
 )
 def set_user_role(request: Request, body: SetUserRole) -> SetUserRoleReply:
     """Make an account an admin or an ordinary user. Who may do what lives in
@@ -386,7 +448,14 @@ class DeleteUserReply(Reply):
     removed: Revoked
 
 
-@route(summary="Delete an account", tag="Admin", role=ADMIN, errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/users/{user_id}/delete", summary="Delete an account",
+    tag="Admin", role=ADMIN, errors=(404,),
+    description="Remove an account for good, with its sessions, login link and API keys.",
+    mcp_note="Cannot be undone: admin_set_user_disabled is the reversible version. Only the owner deletes "  # feature:mcp
+    "an admin; nobody deletes the owner or themselves.",  # feature:mcp
+    mcp="admin_delete_user", destructive=True,  # feature:mcp
+)
 def delete_user(request: Request, body: UserIDPath) -> DeleteUserReply:
     """Remove an account for good, together with every session, login link,
     and API key it held. Disabling is the reversible version; this is for an
@@ -411,7 +480,14 @@ def delete_user(request: Request, body: UserIDPath) -> DeleteUserReply:
 
 
 # >>> feature:two_factor
-@route(summary="Turn off an account's two-factor", tag="Admin", role=ADMIN, feature="two_factor", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/users/{user_id}/reset-two-factor", summary="Turn off an account's two-factor",
+    tag="Admin", role=ADMIN, feature="two_factor",
+    description="For someone who lost both their phone and their recovery codes: switches their two-factor "
+    "sign-in off so a login link lets them in again. Only the owner resets an admin's; the owner's is reset "
+    "from a shell.",
+    mcp="admin_reset_two_factor", destructive=True, enabled=two_factor_on,  # feature:mcp
+)
 def reset_two_factor(request: Request, body: UserIDPath) -> OkReply:
     """For someone who lost both the phone and the recovery codes. Who may
     reset whom lives in credentials.reset_two_factor."""

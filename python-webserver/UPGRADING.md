@@ -5,14 +5,51 @@ Read by the `webserver-upgrade` skill. Add an entry whenever
 
 ## After 3731d9a
 
-**Typed routes: one declaration per route (2026-11-13). Required, and an app's
-own routes need converting too.** Each route is now declared once, as a typed
-handler beside its code: `@route(**op)` on a function whose second parameter's
-type is the request and whose return type is the reply, both msgspec Structs.
-They parse and check every request, encode the reply, and are the only source
-of `config/openapi.json`, `api.md`, and each MCP tool's input schema. The
-template has no `*_api.py` files and no hand-written `input_schema` left.
+**Routes: one declaration per route (2026-11-13). Required, and an app's own
+routes need converting too.** Each route is declared once, as a typed handler
+beside its code, with its method and path first:
 
+```python
+@route(
+    "POST /api/admin/users/{user_id}/cancel-login-link", summary="Stop an account's login link working",
+    tag="Admin", role=ADMIN, errors=(404,),
+    description="Void an account's live login link without making a new one: a link that went somewhere it "
+    "should not have.",
+    mcp_note="Devices it already signed in stay signed in; admin_revoke_access ends those too. Answers with "  # feature:mcp
+    "removed: 0 or 1.",  # feature:mcp
+    mcp="admin_cancel_login_link", destructive=True,  # feature:mcp
+)
+def cancel_login_link(request: Request, body: UserIDPath) -> CancelLoginLinkReply:
+```
+
+`mcp="tool_name"` gives the route its MCP tool, with `read_only`,
+`destructive`, `admin_only` (on by default for `role=ADMIN`), `enabled` and
+`call`. The tool's title is the summary, with ` (admin)` for an admin-only
+tool, and its description is the description, then `mcp_note`: words only the
+tool shows (tool names, `login_url`). `mcp_title`/`mcp_description` replace
+them for a tool whose words must differ from its route's. Each tool line ends
+with `# feature:mcp`, so pruning mcp cuts exactly those. Go declares its
+routes with the same words, in a `// @route(...)` comment.
+
+The second parameter's type is the request and the return type the reply,
+both msgspec Structs. They parse and check every request, encode the reply,
+and are the only source of `config/openapi.json`, `api.md`, and each MCP
+tool's input schema. `app/routes/__init__.py` builds the route list from the
+declarations in `MODULES`, the most specific path first, each behind the
+guards its declaration implies. The template has no `*_api.py` files, no
+hand-written `input_schema` and no route groups left.
+
+- **Guards are derived, in this order:**
+  1. the feature's switch, from `FEATURE_GUARDS` (404 while it is off;
+     `no_switch=True` opts a route out);
+  2. `RequireLogin`, or `RequireAdmin` (`role=ADMIN`), `RequireOwner`
+     (`role=OWNER`, which is session-only too) or `RequireAPIKey`
+     (`access=KEY_ONLY`);
+  3. `RequireSession` for `access=SESSION_ONLY`;
+  4. then `use=[...]`, Guard classes.
+- **Error statuses are derived** from the same facts: 400 for a request with
+  fields or a csrf token, and each guard's `statuses`. `errors=` lists only
+  what the handler itself answers.
 - **Framework.**
   - New: `msgspec==0.22.0` in `requirements.txt`. It has wheels for musl,
     glibc, macOS and Windows.
@@ -20,17 +57,26 @@ template has no `*_api.py` files and no hand-written `input_schema` left.
     the request checks, `reply_response`, MCP argument decoding) and
     `app/apidocs/reflect.py` (schemas from `msgspec.json.schema_components`,
     `Schemas`, `one_of`).
+  - `@route(..., mcp="name", ...)` declares a route's tool (the keys are
+    `TOOL_KEYS` in `app/apidocs/route.py`), and `build_registry` makes one
+    `Tool.for_route` for each, by name, with the title and description rules
+    above. A tool's
+    `call` is `call(call, body, serve)`, given the route's handler:
+    `with_login_url`, `with_join_url`.
   - Removed: `app/apidocs/schema.py`, `doc()`, `load_docs`, the TypedDict
     schemas, `Op.method`/`params`/`body`/`reply`, `Tool.input_schema`/`route`,
-    and `Call.bind`.
-  - New: `Tool.for_route`.
-  - Added to `Op`: `no_csrf` and `raw_body`.
+    `Call.bind`, `group()`, `mounted()`, `mcp_tools_accounts.register`, and
+    the `cfg` argument of `build_routes`.
+  - Added to `Op`: `no_csrf` and `raw_body`. A Guard has `statuses`.
+  - New `RequireLogs`: the log's routes are always in the list, and answer
+    404 while logs are off.
   - Removed from `helpers.py`: `read_json`, `parse_id`, `whole_number`,
     `send_page`, `page_body` and `emit`. Added: `Page`, `Dir`, `Paged`,
     `Limit`, `Offset`, `cut_page`, `sorted_page`, `field_of` and `DateTime`.
   - CSRF is checked by the framework (body `csrf_token`, or `X-CSRF-Token` for
     a raw body), so handlers no longer call `check_csrf`.
-  - Same-origin sign-in is a guard: `auth.SameOriginLogin` / `SameOriginJoin`.
+  - Same-origin sign-in is a guard: `auth.SameOriginLogin` / `SameOriginJoin`,
+    given in `use=[...]`.
 - **Every template route and tool converted.** Named schemas are `Reply`
   Structs with `api_name` / `api_doc` ClassVars, next to their routes.
 - **Doc changes, all from the code now being the docs.**
@@ -50,6 +96,23 @@ template has no `*_api.py` files and no hand-written `input_schema` left.
   - The `/mcp` 405s document no body.
   - MCP tools take their route's whole request, so the list tools gain
     `q`/`sort`/`dir`, and some tools gain `limit`/`offset` too.
+  - The derived error statuses add what the old lists missed: 400 on
+    `GET /api/files/{file_id}`, its download, the admin download,
+    `GET /api/owner/logs/days` and `/stream`, and `POST /api/join/info`; 403
+    on `POST /api/join/info`, `/match`, `/create` and `POST /mcp`; 404 on
+    `POST /api/account/pin` and `GET`/`POST /api/admin/invite-links`.
+  - `config/mcp.json` lists the tools by name.
+  - **One text per route.** A route with an MCP tool shares its words with
+    the tool, so 41 routes' summaries and descriptions in `openapi.json` and
+    `api.md` are now their tool's: the summary is the tool's title less
+    ` (admin)`, and the description is the tool's, less the closing words only
+    the tool needs (`mcp_note`). Two tools gain words their route had:
+    `admin_set_user_role` (becoming an admin ends the account's sessions and
+    live login link) and `files_delete` (it can be restored for ten minutes).
+    `revoke_my_other_sessions`, `files_start_upload` and `files_download_url`
+    keep their own words (`mcp_title`/`mcp_description`), since a browser
+    and an agent get different things from those routes.
+    `LOGIN_LINK_ANSWER` is gone: its words are in each route's `mcp_note`.
 - **Behavior changes.**
   - An unknown body field is a 400 "unknown field: x" (it was ignored).
   - A body value of the wrong JSON type, or `null` where null is not allowed,
@@ -65,6 +128,9 @@ template has no `*_api.py` files and no hand-written `input_schema` left.
     log and fire the webhooks the route does.
   - A malformed or unknown MCP argument is JSON-RPC invalid params, and a
     field's own message is a tool error.
+  - `POST /api/admin/users/{user_id}/reset-two-factor` is 404 while
+    two-factor is off.
+  - The log's routes exist while logs are off, and answer 404.
 
 **Converting an app's own routes** (their docs are gone with `doc()`, and
 `test_api_docs.py` fails until they are declared). For each `doc(module.x, ...)`
@@ -83,8 +149,10 @@ in an app `*_api.py`:
 2. **Reply type.** Write a `class XReply(Reply)` from the reply TypedDict. A
    field the handler always sends has no default.
 3. **Handler.** Decorate the handler, or its `*_checked` helper, with
-   `@route(...the old doc() fields, less params/body/reply...)`, as
-   `def x(request: Request, body: XRequest) -> XReply`.
+   `@route("METHOD /path", ...the old doc() fields, less params/body/reply...)`,
+   as `def x(request: Request, body: XRequest) -> XReply`.
+   - `errors=` keeps only what the handler itself answers, and `use=[...]`
+     any guard its group had beyond what the op implies.
    - Make it a plain function if an MCP tool calls it: it runs in a worker
      thread.
    - Delete the `read_json`, the CSRF check, the id parsing and the checks
@@ -92,12 +160,21 @@ in an app `*_api.py`:
    - Return the reply Struct, and `raise Refused(...)` to refuse.
    - Bytes and streams return their Response, with `reply_type=`.
    - `await emit(...)` becomes `request.app.state.webhooks.emit(...)`.
-4. **MCP tool.** Replace `Tool(route=..., input_schema=..., call=...)` with
-   `Tool.for_route(module.x, name=..., title=..., description=..., ...)`.
-   Pass `call=` only to add to the reply.
-5. **Finish.** Delete the `*_api.py` file, then run `scripts/api_docs.sh` and
-   the tests. Tests that post unknown fields, or that rely on the behavior
-   changes above, need updating.
+4. **Route list.** Delete its line in `build_routes`, and add its module to
+   `MODULES`. A feature of the app's own that can be switched off while the
+   server runs gets a switch in `FEATURE_GUARDS`, and its routes `feature=`.
+5. **MCP tool.** Replace `Tool(route=..., input_schema=..., call=...)` with
+   `mcp="its_name"` and its flags in the route's `@route(...)`, each tool line
+   ending `# feature:mcp`. Its title becomes the summary (` (admin)` is added
+   for an admin-only tool) and its description the route's description: move
+   the words only the tool needs (tool names, `login_url`) to the end, in
+   `mcp_note`, and use `mcp_title`/`mcp_description` only where a browser and
+   an agent really get different things. Give `call=` only to add to the
+   reply.
+6. **Finish.** Delete the `*_api.py` file, then run `scripts/api_docs.sh` and
+   the tests. Check each route's guards (`declared_routes()`) against its old
+   group. Tests that post unknown fields, or that rely on the behavior changes
+   above, need updating.
 
 `app/routes/admin.py` is the worked example.
 

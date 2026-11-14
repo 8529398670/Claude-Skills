@@ -5,33 +5,99 @@ Read by the `webserver-upgrade` skill. Add an entry whenever
 
 ## After 3731d9a
 
-**Typed routes: one declaration per route (2026-11-13). Required, and an app's
-own routes need converting too.** Each route is now declared once, as a typed
-handler beside its code: `apidoc.Handle[In, Out]( op , fn )`, mounted with
-`apidoc.Get/Post/Delete`. The request and reply types parse and check every
-request, encode the reply, and are the only source of `config/openapi.json`,
-`api.md`, and each MCP tool's input schema. The template has no `*_api.go`
-files and no hand-written `InputSchema` left.
+**Routes: one annotated method per route (2026-11-13). Required, and an app's
+own routes need converting too.** Each route is a flat, unexported method on
+`*Handlers`, and the last thing in its doc comment is its declaration,
+`// @route(...)`, spelled exactly like the Python template's decorator.
+`go generate` (`server/apidoc/gen`) reads them and writes
+`server/routes/routes_generated.go`, which mounts every route behind the
+guards its declaration implies and registers every MCP tool. The request and
+reply types parse and check every request, encode the reply, and are the only
+source of `config/openapi.json`, `api.md`, and each MCP tool's input schema.
+The template has no `*_api.go` files, no hand-written `InputSchema`, and no
+route groups left.
 
+```go
+// cancelLoginLink stops an account's live login link working, without
+// making a new one. (For developers: this part never reaches the docs.)
+//
+// @route("POST /api/admin/users/{user_id}/cancel-login-link", summary="Stop an account's login link working",
+//     tag="Admin", role=ADMIN, errors=(404,),
+//     description="Void an account's live login link without making a new one: a link that went somewhere it "
+//         "should not have.",
+//     mcp_note="Devices it already signed in stay signed in; admin_revoke_access ends those too. Answers with "  // feature:mcp
+//         "removed: 0 or 1.",  // feature:mcp
+//     mcp="admin_cancel_login_link", destructive=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) cancelLoginLink( c fiber.Ctx , in *userIDPath ) ( reply *cancelLoginLinkReply , err error ) {
+```
+
+- **The declaration** (the full list is in `server/apidoc/routegen/routegen.go`):
+  - It reads like Python: `"strings"` (adjacent ones join, so long text
+    wraps over lines), `ADMIN`/`OWNER`, `PUBLIC`/`SESSION_ONLY`/`KEY_ONLY`,
+    `True`/`False`, tuples `errors=(404, 409)`, lists `use=[...]`. A route
+    copies between the templates with only its Go expressions changed.
+  - The first argument is `"METHOD /path/{param}"`. Every `{param}` must be a
+    `path:"..."` field of the request type.
+  - Then the `apidoc.Op` fields (`summary`, `description`, `tag`, `access`,
+    `role`, `feature`, `status`, `errors`, `mcp_http`, ...), `no_switch`, and
+    `use=[...]`: extra middleware, as Go expressions.
+  - `mcp="tool_name"` gives the route its MCP tool, with `read_only`,
+    `destructive`, `admin_only` (on by default for `role=ADMIN`), and the Go
+    expressions `enabled=` and `call=`. The tool's title is the summary, with
+    ` (admin)` for an admin-only tool, and its description is the
+    description, then `mcp_note="..."`: words only the tool shows (tool
+    names, `login_url`). `mcp_title=`/`mcp_description=` replace them for a
+    tool whose words must differ from its route's. Each tool line ends with
+    `// feature:mcp`, so pruning mcp cuts exactly those.
+  - It ends with `// )` on its own line, after the developer doc comment.
+    An unknown key, a bad value or a key set twice stops the generator, by
+    file and line.
+  - The method is `( c fiber.Ctx , in *In ) ( *Out , error )`, or
+    `( c fiber.Ctx , in *In ) error` for a route that writes its own reply.
+- **Guards are derived, in this order:**
+  1. the feature's switch, from `featureGuards` in `routes.go` (404 while it
+     is off; `no_switch=True` opts a route out);
+  2. `RequireLogin`, or `RequireAdmin` (`role=ADMIN`), `RequireOwner`
+     (`role=OWNER`, which is session-only too) or `RequireAPIKey`
+     (`access=KEY_ONLY`);
+  3. `RequireSession` for `access=SESSION_ONLY`;
+  4. then the `use=[...]` expressions.
+- **Error statuses are derived** from the same facts: 400 for a request with
+  fields or a csrf token, 401/403/404 from the guards. `errors=` lists only
+  what the handler itself answers.
 - **Framework.**
-  - New: `server/apidoc/route.go` (Handle, Stream, Post/Get/Delete, the
-    request checks, MCP argument decoding) and `server/apidoc/reflect.go`
-    (schemas from `github.com/invopop/jsonschema v0.14.0`, new in `go.mod`).
-  - New: `server/mcp/route.go` (`mcp.ForRoute`, `mcp.Answer`).
-  - Removed: `server/apidoc/schema.go`, `apidoc.Doc`, `Op.Method`/`Params`/`Body`/`Reply`,
-    `mcp.Tool.InputSchema`/`Route`, and `Call.Bind`.
+  - New: `server/apidoc/route.go` (`Mount`, `MountStream`, the request
+    checks, MCP argument decoding), `server/apidoc/reflect.go` (schemas from
+    `github.com/invopop/jsonschema v0.14.0`, new in `go.mod`),
+    `server/apidoc/routegen` and `server/apidoc/gen` (the generator), and
+    `server/mcp/route.go` (`mcp.ForRoute`, `mcp.ForStream`, `mcp.Answer`).
+  - A tool's `call=` is `func( call *mcp.Call , in *In , serve ... ) ( any , error )`,
+    given the route's handler: `withLoginLinkURL`, `withJoinURL`.
+  - Removed: `server/apidoc/schema.go`, `apidoc.Doc`,
+    `Op.Method`/`Params`/`Body`/`Reply`, `mcp.Tool.InputSchema`/`Route`,
+    `Call.Bind`, `registerAccountTools`/`registerFileTools`, and every
+    `app.Group` in `routes.go`.
   - Added to `Op`: `NoCSRF` and `RawBody`.
+  - `routes.go`: `//go:generate go run ../apidoc/gen`, `featureGuards`, and a
+    `Register` that mounts only the login and join pages, `mountDeclared` and
+    the catch-alls.
+  - New `RequireLogs`: the log's routes are always mounted, and answer 404
+    while logs are off.
+  - `scripts/api_docs.sh` runs `go generate ./server/routes` first, and
+    `TestTheRouteTableIsCurrent` fails while the table is stale.
   - `refusal` gains `Error`/`Send`/`Refused`, so a handler returns it as its
     error.
   - Pagination is typed: `Page`, `Direction`, `Paged`, `cutPage`,
     `sortedPage`, with `matchRows`/`sortRows` over typed rows. `sendPage`,
     `sendSorted` and `toolPage` are gone.
   - CSRF is checked by the framework (body `csrf_token`, or `X-CSRF-Token` for
-    a raw body), so handlers no longer call `CheckCSRF`. `routes.go` sets
-    `apidoc.CheckCSRF`.
+    a raw body), so handlers no longer call `CheckCSRF`.
 - **Every template route and tool converted.** Named schemas moved out of
   `schemas_api.go` next to their routes or models: `models.LoginLinkInfo`,
-  `models.Revoked` and `models.Theme` carry `APIName`.
+  `models.Revoked` and `models.Theme` carry `APIName`. The helpers
+  `setUserDisabled`/`revokeAccess` are now `applyUserDisabled`/
+  `revokeCredentials`, since their names went to the handlers.
 - **Doc changes, all from the code now being the docs.**
   - Every JSON request body has `additionalProperties: false`.
   - Limits that only the handlers knew are now documented: `display_name` and
@@ -49,6 +115,22 @@ files and no hand-written `InputSchema` left.
   - The `/mcp` 405s document no body.
   - MCP tools take their route's whole request, so the list tools gain
     `q`/`sort`/`dir`, and some tools gain `limit`/`offset` too.
+  - The derived error statuses add what the old lists missed: 400 on
+    `GET /api/files/{file_id}`, its download, the admin download,
+    `GET /api/owner/logs/days` and `/stream`, and `POST /api/join/info`; 403
+    on `POST /api/join/info`, `/match`, `/create` and `POST /mcp`; 404 on
+    `POST /api/account/pin` and `GET`/`POST /api/admin/invite-links`.
+  - `config/mcp.json` lists the tools by name.
+  - **One text per route.** A route with an MCP tool shares its words with
+    the tool, so 41 routes' summaries and descriptions in `openapi.json` and
+    `api.md` are now their tool's: the summary is the tool's title less
+    ` (admin)`, and the description is the tool's, less the closing words only
+    the tool needs (`mcp_note`). Two tools gain words their route had:
+    `admin_set_user_role` (becoming an admin ends the account's sessions and
+    live login link) and `files_delete` (it can be restored for ten minutes).
+    `revoke_my_other_sessions`, `files_start_upload` and `files_download_url`
+    keep their own words (`mcp_title`/`mcp_description`), since a browser
+    and an agent get different things from those routes.
 - **Behavior changes.**
   - An unknown body field is a 400 "unknown field: x" (it was ignored).
   - A body value of the wrong JSON type, or `null` where null is not allowed,
@@ -64,10 +146,16 @@ files and no hand-written `InputSchema` left.
     log and fire the webhooks the route does.
   - A malformed or unknown MCP argument is JSON-RPC invalid params, and a
     field's own message is a tool error.
+  - A feature's switch now runs first, so a signed-out call to a switched-off
+    feature is 404, not 401.
+  - With the route groups gone, a signed-out call to an unknown `/api/` path,
+    or to an owner route, is 404 (it was 401), as in the Python template.
+  - `POST /api/admin/users/{user_id}/reset-two-factor` is 404 while
+    two-factor is off.
+  - The log's routes exist while logs are off, and answer 404.
 
-**Converting an app's own routes** (they stop compiling, since `apidoc.Doc` is
-gone). For each `apidoc.Doc( (*Handlers).X , apidoc.Op{...} )` in an app
-`*_api.go`:
+**Converting an app's own routes** (they stop compiling: `apidoc.Doc` and
+the route groups are gone). For each route in an app `*_api.go`:
 
 1. **Request type.** Turn the handler's request struct into the route's
    request type:
@@ -82,20 +170,32 @@ gone). For each `apidoc.Doc( (*Handlers).X , apidoc.Op{...} )` in an app
 2. **Reply type.** Replace the `fiber.Map` reply with a reply struct, taking
    the reply doc struct's fields and tags. A field the handler always sends
    has no `omitempty`.
-3. **Handler.** Make the handler
-   `func ( handlers *Handlers ) X() *apidoc.Endpoint[ xRequest , xReply ] { return apidoc.Handle( apidoc.Op{ ...the old Op, less Params/Body/Reply... } , func( c fiber.Ctx , in *xRequest ) ( reply *xReply , err error ) { ... } ) }`.
-   - Delete the bind, the CSRF check, the id parsing and the checks the type
-     now makes.
-   - Return `refuse(...)` as the error.
-   - Bytes and streams use `apidoc.Stream` with `Op.ReplyType`.
-4. **Mount.** In `routes.go`, change `group.Post( "/p" , mw , handlers.X )` to
-   `apidoc.Post( group , "/p" , handlers.X , mw )`.
-5. **MCP tool.** Replace its `&mcp.Tool{ Route , InputSchema , Call }` with
-   `mcp.ForRoute( handlers.X , mcp.Tool{ Name , Title , Description , flags } , nil )`.
-   Pass a call only to add to the reply.
-6. **Finish.** Delete the `*_api.go` file, then run `scripts/api_docs.sh` and
-   `go test ./...`. Tests that post unknown fields, or that rely on the
-   behavior changes above, need updating.
+3. **Handler.** Make it a flat method,
+   `func ( handlers *Handlers ) x( c fiber.Ctx , in *xRequest ) ( reply *xReply , err error )`,
+   ending its doc comment with `// @route(...)`:
+   - first the method and the full path, `"POST /api/x/{x_id}"`;
+   - then the old `Op`'s fields, less `Params`/`Body`/`Reply`, with
+     `errors=(...)` only for what the handler itself answers;
+   - `use=[...]` for any middleware its mount had beyond what the
+     declaration implies (`sameOrigin( ... )`, say).
+   Delete the bind, the CSRF check, the id parsing and the checks the type
+   now makes, and return `refuse(...)` as the error. Bytes and streams return
+   only `error`, with `reply_type=`.
+4. **Mount.** Delete its line in `routes.go`, and any group that is left
+   empty. A feature of the app's own that can be switched off while the server
+   runs gets a switch in `featureGuards`, and its routes `feature="..."`.
+5. **MCP tool.** Replace its `&mcp.Tool{ ... }` registration with
+   `mcp="its_name"` and its flags in the route's `@route(...)`, each tool line
+   ending `// feature:mcp`. Its title becomes the summary (` (admin)` is
+   added for an admin-only tool) and its description the route's
+   description: move the words only the tool needs (tool names, `login_url`)
+   to the end, in `mcp_note`, and use `mcp_title`/`mcp_description` only
+   where a browser and an agent really get different things. Give `call=`
+   only to add to the reply.
+6. **Finish.** Delete the `*_api.go` file, then run `scripts/api_docs.sh` (it
+   writes `routes_generated.go`) and `go test ./...`. Check the route's guards
+   in `routes_generated.go` against what its mount had. Tests that post
+   unknown fields, or that rely on the behavior changes above, need updating.
 
 `server/routes/admin.go` is the worked example.
 

@@ -55,7 +55,7 @@ type meReply struct {
 
 func ( meReply ) APIName() ( name string ) { name = "Me"; return }
 
-// GetMe is the frontend's first call on every page load: it answers "who am
+// getMe is the frontend's first call on every page load: it answers "who am
 // I, what may I do, and what CSRF token do I echo back". Handing the token
 // out here means no page needs a hidden form field or a template variable.
 //
@@ -66,75 +66,79 @@ func ( meReply ) APIName() ( name string ) { name = "Me"; return }
 // as "role" would have a client believe it has permissions the server will
 // refuse to act on. The MCP whoami tool is this route, so the two cannot
 // describe the same caller differently.
-func ( handlers *Handlers ) GetMe() *apidoc.Endpoint[ apidoc.None , meReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Who am I" , Tag: "Account" , Errors: []int{ 401 } },
-		func( c fiber.Ctx , in *apidoc.None ) ( reply *meReply , err error ) {
-			actor := security.ActorFrom( c )
-			user := actor.User
+//
+// @route("GET /api/me", summary="Who am I",
+//     tag="Account",
+//     description="The account this API key belongs to, the role it acts with (role -- never higher than "
+//         "the key's own scope), and the account's own role.",
+//     mcp="whoami", read_only=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) getMe( c fiber.Ctx , in *apidoc.None ) ( reply *meReply , err error ) {
+	actor := security.ActorFrom( c )
+	user := actor.User
 
-			// is_owner tells the UI which account-management buttons to offer; the
-			// server checks ownership again on every request that depends on it.
-			owner_id , err := models.OwnerID( handlers.Store )
-			if err != nil { return }
-			login_link , err := models.LiveLoginLink( handlers.Store , user.ID )
-			if err != nil { return }
+	// is_owner tells the UI which account-management buttons to offer; the
+	// server checks ownership again on every request that depends on it.
+	owner_id , err := models.OwnerID( handlers.Store )
+	if err != nil { return }
+	login_link , err := models.LiveLoginLink( handlers.Store , user.ID )
+	if err != nil { return }
 
-			// >>> feature:appearance
-			themes , themes_custom , err := handlers.myThemes( user )
-			if err != nil { return }
-			// <<< feature:appearance
-			cfg := handlers.cfg()
-			reply = &meReply{
-				Authenticated:      true,
-				ID:                 user.ID,
-				DisplayName:        user.DisplayName,
-				Role:               actor.Role,
-				AccountRole:        user.Role,
-				IsOwner:            user.ID == owner_id,
-				LoginLink:          login_link,
-				Maintenance:        cfg.MaintenanceMode(), // feature:maintenance
-				Version:            handlers.Version,
-				Announcement:       cfg.Announcement,
-				Repo:               cfg.Repo,
-				Description:        cfg.Description,
-				ShowAbout:          cfg.ShowAbout, // feature:about
-				OpenapiURL:         handlers.openAPIURL(), // feature:openapi
-				MCPURL:             handlers.mcpURL(), // feature:mcp
-				Shortcuts:          myShortcuts( user ), // feature:shortcuts
-				Themes:             themes, // feature:appearance
-				ThemesCustom:       themes_custom, // feature:appearance
-				ThemeID:            user.ThemeID, // feature:appearance
-				HasPIN:             user.HasPin(), // feature:invite_links
-				Username:           user.Username, // feature:passwords
-				HasPassword:        user.HasPassword(), // feature:passwords
-				PasswordBlocked:    user.PasswordBlocked, // feature:passwords
-				TwoFactor:          user.TwoFactorOn(), // feature:two_factor
-				PasswordsEnabled:   cfg.PasswordsEnabled, // feature:passwords
-				TwoFactorEnabled:   cfg.TwoFactorEnabled, // feature:two_factor
-				Auth:               actor.Method(),
-				APIKeysEnabled:     cfg.APIKeysEnabled, // feature:api_keys
-				MCPEnabled:         cfg.MCPEnabled, // feature:mcp
-				FilesEnabled:       cfg.Files.Enabled, // feature:files
-				InviteLinksEnabled: handlers.inviteLinksOn(), // feature:invite_links
-				WebhooksEnabled:    cfg.Webhooks.Enabled, // feature:webhooks
-				// Whether track.js sends anything, and whether it sends clicks. // feature:logs
-				LogsEnabled:        handlers.Logs.Enabled(), // feature:logs
-				LogsUIClicks:       handlers.Logs.Enabled() && cfg.Logs.UIClicks, // feature:logs
-			}
-			// Only a session has a CSRF token. A key-authenticated request has no
-			// ambient credential to protect, so there is nothing to hand back -- see
-			// Guard.CheckCSRF.
-			if actor.Session != nil {
-				reply.CSRFToken = actor.Session.CSRFToken
-			}
-			// >>> feature:api_keys
-			if actor.APIKey != nil {
-				reply.APIKeyID = actor.APIKey.ID
-				reply.APIKeyName = actor.APIKey.Name
-			}
-			// <<< feature:api_keys
-			return
-		} )
+	// >>> feature:appearance
+	themes , themes_custom , err := handlers.myThemes( user )
+	if err != nil { return }
+	// <<< feature:appearance
+	cfg := handlers.cfg()
+	reply = &meReply{
+		Authenticated:      true,
+		ID:                 user.ID,
+		DisplayName:        user.DisplayName,
+		Role:               actor.Role,
+		AccountRole:        user.Role,
+		IsOwner:            user.ID == owner_id,
+		LoginLink:          login_link,
+		Maintenance:        cfg.MaintenanceMode(), // feature:maintenance
+		Version:            handlers.Version,
+		Announcement:       cfg.Announcement,
+		Repo:               cfg.Repo,
+		Description:        cfg.Description,
+		ShowAbout:          cfg.ShowAbout, // feature:about
+		OpenapiURL:         handlers.openAPIURL(), // feature:openapi
+		MCPURL:             handlers.mcpURL(), // feature:mcp
+		Shortcuts:          myShortcuts( user ), // feature:shortcuts
+		Themes:             themes, // feature:appearance
+		ThemesCustom:       themes_custom, // feature:appearance
+		ThemeID:            user.ThemeID, // feature:appearance
+		HasPIN:             user.HasPin(), // feature:invite_links
+		Username:           user.Username, // feature:passwords
+		HasPassword:        user.HasPassword(), // feature:passwords
+		PasswordBlocked:    user.PasswordBlocked, // feature:passwords
+		TwoFactor:          user.TwoFactorOn(), // feature:two_factor
+		PasswordsEnabled:   cfg.PasswordsEnabled, // feature:passwords
+		TwoFactorEnabled:   cfg.TwoFactorEnabled, // feature:two_factor
+		Auth:               actor.Method(),
+		APIKeysEnabled:     cfg.APIKeysEnabled, // feature:api_keys
+		MCPEnabled:         cfg.MCPEnabled, // feature:mcp
+		FilesEnabled:       cfg.Files.Enabled, // feature:files
+		InviteLinksEnabled: handlers.inviteLinksOn(), // feature:invite_links
+		WebhooksEnabled:    cfg.Webhooks.Enabled, // feature:webhooks
+		// Whether track.js sends anything, and whether it sends clicks. // feature:logs
+		LogsEnabled:        handlers.Logs.Enabled(), // feature:logs
+		LogsUIClicks:       handlers.Logs.Enabled() && cfg.Logs.UIClicks, // feature:logs
+	}
+	// Only a session has a CSRF token. A key-authenticated request has no
+	// ambient credential to protect, so there is nothing to hand back -- see
+	// Guard.CheckCSRF.
+	if actor.Session != nil {
+		reply.CSRFToken = actor.Session.CSRFToken
+	}
+	// >>> feature:api_keys
+	if actor.APIKey != nil {
+		reply.APIKeyID = actor.APIKey.ID
+		reply.APIKeyName = actor.APIKey.Name
+	}
+	// <<< feature:api_keys
+	return
 }
 
 // >>> feature:shortcuts
@@ -154,29 +158,34 @@ type renameAccountRequest struct {
 	Expect *string `json:"expect,omitempty"`
 }
 
-// RenameAccount changes the caller's own display name.
-func ( handlers *Handlers ) RenameAccount() *apidoc.Endpoint[ renameAccountRequest , renameUserReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Change your display name" , Tag: "Account" , Errors: []int{ 400 , 401 , 403 , 409 } },
-		func( c fiber.Ctx , in *renameAccountRequest ) ( reply *renameUserReply , err error ) {
-			if models.ValidDisplayName( in.DisplayName ) == false {
-				err = refuse( fiber.StatusBadRequest , "display name must be 1-80 characters" )
-				return
-			}
-			user := security.UserFrom( c )
-			rename_err := models.RenameUser( handlers.Store , user.ID , in.DisplayName , in.Expect )
-			var conflict_err *models.RenameConflictError
-			if errors.As( rename_err , &conflict_err ) {
-				err = refuse( fiber.StatusConflict , conflict_err.Error() , fiber.Map{ "display_name": conflict_err.Current } )
-				return
-			}
-			if rename_err != nil {
-				err = rename_err
-				return
-			}
-			handlers.audit( c , logs.KindAuth , "renamed own account" , fiber.Map{ "name": in.DisplayName } )
-			reply = &renameUserReply{ Ok: true , DisplayName: in.DisplayName }
-			return
-		} )
+// renameAccount changes the caller's own display name.
+//
+// @route("POST /api/account/rename", summary="Rename your account",
+//     tag="Account", errors=(409,),
+//     description="Change your own display name (1-80 characters). expect, when given, is the name you "
+//         "think it has now; if someone changed it meanwhile the rename is refused with the current name, "
+//         "so nothing is overwritten unseen.",
+//     mcp="rename_account",  // feature:mcp
+// )
+func ( handlers *Handlers ) renameAccount( c fiber.Ctx , in *renameAccountRequest ) ( reply *renameUserReply , err error ) {
+	if models.ValidDisplayName( in.DisplayName ) == false {
+		err = refuse( fiber.StatusBadRequest , "display name must be 1-80 characters" )
+		return
+	}
+	user := security.UserFrom( c )
+	rename_err := models.RenameUser( handlers.Store , user.ID , in.DisplayName , in.Expect )
+	var conflict_err *models.RenameConflictError
+	if errors.As( rename_err , &conflict_err ) {
+		err = refuse( fiber.StatusConflict , conflict_err.Error() , fiber.Map{ "display_name": conflict_err.Current } )
+		return
+	}
+	if rename_err != nil {
+		err = rename_err
+		return
+	}
+	handlers.audit( c , logs.KindAuth , "renamed own account" , fiber.Map{ "name": in.DisplayName } )
+	reply = &renameUserReply{ Ok: true , DisplayName: in.DisplayName }
+	return
 }
 
 // >>> feature:invite_links
@@ -189,28 +198,29 @@ type pinReply struct {
 	HasPIN bool `json:"has_pin"`
 }
 
-// SetPin sets, or with an empty pin clears, the PIN asked for when this
+// setPin sets, or with an empty pin clears, the PIN asked for when this
 // account signs back in through an invite link (see models/pin.go).
-func ( handlers *Handlers ) SetPin() *apidoc.Endpoint[ pinRequest , pinReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Set or clear your PIN" , Tag: "Account" , Access: apidoc.SessionOnly , Feature: "invite_links" , Errors: []int{ 400 , 401 , 403 } },
-		func( c fiber.Ctx , in *pinRequest ) ( reply *pinReply , err error ) {
-			set_err := models.SetUserPin( handlers.Store , security.UserFrom( c ).ID , in.Pin )
-			if errors.Is( set_err , models.ErrBadPin ) {
-				err = refuse( fiber.StatusBadRequest , "bad_pin" )
-				return
-			}
-			if set_err != nil {
-				err = set_err
-				return
-			}
-			handlers.audit( c , logs.KindAuth , "pin changed" , fiber.Map{ "has_pin": in.Pin != "" } )
-			reply = &pinReply{ Ok: true , HasPIN: in.Pin != "" }
-			return
-		} )
+//
+// @route("POST /api/account/pin", summary="Set or clear your PIN",
+//     tag="Account", access=SESSION_ONLY, feature="invite_links",
+// )
+func ( handlers *Handlers ) setPin( c fiber.Ctx , in *pinRequest ) ( reply *pinReply , err error ) {
+	set_err := models.SetUserPin( handlers.Store , security.UserFrom( c ).ID , in.Pin )
+	if errors.Is( set_err , models.ErrBadPin ) {
+		err = refuse( fiber.StatusBadRequest , "bad_pin" )
+		return
+	}
+	if set_err != nil {
+		err = set_err
+		return
+	}
+	handlers.audit( c , logs.KindAuth , "pin changed" , fiber.Map{ "has_pin": in.Pin != "" } )
+	reply = &pinReply{ Ok: true , HasPIN: in.Pin != "" }
+	return
 }
 // <<< feature:invite_links
 
-// CreateMyLoginLink mints a login link for the caller's own account: the way
+// createMyLoginLink mints a login link for the caller's own account: the way
 // to sign in on another device without asking an admin. Once by default, or
 // reusable, like ReissueLogin -- it is ReissueLogin pointed at yourself, so it
 // has the same effect: any link the account could still use stops working,
@@ -220,42 +230,54 @@ func ( handlers *Handlers ) SetPin() *apidoc.Endpoint[ pinRequest , pinReply ] {
 // the link becomes a session, and a session acts with the account's role, so
 // a key scoped down to "user" on an admin's account would otherwise climb.
 // Revoking the key voids the link while it can still be used.
-func ( handlers *Handlers ) CreateMyLoginLink() *apidoc.Endpoint[ models.LoginLinkRequest , loginLinkReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "A login link for yourself" , Tag: "Account" , Errors: []int{ 400 , 401 , 403 } },
-		func( c fiber.Ctx , in *models.LoginLinkRequest ) ( reply *loginLinkReply , err error ) {
-			actor := security.ActorFrom( c )
-			if actor.ViaAPIKey() && actor.Role != actor.User.Role {
-				err = refuse( fiber.StatusForbidden , "this key acts with less than your account's role, so it cannot make a login link" )
-				return
-			}
-			options , refused := handlers.loginLinkOptions( c , *in )
-			if refused != nil {
-				err = refused
-				return
-			}
-			credential , info , err := models.IssueLoginLink( handlers.Store , actor.User.ID , options )
-			if err != nil { return }
-			handlers.audit( c , logs.KindAuth , "own login link created" , fiber.Map{ "max_uses": info.MaxUses , "expires_at": info.ExpiresAt } )
-			made := newLoginLinkReply( credential , info )
-			reply = &made
-			return
-		} )
+//
+// @route("POST /api/account/login-link", summary="A login link for yourself",
+//     tag="Account",
+//     description="A link that signs your own account in on a browser or another device. Only a key with "
+//         "your account's full role may ask: one scoped down to user on an admin account is refused.",
+//     mcp_note="Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), "  // feature:mcp
+//         "expires_at and max_uses. Any older link the account could still use stops working; its "  // feature:mcp
+//         "signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is "  // feature:mcp
+//         "unused, and signs out every device it signed in.",  // feature:mcp
+//     mcp="create_my_login_link", call=withLoginLinkURL,  // feature:mcp
+// )
+func ( handlers *Handlers ) createMyLoginLink( c fiber.Ctx , in *models.LoginLinkRequest ) ( reply *loginLinkReply , err error ) {
+	actor := security.ActorFrom( c )
+	if actor.ViaAPIKey() && actor.Role != actor.User.Role {
+		err = refuse( fiber.StatusForbidden , "this key acts with less than your account's role, so it cannot make a login link" )
+		return
+	}
+	options , refused := handlers.loginLinkOptions( c , *in )
+	if refused != nil {
+		err = refused
+		return
+	}
+	credential , info , err := models.IssueLoginLink( handlers.Store , actor.User.ID , options )
+	if err != nil { return }
+	handlers.audit( c , logs.KindAuth , "own login link created" , fiber.Map{ "max_uses": info.MaxUses , "expires_at": info.ExpiresAt } )
+	made := newLoginLinkReply( credential , info )
+	reply = &made
+	return
 }
 
-// CancelMyLoginLink stops the caller's own live login link working.
-func ( handlers *Handlers ) CancelMyLoginLink() *apidoc.Endpoint[ apidoc.None , cancelLoginLinkReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Stop your own login link working" , Tag: "Account" , Errors: []int{ 400 , 401 , 403 } },
-		func( c fiber.Ctx , in *apidoc.None ) ( reply *cancelLoginLinkReply , err error ) {
-			user_id := security.UserFrom( c ).ID
-			removed , err := models.CancelLoginLink( handlers.Store , user_id , user_id )
-			if err != nil { return }
-			handlers.audit( c , logs.KindAuth , "own login link cancelled" , fiber.Map{ "removed": removed } )
-			reply = &cancelLoginLinkReply{ Ok: true , Removed: removed }
-			return
-		} )
+// cancelMyLoginLink stops the caller's own live login link working.
+//
+// @route("POST /api/account/login-link/cancel", summary="Stop your own login link working",
+//     tag="Account",
+//     description="Void your account's live login link without making a new one. Devices it already signed "
+//         "in stay signed in. Answers with removed: 0 or 1.",
+//     mcp="cancel_my_login_link", destructive=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) cancelMyLoginLink( c fiber.Ctx , in *apidoc.None ) ( reply *cancelLoginLinkReply , err error ) {
+	user_id := security.UserFrom( c ).ID
+	removed , err := models.CancelLoginLink( handlers.Store , user_id , user_id )
+	if err != nil { return }
+	handlers.audit( c , logs.KindAuth , "own login link cancelled" , fiber.Map{ "removed": removed } )
+	reply = &cancelLoginLinkReply{ Ok: true , Removed: removed }
+	return
 }
 
-// Logout deletes the session server-side as well as clearing the cookie, so
+// logout deletes the session server-side as well as clearing the cookie, so
 // a copy of the cookie captured earlier is dead too.
 //
 // It is held to the CSRF token like every other state change. SameSite=Strict
@@ -265,15 +287,17 @@ func ( handlers *Handlers ) CancelMyLoginLink() *apidoc.Endpoint[ apidoc.None , 
 //
 // Called with an API key it does nothing and says so by succeeding: there is
 // no session to destroy. A key is ended by revoking it, not by logging out.
-func ( handlers *Handlers ) Logout() *apidoc.Endpoint[ apidoc.None , okReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Sign out" , Tag: "Account" , MCPHTTP: "Ends a browser session; a key has none to end." , Errors: []int{ 400 , 401 , 403 } },
-		func( c fiber.Ctx , in *apidoc.None ) ( reply *okReply , err error ) {
-			handlers.audit( c , logs.KindAuth , "signed out" , nil )
-			handlers.destroyCookieSession( c )
-			handlers.Guard.ClearSessionCookie( c )
-			reply = &okReply{ Ok: true }
-			return
-		} )
+//
+// @route("POST /api/logout", summary="Sign out",
+//     tag="Account",
+//     mcp_http="Ends a browser session; a key has none to end.",
+// )
+func ( handlers *Handlers ) logout( c fiber.Ctx , in *apidoc.None ) ( reply *okReply , err error ) {
+	handlers.audit( c , logs.KindAuth , "signed out" , nil )
+	handlers.destroyCookieSession( c )
+	handlers.Guard.ClearSessionCookie( c )
+	reply = &okReply{ Ok: true }
+	return
 }
 
 // >>> feature:openapi

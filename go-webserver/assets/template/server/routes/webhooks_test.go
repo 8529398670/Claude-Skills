@@ -170,7 +170,7 @@ func TestDisablingAUserEmitsFromTheSharedHelper( t *testing.T ) {
 	fixture.handlers.Webhooks = webhooks.New( fixture.store , fixture.handlers.Settings )
 	_ , hook , err := models.CreateWebhook( fixture.store , fixture.cfg.SecretKey , "x" , "https://a.example" , []string{ models.EventUserDisabled } , fixture.owner.ID )
 	if err != nil { t.Fatal( err ) }
-	if refused := fixture.handlers.setUserDisabled( fixture.owner.ID , fixture.alice.ID , true ); refused != nil { t.Fatalf( "%+v" , refused ) }
+	if refused := fixture.handlers.applyUserDisabled( fixture.owner.ID , fixture.alice.ID , true ); refused != nil { t.Fatalf( "%+v" , refused ) }
 	rows , _ := models.ListWebhookDeliveries( fixture.store , hook.ID )
 	if len( rows ) != 1 || strings.Contains( rows[ 0 ].Body , `"disabled":true` ) == false { t.Fatalf( "%+v" , rows ) }
 }

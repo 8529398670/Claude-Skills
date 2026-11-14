@@ -49,6 +49,8 @@ class RequireAPIKeys(Guard):
     in app/core/security.py, not here, because it has to hold for every route
     rather than only these."""
 
+    statuses = (404,)
+
     def refuse(self, request: Request) -> Response | None:
         if not get_config(request).api_keys_enabled:
             return not_found("api keys are disabled on this server")
@@ -139,7 +141,7 @@ class KeysReply(Paged):
     keys: list[APIKey]
 
 
-@route(summary="Your API keys", tag="API keys", access=SESSION_ONLY, feature="api_keys", errors=(400, 401, 403, 404))
+@route("GET /api/keys", summary="Your API keys", tag="API keys", access=SESSION_ONLY, feature="api_keys")
 def list_my_keys(request: Request, body: ListMyKeys) -> KeysReply:
     """Answers "what has standing access as me". Revoked and expired keys are
     included, marked as such, because a key that used to exist is part of
@@ -176,7 +178,10 @@ def _ttl_seconds(request: Request, days: int | None) -> int:
     return ttl_seconds
 
 
-@route(summary="Create an API key", tag="API keys", access=SESSION_ONLY, feature="api_keys", status=201, errors=(400, 401, 403, 404))
+@route(
+    "POST /api/keys", summary="Create an API key",
+    tag="API keys", access=SESSION_ONLY, feature="api_keys", status=201,
+)
 def create_my_key(request: Request, body: CreateMyKey) -> NewAPIKey:
     """Mints a key for the signed-in user and returns the credential once. The
     default role is "user" even for an admin: an admin-scoped key can list and
@@ -211,9 +216,10 @@ class CreateKeyForUser(CreateMyKey, kw_only=True):
 
 
 @route(
-    summary="Create a key that acts as someone else",
-    description="Any admin may do this for an ordinary user, and only the owner for another admin. Nobody may do it for the owner. The key records who made it and shows that to the person it acts as.",
-    tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", status=201, errors=(400, 401, 403, 404),
+    "POST /api/admin/keys", summary="Create a key that acts as someone else",
+    tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", status=201,
+    description="Any admin may do this for an ordinary user, and only the owner for another admin. Nobody "
+    "may do it for the owner. The key records who made it and shows that to the person it acts as.",
 )
 def create_key_for_user(request: Request, body: CreateKeyForUser) -> NewAPIKey:
     """Mints a key that acts as another account, for setting up someone's
@@ -265,14 +271,20 @@ class RenameKeyReply(Reply):
     name: str
 
 
-@route(summary="Rename one of your keys", tag="API keys", access=SESSION_ONLY, feature="api_keys", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/keys/{key_id}/rename", summary="Rename one of your keys",
+    tag="API keys", access=SESSION_ONLY, feature="api_keys", errors=(409,),
+)
 def rename_my_key(request: Request, body: RenameKey) -> RenameKeyReply:
     """Rename one of your own keys. Someone else's is "no such api key", for
     the same reason as in revoke_my_key."""
     return _rename(request, body, own_only=True)
 
 
-@route(summary="Rename anyone's key", tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/admin/keys/{key_id}/rename", summary="Rename anyone's key",
+    tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", errors=(409,),
+)
 def rename_any_key(request: Request, body: RenameKey) -> RenameKeyReply:
     """An admin renaming anyone's key. A name changes nothing about what a key
     can do, so unlike its expiry this needs no ladder."""
@@ -302,14 +314,20 @@ class SetKeyExpiry(KeyIDPath):
     expires_in_days: Annotated[ExpiresInDays, Meta(description="Counted from now. 0 means it never expires.")]
 
 
-@route(summary="Change when one of your keys expires", tag="API keys", access=SESSION_ONLY, feature="api_keys", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/keys/{key_id}/expiry", summary="Change when one of your keys expires",
+    tag="API keys", access=SESSION_ONLY, feature="api_keys",
+)
 def set_my_key_expiry(request: Request, body: SetKeyExpiry) -> APIKey:
     """Change when one of your own keys expires. The session this group
     requires is what stops a leaked key from extending itself."""
     return _set_expiry(request, body, own_only=True)
 
 
-@route(summary="Change when anyone's key expires", tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/keys/{key_id}/expiry", summary="Change when anyone's key expires",
+    tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys",
+)
 def set_any_key_expiry(request: Request, body: SetKeyExpiry) -> APIKey:
     """The same for an admin. Whose keys they may change is
     api_keys.set_api_key_expiry's to say."""
@@ -337,7 +355,10 @@ def _set_expiry(request: Request, body: SetKeyExpiry, own_only: bool) -> APIKey:
     return api_key_row(key)
 
 
-@route(summary="Revoke one of your keys", tag="API keys", access=SESSION_ONLY, feature="api_keys", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/keys/{key_id}/revoke", summary="Revoke one of your keys",
+    tag="API keys", access=SESSION_ONLY, feature="api_keys",
+)
 def revoke_my_key(request: Request, body: KeyIDPath) -> OkReply:
     """Takes effect immediately -- the next request carrying that key fails.
     Someone else's key is reported as "no such api key" rather than
@@ -352,7 +373,10 @@ def revoke_my_key(request: Request, body: KeyIDPath) -> OkReply:
     return OkReply(ok=True)
 
 
-@route(summary="Delete one of your keys", tag="API keys", access=SESSION_ONLY, feature="api_keys", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/keys/{key_id}/delete", summary="Delete one of your keys",
+    tag="API keys", access=SESSION_ONLY, feature="api_keys",
+)
 def delete_my_key(request: Request, body: KeyIDPath) -> OkReply:
     """Delete one of your own keys -- live or already dead. It stops working
     at once and restore_my_key can bring it back for a few minutes. Someone
@@ -371,7 +395,10 @@ def delete_my_key(request: Request, body: KeyIDPath) -> OkReply:
     return OkReply(ok=True)
 
 
-@route(summary="Undo deleting one of your keys", tag="API keys", access=SESSION_ONLY, feature="api_keys", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/keys/{key_id}/restore", summary="Undo deleting one of your keys",
+    tag="API keys", access=SESSION_ONLY, feature="api_keys", errors=(409,),
+)
 def restore_my_key(request: Request, body: KeyIDPath) -> APIKey:
     """Undo delete_my_key, within RESTORE_WINDOW. A key an admin deleted is
     the admin's to restore, not its owner's."""
@@ -410,7 +437,10 @@ class ListAllKeys(Page):
     dir: Dir = ""  # type: ignore[assignment]
 
 
-@route(summary="Every key in the app", tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", errors=(400, 401, 403, 404))
+@route(
+    "GET /api/admin/keys", summary="Every key in the app",
+    tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys",
+)
 def list_all_keys(request: Request, body: ListAllKeys) -> KeysReply:
     """The admin view: every key in the app, with whose it is. This is the
     "who and what has standing access" question, and it is the reason admins
@@ -424,7 +454,10 @@ def list_all_keys(request: Request, body: ListAllKeys) -> KeysReply:
     return KeysReply(keys=page.pop("rows"), **page)
 
 
-@route(summary="Revoke anyone's key", tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/keys/{key_id}/revoke", summary="Revoke anyone's key",
+    tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys",
+)
 def revoke_any_key(request: Request, body: KeyIDPath) -> OkReply:
     """How an admin kills a credential belonging to someone else -- a laptop
     that went missing, a CI system being decommissioned, a contractor who has
@@ -440,7 +473,10 @@ def revoke_any_key(request: Request, body: KeyIDPath) -> OkReply:
     return OkReply(ok=True)
 
 
-@route(summary="Delete anyone's key", tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/keys/{key_id}/delete", summary="Delete anyone's key",
+    tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys",
+)
 def delete_any_key(request: Request, body: KeyIDPath) -> OkReply:
     """The key stops working and disappears from every listing, its owner's
     included. Unlike revoke_any_key it can be undone, by restore_any_key."""
@@ -454,7 +490,10 @@ def delete_any_key(request: Request, body: KeyIDPath) -> OkReply:
     return OkReply(ok=True)
 
 
-@route(summary="Undo deleting anyone's key", tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/admin/keys/{key_id}/restore", summary="Undo deleting anyone's key",
+    tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", errors=(409,),
+)
 def restore_any_key(request: Request, body: KeyIDPath) -> APIKey:
     """Undo a delete, any key's, within RESTORE_WINDOW."""
     row = _restore(get_store(request), body.key_id, actor_from(request).user)

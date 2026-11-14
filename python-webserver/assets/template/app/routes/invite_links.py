@@ -23,6 +23,7 @@ from app.models.users import User
 from app.routes.admin import DateTime, OkReply
 from app.routes.helpers import Dir, Page, Paged, Refused, get_store, match_rows, restore_refusal, sorted_page
 from app.routes.logs import audit
+from app.routes.mcp_tools_accounts import invite_links_on, with_join_url  # feature:mcp
 
 
 class InviteLinkRow(Reply, kw_only=True):
@@ -74,7 +75,14 @@ class ListInviteLinksReply(Paged):
     invite_links: list[InviteLinkRow]
 
 
-@route(summary="Every invite link", tag="Invite links", role=ADMIN, feature="invite_links", errors=(400, 401, 403))
+@route(
+    "GET /api/admin/invite-links", summary="List invite links",
+    tag="Invite links", role=ADMIN, feature="invite_links",
+    description="Group invite links, a page at a time: label, places used and left, expiry, and whether "
+    "each still works. The links themselves are never shown again after creation. next is the offset of the "
+    "following page, or null on the last one.",
+    mcp="admin_list_invite_links", read_only=True, enabled=invite_links_on,  # feature:mcp
+)
 def list_invite_links(request: Request, body: ListInviteLinks) -> ListInviteLinksReply:
     """Over HTTP and as the MCP admin_list_invite_links tool."""
     store = get_store(request)
@@ -98,7 +106,15 @@ class NewInviteLink(InviteLinkRow, kw_only=True):
     join_path: Annotated[str, Meta(description="The link to hand out, shown in this response only. A credential: treat it like a password.")]
 
 
-@route(summary="Create an invite link", tag="Invite links", role=ADMIN, feature="invite_links", status=201, errors=(400, 401, 403))
+@route(
+    "POST /api/admin/invite-links", summary="Create an invite link",
+    tag="Invite links", role=ADMIN, feature="invite_links", status=201,
+    description="One link for a group: each person who opens it joins as a new user, up to max_uses people, "
+    "for days days.",
+    mcp_note="Answers with join_url (shown only now) and the link's details. Revoking or deleting this API "  # feature:mcp
+    "key switches the link off.",  # feature:mcp
+    mcp="admin_create_invite_link", enabled=invite_links_on, call=with_join_url,  # feature:mcp
+)
 def create_invite_link(request: Request, body: CreateInviteLink) -> NewInviteLink:
     """One link for a group (see invite_links.py's module docs), over HTTP or
     the MCP admin_create_invite_link tool."""
@@ -129,7 +145,13 @@ class RenameInviteLinkReply(Reply):
     label: str
 
 
-@route(summary="Rename a link", tag="Invite links", role=ADMIN, feature="invite_links", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/admin/invite-links/{link_id}/rename", summary="Rename an invite link",
+    tag="Invite links", role=ADMIN, feature="invite_links", errors=(409,),
+    description="Change the label people see on an invite link's join page (1-80 characters). expect, when "
+    "given, is the label you think it has now.",
+    mcp="admin_rename_invite_link", enabled=invite_links_on,  # feature:mcp
+)
 def rename_invite_link(request: Request, body: RenameInviteLink) -> RenameInviteLinkReply:
     """Change a link's label, over HTTP or the MCP admin_rename_invite_link
     tool."""
@@ -153,7 +175,14 @@ class SetInviteLinkLimits(LinkIDPath):
     days: Annotated[Annotated[int, Meta(ge=1, le=INVITE_LINK_MAX_DAYS, extra={"error": INVITE_LIMITS})] | None, Meta(description="Counted from now. Leave out to keep the expiry.")] = None
 
 
-@route(summary="Change a link's places and expiry", tag="Invite links", role=ADMIN, feature="invite_links", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/invite-links/{link_id}/limits", summary="Change an invite link's places and expiry",
+    tag="Invite links", role=ADMIN, feature="invite_links",
+    description="Set how many people the link may take in (never fewer than have joined) and, when days is "
+    "given, a new expiry counted from now. The link then counts as this key's: revoking the key switches it "
+    "off.",
+    mcp="admin_set_invite_link_limits", enabled=invite_links_on,  # feature:mcp
+)
 def set_invite_link_limits(request: Request, body: SetInviteLinkLimits) -> InviteLinkRow:
     """Change a link's places, and its expiry when days is given; leaving days
     out keeps the expiry. Over HTTP or the MCP admin_set_invite_link_limits
@@ -173,7 +202,13 @@ def set_invite_link_limits(request: Request, body: SetInviteLinkLimits) -> Invit
     return _row(link, users.get_user(store, link.created_by))
 
 
-@route(summary="Switch a link back on", tag="Invite links", role=ADMIN, feature="invite_links", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/invite-links/{link_id}/switch-on", summary="Switch an invite link back on",
+    tag="Invite links", role=ADMIN, feature="invite_links",
+    mcp_note="Undo admin_revoke_invite_link: anyone still holding the link can use it again. The link then "  # feature:mcp
+    "counts as this key's: revoking the key switches it off.",  # feature:mcp
+    mcp="admin_switch_on_invite_link", enabled=invite_links_on,  # feature:mcp
+)
 def switch_on_invite_link(request: Request, body: LinkIDPath) -> InviteLinkRow:
     """Undo revoke_invite_link, over HTTP or the MCP
     admin_switch_on_invite_link tool. A key that switches a link on takes it
@@ -186,7 +221,13 @@ def switch_on_invite_link(request: Request, body: LinkIDPath) -> InviteLinkRow:
     return _row(link, users.get_user(store, link.created_by))
 
 
-@route(summary="Switch an invite link off", tag="Invite links", role=ADMIN, feature="invite_links", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/invite-links/{link_id}/revoke", summary="Switch off an invite link",
+    tag="Invite links", role=ADMIN, feature="invite_links",
+    description="Stop an invite link from letting anyone else join or sign in through it. Accounts it "
+    "already made keep working. Cannot be switched back on.",
+    mcp="admin_revoke_invite_link", destructive=True, enabled=invite_links_on,  # feature:mcp
+)
 def revoke_invite_link(request: Request, body: LinkIDPath) -> OkReply:
     """Switch a link off, over HTTP or the MCP admin_revoke_invite_link tool.
     The accounts it made keep working."""
@@ -197,7 +238,13 @@ def revoke_invite_link(request: Request, body: LinkIDPath) -> OkReply:
     return OkReply(ok=True)
 
 
-@route(summary="Delete an invite link", tag="Invite links", role=ADMIN, feature="invite_links", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/invite-links/{link_id}/delete", summary="Delete an invite link",
+    tag="Invite links", role=ADMIN, feature="invite_links",
+    description="Take an invite link off the list and stop it working. The accounts it made stay.",
+    mcp_note="admin_restore_invite_link undoes it for a few minutes.",  # feature:mcp
+    mcp="admin_delete_invite_link", destructive=True, enabled=invite_links_on,  # feature:mcp
+)
 def delete_invite_link(request: Request, body: LinkIDPath) -> OkReply:
     """Drop a link from the list, over HTTP or the MCP admin_delete_invite_link
     tool. The accounts it made stay; they just can no longer sign in on a new
@@ -208,7 +255,13 @@ def delete_invite_link(request: Request, body: LinkIDPath) -> OkReply:
     return OkReply(ok=True)
 
 
-@route(summary="Undo deleting an invite link", tag="Invite links", role=ADMIN, feature="invite_links", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/admin/invite-links/{link_id}/restore", summary="Undo deleting an invite link",
+    tag="Invite links", role=ADMIN, feature="invite_links", errors=(409,),
+    description="Bring back an invite link deleted in the last few minutes, working as before. The link "
+    "then counts as this key's: revoking the key switches it off.",
+    mcp="admin_restore_invite_link", enabled=invite_links_on,  # feature:mcp
+)
 def restore_invite_link(request: Request, body: LinkIDPath) -> InviteLinkRow:
     """Undo delete_invite_link, within RESTORE_WINDOW, over HTTP or the MCP
     admin_restore_invite_link tool. The link works again exactly as before,

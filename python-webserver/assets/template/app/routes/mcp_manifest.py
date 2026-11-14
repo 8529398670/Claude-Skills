@@ -28,9 +28,9 @@ def manifest() -> bytes | None:
 
 
 @route(
-    summary="The MCP tools: every tool /mcp has, its arguments, and the route it stands for",
+    "GET /api/mcp.json", summary="The MCP tools: every tool /mcp has, its arguments, and the route it stands for",
     tag="Monitoring", feature="mcp",
-    mcp_http="The MCP reference itself; tools/list gives the same list.", errors=(401, 404),
+    mcp_http="The MCP reference itself; tools/list gives the same list.",
 )
 async def get_mcp_manifest(request: Request) -> dict[str, Any]:
     raw = manifest()
@@ -56,20 +56,27 @@ class JSONRPCRequest(Reply):
 
 
 @route(
-    summary="Model Context Protocol, at the key's role", tag="Monitoring", access=KEY_ONLY, feature="mcp",
-    mcp_http="The MCP endpoint itself.", raw_body=JSONRPCRequest, errors=(400, 401, 404),
+    "POST /mcp", summary="Model Context Protocol, at the key's role",
+    tag="Monitoring", access=KEY_ONLY, feature="mcp", errors=(400,), raw_body=JSONRPCRequest,
+    mcp_http="The MCP endpoint itself.",
 )
 async def mcp_endpoint(request: Request) -> dict[str, Any]:
     return await server().endpoint(request)  # type: ignore[return-value]
 
 
-@route(summary="Refused: this server has no stream", tag="Monitoring", access=PUBLIC, feature="mcp", status=405, errors=(404,))
+@route(
+    "GET /mcp", summary="Refused: this server has no stream",
+    tag="Monitoring", access=PUBLIC, feature="mcp", status=405,
+)
 async def mcp_no_stream(request: Request) -> None:
     """GET /mcp: how a client asks for a server-to-client SSE stream."""
     return await server().method_not_allowed(request)  # type: ignore[return-value]
 
 
-@route(summary="Refused: this server keeps no sessions", tag="Monitoring", access=PUBLIC, feature="mcp", status=405, errors=(404,))
+@route(
+    "DELETE /mcp", summary="Refused: this server keeps no sessions",
+    tag="Monitoring", access=PUBLIC, feature="mcp", status=405,
+)
 async def mcp_no_sessions(request: Request) -> None:
     """DELETE /mcp: how a client ends a session."""
     return await server().method_not_allowed(request)  # type: ignore[return-value]

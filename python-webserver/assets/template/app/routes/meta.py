@@ -16,7 +16,7 @@ from app.routes.admin import OkReply
 READY_TIMEOUT_SECONDS = 2.0
 
 
-@route(summary="The UI's text", tag="Account", access=PUBLIC)
+@route("GET /api/language", summary="The UI's text", tag="Account", access=PUBLIC)
 async def get_language(request: Request) -> dict[str, Any]:
     """The whole language.yaml tree as JSON. Deliberately public: the
     signed-out page has text too, and none of it is secret. Do not put
@@ -29,7 +29,7 @@ async def get_language(request: Request) -> dict[str, Any]:
     )
 
 
-@route(summary="Is the process up", tag="Monitoring", access=PUBLIC)
+@route("GET /api/health", summary="Is the process up", tag="Monitoring", access=PUBLIC)
 async def get_health(request: Request) -> OkReply:
     """What the Dockerfile HEALTHCHECK hits. Trivial on purpose -- if it
     touched the database, a slow query would get the container killed and
@@ -51,7 +51,7 @@ async def _probe(store: db.Store) -> bool:
         return False
 
 
-@route(summary="Can the server do real work", tag="Monitoring", access=PUBLIC)
+@route("GET /api/ready", summary="Can the server do real work", tag="Monitoring", access=PUBLIC)
 async def get_ready(request: Request) -> OkReply:
     """Whether this instance can serve: what a load balancer or an orchestrator
     asks, as against /api/health, which only says the process is up. Public,

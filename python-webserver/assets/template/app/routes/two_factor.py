@@ -24,6 +24,7 @@ from app.routes.admin import OkReply
 from app.routes.auth import SignedIn, sign_in_response
 from app.routes.helpers import Refused, get_config, get_store, run
 from app.routes.logs import audit, audit_as, user_actor
+from app.routes.auth import SameOriginLogin
 
 # Wrong codes per account, wherever they are typed. Six digits with a window
 # of three steps would otherwise fall to a patient guesser. Per process, like
@@ -36,7 +37,10 @@ class FinishSignIn(RequestType):
     code: str
 
 
-@route(summary="Finish a sign-in with a code", tag="Sign-in", access=PUBLIC, feature="two_factor", errors=(400, 403))
+@route(
+    "POST /api/login/two-factor", summary="Finish a sign-in with a code",
+    tag="Sign-in", access=PUBLIC, feature="two_factor", no_switch=True, use=[SameOriginLogin],
+)
 async def finish_sign_in(request: Request, body: FinishSignIn) -> SignedIn:
     """The second half of a sign-in. No CSRF token, for the same reason as
     /api/login: there is no session yet to hold one, and the JSON body rule
@@ -70,7 +74,10 @@ class StartSetupReply(Reply):
     secret: str
 
 
-@route(summary="Begin two-factor setup", tag="Account", access=SESSION_ONLY, feature="two_factor", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/account/two-factor/start", summary="Begin two-factor setup",
+    tag="Account", access=SESSION_ONLY, feature="two_factor", errors=(409,),
+)
 def start_setup(request: Request) -> StartSetupReply:
     """A new secret for the person's authenticator app. The page builds the
     QR code from it, so nothing about it is stored as anything but cipher text
@@ -92,7 +99,10 @@ class ConfirmSetupReply(Reply):
     recovery_codes: list[str]
 
 
-@route(summary="Turn two-factor on", tag="Account", access=SESSION_ONLY, feature="two_factor", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/account/two-factor/confirm", summary="Turn two-factor on",
+    tag="Account", access=SESSION_ONLY, feature="two_factor", errors=(409,),
+)
 def confirm_setup(request: Request, body: Code) -> ConfirmSetupReply:
     """The code that proves the app has the secret. Answers with the recovery
     codes, which are never shown again."""
@@ -115,7 +125,10 @@ def confirm_setup(request: Request, body: Code) -> ConfirmSetupReply:
     return ConfirmSetupReply(recovery_codes=codes)
 
 
-@route(summary="Turn two-factor off", tag="Account", access=SESSION_ONLY, feature="two_factor", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/account/two-factor/disable", summary="Turn two-factor off",
+    tag="Account", access=SESSION_ONLY, feature="two_factor", errors=(409,),
+)
 def disable(request: Request, body: Code) -> OkReply:
     user_id = actor_from(request).user.id
     attempt = CODES.reserve(user_id)

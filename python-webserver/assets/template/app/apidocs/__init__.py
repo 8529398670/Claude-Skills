@@ -80,6 +80,13 @@ class Op:
     # and 503, which every route can.
     errors: tuple[int, ...] = ()
 
+    def __post_init__(self) -> None:
+        # The owner signs in from a browser: role=OWNER is SESSION_ONLY too.
+        if self.role == OWNER:
+            if self.access not in (SIGNED, SESSION_ONLY):
+                raise TypeError("role=OWNER is a browser session: give it no access")
+            self.access = SESSION_ONLY
+
 
 def handler_name(handler: Any) -> str:
     """The function behind a handler, for saying which one is undeclared."""
@@ -190,7 +197,7 @@ def operation(builder: Schemas, method: str, path: str, declared: Any) -> tuple[
         # A route whose handler returns None answers with its status alone.
         reply["content"] = json_content(typed(builder, declared.reply))
     responses: dict[str, Any] = {str(op.status): reply}
-    for code in (429, 503, *op.errors):
+    for code in (429, 503, *(declared.errors or op.errors)):
         if code not in ERROR_MEANINGS:
             problems.append(f"error status {code} has no shared response")
             continue

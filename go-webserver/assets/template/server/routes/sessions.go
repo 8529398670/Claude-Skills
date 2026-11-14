@@ -63,29 +63,34 @@ func currentSessionID( c fiber.Ctx ) ( result string ) {
 	return
 }
 
-// ListMySessions answers "where am I signed in". Only ever the caller's own:
+// listMySessions answers "where am I signed in". Only ever the caller's own:
 // an admin looks at someone else's through ListUserSessions.
-func ( handlers *Handlers ) ListMySessions() *apidoc.Endpoint[ Page , sessionsReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Your signed-in devices" , Tag: "Account" , Feature: "sessions" , Errors: []int{ 400 , 401 , 403 } },
-		func( c fiber.Ctx , in *Page ) ( reply *sessionsReply , err error ) {
-			actor := security.ActorFrom( c )
-			sessions , err := models.ListSessionsForUser( handlers.Store , actor.User.ID )
-			if err != nil { return }
-			rows := []sessionRow{}
-			for _ , session := range sessions {
-				rows = append( rows , newSessionRow( session , currentSessionID( c ) ) )
-			}
-			// >>> feature:logs
-			owner_id , err := models.OwnerID( handlers.Store )
-			if err != nil { return }
-			if actor.User.ID == owner_id {
-				if err = handlers.nameSessionRows( rows ); err != nil { return }
-			}
-			// <<< feature:logs
-			reply = &sessionsReply{}
-			reply.Sessions , reply.Paged = cutPage( rows , *in )
-			return
-		} )
+//
+// @route("GET /api/account/sessions", summary="Your signed-in devices",
+//     tag="Account", feature="sessions", errors=(403,),
+//     description="Where your account is signed in, a page at a time: id, when it started and was last "
+//         "seen, the browser, and the name you gave it. Through an API key no device is current. next is "
+//         "the offset of the following page, or null on the last one.",
+//     mcp="list_my_sessions", read_only=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) listMySessions( c fiber.Ctx , in *Page ) ( reply *sessionsReply , err error ) {
+	actor := security.ActorFrom( c )
+	sessions , err := models.ListSessionsForUser( handlers.Store , actor.User.ID )
+	if err != nil { return }
+	rows := []sessionRow{}
+	for _ , session := range sessions {
+		rows = append( rows , newSessionRow( session , currentSessionID( c ) ) )
+	}
+	// >>> feature:logs
+	owner_id , err := models.OwnerID( handlers.Store )
+	if err != nil { return }
+	if actor.User.ID == owner_id {
+		if err = handlers.nameSessionRows( rows ); err != nil { return }
+	}
+	// <<< feature:logs
+	reply = &sessionsReply{}
+	reply.Sessions , reply.Paged = cutPage( rows , *in )
+	return
 }
 
 // >>> feature:logs
@@ -125,34 +130,38 @@ type userSessionsRequest struct {
 	Page
 }
 
-// ListUserSessions shows an admin where an account is signed in, for ending one
+// listUserSessions shows an admin where an account is signed in, for ending one
 // device rather than everything with revoke-access. Addresses are for the owner
 // only, as in the activity log, which keeps them from other admins too.
-func ( handlers *Handlers ) ListUserSessions() *apidoc.Endpoint[ userSessionsRequest , sessionsReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "An account's signed-in devices" , Description: "The owner's are the owner's alone, and only the owner sees addresses." , Tag: "Admin" , Role: apidoc.Admin , Feature: "sessions" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *userSessionsRequest ) ( reply *sessionsReply , err error ) {
-			by_owner , refused := handlers.sessionsTarget( c , in.UserID )
-			if refused != nil {
-				err = refused
-				return
-			}
-			sessions , err := models.ListSessionsForUser( handlers.Store , in.UserID )
-			if err != nil { return }
-			rows := []sessionRow{}
-			for _ , session := range sessions {
-				row := newSessionRow( session , currentSessionID( c ) )
-				if by_owner == false { row.IP = "" }
-				rows = append( rows , row )
-			}
-			// >>> feature:logs
-			if by_owner {
-				if err = handlers.nameSessionRows( rows ); err != nil { return }
-			}
-			// <<< feature:logs
-			reply = &sessionsReply{}
-			reply.Sessions , reply.Paged = cutPage( rows , in.Page )
-			return
-		} )
+//
+// @route("GET /api/admin/users/{user_id}/sessions", summary="An account's signed-in devices",
+//     tag="Admin", role=ADMIN, feature="sessions", errors=(404,),
+//     description="Where an account is signed in: every session, with when it started and was last seen. "
+//         "Addresses are shown to the owner only, and only the owner sees the owner's.",
+//     mcp="admin_list_user_sessions", read_only=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) listUserSessions( c fiber.Ctx , in *userSessionsRequest ) ( reply *sessionsReply , err error ) {
+	by_owner , refused := handlers.sessionsTarget( c , in.UserID )
+	if refused != nil {
+		err = refused
+		return
+	}
+	sessions , err := models.ListSessionsForUser( handlers.Store , in.UserID )
+	if err != nil { return }
+	rows := []sessionRow{}
+	for _ , session := range sessions {
+		row := newSessionRow( session , currentSessionID( c ) )
+		if by_owner == false { row.IP = "" }
+		rows = append( rows , row )
+	}
+	// >>> feature:logs
+	if by_owner {
+		if err = handlers.nameSessionRows( rows ); err != nil { return }
+	}
+	// <<< feature:logs
+	reply = &sessionsReply{}
+	reply.Sessions , reply.Paged = cutPage( rows , in.Page )
+	return
 }
 
 type userSessionRequest struct {
@@ -160,30 +169,33 @@ type userSessionRequest struct {
 	sessionIDPath
 }
 
-// RevokeUserSession signs one of an account's devices out, and only that.
-func ( handlers *Handlers ) RevokeUserSession() *apidoc.Endpoint[ userSessionRequest , okReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Sign out one of an account's devices" , Tag: "Admin" , Role: apidoc.Admin , Feature: "sessions" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *userSessionRequest ) ( reply *okReply , err error ) {
-			if _ , refused := handlers.sessionsTarget( c , in.UserID ); refused != nil {
-				err = refused
-				return
-			}
-			if in.SessionID != "" && in.SessionID == currentSessionID( c ) {
-				err = refuse( fiber.StatusBadRequest , "use sign out for this device" )
-				return
-			}
-			revoke_err := models.RevokeSessionAs( handlers.Store , in.UserID , security.UserFrom( c ).ID , in.SessionID )
-			switch {
-			case errors.Is( revoke_err , models.ErrSessionNotFound ):
-				err = refuse( fiber.StatusNotFound , "not found" )
-			case revoke_err != nil:
-				err = actOnRefusal( revoke_err , "end a session of" )
-			default:
-				handlers.audit( c , logs.KindAdmin , "session revoked" , fiber.Map{ "user_id": in.UserID } )
-				reply = &okReply{ Ok: true }
-			}
-			return
-		} )
+// revokeUserSession signs one of an account's devices out, and only that.
+//
+// @route("POST /api/admin/users/{user_id}/sessions/{session_id}/revoke", summary="Sign out one of an account's devices",
+//     tag="Admin", role=ADMIN, feature="sessions", errors=(404,),
+//     mcp_note="End one of an account's sessions, rather than all of them with admin_revoke_access.",  // feature:mcp
+//     mcp="admin_revoke_user_session", destructive=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) revokeUserSession( c fiber.Ctx , in *userSessionRequest ) ( reply *okReply , err error ) {
+	if _ , refused := handlers.sessionsTarget( c , in.UserID ); refused != nil {
+		err = refused
+		return
+	}
+	if in.SessionID != "" && in.SessionID == currentSessionID( c ) {
+		err = refuse( fiber.StatusBadRequest , "use sign out for this device" )
+		return
+	}
+	revoke_err := models.RevokeSessionAs( handlers.Store , in.UserID , security.UserFrom( c ).ID , in.SessionID )
+	switch {
+	case errors.Is( revoke_err , models.ErrSessionNotFound ):
+		err = refuse( fiber.StatusNotFound , "not found" )
+	case revoke_err != nil:
+		err = actOnRefusal( revoke_err , "end a session of" )
+	default:
+		handlers.audit( c , logs.KindAdmin , "session revoked" , fiber.Map{ "user_id": in.UserID } )
+		reply = &okReply{ Ok: true }
+	}
+	return
 }
 
 type labelSessionRequest struct {
@@ -197,57 +209,64 @@ type labelSessionReply struct {
 	Label string `json:"label"`
 }
 
-// LabelMySession names one of your own devices, this one included. An empty
+// labelMySession names one of your own devices, this one included. An empty
 // label clears the name. Admins see a label but cannot set one: it is what the
 // person calls their own device.
-func ( handlers *Handlers ) LabelMySession() *apidoc.Endpoint[ labelSessionRequest , labelSessionReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Name one of your devices" , Description: "This device included. Empty clears the name." , Tag: "Account" , Feature: "sessions" , Errors: []int{ 400 , 401 , 403 , 404 , 409 } },
-		func( c fiber.Ctx , in *labelSessionRequest ) ( reply *labelSessionReply , err error ) {
-			if models.ValidSessionLabel( in.Label ) == false {
-				err = refuse( fiber.StatusBadRequest , "a device name can be at most 80 characters" )
-				return
-			}
-			label_err := models.LabelSession( handlers.Store , security.UserFrom( c ).ID , in.SessionID , in.Label , in.Expect )
-			var stale *models.RenameConflictError
-			switch {
-			case errors.As( label_err , &stale ):
-				err = refuse( fiber.StatusConflict , stale.Error() , fiber.Map{ "label": stale.Current } )
-			case errors.Is( label_err , models.ErrSessionNotFound ):
-				err = refuse( fiber.StatusNotFound , "not found" )
-			case label_err != nil:
-				err = label_err
-			default:
-				// Not the label: it is the person's own words about where they are.
-				handlers.audit( c , logs.KindAuth , "session_labelled" , nil )
-				reply = &labelSessionReply{ Ok: true , Label: strings.TrimSpace( in.Label ) }
-			}
-			return
-		} )
+//
+// @route("POST /api/account/sessions/{session_id}/label", summary="Name one of your devices",
+//     tag="Account", feature="sessions", errors=(404, 409),
+//     description="Give one of your devices a name (at most 80 characters; empty clears it). expect, when "
+//         "given, is the name you think it has now.",
+//     mcp="label_my_session",  // feature:mcp
+// )
+func ( handlers *Handlers ) labelMySession( c fiber.Ctx , in *labelSessionRequest ) ( reply *labelSessionReply , err error ) {
+	if models.ValidSessionLabel( in.Label ) == false {
+		err = refuse( fiber.StatusBadRequest , "a device name can be at most 80 characters" )
+		return
+	}
+	label_err := models.LabelSession( handlers.Store , security.UserFrom( c ).ID , in.SessionID , in.Label , in.Expect )
+	var stale *models.RenameConflictError
+	switch {
+	case errors.As( label_err , &stale ):
+		err = refuse( fiber.StatusConflict , stale.Error() , fiber.Map{ "label": stale.Current } )
+	case errors.Is( label_err , models.ErrSessionNotFound ):
+		err = refuse( fiber.StatusNotFound , "not found" )
+	case label_err != nil:
+		err = label_err
+	default:
+		// Not the label: it is the person's own words about where they are.
+		handlers.audit( c , logs.KindAuth , "session_labelled" , nil )
+		reply = &labelSessionReply{ Ok: true , Label: strings.TrimSpace( in.Label ) }
+	}
+	return
 }
 
-// RevokeMySession signs out one other device. This device is refused: ending
+// revokeMySession signs out one other device. This device is refused: ending
 // it here would leave the browser holding a dead cookie, and signing out is
 // what the sign-out button is for. Through an API key there is no "this
 // device", so any of them may go.
-func ( handlers *Handlers ) RevokeMySession() *apidoc.Endpoint[ sessionIDPath , okReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Sign out one device" , Tag: "Account" , Feature: "sessions" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *sessionIDPath ) ( reply *okReply , err error ) {
-			if in.SessionID != "" && in.SessionID == currentSessionID( c ) {
-				err = refuse( fiber.StatusBadRequest , "use sign out for this device" )
-				return
-			}
-			revoke_err := models.RevokeSession( handlers.Store , security.UserFrom( c ).ID , in.SessionID )
-			switch {
-			case errors.Is( revoke_err , models.ErrSessionNotFound ):
-				err = refuse( fiber.StatusNotFound , "not found" )
-			case revoke_err != nil:
-				err = revoke_err
-			default:
-				handlers.audit( c , logs.KindAuth , "session_revoked" , nil )
-				reply = &okReply{ Ok: true }
-			}
-			return
-		} )
+//
+// @route("POST /api/account/sessions/{session_id}/revoke", summary="Sign out one of your devices",
+//     tag="Account", feature="sessions", errors=(404,),
+//     description="End one of your signed-in sessions; that browser has to sign in again.",
+//     mcp="revoke_my_session", destructive=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) revokeMySession( c fiber.Ctx , in *sessionIDPath ) ( reply *okReply , err error ) {
+	if in.SessionID != "" && in.SessionID == currentSessionID( c ) {
+		err = refuse( fiber.StatusBadRequest , "use sign out for this device" )
+		return
+	}
+	revoke_err := models.RevokeSession( handlers.Store , security.UserFrom( c ).ID , in.SessionID )
+	switch {
+	case errors.Is( revoke_err , models.ErrSessionNotFound ):
+		err = refuse( fiber.StatusNotFound , "not found" )
+	case revoke_err != nil:
+		err = revoke_err
+	default:
+		handlers.audit( c , logs.KindAuth , "session_revoked" , nil )
+		reply = &okReply{ Ok: true }
+	}
+	return
 }
 
 type removedReply struct {
@@ -255,16 +274,22 @@ type removedReply struct {
 	Removed int  `json:"removed"`
 }
 
-// RevokeMyOtherSessions is the button for a lost phone or a shared computer:
+// revokeMyOtherSessions is the button for a lost phone or a shared computer:
 // everything but this device. Through an API key, which is no device, that is
 // every session the account has.
-func ( handlers *Handlers ) RevokeMyOtherSessions() *apidoc.Endpoint[ apidoc.None , removedReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Sign out every other device" , Tag: "Account" , Feature: "sessions" , Errors: []int{ 400 , 401 , 403 } },
-		func( c fiber.Ctx , in *apidoc.None ) ( reply *removedReply , err error ) {
-			removed , err := models.RevokeOtherSessions( handlers.Store , security.UserFrom( c ).ID , currentSessionID( c ) )
-			if err != nil { return }
-			handlers.audit( c , logs.KindAuth , "sessions_revoked" , fiber.Map{ "removed": removed } )
-			reply = &removedReply{ Ok: true , Removed: removed }
-			return
-		} )
+//
+// @route("POST /api/account/sessions/revoke-others", summary="Sign out every other device",
+//     tag="Account", feature="sessions",
+//     mcp_title="Sign out all your devices",  // feature:mcp
+//     mcp_description="End every session your account has: through an API key there is no current device "  // feature:mcp
+//         "to keep, so every browser signs in again. API keys keep working. Answers with how many were "  // feature:mcp
+//         "removed.",  // feature:mcp
+//     mcp="revoke_my_other_sessions", destructive=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) revokeMyOtherSessions( c fiber.Ctx , in *apidoc.None ) ( reply *removedReply , err error ) {
+	removed , err := models.RevokeOtherSessions( handlers.Store , security.UserFrom( c ).ID , currentSessionID( c ) )
+	if err != nil { return }
+	handlers.audit( c , logs.KindAuth , "sessions_revoked" , fiber.Map{ "removed": removed } )
+	reply = &removedReply{ Ok: true , Removed: removed }
+	return
 }

@@ -16,11 +16,12 @@ import (
 
 	config "{{MODULE_PATH}}/server/config" // feature:files
 	apidoc "{{MODULE_PATH}}/server/apidoc"
+	routegen "{{MODULE_PATH}}/server/apidoc/routegen"
 )
 
 // The API reference is written from the code: config/openapi.json and
-// config/api.md from each route's declaration (apidoc.Handle or Stream, next
-// to its handler), and config/mcp.json from the registered MCP tools.
+// config/api.md from each route's declaration (the // @route(...) at the
+// end of its handler's doc comment), and config/mcp.json from the registered MCP tools.
 // scripts/api_docs.sh runs TestAPIDocsAreCurrent with -update to rewrite
 // them; without it, the test fails while a committed file is out of date.
 var updateAPIDocs = flag.Bool( "update" , false , "rewrite config/openapi.json, config/mcp.json and config/api.md from the code" )
@@ -103,6 +104,17 @@ func checkReplies( t *testing.T ) ( handler fiber.Handler ) {
 // Every route is declared.
 func TestEveryRouteIsDocumented( t *testing.T ) {
 	apiSpec( t )
+}
+
+// The route table is what apidoc/gen writes from the handlers' @route(...)
+// declarations. scripts/api_docs.sh rewrites it (go generate).
+func TestTheRouteTableIsCurrent( t *testing.T ) {
+	want , err := routegen.Generate( "." )
+	if err != nil { t.Fatal( err ) }
+	have , err := os.ReadFile( routegen.FileName )
+	if err != nil || bytes.Equal( have , want ) == false {
+		t.Errorf( "server/routes/%s is out of date: run scripts/api_docs.sh" , routegen.FileName )
+	}
 }
 
 func TestAPIDocsAreCurrent( t *testing.T ) {

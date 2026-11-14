@@ -1,8 +1,9 @@
 # whole-file feature:mcp
 """What a tool is, how it reads its arguments, and how it says no.
 
-Adding one is the MCP version of adding a route: in app/routes/mcp_tools.py,
-Tool.for_route(...) on the declared route it stands for. It takes the route's
+Adding one is the MCP version of adding a route: mcp="tool_name" in the
+@route(...) of the route it stands for (build_registry in
+app/routes/mcp_tools.py makes it with Tool.for_route). It takes the route's
 request type and runs the route's own handler, so a rule enforced there holds
 whichever door a change comes through. The rules match the rest of the
 template:
@@ -87,24 +88,29 @@ class Tool:
     enabled: Callable[[Config], bool] | None = None
 
     @classmethod
-    def for_route(cls, endpoint: Callable, call: Callable[[Call, Any], Any] | None = None, **fields: Any) -> Tool:
-        """The tool that stands for a declared route (see app.apidocs.route):
-
-            registry.register(Tool.for_route(admin.delete_user, name="admin_delete_user", ...))
+    def for_route(cls, endpoint: Callable, call: Callable[..., Any] | None = None, **fields: Any) -> Tool:
+        """The tool that stands for a declared route, as mcp= and the tool keys
+        in its @route(...) declare it; build_registry (app/routes/mcp_tools.py)
+        makes one for each.
 
         Its arguments are the route's request type, URL fields and all, so its
         input schema and the checks on what it is sent are the route's;
-        nobody writes them for a tool. Leave call out to answer with the
+        nobody writes them for a tool. With no call it answers with the
         route's own handler and reply. A tool that adds to the reply (a full
-        URL where the route answers a path) passes call(call, body), given the
-        checked request."""
+        URL where the route answers a path) passes call(call, body, serve),
+        given the checked request and serve(request, body), the route's
+        handler."""
         from app.apidocs.route import declared_of, decode_arguments
         from app.routes.helpers import Refused
 
         declared = declared_of(endpoint)
         if declared is None:
             raise TypeError(f"{endpoint!r} is not a declared route")
-        answer = call or (lambda tool_call, body: declared.serve(tool_call.request, body))
+
+        def answer(tool_call: Call, body: Any) -> Any:
+            if call is None:
+                return declared.serve(tool_call.request, body)
+            return call(tool_call, body, declared.serve)
 
         def run(tool_call: Call) -> dict[str, Any]:
             body, message, malformed = decode_arguments(endpoint, tool_call.args)

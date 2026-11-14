@@ -79,7 +79,15 @@ class SetMyThemesReply(Reply):
     theme_id: str
 
 
-@route(summary="Replace your own themes", tag="Account", feature="appearance", errors=(400, 401, 403))
+@route(
+    "POST /api/account/themes", summary="Replace your own themes",
+    tag="Account", feature="appearance",
+    description="Replace your whole list of color themes (1 to 40) and pick the one you use. themes: null "
+    "goes back to following the app's defaults. A theme is the Theme schema in the API reference "
+    "(config/openapi.json): id, name, mode light|dark, accent, second, and optional colors as #rrggbb.",
+    mcp_note="whoami shows the current list.",  # feature:mcp
+    mcp="set_themes",  # feature:mcp
+)
 def set_my_themes(request: Request, body: SetMyThemes) -> SetMyThemesReply:
     """Replaces the caller's own list and pick, over HTTP or the MCP
     set_themes tool. themes null (or left out) goes back to following the
@@ -108,7 +116,12 @@ class SetMyThemeReply(Reply):
     theme_id: str
 
 
-@route(summary="Pick which theme you use", tag="Account", feature="appearance", errors=(400, 401, 403))
+@route(
+    "POST /api/account/theme", summary="Pick your theme",
+    tag="Account", feature="appearance",
+    description="Switch to another theme from your list (or the defaults), by its id.",
+    mcp="set_theme",  # feature:mcp
+)
 def set_my_theme(request: Request, body: SetMyTheme) -> SetMyThemeReply:
     """Changes only which theme the caller uses, over HTTP or the MCP
     set_theme tool."""
@@ -125,7 +138,13 @@ class ThemeDefaultsReply(Reply):
     themes: Annotated[list[Theme] | None, Meta(description="null while the built-in themes apply.")]
 
 
-@route(summary="The themes everyone without their own list sees", tag="Admin", role=ADMIN, feature="appearance", errors=(401, 403, 404))
+@route(
+    "GET /api/admin/theme-defaults", summary="Default themes",
+    tag="Admin", role=ADMIN, feature="appearance", errors=(404,),
+    description="The theme list everyone without their own list sees. themes is null while the built-in "
+    "ones apply.",
+    mcp="admin_get_theme_defaults", read_only=True,  # feature:mcp
+)
 def get_theme_defaults(request: Request) -> ThemeDefaultsReply:
     """themes is null while the built-in ones apply. Over HTTP and as the MCP
     admin_get_theme_defaults tool."""
@@ -141,7 +160,13 @@ class SetThemeDefaultsReply(Reply):
     themes: list[Theme] | None
 
 
-@route(summary="Replace the default themes", tag="Admin", role=ADMIN, feature="appearance", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/theme-defaults", summary="Replace the default themes",
+    tag="Admin", role=ADMIN, feature="appearance", errors=(404,),
+    description="Replace the theme list everyone without their own list sees, 1 to 40 themes in the Theme "
+    "schema of the API reference. null puts the built-in themes back.",
+    mcp="admin_set_theme_defaults",  # feature:mcp
+)
 def set_theme_defaults(request: Request, body: SetThemeDefaults) -> SetThemeDefaultsReply:
     """Replaces the list everyone without their own list sees, over HTTP or
     the MCP admin_set_theme_defaults tool. null goes back to the built-in

@@ -626,9 +626,9 @@ It is the API keys in another shape, not a new way in:
   owner's screens. Those need a browser session on the REST side (see
   [Keys and the ways in they hand out](#keys-and-the-ways-in-they-hand-out)),
   and a tool is a key-authenticated route, so the same rule keeps them out.
-  Accounts, login links, devices and invite links have tools
-  (`app/routes/mcp_tools_accounts.py`).
-  Everything else a key may call has a tool naming its route, or an
+  Accounts, login links, devices and invite links have tools.
+  Everything else a key may call has a tool (`mcp="name"` in its route's
+  `@route(...)`), or an
   `mcp_http` reason in its `@route(...)` for staying HTTP only (logout,
   the references themselves, `/metrics`, the browser's own activity reports,
   and file bytes). `app/tests/test_mcp_parity.py` holds the two lists together, and calls every route
@@ -639,9 +639,12 @@ It is the API keys in another shape, not a new way in:
   `/api/files/<id>/chunks/<n>` with the same `Authorization` header, then calls
   `files_finish_upload`. `files_download_url` answers the address to GET. The
   same pattern fits any other binary an app adds.
-- **One set of rules.** A tool calls the helper its HTTP handler calls
-  (`me_row`, `user_rows`, `set_disabled_checked`, `create_file_checked`, ...), so "you cannot disable yourself", the owner protection and the
-  quota hold through both doors and refuse in the same words.
+- **One set of rules.** A tool runs its route's own handler, after the same
+  checks on its arguments, so "you cannot disable yourself", the owner
+  protection and the quota hold through both doors and refuse in the same
+  words. A tool that adds to the answer names a `call=` (in
+  `app/routes/mcp_tools.py` and `mcp_tools_accounts.py`) that is given the
+  route's handler to run.
 
 The transport is the simplest legal form of Streamable HTTP: stateless, one
 JSON-RPC message per POST, a JSON reply. No SSE stream, no `Mcp-Session-Id`,
@@ -657,8 +660,8 @@ and other clients that can only sign in through OAuth cannot use it; anything
 that can set a header can. That follows from the template's position on
 OAuth -- see "When this template does not fit" in SKILL.md.
 
-`server.mcp: false`, or `auth.api_keys: false`, means the route is never
-registered.
+`server.mcp: false`, or `auth.api_keys: false`, makes `/mcp` answer 404
+(`RequireMCP`, the feature's switch), the same as a route that is not there.
 
 ### config/mcp.json, the MCP reference
 
@@ -677,8 +680,8 @@ it byte for byte the same.
 | Concern | File |
 |---|---|
 | JSON-RPC, version negotiation, the transport rules | `app/mcp/protocol.py` |
-| `Tool`, `Call.bind`, `Refusal`, role filtering | `app/mcp/registry.py` |
-| The built-in tools | `app/routes/mcp_tools.py` |
+| `Tool`, `mcp_tool`, `Refusal`, role filtering | `app/mcp/registry.py` |
+| The built-in tools | `mcp="name"` in each route's `@route(...)`, made by `build_registry` in `app/routes/mcp_tools.py`, with the calls that add to an answer |
 | config/mcp.json | `app/mcp/manifest.py`, `app/apidocs/generate.py`, `scripts/api_docs.sh` |
 | The parity tests | `app/tests/test_mcp_parity.py` |
 | The guard | `RequireAPIKey` in `app/core/security.py` |
@@ -1075,7 +1078,7 @@ serves the spec to any signed-in caller, session or key: it maps the admin
 surface, and nobody who cannot sign in has a use for it.
 
 **Where the docs live.** Nowhere of their own: every route is declared once, as a
-typed handler beside its code (`app/apidocs/route.py`):
+typed handler beside its code (`app/apidocs/route.py`), with its method and path first:
 
 ```python
 class CreateUser(Request):
@@ -1084,12 +1087,30 @@ class CreateUser(Request):
     max_uses: MaxUses | None = None
     expires_in_minutes: ExpiresInMinutes | None = None
 
-@route(summary="Create an account and its login link", tag="Admin", role=ADMIN, status=201, errors=(400, 401, 403))
+@route(
+    "POST /api/admin/users", summary="Create an account",
+    tag="Admin", role=ADMIN, status=201,
+    description="Make a new account and its first login link, to hand to the person. role is admin or user. "
+    "Answers with user_id and the link.",
+    mcp_note="Answers with login_url (open it to sign in; ...), expires_at and max_uses. ...",  # feature:mcp
+    mcp="admin_create_user", call=with_login_url,  # feature:mcp
+)
 def create_user(request: Request, body: CreateUser) -> CreateUserReply:
     ...
 ```
 
-mounted like any other route. The second parameter's type is the whole of what the route
+`app/routes/__init__.py` builds the route list from every declaration in its `MODULES`: the
+most specific path first (a clash is an error, not a matter of order), each route behind the
+guards its declaration implies -- its feature's switch from `FEATURE_GUARDS`, then
+`RequireLogin`, `RequireAdmin`, `RequireOwner` or `RequireAPIKey`, then `RequireSession` for
+`SESSION_ONLY`, then its own `use=[...]`. The Go template's generated route table follows the
+same rules, so the two mount the same routes behind the same guards, and declares each route
+with the same words in a `// @route(...)` comment. A route with a tool shares one text with it:
+the tool's title is the summary (with ` (admin)` for an admin-only tool) and its description is
+the description, then `mcp_note`, words only the tool shows; `mcp_title`/`mcp_description`
+replace them where a browser and an agent get different things. Every tool line ends
+`# feature:mcp`, so pruning mcp cuts exactly those. The handler's docstring is
+for the code's readers and never reaches the docs. The second parameter's type is the whole of what the route
 takes: a field marked `Annotated[T, PATH]` or `Annotated[T, QUERY]` comes from the URL, the
 rest from the JSON body. The return type is what it answers. They are msgspec Structs:
 `msgspec.json.schema_components` turns them into JSON Schema and `app/apidocs/reflect.py` puts
@@ -1107,17 +1128,19 @@ field: x"), then each field in declaration order: present if required, the right
 ("malformed request body"), within its limits. A missing field or a broken limit answers the
 field's `Meta(extra={"error": ...})` ("x is required" / "x is invalid" / "x must be one of: ..."
 without one). The handler gets the checked Struct and returns the reply, or raises `Refused`.
-The MCP tool for the route (`Tool.for_route`) takes the same type as its arguments, URL fields
-included, so its input schema and its checks are the route's.
+The MCP tool for the route (its `mcp=`) takes the same type as its arguments, URL
+fields included, so its input schema and its checks are the route's.
 
 **How it is built.** `apidocs.build` (`app/apidocs`) walks the route table the app really
 registers and pairs each route with its declaration, so paths and methods
 come from the code that serves them. The pages at `/login/*` and `/join/*` and
 the catch-alls are the only routes left out. `operationId`, path parameters and
-the shared error replies are worked out; everything else comes from the docs.
+the shared error replies are worked out, and so is each route's list of error statuses: 400
+for a request with fields or a csrf token, each guard's `statuses`, and the handler's own
+`errors=`. Everything else comes from the declaration.
 The Go and Python templates write all three files byte for byte the same.
 
-**Who may call.** `access` (the default is anyone signed in; `PUBLIC`, `SESSION_ONLY` or `KEY_ONLY` otherwise) and `role` (`ADMIN`, `OWNER`) become `security` and `x-required-role`. A test
+**Who may call.** `access` (the default is anyone signed in; `PUBLIC`, `SESSION_ONLY` or `KEY_ONLY` otherwise) and `role` (`ADMIN`, or `OWNER`, which is session-only too) become `security` and `x-required-role`. A test
 (`test_mcp_parity.py`) calls every route with an admin key to check that the guards agree.
 A route a key may call either has an MCP tool or a `mcp_http` reason, one line
 on why it stays HTTP only (see [MCP](#mcp-the-api-keys-for-agents)). `feature`
@@ -1537,19 +1560,21 @@ feature.
 ## Why auth is attached where routes are registered
 
 `RequireLogin`, `RequireAdmin`, and `RequireSession` are ASGI middleware
-classes. `app/routes/__init__.py` builds every protected route through a
-`group(...)` builder that attaches them (`signed_in = group(RequireLogin)`),
-rather than each handler calling a helper at its top.
+classes. `app/routes/__init__.py` puts them in front of each route, from its
+declaration (`guards_of`), rather than each handler calling a helper at its
+top.
 
 A handler that forgets a helper call is silently public, and nothing about
-reading that handler tells you it is wrong. With builders, protection comes
-from how a route is registered -- visible in one place, in the URL map itself.
+reading that handler tells you it is wrong. Here protection comes from the
+route's declaration: no `role=` and no `access=PUBLIC` is anyone signed in, so
+a route is never public by forgetting something, and `declared_routes()` lists
+every route with its guards.
 `LoadActor` runs on every request and resolves the caller at most once, so a
 handler and a guard both asking "who is this" do not cost two lookups.
 
 The guards attach to each route (Starlette's `Route(middleware=...)`), not to
-a path prefix, so a group can never leak onto routes outside it, and route
-order only matters for the static catch-all, which must stay last. Any
+a path prefix, so one route's rules never leak onto another, and the routes
+are mounted most specific first, with the static catch-all last. Any
 `/api/...` path nothing claims answers a JSON 404 rather than falling through
 to `index.html`.
 

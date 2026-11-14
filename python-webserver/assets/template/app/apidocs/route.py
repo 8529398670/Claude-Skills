@@ -4,12 +4,20 @@
         display_name: Annotated[str, Meta(min_length=1, max_length=80, extra={"error": "display name must be 1-80 characters"})]
         role: Annotated[Literal["admin", "user"], Meta(extra={"error": "role must be admin or user"})]
 
-    @route(summary="Create an account and its login link", tag="Admin", role=ADMIN, status=201, errors=(400, 401, 403))
+    @route(
+        "POST /api/admin/users", summary="Create an account",
+        tag="Admin", role=ADMIN, status=201,
+        description="Make a new account and its first login link, to hand to the person.",
+        mcp="admin_create_user", call=with_login_url,  # feature:mcp
+    )
     def create_user(request: Request, body: CreateUser) -> CreateUserReply:
         ...
 
-and mounted in app/routes/__init__.py like any other, behind its group's
-guards: admins("/api/admin/users", admin.create_user, ["POST"]).
+Go's routes (server/apidoc/routegen) are declared with the same words, in a
+comment above each handler, so a declaration reads the same in both.
+
+app/routes/__init__.py mounts every declared route in its modules, behind the
+guards its access, role and feature imply.
 
 The handler's second parameter's type is the whole of what the route takes.
 A field marked Annotated[T, PATH] or Annotated[T, QUERY] comes from the URL,
@@ -28,7 +36,7 @@ and the checks every request goes through before the handler sees it:
   or for a Literal "x must be one of: a, b"). A path or query value that is
   not a number where one is wanted counts as that.
 
-These are the checks Go's apidoc.Handle makes, in the same order, so the two
+These are the checks Go's declared routes (server/apidoc) make, in the same order, so the two
 templates answer the same words. A handler may be a plain function (it runs
 in a worker thread, and an MCP tool can call it too) or a coroutine. It
 returns its reply, or raises Refused.
@@ -37,10 +45,11 @@ from __future__ import annotations
 
 import functools
 import inspect
+import re
 import types
 import typing
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar
+from typing import Any, Callable, ClassVar, Sequence
 
 import msgspec
 from msgspec import inspect as msgspec_inspect
@@ -249,6 +258,19 @@ class Declared:
     takes_input: bool
     method: str = ""
     path: str = ""
+    # use are guards beyond the ones the op implies (see app/routes); no_switch
+    # is a route that answers while its feature is switched off.
+    use: tuple[type, ...] = ()
+    no_switch: bool = False
+    # tool is the route's MCP tool, from @route(..., mcp="name", ...): its
+    # name and the tool keys given (TOOL_KEYS). build_registry makes the Tool.
+    tool: dict[str, Any] | None = None
+    endpoint: Any = None
+    # guards and errors are filled in by app/routes when it builds the route
+    # list: the guards in front of the handler, and every error status the
+    # docs list (theirs, the request checks' and the handler's own).
+    guards: tuple[type, ...] = ()
+    errors: tuple[int, ...] = ()
 
     def serve(self, request: Any, body: Any) -> Any:
         """Runs a plain-function handler: an MCP tool's call."""
@@ -257,23 +279,58 @@ class Declared:
         return self.handler(request, body) if self.takes_input else self.handler(request)
 
 
-def route(**op_fields: Any) -> Callable[[Callable], Callable]:
-    """Declares a route: its docs (the fields of Op), and its types from the
-    handler's annotations."""
+METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+PARAMETER = re.compile(r"\{(\w+)\}")
+
+
+# The keys of a route's MCP tool, which mean something only with mcp=.
+TOOL_KEYS = ("read_only", "destructive", "admin_only", "enabled", "call", "mcp_note", "mcp_title", "mcp_description")
+
+
+def route(where: str, *, use: Sequence[type] = (), no_switch: bool = False, mcp: str = "", **fields: Any) -> Callable[[Callable], Callable]:
+    """Declares a route: where it is ("POST /api/admin/users/{user_id}/rename",
+    with each {param} a PATH field of the request), its docs (the fields of
+    Op), and its types from the handler's annotations. Its guards follow from
+    access, role and feature (see app/routes); use adds Guard classes after
+    them, and no_switch keeps the feature's switch off it.
+
+    mcp="tool_name" gives it an MCP tool (see app/mcp/registry.py), and the
+    keys that mean something only with it: read_only, destructive,
+    admin_only (on by default for role=ADMIN), enabled, call, and mcp_note,
+    words only the tool shows after the description. mcp_title and
+    mcp_description replace the tool's words, for one whose words must
+    differ from its route's."""
     from app.apidocs import Op
+
+    method, _, path = where.partition(" ")
+    if method not in METHODS or not path.startswith("/"):
+        raise TypeError(f"@route({where!r}): give METHOD /path, such as POST /api/admin/users")
+    tool = {key: fields.pop(key) for key in TOOL_KEYS if key in fields}
+    if tool and not mcp:
+        raise TypeError(f"@route({where!r}): {', '.join(sorted(tool))} need mcp=\"tool_name\"")
+    if mcp:
+        tool["name"] = mcp
+    op = Op(**fields)
 
     def mark(handler: Callable) -> Callable:
         hints = typing.get_type_hints(handler, include_extras=True)
         parameters = list(inspect.signature(handler).parameters)
         takes_input = len(parameters) > 1
         kind = hints[parameters[1]] if takes_input else NoInput
-        declared = Declared(Op(**op_fields), handler, InputType.of(kind), hints.get("return"), takes_input)
+        declared = Declared(op, handler, InputType.of(kind), hints.get("return"), takes_input,
+                            method=method, path=path, use=tuple(use), no_switch=no_switch,
+                            tool=tool or None)
+        in_path = {item.name for item in declared.input.fields if item.place == "path"}
+        named = set(PARAMETER.findall(path))
+        if in_path != named:
+            raise TypeError(f"{handler.__qualname__}: the path's {{params}} {sorted(named)} are not the request's PATH fields {sorted(in_path)}")
 
         @functools.wraps(handler)
         async def endpoint(request: HTTPRequest) -> Response:
             return await handle(declared, request)
 
         endpoint.__declared__ = declared  # type: ignore[attr-defined]
+        declared.endpoint = endpoint
         return endpoint
 
     return mark
@@ -283,21 +340,11 @@ def declared_of(handler: Any) -> Declared | None:
     return getattr(handler, "__declared__", None)
 
 
-def mounted(endpoint: Any, method: str, path: str) -> None:
-    """Records where a declared route is mounted (app/routes/__init__.py's
-    group does it), for its MCP tool's route."""
-    from app.apidocs import spec_path
-
-    declared = declared_of(endpoint)
-    if declared is not None:
-        declared.method, declared.path = method, spec_path(path)
-
-
 def route_of(handler: Any) -> str:
-    """The route a declared handler is mounted at, as the spec writes it:
+    """The route a declared handler is at, as the spec writes it:
     "POST /api/admin/users"."""
     declared = declared_of(handler)
-    if declared is None or not declared.path:
+    if declared is None:
         return ""
     return f"{declared.method} {declared.path}"
 

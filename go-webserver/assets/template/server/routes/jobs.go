@@ -51,17 +51,16 @@ type jobsReply struct {
 	Jobs []jobRow `json:"jobs"`
 }
 
-// ListJobs is the owner's Jobs screen: what runs in the background and how the
+// listJobs is the owner's Jobs screen: what runs in the background and how the
 // last run of each went.
-func ( handlers *Handlers ) ListJobs() *apidoc.Endpoint[ apidoc.None , jobsReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Background jobs" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "jobs" , Errors: []int{ 404 } },
-		func( c fiber.Ctx , in *apidoc.None ) ( reply *jobsReply , err error ) {
-			reply = &jobsReply{ Jobs: []jobRow{} }
-			for _ , status := range handlers.Jobs.Status() {
-				reply.Jobs = append( reply.Jobs , newJobRow( status ) )
-			}
-			return
-		} )
+//
+// @route("GET /api/owner/jobs", summary="Background jobs", tag="Owner", role=OWNER, feature="jobs")
+func ( handlers *Handlers ) listJobs( c fiber.Ctx , in *apidoc.None ) ( reply *jobsReply , err error ) {
+	reply = &jobsReply{ Jobs: []jobRow{} }
+	for _ , status := range handlers.Jobs.Status() {
+		reply.Jobs = append( reply.Jobs , newJobRow( status ) )
+	}
+	return
 }
 
 // jobNamePath is the job a route under /api/owner/jobs/{name} acts on.
@@ -69,22 +68,23 @@ type jobNamePath struct {
 	Name string `json:"name" path:"name" jsonschema_description:"The job's name, from GET /api/owner/jobs."`
 }
 
-// RunJob starts a job now, ahead of its schedule. The answer is 202 because
+// runJob starts a job now, ahead of its schedule. The answer is 202 because
 // only the start is waited for: a backup can outlast a request, and the screen
 // polls for how it ended.
-func ( handlers *Handlers ) RunJob() *apidoc.Endpoint[ jobNamePath , okReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Run a job now" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "jobs" , Status: 202 , Errors: []int{ 400 , 403 , 404 , 409 } },
-		func( c fiber.Ctx , in *jobNamePath ) ( reply *okReply , err error ) {
-			run_err := handlers.Jobs.RunNow( in.Name )
-			switch {
-			case errors.Is( run_err , jobs.ErrUnknown ):
-				err = refuse( fiber.StatusNotFound , "not found" )
-			case run_err != nil:
-				err = refuse( fiber.StatusConflict , "job already running" )
-			default:
-				handlers.audit( c , logs.KindAdmin , "job_run" , fiber.Map{ "name": in.Name } )
-				reply = &okReply{ Ok: true }
-			}
-			return
-		} )
+//
+// @route("POST /api/owner/jobs/{name}/run", summary="Run a job now",
+//     tag="Owner", role=OWNER, feature="jobs", status=202, errors=(409,),
+// )
+func ( handlers *Handlers ) runJob( c fiber.Ctx , in *jobNamePath ) ( reply *okReply , err error ) {
+	run_err := handlers.Jobs.RunNow( in.Name )
+	switch {
+	case errors.Is( run_err , jobs.ErrUnknown ):
+		err = refuse( fiber.StatusNotFound , "not found" )
+	case run_err != nil:
+		err = refuse( fiber.StatusConflict , "job already running" )
+	default:
+		handlers.audit( c , logs.KindAdmin , "job_run" , fiber.Map{ "name": in.Name } )
+		reply = &okReply{ Ok: true }
+	}
+	return
 }

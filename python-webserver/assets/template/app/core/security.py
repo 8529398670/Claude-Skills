@@ -259,6 +259,9 @@ class Guard:
     """Base for the guards: subclasses return a refusal, or None to let the
     request through."""
 
+    # The error statuses it can answer with, for the API docs.
+    statuses: tuple[int, ...] = ()
+
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
@@ -274,6 +277,8 @@ class Guard:
 
 
 class RequireLogin(Guard):
+    statuses = (401,)
+
     def refuse(self, request: Request) -> Response | None:
         if actor_from(request) is None:
             return _refuse(401, "not authenticated")
@@ -281,6 +286,8 @@ class RequireLogin(Guard):
 
 
 class RequireAdmin(Guard):
+    statuses = (401, 403)
+
     def refuse(self, request: Request) -> Response | None:
         actor = actor_from(request)
         if actor is None:
@@ -311,6 +318,8 @@ class RequireSession(Guard):
     Keys themselves stay browser-only: a key that could mint a key would leave
     a successor behind with nothing to tie it to the one revoked."""
 
+    statuses = (401, 403)
+
     def refuse(self, request: Request) -> Response | None:
         actor = actor_from(request)
         if actor is None:
@@ -327,6 +336,8 @@ class RequireAPIKey(Guard):
     header credential there means no ambient cookie can ride along on a
     request some other page caused, so the endpoint needs no CSRF token and
     the no-credentials rule for keys covers everything it can do."""
+
+    statuses = (401, 403)
 
     def refuse(self, request: Request) -> Response | None:
         actor = actor_from(request)
@@ -354,6 +365,8 @@ class RequireOwner(Guard):
 
     Finding the owner reads SQLite, so unlike the guards above this one runs
     its check in a worker thread."""
+
+    statuses = (404,)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         request = Request(scope)

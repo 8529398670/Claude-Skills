@@ -18,7 +18,7 @@ import msgspec
 from msgspec import Meta
 from starlette.requests import Request
 
-from app.apidocs import OWNER, SESSION_ONLY, Reply, route
+from app.apidocs import OWNER, Reply, route
 from app.apidocs import Request as RequestType
 from app.core import config_live
 from app.core.config import ValidationError
@@ -85,7 +85,10 @@ class SettingsResult(Reply):
     version: str
 
 
-@route(summary="config.yaml, as a form", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="settings", errors=(404,))
+@route(
+    "GET /api/owner/settings", summary="config.yaml, as a form",
+    tag="Owner", role=OWNER, feature="settings",
+)
 def get_settings(request: Request) -> SettingsSnapshot:
     return msgspec.convert(holder(request).snapshot(), SettingsSnapshot)
 
@@ -95,7 +98,10 @@ class SaveSettings(RequestType):
     changes: Annotated[dict[str, Any], Meta(description="Setting paths and their new values.", extra={"error": "malformed request body"})]
 
 
-@route(summary="Save settings", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="settings", errors=(400, 403, 404, 409))
+@route(
+    "POST /api/owner/settings", summary="Save settings",
+    tag="Owner", role=OWNER, feature="settings", errors=(409,),
+)
 def save_settings(request: Request, body: SaveSettings) -> SettingsResult:
     """Apply {version, changes: {"section.key": value}}. version is the one
     get_settings returned; a file changed since is a 409 with the current

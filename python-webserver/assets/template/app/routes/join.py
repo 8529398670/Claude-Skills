@@ -27,6 +27,7 @@ from app.models.sign_in import SignIn
 from app.routes.auth import TwoFactorChallenge, sign_in_response, sign_in_rules
 from app.routes.helpers import Refused, get_config, get_store, run
 from app.routes.logs import audit_as, user_actor
+from app.routes.auth import SameOriginJoin
 
 # Per process, like the rate limiter. See AttemptGuard.
 PINS = AttemptGuard()
@@ -63,7 +64,10 @@ class JoinInfoReply(Reply):
     remaining: int
 
 
-@route(summary="What an invite link is", tag="Invite links", access=PUBLIC, feature="invite_links", errors=(404,))
+@route(
+    "POST /api/join/info", summary="What an invite link is",
+    tag="Invite links", access=PUBLIC, feature="invite_links", use=[SameOriginJoin],
+)
 def join_info(request: Request, body: Join) -> JoinInfoReply:
     link = _join_link(request, body)
     return JoinInfoReply(label=link.label, remaining=link.remaining)
@@ -80,7 +84,10 @@ class JoinMatchReply(Reply):
     can_create: bool
 
 
-@route(summary="Accounts matching a name", tag="Invite links", access=PUBLIC, feature="invite_links", errors=(400, 404))
+@route(
+    "POST /api/join/match", summary="Accounts matching a name",
+    tag="Invite links", access=PUBLIC, feature="invite_links", use=[SameOriginJoin],
+)
 def join_match(request: Request, body: Join) -> JoinMatchReply:
     """The "did you mean...?": the accounts from this link whose names are
     close to what was typed. The page always shows this step before creating
@@ -94,7 +101,10 @@ def join_match(request: Request, body: Join) -> JoinMatchReply:
     return JoinMatchReply(matches=rows, can_create=link.remaining > 0)
 
 
-@route(summary="Sign in as an existing account", tag="Invite links", access=PUBLIC, feature="invite_links", errors=(400, 403, 404))
+@route(
+    "POST /api/join/claim", summary="Sign in as an existing account",
+    tag="Invite links", access=PUBLIC, feature="invite_links", use=[SameOriginJoin],
+)
 async def join_claim(request: Request, body: Join) -> JOINED:
     """Sign in as an account this link created -- the same person on another
     device -- asking for the PIN if that person set one.
@@ -137,7 +147,11 @@ async def join_claim(request: Request, body: Join) -> JOINED:
     return await sign_in_response(request, signed, JoinedReply(ok=True, display_name=user.display_name), 200)  # type: ignore[return-value]
 
 
-@route(summary="Join as a new account", tag="Invite links", access=PUBLIC, feature="invite_links", status=201, errors=(400, 404, 409))
+@route(
+    "POST /api/join/create", summary="Join as a new account",
+    tag="Invite links", access=PUBLIC, feature="invite_links", status=201, errors=(409,),
+    use=[SameOriginJoin],
+)
 async def join_create(request: Request, body: Join) -> JOINED:
     """Make a new account through the link, if it has places left, and sign
     it in."""

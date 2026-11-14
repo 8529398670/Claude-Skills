@@ -1,12 +1,12 @@
 // Package apidoc writes the API reference -- config/openapi.json and
 // config/api.md -- from the code, so nobody edits either by hand.
 //
-// Every route is declared once, next to its handler, with Handle or Stream
-// (see route.go): a summary, who may call it, and the Go types of what it
-// takes and gives back. The struct tags on those types carry the rest (see
-// reflect.go). Build walks the routes the app really registers, each mounted
-// with Get, Post or Delete, so the paths and methods come from the route
-// table and a route mounted any other way is reported.
+// Every route is declared once, next to its handler, in a // @route(...)
+// comment (see route.go and routegen): a summary, who may call it, and the Go types of
+// what it takes and gives back. The struct tags on those types carry the rest
+// (see reflect.go). Build walks the routes the app really registers, each
+// mounted by the generated route table with Mount, so the paths and methods
+// come from the route table and a route mounted any other way is reported.
 //
 // Nothing here runs while the server is up. scripts/api_docs.sh runs
 // TestAPIDocsAreCurrent with -update, which writes the files; the same test
@@ -17,7 +17,6 @@ import (
 	fmt "fmt"
 	reflect "reflect"
 	regexp "regexp"
-	runtime "runtime"
 	sort "sort"
 	strconv "strconv"
 	strings "strings"
@@ -92,21 +91,9 @@ type Op struct {
 type Route struct {
 	Method string
 	Path   string
-	// Name is the route table's name for the route: Post, Get and Delete
+	// Name is the route table's name for the route: Mount and MountStream
 	// mark the routes they mount with it.
 	Name string
-}
-
-// HandlerName is the function behind a route's declaration: the same for a
-// method value (handlers.GetMe, which is what Post and Get are given) and a
-// method expression ((*Handlers).GetMe).
-func HandlerName( handler any ) ( name string ) {
-	value := reflect.ValueOf( handler )
-	if value.Kind() != reflect.Func { return }
-	function := runtime.FuncForPC( value.Pointer() )
-	if function == nil { return }
-	name = strings.TrimSuffix( function.Name() , "-fm" )
-	return
 }
 
 var routeParameter = regexp.MustCompile( `:(\w+)` )
@@ -120,7 +107,7 @@ func SpecPath( path string ) ( result string ) {
 }
 
 // Build is openapi.json for these routes, and what is wrong with the docs: a
-// route that was not mounted with Get, Post or Delete, so has no declaration.
+// route that was not mounted with Mount, so has no declaration.
 func Build( routes []Route ) ( spec map[string]any , problems []string ) {
 	builder := newSchemas()
 	paths := map[string]any{}
@@ -129,7 +116,7 @@ func Build( routes []Route ) ( spec map[string]any , problems []string ) {
 		path := SpecPath( route.Path )
 		label := route.Method + " " + path
 		if strings.HasPrefix( route.Name , "apidoc:" ) == false {
-			problems = append( problems , label + ": not declared; mount it with apidoc.Get, Post or Delete" )
+			problems = append( problems , label + ": not declared: give its handler a // @route(...) and run scripts/api_docs.sh" )
 			continue
 		}
 		found := lookup( strings.TrimPrefix( route.Name , "apidoc:" ) )
@@ -180,13 +167,6 @@ func Build( routes []Route ) ( spec map[string]any , problems []string ) {
 			"schemas":   builder.components,
 		},
 	}
-	return
-}
-
-func shortName( name string ) ( result string ) {
-	result = name
-	if index := strings.LastIndex( name , "/" ); index >= 0 { result = name[ index + 1 : ] }
-	if index := strings.Index( result , "." ); index >= 0 { result = result[ index + 1 : ] }
 	return
 }
 

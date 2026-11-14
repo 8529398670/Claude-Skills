@@ -22,8 +22,9 @@ def spec() -> bytes:
 
 
 @route(
-    summary="This document", tag="Monitoring", feature="openapi",
-    mcp_http="The API reference itself; GET /api/mcp.json is the MCP one.", errors=(401, 404),
+    "GET /api/openapi.json", summary="This document",
+    tag="Monitoring", feature="openapi", errors=(404,),
+    mcp_http="The API reference itself; GET /api/mcp.json is the MCP one.",
 )
 async def get_openapi(request: Request) -> dict[str, Any]:
     return Response(spec(), media_type="application/json")  # type: ignore[return-value]

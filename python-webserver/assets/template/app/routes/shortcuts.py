@@ -26,7 +26,15 @@ class SetMyShortcutsReply(Reply):
     shortcuts: dict[str, str]
 
 
-@route(summary="Change your keyboard shortcuts", tag="Account", feature="shortcuts", errors=(400, 401, 403))
+@route(
+    "POST /api/account/shortcuts", summary="Change your keyboard shortcuts",
+    tag="Account", feature="shortcuts",
+    description='Replace your changed keyboard shortcuts: action name to binding, such as "search": "Mod+K" '
+    '(Mod is Cmd on a Mac, Ctrl elsewhere). Send the whole set; an empty binding switches a key off, and {} '
+    'puts every key back to its default.',
+    mcp_note="whoami shows the current set.",  # feature:mcp
+    mcp="set_shortcuts",  # feature:mcp
+)
 def set_my_shortcuts(request: Request, body: SetMyShortcuts) -> SetMyShortcutsReply:
     """Replaces the caller's changed shortcuts, over HTTP or the MCP
     set_shortcuts tool. The whole set is sent each time, so an undo is the

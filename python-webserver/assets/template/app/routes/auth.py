@@ -65,6 +65,8 @@ class SameOriginLogin(Guard):
     """Refuses a sign-in that is not JSON from one of this site's own pages,
     before its body is read. It goes in front of each public sign-in route."""
 
+    statuses = (403,)
+
     message = "login must be submitted from this site's own login page"
 
     def refuse(self, request: Request) -> Response | None:
@@ -122,7 +124,7 @@ class RedeemLoginLink(RequestType):
     credential: Annotated[str, Meta(extra={"error": "invalid login link"})]
 
 
-@route(summary="Redeem a login link", tag="Sign-in", access=PUBLIC, errors=(400, 403))
+@route("POST /api/login", summary="Redeem a login link", tag="Sign-in", access=PUBLIC, use=[SameOriginLogin])
 async def redeem_login_link(request: Request, body: RedeemLoginLink) -> SIGN_IN:
     """The one state-changing route with no CSRF token -- there is no session
     yet to hold one -- so it is guarded differently. A forged login signs a

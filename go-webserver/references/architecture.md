@@ -622,10 +622,10 @@ It is the API keys in another shape, not a new way in:
   owner's screens. Those need a browser session on the REST side (see
   [Keys and the ways in they hand out](#keys-and-the-ways-in-they-hand-out)),
   and a tool is a key-authenticated route, so the same rule keeps them out.
-  Accounts, login links, devices and invite links have tools
-  (`server/routes/mcp_tools_accounts.go`).
-  Everything else a key may call has a tool naming its route, or an
-  `MCPHTTP` reason in its `apidoc.Op` for staying HTTP only (logout,
+  Accounts, login links, devices and invite links have tools.
+  Everything else a key may call has a tool (`mcp="name"` in its route's
+  `@route(...)`), or an `mcp_http` reason in its `@route(...)` for staying
+  HTTP only (logout,
   the references themselves, `/metrics`, the browser's own activity reports,
   and file bytes). `server/routes/mcp_parity_test.go` holds the two lists together, and calls every route
   with an admin key to check the docs' `security` against the guards.
@@ -635,9 +635,12 @@ It is the API keys in another shape, not a new way in:
   `/api/files/<id>/chunks/<n>` with the same `Authorization` header, then calls
   `files_finish_upload`. `files_download_url` answers the address to GET. The
   same pattern fits any other binary an app adds.
-- **One set of rules.** A tool calls the helper its HTTP handler calls
-  (`meRow`, `userRows`, `setUserDisabled`, `createFile`, `finishFile`, ...), so "you cannot disable yourself", the owner protection and the
-  quota hold through both doors and refuse in the same words.
+- **One set of rules.** A tool runs its route's own handler, after the same
+  checks on its arguments, so "you cannot disable yourself", the owner
+  protection and the quota hold through both doors and refuse in the same
+  words. A tool that adds to the answer names a `call=` (in
+  `server/routes/mcp_tools.go` and `mcp_tools_accounts.go`) that is given the
+  route's handler to run.
 
 The transport is the simplest legal form of Streamable HTTP: stateless, one
 JSON-RPC message per POST, a JSON reply. No SSE stream, no `Mcp-Session-Id`,
@@ -652,8 +655,8 @@ and other clients that can only sign in through OAuth cannot use it; anything
 that can set a header can. That follows from the template's position on
 OAuth -- see "When this template does not fit" in SKILL.md.
 
-`server.mcp: false`, or `auth.api_keys: false`, means the route is never
-registered.
+`server.mcp: false`, or `auth.api_keys: false`, makes `/mcp` answer 404
+(`RequireMCP`, the feature's switch), the same as a route that is not there.
 
 ### config/mcp.json, the MCP reference
 
@@ -672,8 +675,8 @@ it byte for byte the same.
 | Concern | File |
 |---|---|
 | JSON-RPC, version negotiation, the transport rules | `server/mcp/mcp.go` |
-| `Tool`, argument binding, `Refuse`, role filtering | `server/mcp/registry.go` |
-| The built-in tools | `server/routes/mcp_tools.go` |
+| `Tool`, argument binding, `Refuse`, role filtering | `server/mcp/registry.go`, `server/mcp/route.go` |
+| The built-in tools | `mcp="name"` in each route's `@route(...)`, registered by `server/routes/routes_generated.go`; the calls that add to an answer in `server/routes/mcp_tools.go` |
 | config/mcp.json, and the parity tests | `server/routes/mcp_parity_test.go`, `server/routes/api_docs_test.go`, `scripts/api_docs.sh` |
 | The guard | `Guard.RequireAPIKey` in `server/security/security.go` |
 | End-to-end tests | `server/routes/mcp_test.go` |
@@ -739,8 +742,7 @@ days older than `retention_days` are deleted; then, while the total is over
 Another admin or any API key gets the 404 an unknown route gets -- the log
 holds everyone's addresses and activity, including the other admins', which
 is the reason they cannot read it, and a key is a credential that lives in
-files. Signed out, the `/api` group's `RequireLogin` answers first with 401,
-as it does for every `/api` route. `manage logs` reads the same files from a
+files. Signed out, the answer is the same 404. `manage logs` reads the same files from a
 shell; they are append-only, so that is safe with the server running.
 
 **Search** is `logs.ParseQuery`: free words match the entry's JSON in any
@@ -1042,7 +1044,8 @@ serves the spec to any signed-in caller, session or key: it maps the admin
 surface, and nobody who cannot sign in has a use for it.
 
 **Where the docs live.** Nowhere of their own: every route is declared once, as a
-typed handler beside its code (`server/apidoc/route.go`):
+method on `*Handlers` whose doc comment ends with its `// @route(...)`, spelled exactly like the
+Python template's decorator:
 
 ```go
 type createUserRequest struct {
@@ -1051,13 +1054,34 @@ type createUserRequest struct {
 	models.LoginLinkRequest
 }
 
-func ( handlers *Handlers ) CreateUser() *apidoc.Endpoint[ createUserRequest , createUserReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Create an account and its login link" , Tag: "Admin" , Role: apidoc.Admin , Status: 201 , Errors: []int{ 400 , 401 , 403 } },
-		func( c fiber.Ctx , in *createUserRequest ) ( reply *createUserReply , err error ) { ... } )
-}
+// createUser makes an account and its first login link.
+//
+// @route("POST /api/admin/users", summary="Create an account",
+//     tag="Admin", role=ADMIN, status=201,
+//     description="Make a new account and its first login link, to hand to the person. role is admin or user. "
+//         "Answers with user_id and the link.",
+//     mcp_note="Answers with login_url (open it to sign in; ...), expires_at and max_uses. ...",  // feature:mcp
+//     mcp="admin_create_user", call=withLoginLinkURL,  // feature:mcp
+// )
+func ( handlers *Handlers ) createUser( c fiber.Ctx , in *createUserRequest ) ( reply *createUserReply , err error ) { ... }
 ```
 
-mounted with `apidoc.Post( admin , "/users" , handlers.CreateUser )`. The request type is the
+The doc comment above the declaration is for the code's readers and never reaches the docs.
+The values are Python's (`"strings"`, adjacent ones joined so long text wraps, `ADMIN`,
+`SESSION_ONLY`, `True`, tuples `errors=(404,)`, lists `use=[...]`), and the Go expressions in
+`use`, `call` and `enabled` stay Go, copied as they are into the table so the compiler checks
+them. A route with a tool shares one text with it: the tool's title is the summary (with
+` (admin)` for an admin-only tool) and its description is the description, then `mcp_note`,
+words only the tool shows. `mcp_title`/`mcp_description` replace them where a browser and an
+agent get different things. Every tool line ends `// feature:mcp`, so pruning mcp cuts them.
+`go generate` runs `server/apidoc/gen`, which reads the declarations
+(`server/apidoc/routegen` documents every key) and writes `server/routes/routes_generated.go`:
+the route table, the most specific path first, each route behind the guards its declaration
+implies (its feature's switch from `featureGuards`, then `RequireLogin`, `RequireAdmin`,
+`RequireOwner` or `RequireAPIKey`, then `RequireSession` for `SESSION_ONLY`, then any
+`use=[...]`), and the MCP tools. It refuses an unknown key, a bad value, the old `//apidoc:`
+directives, a `{param}` that is not a `path:` field, and two routes that could match one
+request, by file and line. The request type is the
 whole of what the route takes: a field tagged `path:"name"` or `query:"name"` comes from the URL,
 the rest from the JSON body. The reply type is what it answers. github.com/invopop/jsonschema
 turns both into JSON Schema and `server/apidoc/reflect.go` puts that in the docs' shape: `json`
@@ -1072,29 +1096,33 @@ a URL value reads as its type, no field is unknown (400 "unknown field: x"), the
 declaration order: present if required, the right JSON type ("malformed request body"), within its
 limits. A missing field or a broken limit answers the field's `error` tag ("x is required" / "x
 is invalid" / "x must be one of: ..." without one). The handler gets the checked value and returns
-the reply, or a refusal. The MCP tool for the route (`mcp.ForRoute`) takes the same type as its
-arguments, URL fields included, so its input schema and its checks are the route's.
+the reply, or a refusal. The MCP tool for the route (its `mcp=`) takes the same
+type as its arguments, URL fields included, so its input schema and its checks are the route's.
 
 **How it is built.** `apidoc.Build` (`server/apidoc`) walks the route table the app really
-registers and pairs each route with its declaration (`apidoc.Post` names the route after its
-handler), so paths and methods come from the code that serves them. The pages at `/login/*` and `/join/*` and
+registers and pairs each route with its declaration (`apidoc.Mount` names the route after its
+method and path), so paths and methods come from the code that serves them. The pages at `/login/*` and `/join/*` and
 the catch-alls are the only routes left out. `operationId`, path parameters and
-the shared error replies are worked out; everything else comes from the docs.
+the shared error replies are worked out, and so is each route's list of error statuses: 400
+for a request with fields or a csrf token, 401, 403 and 404 from its guards, and the
+handler's own `errors=`. Everything else comes from the declaration.
 The Go and Python templates write all three files byte for byte the same.
 
-**Who may call.** `Access` (the default is anyone signed in; `apidoc.Public`, `SessionOnly` or `KeyOnly` otherwise) and `Role` (`apidoc.Admin`, `apidoc.Owner`) become `security` and `x-required-role`. A test
+**Who may call.** `access` (the default is anyone signed in; `PUBLIC`, `SESSION_ONLY` or `KEY_ONLY` otherwise) and `role` (`ADMIN`, or `OWNER`, which is session-only too) become `security` and `x-required-role`, and the guards. A test
 (`mcp_parity_test.go`) calls every route with an admin key to check that the guards agree.
-A route a key may call either has an MCP tool or a `MCPHTTP` reason, one line
-on why it stays HTTP only (see [MCP](#mcp-the-api-keys-for-agents)). `Feature`
+A route a key may call either has an MCP tool or an `mcp_http` reason, one line
+on why it stays HTTP only (see [MCP](#mcp-the-api-keys-for-agents)). `feature`
 becomes `x-feature` on the path, which scaffolding reads to cut a part out.
 
-**What keeps it honest.** `server/routes/api_docs_test.go`: `TestEveryRouteIsDocumented` fails while a route is mounted without a declaration (not through `apidoc.Get/Post/Delete`); `TestAPIDocsAreCurrent` fails while a committed file differs from what the code says (`scripts/api_docs.sh` runs it with `-update`). And every test app has `checkReplies` in front of its routes: each 2xx JSON reply is held against the documented schema. Since a handler returns its declared reply type, the docs cannot drift from it; this is the safety net for what the types cannot say, such as a field left out by `omitempty`.
+**What keeps it honest.** `server/routes/api_docs_test.go`: `TestEveryRouteIsDocumented` fails while a route is mounted without a declaration; `TestTheRouteTableIsCurrent` fails while `routes_generated.go` is not what the declarations say; `TestAPIDocsAreCurrent` fails while a committed file differs from what the code says (`scripts/api_docs.sh` runs `go generate`, then that test with `-update`). And every test app has `checkReplies` in front of its routes: each 2xx JSON reply is held against the documented schema. Since a handler returns its declared reply type, the docs cannot drift from it; this is the safety net for what the types cannot say, such as a field left out by `omitempty`.
 
 **Scaffolding.** The template ships the three files for a project with every
 part. A project scaffolded without some parts runs `scripts/api_docs.sh` once,
 and its tests say so until it has. A maintainer who changes the template's docs
-runs `scripts/refresh_api_docs.py` in the skill, which scaffolds a full project
-and copies its files back; `check_features.py` fails while they are stale.
+runs `scripts/refresh_api_docs.py` in the skill, which scaffolds a full project,
+copies its files back and writes the template's own route table (with its feature
+markers, so pruning cuts each route with its handler); `check_features.py` fails
+while they are stale.
 
 ## Webhooks
 
@@ -1410,13 +1438,17 @@ feature.
 
 ## Why auth is middleware, not a helper call
 
-`RequireLogin` and `RequireAdmin` are Fiber middleware, applied to route
-groups in `server/routes/routes.go`, rather than helpers called at the top of
-each handler.
+`RequireLogin` and `RequireAdmin` are Fiber middleware, put in front of each
+route by the route table (`server/routes/routes_generated.go`), rather than
+helpers called at the top of each handler.
 
 A handler that forgets a helper call is silently public, and nothing about
-reading that handler tells you it is wrong. With groups, protection comes from
-where a route is registered -- visible in one place, in the URL map itself.
+reading that handler tells you it is wrong. Here protection comes from the
+route's declaration: no `role=` and no `access=PUBLIC` is anyone signed in,
+so a route is never public by forgetting something. The generator derives each
+route's guards from its `@route(...)`, and the table shows them all in one
+place. Each route gets its own guards, never a path prefix's, so one route
+cannot pass its rules on to another that happens to share its start.
 `LoadUser` runs on everything and resolves the cookie at most once, so a
 handler and a middleware both asking "who is this" do not cost two reads.
 

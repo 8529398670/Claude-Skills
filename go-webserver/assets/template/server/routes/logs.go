@@ -23,6 +23,17 @@ import (
 // page -- what track.js sends -- is any signed-in user's, at
 // /api/logs/events, since what they do is what gets logged.
 
+// RequireLogs makes the log's routes answer 404 while the log is off
+// (logs.enabled, or no log at all). Per request, like RequireWebhooks.
+func ( handlers *Handlers ) RequireLogs( c fiber.Ctx ) ( err error ) {
+	if handlers.Logs.Enabled() == false {
+		err = notFound( c , "not found" )
+		return
+	}
+	err = c.Next()
+	return
+}
+
 const (
 	// Page events a browser may send per call, and per session per minute.
 	logEventsPerCall   = 50
@@ -76,17 +87,15 @@ type logDaysReply struct {
 
 func ( logDaysReply ) APIName() ( name string ) { name = "LogDays"; return }
 
-func ( handlers *Handlers ) ListLogDays() *apidoc.Endpoint[ logSearch , logDaysReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "The days on record" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "logs" , Errors: []int{ 404 } },
-		func( c fiber.Ctx , in *logSearch ) ( reply *logDaysReply , err error ) {
-			query , err := handlers.logQuery( in.Q )
-			if err != nil { return }
-			days , total , err := handlers.Logs.Days( query )
-			if err != nil { return }
-			reply = &logDaysReply{ TotalBytes: total , Dropped: handlers.Logs.Dropped() , Settings: handlers.logSettings() }
-			reply.Days , err = jsonObjects( days )
-			return
-		} )
+// @route("GET /api/owner/logs/days", summary="The days on record", tag="Owner", role=OWNER, feature="logs")
+func ( handlers *Handlers ) listLogDays( c fiber.Ctx , in *logSearch ) ( reply *logDaysReply , err error ) {
+	query , err := handlers.logQuery( in.Q )
+	if err != nil { return }
+	days , total , err := handlers.Logs.Days( query )
+	if err != nil { return }
+	reply = &logDaysReply{ TotalBytes: total , Dropped: handlers.Logs.Dropped() , Settings: handlers.logSettings() }
+	reply.Days , err = jsonObjects( days )
+	return
 }
 
 // logDayPath is the day a route under .../days/{date} reads.
@@ -109,90 +118,92 @@ type logDayReply struct {
 
 func ( logDayReply ) APIName() ( name string ) { name = "LogDay"; return }
 
-func ( handlers *Handlers ) GetLogDay() *apidoc.Endpoint[ logDayRequest , logDayReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "One day's entries" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "logs" , Errors: []int{ 400 , 404 } },
-		func( c fiber.Ctx , in *logDayRequest ) ( reply *logDayReply , err error ) {
-			if logs.ValidDay( in.Date ) == false {
-				err = refuse( fiber.StatusBadRequest , "bad_day" )
-				return
-			}
-			before , limit := -1 , pageDefault
-			if in.Before != nil { before = *in.Before }
-			if in.Limit != 0 { limit = in.Limit }
-			query , err := handlers.logQuery( in.Q )
-			if err != nil { return }
-			records , next , err := handlers.Logs.ReadDay( in.Date , query , before , limit )
-			if err != nil { return }
-			reply = &logDayReply{ Date: in.Date , Next: next }
-			reply.Entries , err = jsonObjects( records )
-			return
-		} )
+// @route("GET /api/owner/logs/days/{date}", summary="One day's entries",
+//     tag="Owner", role=OWNER, feature="logs",
+// )
+func ( handlers *Handlers ) getLogDay( c fiber.Ctx , in *logDayRequest ) ( reply *logDayReply , err error ) {
+	if logs.ValidDay( in.Date ) == false {
+		err = refuse( fiber.StatusBadRequest , "bad_day" )
+		return
+	}
+	before , limit := -1 , pageDefault
+	if in.Before != nil { before = *in.Before }
+	if in.Limit != 0 { limit = in.Limit }
+	query , err := handlers.logQuery( in.Q )
+	if err != nil { return }
+	records , next , err := handlers.Logs.ReadDay( in.Date , query , before , limit )
+	if err != nil { return }
+	reply = &logDayReply{ Date: in.Date , Next: next }
+	reply.Entries , err = jsonObjects( records )
+	return
 }
 
-// DownloadLogDay streams a day as plain JSON lines, decrypted: the file a
+// downloadLogDay streams a day as plain JSON lines, decrypted: the file a
 // person can grep, or hand to whatever reads logs. Each line has ip_name beside
 // the address, as named when this was asked for.
-func ( handlers *Handlers ) DownloadLogDay() *apidoc.Endpoint[ logDayPath , apidoc.None ] {
-	return apidoc.Stream( apidoc.Op{ Summary: "One day's entries as a file" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "logs" , ReplyType: "application/x-ndjson" , Errors: []int{ 400 , 404 } },
-		func( c fiber.Ctx , in *logDayPath ) ( err error ) {
-			day := in.Date
-			if logs.ValidDay( day ) == false {
-				err = refuse( fiber.StatusBadRequest , "bad_day" )
-				return
-			}
-			query , err := handlers.logQuery( "" )
-			if err != nil { return }
-			c.Set( fiber.HeaderContentType , "application/x-ndjson" )
-			c.Set( fiber.HeaderContentDisposition , `attachment; filename="logs-`+day+`.jsonl"` )
-			c.Response().SetBodyStreamWriter( func( writer *bufio.Writer ) {
-				handlers.Logs.Download( day , query , writer )
-				writer.Flush()
-			} )
-			return
-		} )
+//
+// @route("GET /api/owner/logs/days/{date}/download", summary="One day's entries as a file",
+//     tag="Owner", role=OWNER, feature="logs", reply_type="application/x-ndjson",
+// )
+func ( handlers *Handlers ) downloadLogDay( c fiber.Ctx , in *logDayPath ) ( err error ) {
+	day := in.Date
+	if logs.ValidDay( day ) == false {
+		err = refuse( fiber.StatusBadRequest , "bad_day" )
+		return
+	}
+	query , err := handlers.logQuery( "" )
+	if err != nil { return }
+	c.Set( fiber.HeaderContentType , "application/x-ndjson" )
+	c.Set( fiber.HeaderContentDisposition , `attachment; filename="logs-`+day+`.jsonl"` )
+	c.Response().SetBodyStreamWriter( func( writer *bufio.Writer ) {
+		handlers.Logs.Download( day , query , writer )
+		writer.Flush()
+	} )
+	return
 }
 
-// StreamLogs tells the Logs screen when there is something new, so Live needs
+// streamLogs tells the Logs screen when there is something new, so Live needs
 // no timer. It sends a nudge, not the entries: the page reads them the way it
 // always does, which is what keeps its search, paging and decryption in one
 // place. Watching cannot feed itself, since nothing under /api/owner/logs is
 // logged.
-func ( handlers *Handlers ) StreamLogs() *apidoc.Endpoint[ logSearch , apidoc.None ] {
-	return apidoc.Stream( apidoc.Op{ Summary: "New log entries as they happen" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "logs" , ReplyType: "text/event-stream" , Errors: []int{ 404 } },
-		func( c fiber.Ctx , in *logSearch ) ( err error ) {
-			credential , cookie_err := handlers.Guard.DecryptCookie( c.Cookies( handlers.cfg().CookieName ) )
-			if cookie_err != nil {
-				err = refuse( fiber.StatusNotFound , "not found" )
-				return
-			}
-			err = stream.Serve( c , handlers.LogStream , func() bool {
-				return handlers.Guard.StillOwner( credential )
-			} )
-			return
-		} )
+//
+// @route("GET /api/owner/logs/stream", summary="New log entries as they happen",
+//     tag="Owner", role=OWNER, feature="logs", reply_type="text/event-stream",
+// )
+func ( handlers *Handlers ) streamLogs( c fiber.Ctx , in *logSearch ) ( err error ) {
+	credential , cookie_err := handlers.Guard.DecryptCookie( c.Cookies( handlers.cfg().CookieName ) )
+	if cookie_err != nil {
+		err = refuse( fiber.StatusNotFound , "not found" )
+		return
+	}
+	err = stream.Serve( c , handlers.LogStream , func() bool {
+		return handlers.Guard.StillOwner( credential )
+	} )
+	return
 }
 
 type logDayDeletedReply struct {
 	Deleted bool `json:"deleted"`
 }
 
-func ( handlers *Handlers ) DeleteLogDay() *apidoc.Endpoint[ logDayPath , logDayDeletedReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Delete one day" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "logs" , Errors: []int{ 400 , 403 , 404 , 409 } },
-		func( c fiber.Ctx , in *logDayPath ) ( reply *logDayDeletedReply , err error ) {
-			delete_err := handlers.Logs.DeleteDay( in.Date )
-			switch {
-			case errors.Is( delete_err , logs.ErrBadDay ):
-				err = refuse( fiber.StatusBadRequest , "bad_day" )
-			case errors.Is( delete_err , logs.ErrToday ):
-				err = refuse( fiber.StatusConflict , logs.ErrToday.Error() )
-			case delete_err != nil:
-				err = delete_err
-			default:
-				handlers.audit( c , logs.KindAdmin , "log day deleted" , fiber.Map{ "date": in.Date } )
-				reply = &logDayDeletedReply{ Deleted: true }
-			}
-			return
-		} )
+// @route("POST /api/owner/logs/days/{date}/delete", summary="Delete one day",
+//     tag="Owner", role=OWNER, feature="logs", errors=(409,),
+// )
+func ( handlers *Handlers ) deleteLogDay( c fiber.Ctx , in *logDayPath ) ( reply *logDayDeletedReply , err error ) {
+	delete_err := handlers.Logs.DeleteDay( in.Date )
+	switch {
+	case errors.Is( delete_err , logs.ErrBadDay ):
+		err = refuse( fiber.StatusBadRequest , "bad_day" )
+	case errors.Is( delete_err , logs.ErrToday ):
+		err = refuse( fiber.StatusConflict , logs.ErrToday.Error() )
+	case delete_err != nil:
+		err = delete_err
+	default:
+		handlers.audit( c , logs.KindAdmin , "log day deleted" , fiber.Map{ "date": in.Date } )
+		reply = &logDayDeletedReply{ Deleted: true }
+	}
+	return
 }
 
 // pruneResult is what a prune did, as the model says it.
@@ -200,16 +211,16 @@ type pruneResult logs.PruneResult
 
 func ( pruneResult ) APIName() ( name string ) { name = "PruneResult"; return }
 
-func ( handlers *Handlers ) PruneLogs() *apidoc.Endpoint[ apidoc.None , pruneResult ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Apply the retention rules now" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "logs" , Errors: []int{ 400 , 403 , 404 } },
-		func( c fiber.Ctx , in *apidoc.None ) ( reply *pruneResult , err error ) {
-			result , err := handlers.Logs.Prune()
-			if err != nil { return }
-			handlers.audit( c , logs.KindAdmin , "logs pruned" , fiber.Map{ "compressed": result.Compressed , "deleted": result.Deleted } )
-			pruned := pruneResult( result )
-			reply = &pruned
-			return
-		} )
+// @route("POST /api/owner/logs/prune", summary="Apply the retention rules now",
+//     tag="Owner", role=OWNER, feature="logs",
+// )
+func ( handlers *Handlers ) pruneLogs( c fiber.Ctx , in *apidoc.None ) ( reply *pruneResult , err error ) {
+	result , err := handlers.Logs.Prune()
+	if err != nil { return }
+	handlers.audit( c , logs.KindAdmin , "logs pruned" , fiber.Map{ "compressed": result.Compressed , "deleted": result.Deleted } )
+	pruned := pruneResult( result )
+	reply = &pruned
+	return
 }
 
 type ipNamesReply struct {
@@ -218,16 +229,17 @@ type ipNamesReply struct {
 
 func ( ipNamesReply ) APIName() ( name string ) { name = "IPNames"; return }
 
-// ListIPNames is everything the owner has named. It is short by nature, so
+// listIPNames is everything the owner has named. It is short by nature, so
 // unlike the lists people's activity grows, it comes whole.
-func ( handlers *Handlers ) ListIPNames() *apidoc.Endpoint[ apidoc.None , ipNamesReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "What the owner calls addresses" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "logs" , Errors: []int{ 403 , 404 } },
-		func( c fiber.Ctx , in *apidoc.None ) ( reply *ipNamesReply , err error ) {
-			names , err := models.ListIPNames( handlers.Store )
-			if err != nil { return }
-			reply = &ipNamesReply{ Names: names }
-			return
-		} )
+//
+// @route("GET /api/owner/logs/ip-names", summary="What the owner calls addresses",
+//     tag="Owner", role=OWNER, feature="logs", errors=(403,),
+// )
+func ( handlers *Handlers ) listIPNames( c fiber.Ctx , in *apidoc.None ) ( reply *ipNamesReply , err error ) {
+	names , err := models.ListIPNames( handlers.Store )
+	if err != nil { return }
+	reply = &ipNamesReply{ Names: names }
+	return
 }
 
 // ipTarget is the address or range an IP name is for. It rides in the body,
@@ -246,45 +258,47 @@ type ipNameReply struct {
 	Name   string `json:"name"`
 }
 
-// SetIPName names an address or a range, or renames one. The answer gives the
+// setIPName names an address or a range, or renames one. The answer gives the
 // target as stored, which may not be how it was typed.
-func ( handlers *Handlers ) SetIPName() *apidoc.Endpoint[ ipNameRequest , ipNameReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Name an address or a range, or rename one" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "logs" , Errors: []int{ 400 , 403 , 404 } },
-		func( c fiber.Ctx , in *ipNameRequest ) ( reply *ipNameReply , err error ) {
-			target , ok := models.CleanIPTarget( in.Target )
-			if ok == false {
-				err = refuse( fiber.StatusBadRequest , "bad_ip_target" )
-				return
-			}
-			if models.ValidIPName( in.Name ) == false {
-				err = refuse( fiber.StatusBadRequest , "bad_ip_name" )
-				return
-			}
-			if err = models.SetIPName( handlers.Store , target , in.Name ); err != nil { return }
-			handlers.audit( c , logs.KindAdmin , "ip name set" , fiber.Map{ "target": target } )
-			reply = &ipNameReply{ Target: target , Name: strings.TrimSpace( in.Name ) }
-			return
-		} )
+//
+// @route("POST /api/owner/logs/ip-names", summary="Name an address or a range, or rename one",
+//     tag="Owner", role=OWNER, feature="logs",
+// )
+func ( handlers *Handlers ) setIPName( c fiber.Ctx , in *ipNameRequest ) ( reply *ipNameReply , err error ) {
+	target , ok := models.CleanIPTarget( in.Target )
+	if ok == false {
+		err = refuse( fiber.StatusBadRequest , "bad_ip_target" )
+		return
+	}
+	if models.ValidIPName( in.Name ) == false {
+		err = refuse( fiber.StatusBadRequest , "bad_ip_name" )
+		return
+	}
+	if err = models.SetIPName( handlers.Store , target , in.Name ); err != nil { return }
+	handlers.audit( c , logs.KindAdmin , "ip name set" , fiber.Map{ "target": target } )
+	reply = &ipNameReply{ Target: target , Name: strings.TrimSpace( in.Name ) }
+	return
 }
 
 type ipNameDeletedReply struct {
 	Deleted bool `json:"deleted"`
 }
 
-// DeleteIPName takes a name away.
-func ( handlers *Handlers ) DeleteIPName() *apidoc.Endpoint[ ipTarget , ipNameDeletedReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Take a name off an address or a range" , Tag: "Owner" , Access: apidoc.SessionOnly , Role: apidoc.Owner , Feature: "logs" , Errors: []int{ 400 , 403 , 404 } },
-		func( c fiber.Ctx , in *ipTarget ) ( reply *ipNameDeletedReply , err error ) {
-			target , ok := models.CleanIPTarget( in.Target )
-			if ok == false {
-				err = refuse( fiber.StatusBadRequest , "bad_ip_target" )
-				return
-			}
-			if err = models.DeleteIPName( handlers.Store , target ); err != nil { return }
-			handlers.audit( c , logs.KindAdmin , "ip name removed" , fiber.Map{ "target": target } )
-			reply = &ipNameDeletedReply{ Deleted: true }
-			return
-		} )
+// deleteIPName takes a name away.
+//
+// @route("POST /api/owner/logs/ip-names/delete", summary="Take a name off an address or a range",
+//     tag="Owner", role=OWNER, feature="logs",
+// )
+func ( handlers *Handlers ) deleteIPName( c fiber.Ctx , in *ipTarget ) ( reply *ipNameDeletedReply , err error ) {
+	target , ok := models.CleanIPTarget( in.Target )
+	if ok == false {
+		err = refuse( fiber.StatusBadRequest , "bad_ip_target" )
+		return
+	}
+	if err = models.DeleteIPName( handlers.Store , target ); err != nil { return }
+	handlers.audit( c , logs.KindAdmin , "ip name removed" , fiber.Map{ "target": target } )
+	reply = &ipNameDeletedReply{ Deleted: true }
+	return
 }
 
 // uiEvent is one thing track.js saw. Everything in it came from a browser,
@@ -308,58 +322,60 @@ type uiEventsReply struct {
 	Accepted int `json:"accepted"`
 }
 
-// RecordUIEvents takes a batch from track.js. The server stamps each with
+// recordUIEvents takes a batch from track.js. The server stamps each with
 // its own time, the signed-in account, the address and the user agent, so a
 // browser can describe what it did but not who did it or when it arrived.
-func ( handlers *Handlers ) RecordUIEvents() *apidoc.Endpoint[ uiEventsRequest , uiEventsReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Record what happened on the page" , Tag: "Account" , Feature: "logs" , MCPHTTP: "The browser's own activity reports (track.js), not an action." , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *uiEventsRequest ) ( reply *uiEventsReply , err error ) {
-			events := []uiEvent{}
-			encoded , err := json.Marshal( in.Events )
-			if err != nil { return }
-			if json.Unmarshal( encoded , &events ) != nil {
-				err = refuse( fiber.StatusBadRequest , "malformed request body" )
-				return
+//
+// @route("POST /api/logs/events", summary="Record what happened on the page",
+//     tag="Account", feature="logs",
+//     mcp_http="The browser's own activity reports (track.js), not an action.",
+// )
+func ( handlers *Handlers ) recordUIEvents( c fiber.Ctx , in *uiEventsRequest ) ( reply *uiEventsReply , err error ) {
+	events := []uiEvent{}
+	encoded , err := json.Marshal( in.Events )
+	if err != nil { return }
+	if json.Unmarshal( encoded , &events ) != nil {
+		err = refuse( fiber.StatusBadRequest , "malformed request body" )
+		return
+	}
+	if len( events ) > logEventsPerCall {
+		events = events[ :logEventsPerCall ]
+	}
+	actor := security.ActorFrom( c )
+	allowed := handlers.uiEventBudget.take( actor.User.ID , len( events ) )
+	tab := logs.Truncate( in.Tab , 32 )
+	accepted := 0
+	for index , event := range events {
+		if index >= allowed || logUIActions[ event.Action ] == false { continue }
+		entry := logs.Entry{
+			Kind:  logs.KindUI,
+			Level: logs.LevelInfo,
+			Actor: security.LogActor( actor ),
+			IP:    c.IP(),
+			UA:    logs.Truncate( c.Get( fiber.HeaderUserAgent ) , 300 ),
+			UI: &logs.UI{
+				Action: event.Action,
+				Screen: logs.Truncate( event.Screen , 120 ),
+				Target: logs.Truncate( event.Target , 120 ),
+				Fields: capFields( event.Fields ),
+				Detail: capMap( event.Detail ),
+				At:     logs.Truncate( event.At , 40 ),
+			},
+			Client: map[string]any{ "tab": tab },
+		}
+		if event.Action == "error" || event.Action == "fetch_fail" {
+			entry.Level = logs.LevelError
+		}
+		if event.Action == "session_start" {
+			for name , value := range capMap( event.Client ) {
+				entry.Client[ name ] = value
 			}
-			if len( events ) > logEventsPerCall {
-				events = events[ :logEventsPerCall ]
-			}
-			actor := security.ActorFrom( c )
-			allowed := handlers.uiEventBudget.take( actor.User.ID , len( events ) )
-			tab := logs.Truncate( in.Tab , 32 )
-			accepted := 0
-			for index , event := range events {
-				if index >= allowed || logUIActions[ event.Action ] == false { continue }
-				entry := logs.Entry{
-					Kind:  logs.KindUI,
-					Level: logs.LevelInfo,
-					Actor: security.LogActor( actor ),
-					IP:    c.IP(),
-					UA:    logs.Truncate( c.Get( fiber.HeaderUserAgent ) , 300 ),
-					UI: &logs.UI{
-						Action: event.Action,
-						Screen: logs.Truncate( event.Screen , 120 ),
-						Target: logs.Truncate( event.Target , 120 ),
-						Fields: capFields( event.Fields ),
-						Detail: capMap( event.Detail ),
-						At:     logs.Truncate( event.At , 40 ),
-					},
-					Client: map[string]any{ "tab": tab },
-				}
-				if event.Action == "error" || event.Action == "fetch_fail" {
-					entry.Level = logs.LevelError
-				}
-				if event.Action == "session_start" {
-					for name , value := range capMap( event.Client ) {
-						entry.Client[ name ] = value
-					}
-				}
-				handlers.Logs.Log( entry )
-				accepted += 1
-			}
-			reply = &uiEventsReply{ Accepted: accepted }
-			return
-		} )
+		}
+		handlers.Logs.Log( entry )
+		accepted += 1
+	}
+	reply = &uiEventsReply{ Accepted: accepted }
+	return
 }
 
 func capFields( fields []string ) ( result []string ) {

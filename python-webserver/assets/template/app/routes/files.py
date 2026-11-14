@@ -33,6 +33,7 @@ from app.models import webhooks  # feature:webhooks
 from app.routes.admin import OkReply
 from app.routes.helpers import DateTime, Dir, Page, Paged, Refused, get_config, get_store, match_rows, not_found, restore_refusal, run, sorted_page
 from app.routes.logs import audit
+from app.routes.mcp_tools import files_download_url, files_on, files_start_upload  # feature:mcp
 
 LOST = "upload_lost"
 NO_SUCH_FILE = "no such file"
@@ -43,6 +44,8 @@ _locks = models.UploadLocks()
 class RequireFiles(Guard):
     """Makes /api/files answer 404 while files.enabled is off. Per request,
     because it can be switched while the server runs."""
+
+    statuses = (404,)
 
     def refuse(self, request: Request) -> Response | None:
         return None if get_config(request).files.enabled else not_found("not found")
@@ -132,7 +135,12 @@ class MyStorage(Reply):
     quota_bytes: int
 
 
-@route(summary="How much of your quota is used", tag="Files", feature="files", errors=(401, 404))
+@route(
+    "GET /api/account/storage", summary="Your storage",
+    tag="Files", feature="files",
+    description="How many bytes your files use, and your quota (0 is no limit).",
+    mcp="my_storage", read_only=True, enabled=files_on,  # feature:mcp
+)
 def my_storage(request: Request) -> MyStorage:
     """How much of the quota an account has used, so it finds out before an
     upload is refused rather than from the refusal. Over HTTP and as the MCP
@@ -151,7 +159,13 @@ class AllStorage(Reply, kw_only=True):
     disk_total_bytes: DiskBytes | UnsetType = UNSET
 
 
-@route(summary="Every account's files together, and room on the disk", tag="Files", role=ADMIN, feature="files", errors=(401, 403, 404))
+@route(
+    "GET /api/admin/storage", summary="Storage for everyone",
+    tag="Files", role=ADMIN, feature="files",
+    description="How many bytes everyone's files use together, and the disk's free and total bytes where "
+    "the system says.",
+    mcp="admin_storage", read_only=True, enabled=files_on,  # feature:mcp
+)
 def all_storage(request: Request) -> AllStorage:
     """Every account's files together, and what room the disk has left, which
     no quota looks at. The disk figures are left out where the system will not
@@ -176,7 +190,13 @@ class FilesReply(Paged):
     files: list[File]
 
 
-@route(summary="Your files, newest first", tag="Files", feature="files", errors=(400, 401, 404))
+@route(
+    "GET /api/files", summary="List your files",
+    tag="Files", feature="files",
+    description="Your uploaded files, a page at a time: id, name, type, size, state (uploading or ready) "
+    "and when. next is the offset of the following page, or null on the last one.",
+    mcp="files_list", read_only=True, enabled=files_on,  # feature:mcp
+)
 def list_my_files(request: Request, body: ListMyFiles) -> FilesReply:
     """The caller's files, over HTTP and as the MCP files_list tool."""
     rows = [_row(file) for file in models.list_files(get_store(request), actor_from(request).user.id)]
@@ -194,7 +214,13 @@ class OwnedFilesReply(Paged):
     files: list[OwnedFile]
 
 
-@route(summary="Every account's files", tag="Files", role=ADMIN, feature="files", errors=(400, 401, 403, 404))
+@route(
+    "GET /api/admin/files", summary="List everyone's files",
+    tag="Files", role=ADMIN, feature="files",
+    description="Every account's files, a page at a time, with whose each one is (user_id, user_name). next "
+    "is the offset of the following page, or null on the last one.",
+    mcp="admin_list_files", read_only=True, enabled=files_on,  # feature:mcp
+)
 def list_all_files(request: Request, body: ListAllFiles) -> OwnedFilesReply:
     """Adds who each file belongs to. The names, sizes and owners are what an
     admin needs to keep the disk in order. Over HTTP and as the MCP
@@ -221,9 +247,18 @@ class CreateFile(RequestType):
 
 
 @route(
-    summary="Start an upload",
-    description="Then send each piece in order and finish. A file over files.max_file_bytes, or one that would pass files.quota_bytes_per_user, is a 409.",
-    tag="Files", feature="files", status=201, reply_description="Created", errors=(400, 401, 403, 404, 409),
+    "POST /api/files", summary="Start an upload",
+    tag="Files", feature="files", status=201, errors=(409,),
+    description="Then send each piece in order and finish. A file over files.max_file_bytes, or one that "
+    "would pass files.quota_bytes_per_user, is a 409.",
+    reply_description="Created",
+    mcp_title="Start uploading a file",  # feature:mcp
+    mcp_description="Reserve room for a file and get where to send it. The bytes do not go through MCP: "  # feature:mcp
+    "POST each piece of chunk_bytes bytes (the last may be shorter), in order from index 0, as the raw body "  # feature:mcp
+    "(Content-Type: application/octet-stream) to chunk_url with {index} filled in and the same "  # feature:mcp
+    "Authorization: Bearer header this MCP connection uses. curl is a shell recipe that does all of it. "  # feature:mcp
+    "Then call files_finish_upload.",  # feature:mcp
+    mcp="files_start_upload", enabled=files_on, call=files_start_upload,  # feature:mcp
 )
 def create_file(request: Request, body: CreateFile) -> FileUpload:
     """Start an upload, over HTTP and as the MCP files_start_upload tool."""
@@ -236,7 +271,13 @@ def create_file(request: Request, body: CreateFile) -> FileUpload:
     return _upload_row(file)
 
 
-@route(summary="One of your files", description="received is where to resume an upload.", tag="Files", feature="files", errors=(401, 404))
+@route(
+    "GET /api/files/{file_id}", summary="One of your files",
+    tag="Files", feature="files",
+    description="One file: its details, and for an unfinished upload how many pieces have arrived "
+    "(received), which is where to resume.",
+    mcp="files_get", read_only=True, enabled=files_on,  # feature:mcp
+)
 def get_my_file(request: Request, body: FileIDPath) -> FileUpload:
     """How a client finds out where to resume: see received. Over HTTP and as
     the MCP files_get tool."""
@@ -256,11 +297,13 @@ class PutChunkReply(Reply):
 
 
 @route(
-    summary="Send the next piece of an upload",
-    description="The body is the raw bytes. Pieces go in order, from 0. A browser session sends its csrf token in the X-CSRF-Token header. A 409 carries received, the piece to send next. Counts against server.rate_limit_upload_max.",
-    tag="Files", feature="files",
-    mcp_http="File bytes: MCP messages are JSON, and clients cap their size. files_start_upload says where to send each piece, with the same key.",
-    body_type="application/octet-stream", errors=(400, 401, 403, 404, 409),
+    "POST /api/files/{file_id}/chunks/{index}", summary="Send the next piece of an upload",
+    tag="Files", feature="files", errors=(409,), body_type="application/octet-stream",
+    description="The body is the raw bytes. Pieces go in order, from 0. A browser session sends its csrf "
+    "token in the X-CSRF-Token header. A 409 carries received, the piece to send next. Counts against "
+    "server.rate_limit_upload_max.",
+    mcp_http="File bytes: MCP messages are JSON, and clients cap their size. files_start_upload says where "
+    "to send each piece, with the same key.",
 )
 async def put_chunk(request: Request, body: PutChunk) -> PutChunkReply:
     """Take the next piece. Out of order is a 409 carrying received, which is
@@ -293,7 +336,13 @@ async def put_chunk(request: Request, body: PutChunk) -> PutChunkReply:
         _locks.release(body.file_id)
 
 
-@route(summary="Finish an upload", tag="Files", feature="files", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/files/{file_id}/finish", summary="Finish an upload",
+    tag="Files", feature="files", errors=(409,),
+    description="Seal an upload once every piece has arrived; the file is then ready to download. Asked "
+    "again, it answers the same. If pieces are missing it says how many arrived (received).",
+    mcp="files_finish_upload", enabled=files_on,  # feature:mcp
+)
 def finish_file(request: Request, body: FileIDPath) -> File:
     """Seal an upload whose pieces have all arrived, over HTTP and as the MCP
     files_finish_upload tool."""
@@ -346,8 +395,13 @@ async def _send(request: Request, file: models.File) -> Response:
 
 
 @route(
-    summary="Download one of your files", tag="Files", feature="files",
-    reply_type="application/octet-stream", reply_description="The file, always as an attachment", errors=(401, 404),
+    "GET /api/files/{file_id}/download", summary="Download one of your files",
+    tag="Files", feature="files", reply_type="application/octet-stream",
+    reply_description="The file, always as an attachment",
+    mcp_title="Where to download a file",  # feature:mcp
+    mcp_description="The address of one of your files. GET it over HTTP with the same Authorization: Bearer "  # feature:mcp
+    "header this MCP connection uses; the bytes do not come through MCP.",  # feature:mcp
+    mcp="files_download_url", read_only=True, enabled=files_on, call=files_download_url,  # feature:mcp
 )
 async def download_my_file(request: Request, body: FileIDPath) -> Response:
     file = await run(_mine, request, body.file_id)
@@ -357,9 +411,10 @@ async def download_my_file(request: Request, body: FileIDPath) -> Response:
 
 
 @route(
-    summary="Download anyone's file", description="Written to the activity log when the file is someone else's.",
-    tag="Files", access=SESSION_ONLY, role=ADMIN, feature="files",
-    reply_type="application/octet-stream", reply_description="The file, always as an attachment", errors=(401, 403, 404),
+    "GET /api/admin/files/{file_id}/download", summary="Download anyone's file",
+    tag="Files", access=SESSION_ONLY, role=ADMIN, feature="files", reply_type="application/octet-stream",
+    description="Written to the activity log when the file is someone else's.",
+    reply_description="The file, always as an attachment",
 )
 async def download_any_file(request: Request, body: AdminFileIDPath) -> Response:
     file = await run(models.get_file, get_store(request), body.file_id)
@@ -403,13 +458,22 @@ def _rename(request: Request, body: RenameFile, own_only: bool) -> RenameFileRep
     return RenameFileReply(ok=True, name=cleaned)
 
 
-@route(summary="Rename one of your files", tag="Files", feature="files", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/files/{file_id}/rename", summary="Rename a file",
+    tag="Files", feature="files", errors=(409,),
+    description="Give one of your files a new name. expect, when given, is the name you think it has now; a "
+    "rename made meanwhile is refused with the current name.",
+    mcp="files_rename", enabled=files_on,  # feature:mcp
+)
 def rename_my_file(request: Request, body: RenameFile) -> RenameFileReply:
     """Over HTTP and as the MCP files_rename tool."""
     return _rename(request, body, True)
 
 
-@route(summary="Rename any file", tag="Files", access=SESSION_ONLY, role=ADMIN, feature="files", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/admin/files/{file_id}/rename", summary="Rename any file",
+    tag="Files", access=SESSION_ONLY, role=ADMIN, feature="files", errors=(409,),
+)
 def rename_any_file(request: Request, body: RenameAnyFile) -> RenameFileReply:
     """An admin may rename anyone's, as an admin may delete anyone's."""
     return _rename(request, body, False)
@@ -428,13 +492,23 @@ def _delete(request: Request, file_id: str, own_only: bool) -> OkReply:
     return OkReply(ok=True)
 
 
-@route(summary="Delete one of your files", description="It can be restored for ten minutes.", tag="Files", feature="files", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/files/{file_id}/delete", summary="Delete a file",
+    tag="Files", feature="files",
+    description="Move one of your files to the bin. It can be restored for ten minutes; after that it is "
+    "gone.",
+    mcp_note="files_restore brings it back.",  # feature:mcp
+    mcp="files_delete", destructive=True, enabled=files_on,  # feature:mcp
+)
 def delete_my_file(request: Request, body: FileIDPath) -> OkReply:
     """Over HTTP and as the MCP files_delete tool."""
     return _delete(request, body.file_id, True)
 
 
-@route(summary="Delete anyone's file", tag="Files", access=SESSION_ONLY, role=ADMIN, feature="files", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/files/{file_id}/delete", summary="Delete anyone's file",
+    tag="Files", access=SESSION_ONLY, role=ADMIN, feature="files",
+)
 def delete_any_file(request: Request, body: AdminFileIDPath) -> OkReply:
     return _delete(request, body.file_id, False)
 
@@ -458,12 +532,21 @@ def _restore(request: Request, file_id: str, as_admin: bool) -> File:
     return _row(file)
 
 
-@route(summary="Put back a file you deleted", tag="Files", feature="files", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/files/{file_id}/restore", summary="Restore a deleted file",
+    tag="Files", feature="files", errors=(409,),
+    description="Bring back a file you deleted, while it is still in the bin and your storage quota has "
+    "room.",
+    mcp="files_restore", enabled=files_on,  # feature:mcp
+)
 def restore_my_file(request: Request, body: FileIDPath) -> File:
     """Over HTTP and as the MCP files_restore tool."""
     return _restore(request, body.file_id, False)
 
 
-@route(summary="Put back a deleted file", tag="Files", access=SESSION_ONLY, role=ADMIN, feature="files", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/admin/files/{file_id}/restore", summary="Put back a deleted file",
+    tag="Files", access=SESSION_ONLY, role=ADMIN, feature="files", errors=(409,),
+)
 def restore_any_file(request: Request, body: AdminFileIDPath) -> File:
     return _restore(request, body.file_id, True)

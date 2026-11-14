@@ -7,7 +7,6 @@ import (
 
 	fiber "github.com/gofiber/fiber/v3"
 
-	apidoc "{{MODULE_PATH}}/server/apidoc"
 	db "{{MODULE_PATH}}/server/db"
 	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
@@ -50,18 +49,22 @@ type listUsersReply struct {
 	Paged
 }
 
-// ListUsers is every account, a page at a time. ?q= keeps the accounts whose
+// listUsers is every account, a page at a time. ?q= keeps the accounts whose
 // name or username contains it, in any case. Here and not in the browser,
 // which only ever holds one page of them.
-func ( handlers *Handlers ) ListUsers() *apidoc.Endpoint[ listUsersRequest , listUsersReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Every account" , Tag: "Admin" , Role: apidoc.Admin , Errors: []int{ 400 , 401 , 403 } },
-		func( c fiber.Ctx , in *listUsersRequest ) ( reply *listUsersReply , err error ) {
-			rows , err := handlers.userRowsMatching( in.Q )
-			if err != nil { return }
-			reply = &listUsersReply{}
-			reply.Users , reply.Paged = sortedPage( rows , in.Sort , in.Direction , in.Page )
-			return
-		} )
+//
+// @route("GET /api/admin/users", summary="List users",
+//     tag="Admin", role=ADMIN,
+//     description="Accounts, a page at a time, including disabled ones, with each one's role and which is "
+//         "the owner. next is the offset of the following page, or null on the last one.",
+//     mcp="admin_list_users", read_only=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) listUsers( c fiber.Ctx , in *listUsersRequest ) ( reply *listUsersReply , err error ) {
+	rows , err := handlers.userRowsMatching( in.Q )
+	if err != nil { return }
+	reply = &listUsersReply{}
+	reply.Users , reply.Paged = sortedPage( rows , in.Sort , in.Direction , in.Page )
+	return
 }
 
 func ( handlers *Handlers ) userRowsMatching( query string ) ( rows []userRow , err error ) {
@@ -151,36 +154,44 @@ type createUserReply struct {
 	loginLinkReply
 }
 
-// CreateUser is the signup process: an admin names someone, and gets back a
+// createUser is the signup process: an admin names someone, and gets back a
 // login link to hand them -- once by default, or reusable (see
 // models.LoginLinkRequest). The link is returned as a path, not a full URL
 // -- the browser knows the origin it is talking to, whereas the server behind
 // a reverse proxy often does not, and a login link with the wrong host is
 // worse than useless.
-func ( handlers *Handlers ) CreateUser() *apidoc.Endpoint[ createUserRequest , createUserReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Create an account and its login link" , Tag: "Admin" , Role: apidoc.Admin , Status: fiber.StatusCreated , Errors: []int{ 400 , 401 , 403 } },
-		func( c fiber.Ctx , in *createUserRequest ) ( reply *createUserReply , err error ) {
-			if models.ValidDisplayName( in.DisplayName ) == false {
-				err = refuse( fiber.StatusBadRequest , "display name must be 1-80 characters" )
-				return
-			}
-			options , refused := handlers.loginLinkOptions( c , in.LoginLinkRequest )
-			if refused != nil {
-				err = refused
-				return
-			}
-			user , err := models.CreateUser( handlers.Store , in.DisplayName , in.Role )
-			if err != nil { return }
-			credential , info , err := models.IssueLoginLink( handlers.Store , user.ID , options )
-			if err != nil { return }
-			handlers.audit( c , logs.KindAdmin , "user created" , fiber.Map{ "user_id": user.ID , "name": user.DisplayName , "role": user.Role } )
-			handlers.Webhooks.Emit( models.EventUserCreated , map[string]any{ "user_id": user.ID , "display_name": user.DisplayName , "role": user.Role } ) // feature:webhooks
-			reply = &createUserReply{ UserID: user.ID , loginLinkReply: newLoginLinkReply( credential , info ) }
-			return
-		} )
+//
+// @route("POST /api/admin/users", summary="Create an account",
+//     tag="Admin", role=ADMIN, status=201,
+//     description="Make a new account and its first login link, to hand to the person. role is admin or "
+//         "user. Answers with user_id and the link.",
+//     mcp_note="Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), "  // feature:mcp
+//         "expires_at and max_uses. Any older link the account could still use stops working; its "  // feature:mcp
+//         "signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is "  // feature:mcp
+//         "unused, and signs out every device it signed in.",  // feature:mcp
+//     mcp="admin_create_user", call=withLoginLinkURL,  // feature:mcp
+// )
+func ( handlers *Handlers ) createUser( c fiber.Ctx , in *createUserRequest ) ( reply *createUserReply , err error ) {
+	if models.ValidDisplayName( in.DisplayName ) == false {
+		err = refuse( fiber.StatusBadRequest , "display name must be 1-80 characters" )
+		return
+	}
+	options , refused := handlers.loginLinkOptions( c , in.LoginLinkRequest )
+	if refused != nil {
+		err = refused
+		return
+	}
+	user , err := models.CreateUser( handlers.Store , in.DisplayName , in.Role )
+	if err != nil { return }
+	credential , info , err := models.IssueLoginLink( handlers.Store , user.ID , options )
+	if err != nil { return }
+	handlers.audit( c , logs.KindAdmin , "user created" , fiber.Map{ "user_id": user.ID , "name": user.DisplayName , "role": user.Role } )
+	handlers.Webhooks.Emit( models.EventUserCreated , map[string]any{ "user_id": user.ID , "display_name": user.DisplayName , "role": user.Role } ) // feature:webhooks
+	reply = &createUserReply{ UserID: user.ID , loginLinkReply: newLoginLinkReply( credential , info ) }
+	return
 }
 
-// ReissueLogin covers the only real failure mode of this auth model: someone
+// reissueLogin covers the only real failure mode of this auth model: someone
 // lost their cookie or their device, and there is no password reset to fall
 // back on. An admin mints a fresh link instead. Any link the account could
 // still sign in with stops working (see models.IssueLoginLink).
@@ -188,29 +199,36 @@ func ( handlers *Handlers ) CreateUser() *apidoc.Endpoint[ createUserRequest , c
 // It is not a reset: sessions the account already has stay signed in. When
 // the worry is that someone else holds the account's credentials, use
 // RevokeAccess first, then reissue.
-func ( handlers *Handlers ) ReissueLogin() *apidoc.Endpoint[ loginLinkRequest , loginLinkReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "A new login link for an account" , Tag: "Admin" , Role: apidoc.Admin , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *loginLinkRequest ) ( reply *loginLinkReply , err error ) {
-			if _ , get_err := models.GetUser( handlers.Store , in.UserID ); get_err != nil {
-				err = refuse( fiber.StatusNotFound , "no such user" )
-				return
-			}
-			options , refused := handlers.loginLinkOptions( c , in.LoginLinkRequest )
-			if refused != nil {
-				err = refused
-				return
-			}
-			options.ActorID = security.UserFrom( c ).ID
-			credential , info , token_err := models.IssueLoginLink( handlers.Store , in.UserID , options )
-			if refused = actOnRefusal( token_err , "reissue a login link for" ); refused != nil {
-				err = refused
-				return
-			}
-			handlers.audit( c , logs.KindAdmin , "login link reissued" , fiber.Map{ "user_id": in.UserID , "max_uses": info.MaxUses , "expires_at": info.ExpiresAt } )
-			made := newLoginLinkReply( credential , info )
-			reply = &made
-			return
-		} )
+//
+// @route("POST /api/admin/users/{user_id}/reissue-login", summary="A new login link for an account",
+//     tag="Admin", role=ADMIN, errors=(404,),
+//     description="For someone who lost their device or their link: a fresh login link for their account.",
+//     mcp_note="Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), "  // feature:mcp
+//         "expires_at and max_uses. Any older link the account could still use stops working; its "  // feature:mcp
+//         "signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is "  // feature:mcp
+//         "unused, and signs out every device it signed in.",  // feature:mcp
+//     mcp="admin_reissue_login", call=withLoginLinkURL,  // feature:mcp
+// )
+func ( handlers *Handlers ) reissueLogin( c fiber.Ctx , in *loginLinkRequest ) ( reply *loginLinkReply , err error ) {
+	if _ , get_err := models.GetUser( handlers.Store , in.UserID ); get_err != nil {
+		err = refuse( fiber.StatusNotFound , "no such user" )
+		return
+	}
+	options , refused := handlers.loginLinkOptions( c , in.LoginLinkRequest )
+	if refused != nil {
+		err = refused
+		return
+	}
+	options.ActorID = security.UserFrom( c ).ID
+	credential , info , token_err := models.IssueLoginLink( handlers.Store , in.UserID , options )
+	if refused = actOnRefusal( token_err , "reissue a login link for" ); refused != nil {
+		err = refused
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "login link reissued" , fiber.Map{ "user_id": in.UserID , "max_uses": info.MaxUses , "expires_at": info.ExpiresAt } )
+	made := newLoginLinkReply( credential , info )
+	reply = &made
+	return
 }
 
 type cancelLoginLinkReply struct {
@@ -218,27 +236,33 @@ type cancelLoginLinkReply struct {
 	Removed int  `json:"removed" jsonschema_description:"Links removed: 0 or 1."`
 }
 
-// CancelLoginLink stops an account's live login link working, without
+// cancelLoginLink stops an account's live login link working, without
 // making a new one: a reusable link that went somewhere it should not have.
 // Sessions it already made stay signed in; RevokeAccess ends those too.
 //
 // An API key may do this, like RevokeAccess: it only takes a way in away.
-func ( handlers *Handlers ) CancelLoginLink() *apidoc.Endpoint[ userIDPath , cancelLoginLinkReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Stop an account's login link working" , Tag: "Admin" , Role: apidoc.Admin , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *userIDPath ) ( reply *cancelLoginLinkReply , err error ) {
-			if _ , get_err := models.GetUser( handlers.Store , in.UserID ); get_err != nil {
-				err = refuse( fiber.StatusNotFound , "no such user" )
-				return
-			}
-			removed , cancel_err := models.CancelLoginLink( handlers.Store , in.UserID , security.UserFrom( c ).ID )
-			if refused := actOnRefusal( cancel_err , "cancel the login link of" ); refused != nil {
-				err = refused
-				return
-			}
-			handlers.audit( c , logs.KindAdmin , "login link cancelled" , fiber.Map{ "user_id": in.UserID , "removed": removed } )
-			reply = &cancelLoginLinkReply{ Ok: true , Removed: removed }
-			return
-		} )
+//
+// @route("POST /api/admin/users/{user_id}/cancel-login-link", summary="Stop an account's login link working",
+//     tag="Admin", role=ADMIN, errors=(404,),
+//     description="Void an account's live login link without making a new one: a link that went somewhere "
+//         "it should not have.",
+//     mcp_note="Devices it already signed in stay signed in; admin_revoke_access ends those too. Answers "  // feature:mcp
+//         "with removed: 0 or 1.",  // feature:mcp
+//     mcp="admin_cancel_login_link", destructive=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) cancelLoginLink( c fiber.Ctx , in *userIDPath ) ( reply *cancelLoginLinkReply , err error ) {
+	if _ , get_err := models.GetUser( handlers.Store , in.UserID ); get_err != nil {
+		err = refuse( fiber.StatusNotFound , "no such user" )
+		return
+	}
+	removed , cancel_err := models.CancelLoginLink( handlers.Store , in.UserID , security.UserFrom( c ).ID )
+	if refused := actOnRefusal( cancel_err , "cancel the login link of" ); refused != nil {
+		err = refused
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "login link cancelled" , fiber.Map{ "user_id": in.UserID , "removed": removed } )
+	reply = &cancelLoginLinkReply{ Ok: true , Removed: removed }
+	return
 }
 
 type renameUserRequest struct {
@@ -252,36 +276,41 @@ type renameUserReply struct {
 	DisplayName string `json:"display_name"`
 }
 
-// RenameUser is an admin renaming someone else. Who may rename whom lives in
+// renameUser is an admin renaming someone else. Who may rename whom lives in
 // models.RenameUserAs.
-func ( handlers *Handlers ) RenameUser() *apidoc.Endpoint[ renameUserRequest , renameUserReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Rename someone else" , Description: "Only the owner can rename an admin." , Tag: "Admin" , Role: apidoc.Admin , Errors: []int{ 400 , 401 , 403 , 404 , 409 } },
-		func( c fiber.Ctx , in *renameUserRequest ) ( reply *renameUserReply , err error ) {
-			if models.ValidDisplayName( in.DisplayName ) == false {
-				err = refuse( fiber.StatusBadRequest , "display name must be 1-80 characters" )
-				return
-			}
-			rename_err := models.RenameUserAs( handlers.Store , in.UserID , security.UserFrom( c ).ID , in.DisplayName , in.Expect )
-			var stale *models.RenameConflictError
-			switch {
-			case errors.As( rename_err , &stale ):
-				err = refuse( fiber.StatusConflict , stale.Error() , fiber.Map{ "display_name": stale.Current } )
-				return
-			case errors.Is( rename_err , db.ErrNotFound ):
-				err = refuse( fiber.StatusNotFound , "no such user" )
-				return
-			case errors.Is( rename_err , models.ErrOwnerRequired ):
-				err = refuse( fiber.StatusForbidden , "only the owner can rename an admin" )
-				return
-			case rename_err != nil:
-				err = rename_err
-				return
-			}
-			name := strings.TrimSpace( in.DisplayName )
-			handlers.audit( c , logs.KindAdmin , "user renamed" , fiber.Map{ "user_id": in.UserID , "name": name } )
-			reply = &renameUserReply{ Ok: true , DisplayName: name }
-			return
-		} )
+//
+// @route("POST /api/admin/users/{user_id}/rename", summary="Rename someone",
+//     tag="Admin", role=ADMIN, errors=(404, 409),
+//     description="Change another account's display name (1-80 characters). Only the owner renames an "
+//         "admin. expect, when given, is the name you think it has now; if it changed meanwhile the rename "
+//         "is refused with the current name.",
+//     mcp="admin_rename_user",  // feature:mcp
+// )
+func ( handlers *Handlers ) renameUser( c fiber.Ctx , in *renameUserRequest ) ( reply *renameUserReply , err error ) {
+	if models.ValidDisplayName( in.DisplayName ) == false {
+		err = refuse( fiber.StatusBadRequest , "display name must be 1-80 characters" )
+		return
+	}
+	rename_err := models.RenameUserAs( handlers.Store , in.UserID , security.UserFrom( c ).ID , in.DisplayName , in.Expect )
+	var stale *models.RenameConflictError
+	switch {
+	case errors.As( rename_err , &stale ):
+		err = refuse( fiber.StatusConflict , stale.Error() , fiber.Map{ "display_name": stale.Current } )
+		return
+	case errors.Is( rename_err , db.ErrNotFound ):
+		err = refuse( fiber.StatusNotFound , "no such user" )
+		return
+	case errors.Is( rename_err , models.ErrOwnerRequired ):
+		err = refuse( fiber.StatusForbidden , "only the owner can rename an admin" )
+		return
+	case rename_err != nil:
+		err = rename_err
+		return
+	}
+	name := strings.TrimSpace( in.DisplayName )
+	handlers.audit( c , logs.KindAdmin , "user renamed" , fiber.Map{ "user_id": in.UserID , "name": name } )
+	reply = &renameUserReply{ Ok: true , DisplayName: name }
+	return
 }
 
 type setUserRoleRequest struct {
@@ -294,35 +323,40 @@ type setUserRoleReply struct {
 	Role string `json:"role"`
 }
 
-// SetUserRole makes an account an admin or an ordinary user. Who may do what
+// setUserRole makes an account an admin or an ordinary user. Who may do what
 // lives in models.SetUserRole.
-func ( handlers *Handlers ) SetUserRole() *apidoc.Endpoint[ setUserRoleRequest , setUserRoleReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Change an account's role" , Description: "Only the owner can take an admin's rights away. Becoming an admin ends the account's sessions and live login link." , Tag: "Admin" , Role: apidoc.Admin , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *setUserRoleRequest ) ( reply *setUserRoleReply , err error ) {
-			changed , role_err := models.SetUserRole( handlers.Store , in.UserID , security.UserFrom( c ).ID , in.Role )
-			switch {
-			case errors.Is( role_err , db.ErrNotFound ):
-				err = refuse( fiber.StatusNotFound , "no such user" )
-				return
-			case errors.Is( role_err , models.ErrRoleSelf ):
-				err = refuse( fiber.StatusBadRequest , role_err.Error() )
-				return
-			case errors.Is( role_err , models.ErrOwnerProtected ):
-				err = refuse( fiber.StatusForbidden , "the owner is always an admin" )
-				return
-			case errors.Is( role_err , models.ErrOwnerRequired ):
-				err = refuse( fiber.StatusForbidden , "only the owner can take away an admin's rights" )
-				return
-			case role_err != nil:
-				err = role_err
-				return
-			}
-			if changed {
-				handlers.audit( c , logs.KindAdmin , "user role changed" , fiber.Map{ "user_id": in.UserID , "role": in.Role } )
-			}
-			reply = &setUserRoleReply{ Ok: true , Role: in.Role }
-			return
-		} )
+//
+// @route("POST /api/admin/users/{user_id}/role", summary="Change an account's role",
+//     tag="Admin", role=ADMIN, errors=(404,),
+//     description="Make an account an admin or an ordinary user. Only the owner takes an admin's rights "
+//         "away; the owner is always an admin, and nobody changes their own role. Becoming an admin ends "
+//         "the account's sessions and live login link.",
+//     mcp="admin_set_user_role",  // feature:mcp
+// )
+func ( handlers *Handlers ) setUserRole( c fiber.Ctx , in *setUserRoleRequest ) ( reply *setUserRoleReply , err error ) {
+	changed , role_err := models.SetUserRole( handlers.Store , in.UserID , security.UserFrom( c ).ID , in.Role )
+	switch {
+	case errors.Is( role_err , db.ErrNotFound ):
+		err = refuse( fiber.StatusNotFound , "no such user" )
+		return
+	case errors.Is( role_err , models.ErrRoleSelf ):
+		err = refuse( fiber.StatusBadRequest , role_err.Error() )
+		return
+	case errors.Is( role_err , models.ErrOwnerProtected ):
+		err = refuse( fiber.StatusForbidden , "the owner is always an admin" )
+		return
+	case errors.Is( role_err , models.ErrOwnerRequired ):
+		err = refuse( fiber.StatusForbidden , "only the owner can take away an admin's rights" )
+		return
+	case role_err != nil:
+		err = role_err
+		return
+	}
+	if changed {
+		handlers.audit( c , logs.KindAdmin , "user role changed" , fiber.Map{ "user_id": in.UserID , "role": in.Role } )
+	}
+	reply = &setUserRoleReply{ Ok: true , Role: in.Role }
+	return
 }
 
 type setUserDisabledRequest struct {
@@ -335,18 +369,23 @@ type okReply struct {
 	Ok bool `json:"ok"`
 }
 
-// SetUserDisabled switches an account off, or back on.
-func ( handlers *Handlers ) SetUserDisabled() *apidoc.Endpoint[ setUserDisabledRequest , okReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Disable or enable an account" , Tag: "Admin" , Role: apidoc.Admin , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *setUserDisabledRequest ) ( reply *okReply , err error ) {
-			if refused := handlers.setUserDisabled( security.UserFrom( c ).ID , in.UserID , in.Disabled ); refused != nil {
-				err = refused
-				return
-			}
-			handlers.audit( c , logs.KindAdmin , "user disabled set" , fiber.Map{ "user_id": in.UserID , "disabled": in.Disabled } )
-			reply = &okReply{ Ok: true }
-			return
-		} )
+// setUserDisabled switches an account off, or back on.
+//
+// @route("POST /api/admin/users/{user_id}/disabled", summary="Disable or enable a user",
+//     tag="Admin", role=ADMIN, errors=(404,),
+//     description="Switch an account off (disabled: true) or back on (false). Disabling signs it out "
+//         "everywhere and voids its live login link; its API keys stop working while it is off. "
+//         "Reversible. The owner and your own account cannot be disabled.",
+//     mcp="admin_set_user_disabled",  // feature:mcp
+// )
+func ( handlers *Handlers ) setUserDisabled( c fiber.Ctx , in *setUserDisabledRequest ) ( reply *okReply , err error ) {
+	if refused := handlers.applyUserDisabled( security.UserFrom( c ).ID , in.UserID , in.Disabled ); refused != nil {
+		err = refused
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "user disabled set" , fiber.Map{ "user_id": in.UserID , "disabled": in.Disabled } )
+	reply = &okReply{ Ok: true }
+	return
 }
 
 type revokeAccessReply struct {
@@ -354,53 +393,64 @@ type revokeAccessReply struct {
 	Revoked models.Revoked `json:"revoked"`
 }
 
-// RevokeAccess is the response to "this account may be compromised": every
+// revokeAccess is the response to "this account may be compromised": every
 // session, live login link, and live API key it holds stops working at
 // once. The account itself stays enabled; reissue a login link to let its
 // owner back in. See models.RevokeAllCredentials for why this is separate
 // from both disabling and reissuing.
-func ( handlers *Handlers ) RevokeAccess() *apidoc.Endpoint[ userIDPath , revokeAccessReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "End every credential an account holds" , Tag: "Admin" , Role: apidoc.Admin , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *userIDPath ) ( reply *revokeAccessReply , err error ) {
-			revoked , refused := handlers.revokeAccess( security.UserFrom( c ).ID , in.UserID )
-			if refused != nil {
-				err = refused
-				return
-			}
-			handlers.audit( c , logs.KindAdmin , "access revoked" , fiber.Map{ "user_id": in.UserID } )
-			reply = &revokeAccessReply{ Ok: true , Revoked: revoked }
-			return
-		} )
+//
+// @route("POST /api/admin/users/{user_id}/revoke-access", summary="Revoke a user's access",
+//     tag="Admin", role=ADMIN, errors=(404,),
+//     description="For an account that may be compromised: ends every session and voids its live login "
+//         "link and every API key it holds, at once.",
+//     mcp_note="The account stays enabled; admin_reissue_login lets its owner back in. The owner and your "  // feature:mcp
+//         "own account cannot be revoked.",  // feature:mcp
+//     mcp="admin_revoke_access", destructive=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) revokeAccess( c fiber.Ctx , in *userIDPath ) ( reply *revokeAccessReply , err error ) {
+	revoked , refused := handlers.revokeCredentials( security.UserFrom( c ).ID , in.UserID )
+	if refused != nil {
+		err = refused
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "access revoked" , fiber.Map{ "user_id": in.UserID } )
+	reply = &revokeAccessReply{ Ok: true , Revoked: revoked }
+	return
 }
 
 // >>> feature:two_factor
-// ResetTwoFactor is for someone who lost both the phone and the recovery codes.
+// resetTwoFactor is for someone who lost both the phone and the recovery codes.
 // Who may reset whom lives in models.ResetTwoFactor.
-func ( handlers *Handlers ) ResetTwoFactor() *apidoc.Endpoint[ userIDPath , okReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Turn off an account's two-factor" , Tag: "Admin" , Role: apidoc.Admin , Feature: "two_factor" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *userIDPath ) ( reply *okReply , err error ) {
-			reset_err := models.ResetTwoFactor( handlers.Store , in.UserID , security.UserFrom( c ).ID )
-			switch {
-			case errors.Is( reset_err , db.ErrNotFound ):
-				err = refuse( fiber.StatusNotFound , "no such user" )
-				return
-			case errors.Is( reset_err , models.ErrResetSelf ):
-				err = refuse( fiber.StatusBadRequest , "you cannot reset your own two-factor sign-in" )
-				return
-			case errors.Is( reset_err , models.ErrOwnerProtected ):
-				err = refuse( fiber.StatusForbidden , "the owner's two-factor sign-in can only be reset from a shell" )
-				return
-			case errors.Is( reset_err , models.ErrOwnerRequired ):
-				err = refuse( fiber.StatusForbidden , "only the owner can reset an admin's two-factor sign-in" )
-				return
-			case reset_err != nil:
-				err = reset_err
-				return
-			}
-			handlers.audit( c , logs.KindAdmin , "two-factor reset" , fiber.Map{ "user_id": in.UserID } )
-			reply = &okReply{ Ok: true }
-			return
-		} )
+//
+// @route("POST /api/admin/users/{user_id}/reset-two-factor", summary="Turn off an account's two-factor",
+//     tag="Admin", role=ADMIN, feature="two_factor",
+//     description="For someone who lost both their phone and their recovery codes: switches their "
+//         "two-factor sign-in off so a login link lets them in again. Only the owner resets an admin's; "
+//         "the owner's is reset from a shell.",
+//     mcp="admin_reset_two_factor", destructive=True, enabled=handlers.twoFactorOn,  // feature:mcp
+// )
+func ( handlers *Handlers ) resetTwoFactor( c fiber.Ctx , in *userIDPath ) ( reply *okReply , err error ) {
+	reset_err := models.ResetTwoFactor( handlers.Store , in.UserID , security.UserFrom( c ).ID )
+	switch {
+	case errors.Is( reset_err , db.ErrNotFound ):
+		err = refuse( fiber.StatusNotFound , "no such user" )
+		return
+	case errors.Is( reset_err , models.ErrResetSelf ):
+		err = refuse( fiber.StatusBadRequest , "you cannot reset your own two-factor sign-in" )
+		return
+	case errors.Is( reset_err , models.ErrOwnerProtected ):
+		err = refuse( fiber.StatusForbidden , "the owner's two-factor sign-in can only be reset from a shell" )
+		return
+	case errors.Is( reset_err , models.ErrOwnerRequired ):
+		err = refuse( fiber.StatusForbidden , "only the owner can reset an admin's two-factor sign-in" )
+		return
+	case reset_err != nil:
+		err = reset_err
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "two-factor reset" , fiber.Map{ "user_id": in.UserID } )
+	reply = &okReply{ Ok: true }
+	return
 }
 // <<< feature:two_factor
 
@@ -409,7 +459,7 @@ type deleteUserReply struct {
 	Removed models.Revoked `json:"removed"`
 }
 
-// DeleteUser removes an account for good, together with every session, login
+// deleteUser removes an account for good, together with every session, login
 // link, and API key it held. Disabling is the reversible version; this is for
 // an account that should not exist at all.
 //
@@ -418,28 +468,33 @@ type deleteUserReply struct {
 // models.DeleteUser, checked inside its transaction. An admin-scoped API key
 // may do it too, and the MCP tool is marked destructive so a client asks
 // first.
-func ( handlers *Handlers ) DeleteUser() *apidoc.Endpoint[ userIDPath , deleteUserReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Delete an account" , Tag: "Admin" , Role: apidoc.Admin , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *userIDPath ) ( reply *deleteUserReply , err error ) {
-			removed , delete_err := models.DeleteUser( handlers.Store , in.UserID , security.UserFrom( c ).ID )
-			switch {
-			case delete_err == nil:
-				handlers.audit( c , logs.KindAdmin , "user deleted" , fiber.Map{ "user_id": in.UserID } )
-				handlers.Webhooks.Emit( models.EventUserDeleted , map[string]any{ "user_id": in.UserID } ) // feature:webhooks
-				reply = &deleteUserReply{ Ok: true , Removed: removed }
-			case errors.Is( delete_err , db.ErrNotFound ):
-				err = refuse( fiber.StatusNotFound , "no such user" )
-			case errors.Is( delete_err , models.ErrDeleteSelf ):
-				err = refuse( fiber.StatusBadRequest , "you cannot delete your own account" )
-			case errors.Is( delete_err , models.ErrOwnerProtected ):
-				err = refuse( fiber.StatusForbidden , "the owner account cannot be deleted" )
-			case errors.Is( delete_err , models.ErrOwnerRequired ):
-				err = refuse( fiber.StatusForbidden , "only the owner can delete an admin account" )
-			default:
-				err = delete_err
-			}
-			return
-		} )
+//
+// @route("POST /api/admin/users/{user_id}/delete", summary="Delete an account",
+//     tag="Admin", role=ADMIN, errors=(404,),
+//     description="Remove an account for good, with its sessions, login link and API keys.",
+//     mcp_note="Cannot be undone: admin_set_user_disabled is the reversible version. Only the owner "  // feature:mcp
+//         "deletes an admin; nobody deletes the owner or themselves.",  // feature:mcp
+//     mcp="admin_delete_user", destructive=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) deleteUser( c fiber.Ctx , in *userIDPath ) ( reply *deleteUserReply , err error ) {
+	removed , delete_err := models.DeleteUser( handlers.Store , in.UserID , security.UserFrom( c ).ID )
+	switch {
+	case delete_err == nil:
+		handlers.audit( c , logs.KindAdmin , "user deleted" , fiber.Map{ "user_id": in.UserID } )
+		handlers.Webhooks.Emit( models.EventUserDeleted , map[string]any{ "user_id": in.UserID } ) // feature:webhooks
+		reply = &deleteUserReply{ Ok: true , Removed: removed }
+	case errors.Is( delete_err , db.ErrNotFound ):
+		err = refuse( fiber.StatusNotFound , "no such user" )
+	case errors.Is( delete_err , models.ErrDeleteSelf ):
+		err = refuse( fiber.StatusBadRequest , "you cannot delete your own account" )
+	case errors.Is( delete_err , models.ErrOwnerProtected ):
+		err = refuse( fiber.StatusForbidden , "the owner account cannot be deleted" )
+	case errors.Is( delete_err , models.ErrOwnerRequired ):
+		err = refuse( fiber.StatusForbidden , "only the owner can delete an admin account" )
+	default:
+		err = delete_err
+	}
+	return
 }
 
 // refusal is a rule saying no, kept apart from how it is delivered: the HTTP
@@ -519,9 +574,9 @@ func actOnRefusal( err error , what string ) ( refused *refusal ) {
 	return
 }
 
-// setUserDisabled carries every rule for switching an account off or on, for
+// applyUserDisabled carries every rule for switching an account off or on, for
 // SetUserDisabled and the MCP admin_set_user_disabled tool.
-func ( handlers *Handlers ) setUserDisabled( self_id uint64 , user_id uint64 , disabled bool ) ( refused *refusal ) {
+func ( handlers *Handlers ) applyUserDisabled( self_id uint64 , user_id uint64 , disabled bool ) ( refused *refusal ) {
 	if _ , get_err := models.GetUser( handlers.Store , user_id ); get_err != nil {
 		refused = &refusal{ status: fiber.StatusNotFound , message: "no such user" }
 		return
@@ -550,9 +605,9 @@ func ( handlers *Handlers ) setUserDisabled( self_id uint64 , user_id uint64 , d
 	return
 }
 
-// revokeAccess carries every rule for cutting an account's credentials off,
+// revokeCredentials carries every rule for cutting an account's credentials off,
 // for RevokeAccess and the MCP admin_revoke_access tool.
-func ( handlers *Handlers ) revokeAccess( self_id uint64 , user_id uint64 ) ( revoked models.Revoked , refused *refusal ) {
+func ( handlers *Handlers ) revokeCredentials( self_id uint64 , user_id uint64 ) ( revoked models.Revoked , refused *refusal ) {
 	if _ , get_err := models.GetUser( handlers.Store , user_id ); get_err != nil {
 		refused = &refusal{ status: fiber.StatusNotFound , message: "no such user" }
 		return

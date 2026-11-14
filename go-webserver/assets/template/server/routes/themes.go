@@ -63,61 +63,79 @@ func ( handlers *Handlers ) myThemes( user *models.User ) ( themes []models.Them
 	return
 }
 
-// SetMyThemes replaces the caller's own list and pick.
-func ( handlers *Handlers ) SetMyThemes() *apidoc.Endpoint[ setMyThemesRequest , setMyThemesReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Replace your own themes" , Tag: "Account" , Feature: "appearance" , Errors: []int{ 400 , 401 , 403 } },
-		func( c fiber.Ctx , in *setMyThemesRequest ) ( reply *setMyThemesReply , err error ) {
-			user := security.UserFrom( c )
-			if set_err := models.SetUserThemes( handlers.Store , user.ID , in.Themes , in.ThemeID ); set_err != nil {
-				err = refuse( fiber.StatusBadRequest , set_err.Error() )
-				return
-			}
-			user , err = models.GetUser( handlers.Store , user.ID )
-			if err != nil { return }
-			themes , custom , err := handlers.myThemes( user )
-			if err != nil { return }
-			handlers.audit( c , logs.KindAuth , "changed own themes" , fiber.Map{ "count": len( in.Themes ) , "custom": custom } )
-			reply = &setMyThemesReply{ Ok: true , Themes: themes , ThemesCustom: custom , ThemeID: user.ThemeID }
-			return
-		} )
+// setMyThemes replaces the caller's own list and pick.
+//
+// @route("POST /api/account/themes", summary="Replace your own themes",
+//     tag="Account", feature="appearance",
+//     description="Replace your whole list of color themes (1 to 40) and pick the one you use. themes: "
+//         "null goes back to following the app's defaults. A theme is the Theme schema in the API "
+//         "reference (config/openapi.json): id, name, mode light|dark, accent, second, and optional colors "
+//         "as #rrggbb.",
+//     mcp_note="whoami shows the current list.",  // feature:mcp
+//     mcp="set_themes",  // feature:mcp
+// )
+func ( handlers *Handlers ) setMyThemes( c fiber.Ctx , in *setMyThemesRequest ) ( reply *setMyThemesReply , err error ) {
+	user := security.UserFrom( c )
+	if set_err := models.SetUserThemes( handlers.Store , user.ID , in.Themes , in.ThemeID ); set_err != nil {
+		err = refuse( fiber.StatusBadRequest , set_err.Error() )
+		return
+	}
+	user , err = models.GetUser( handlers.Store , user.ID )
+	if err != nil { return }
+	themes , custom , err := handlers.myThemes( user )
+	if err != nil { return }
+	handlers.audit( c , logs.KindAuth , "changed own themes" , fiber.Map{ "count": len( in.Themes ) , "custom": custom } )
+	reply = &setMyThemesReply{ Ok: true , Themes: themes , ThemesCustom: custom , ThemeID: user.ThemeID }
+	return
 }
 
-// SetMyTheme changes only which theme the caller uses.
-func ( handlers *Handlers ) SetMyTheme() *apidoc.Endpoint[ setMyThemeRequest , setMyThemeReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Pick which theme you use" , Tag: "Account" , Feature: "appearance" , Errors: []int{ 400 , 401 , 403 } },
-		func( c fiber.Ctx , in *setMyThemeRequest ) ( reply *setMyThemeReply , err error ) {
-			if set_err := models.SetUserThemeID( handlers.Store , security.UserFrom( c ).ID , in.ThemeID ); set_err != nil {
-				err = refuse( fiber.StatusBadRequest , set_err.Error() )
-				return
-			}
-			reply = &setMyThemeReply{ Ok: true , ThemeID: in.ThemeID }
-			return
-		} )
+// setMyTheme changes only which theme the caller uses.
+//
+// @route("POST /api/account/theme", summary="Pick your theme",
+//     tag="Account", feature="appearance",
+//     description="Switch to another theme from your list (or the defaults), by its id.",
+//     mcp="set_theme",  // feature:mcp
+// )
+func ( handlers *Handlers ) setMyTheme( c fiber.Ctx , in *setMyThemeRequest ) ( reply *setMyThemeReply , err error ) {
+	if set_err := models.SetUserThemeID( handlers.Store , security.UserFrom( c ).ID , in.ThemeID ); set_err != nil {
+		err = refuse( fiber.StatusBadRequest , set_err.Error() )
+		return
+	}
+	reply = &setMyThemeReply{ Ok: true , ThemeID: in.ThemeID }
+	return
 }
 
-// GetThemeDefaults: themes is null while the built-in ones apply.
-func ( handlers *Handlers ) GetThemeDefaults() *apidoc.Endpoint[ apidoc.None , themeDefaultsReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "The themes everyone without their own list sees" , Tag: "Admin" , Role: apidoc.Admin , Feature: "appearance" , Errors: []int{ 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *apidoc.None ) ( reply *themeDefaultsReply , err error ) {
-			themes , err := models.ThemeDefaults( handlers.Store )
-			if err != nil { return }
-			reply = &themeDefaultsReply{ Themes: themes }
-			return
-		} )
+// getThemeDefaults: themes is null while the built-in ones apply.
+//
+// @route("GET /api/admin/theme-defaults", summary="Default themes",
+//     tag="Admin", role=ADMIN, feature="appearance", errors=(404,),
+//     description="The theme list everyone without their own list sees. themes is null while the built-in "
+//         "ones apply.",
+//     mcp="admin_get_theme_defaults", read_only=True,  // feature:mcp
+// )
+func ( handlers *Handlers ) getThemeDefaults( c fiber.Ctx , in *apidoc.None ) ( reply *themeDefaultsReply , err error ) {
+	themes , err := models.ThemeDefaults( handlers.Store )
+	if err != nil { return }
+	reply = &themeDefaultsReply{ Themes: themes }
+	return
 }
 
-// SetThemeDefaults replaces the list everyone without their own list sees.
-func ( handlers *Handlers ) SetThemeDefaults() *apidoc.Endpoint[ setThemeDefaultsRequest , setThemeDefaultsReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Replace the default themes" , Tag: "Admin" , Role: apidoc.Admin , Feature: "appearance" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *setThemeDefaultsRequest ) ( reply *setThemeDefaultsReply , err error ) {
-			if set_err := models.SetThemeDefaults( handlers.Store , in.Themes ); set_err != nil {
-				err = refuse( fiber.StatusBadRequest , set_err.Error() )
-				return
-			}
-			themes , err := models.ThemeDefaults( handlers.Store )
-			if err != nil { return }
-			handlers.audit( c , logs.KindAdmin , "changed the default themes" , fiber.Map{ "count": len( themes ) , "built_in": themes == nil } )
-			reply = &setThemeDefaultsReply{ Ok: true , Themes: themes }
-			return
-		} )
+// setThemeDefaults replaces the list everyone without their own list sees.
+//
+// @route("POST /api/admin/theme-defaults", summary="Replace the default themes",
+//     tag="Admin", role=ADMIN, feature="appearance", errors=(404,),
+//     description="Replace the theme list everyone without their own list sees, 1 to 40 themes in the "
+//         "Theme schema of the API reference. null puts the built-in themes back.",
+//     mcp="admin_set_theme_defaults",  // feature:mcp
+// )
+func ( handlers *Handlers ) setThemeDefaults( c fiber.Ctx , in *setThemeDefaultsRequest ) ( reply *setThemeDefaultsReply , err error ) {
+	if set_err := models.SetThemeDefaults( handlers.Store , in.Themes ); set_err != nil {
+		err = refuse( fiber.StatusBadRequest , set_err.Error() )
+		return
+	}
+	themes , err := models.ThemeDefaults( handlers.Store )
+	if err != nil { return }
+	handlers.audit( c , logs.KindAdmin , "changed the default themes" , fiber.Map{ "count": len( themes ) , "built_in": themes == nil } )
+	reply = &setThemeDefaultsReply{ Ok: true , Themes: themes }
+	return
 }

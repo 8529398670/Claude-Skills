@@ -8,7 +8,6 @@ import (
 
 	fiber "github.com/gofiber/fiber/v3"
 
-	apidoc "{{MODULE_PATH}}/server/apidoc"
 	db "{{MODULE_PATH}}/server/db"
 	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
@@ -174,34 +173,33 @@ func onlyLiveKeys( live string , rows []apiKeyRow ) ( kept []apiKeyRow ) {
 	return
 }
 
-// ListMyAPIKeys answers "what has standing access as me". Revoked and expired
+// listMyAPIKeys answers "what has standing access as me". Revoked and expired
 // keys are included, marked as such, because a key that used to exist is part
 // of that answer.
-func ( handlers *Handlers ) ListMyAPIKeys() *apidoc.Endpoint[ listMyAPIKeysRequest , apiKeysReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Your API keys" , Tag: "API keys" , Access: apidoc.SessionOnly , Feature: "api_keys" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *listMyAPIKeysRequest ) ( reply *apiKeysReply , err error ) {
-			user := security.UserFrom( c )
-			keys , err := models.ListAPIKeysForUser( handlers.Store , user.ID )
-			if err != nil { return }
-			// Most people have no key someone else made, so the names are only loaded
-			// when one is there to be named.
-			names := map[ uint64 ]string{}
-			for _ , key := range keys {
-				if key.CreatedBy == 0 { continue }
-				if names , err = handlers.displayNames(); err != nil { return }
-				break
-			}
-			rows := []apiKeyRow{}
-			for _ , key := range keys {
-				row := newAPIKeyRow( key , "" )
-				nameCreator( &row , key , names )
-				rows = append( rows , row )
-			}
-			rows = onlyLiveKeys( in.Live , matchRows( rows , in.Q , "name" ) )
-			reply = &apiKeysReply{}
-			reply.Keys , reply.Paged = sortedPage( rows , in.Sort , in.Direction , in.Page )
-			return
-		} )
+//
+// @route("GET /api/keys", summary="Your API keys", tag="API keys", access=SESSION_ONLY, feature="api_keys")
+func ( handlers *Handlers ) listMyAPIKeys( c fiber.Ctx , in *listMyAPIKeysRequest ) ( reply *apiKeysReply , err error ) {
+	user := security.UserFrom( c )
+	keys , err := models.ListAPIKeysForUser( handlers.Store , user.ID )
+	if err != nil { return }
+	// Most people have no key someone else made, so the names are only loaded
+	// when one is there to be named.
+	names := map[ uint64 ]string{}
+	for _ , key := range keys {
+		if key.CreatedBy == 0 { continue }
+		if names , err = handlers.displayNames(); err != nil { return }
+		break
+	}
+	rows := []apiKeyRow{}
+	for _ , key := range keys {
+		row := newAPIKeyRow( key , "" )
+		nameCreator( &row , key , names )
+		rows = append( rows , row )
+	}
+	rows = onlyLiveKeys( in.Live , matchRows( rows , in.Q , "name" ) )
+	reply = &apiKeysReply{}
+	reply.Keys , reply.Paged = sortedPage( rows , in.Sort , in.Direction , in.Page )
+	return
 }
 
 // displayNames is every account's name by id: one pass rather than a GetUser
@@ -231,126 +229,133 @@ func keyRole( role string ) ( result string ) {
 	return
 }
 
-// CreateMyAPIKey mints a key for the signed-in user and returns the credential
+// createMyAPIKey mints a key for the signed-in user and returns the credential
 // once. The default role is "user" even for an admin: an admin-scoped key can
 // list and disable accounts and revoke anyone's access, so it should be asked
 // for rather than handed out by omission.
 //
 // The ceiling that a key cannot outrank its owner lives in
 // models.IssueAPIKey, not here, so the control socket and the CLI get it too.
-func ( handlers *Handlers ) CreateMyAPIKey() *apidoc.Endpoint[ createAPIKeyRequest , newAPIKeyReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Create an API key" , Tag: "API keys" , Access: apidoc.SessionOnly , Feature: "api_keys" , Status: fiber.StatusCreated , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *createAPIKeyRequest ) ( reply *newAPIKeyReply , err error ) {
-			if models.ValidAPIKeyName( in.Name ) == false {
-				err = refuse( fiber.StatusBadRequest , "name must be 1-80 characters" )
-				return
-			}
-			ttl , ok := models.APIKeyTTLFromDays( in.ExpiresInDays , handlers.cfg().APIKeyTTL )
-			if ok == false {
-				err = refuse( fiber.StatusBadRequest , "expires_in_days must be 0 (never) or up to 3650" )
-				return
-			}
+//
+// @route("POST /api/keys", summary="Create an API key",
+//     tag="API keys", access=SESSION_ONLY, feature="api_keys", status=201,
+// )
+func ( handlers *Handlers ) createMyAPIKey( c fiber.Ctx , in *createAPIKeyRequest ) ( reply *newAPIKeyReply , err error ) {
+	if models.ValidAPIKeyName( in.Name ) == false {
+		err = refuse( fiber.StatusBadRequest , "name must be 1-80 characters" )
+		return
+	}
+	ttl , ok := models.APIKeyTTLFromDays( in.ExpiresInDays , handlers.cfg().APIKeyTTL )
+	if ok == false {
+		err = refuse( fiber.StatusBadRequest , "expires_in_days must be 0 (never) or up to 3650" )
+		return
+	}
 
-			user := security.UserFrom( c )
-			credential , key , issue_err := models.IssueAPIKey( handlers.Store , user.ID , in.Name , keyRole( in.Role ) , ttl )
-			switch {
-			case errors.Is( issue_err , models.ErrAPIKeyRole ):
-				err = refuse( fiber.StatusForbidden , "you cannot create an API key with more permission than your own account" )
-				return
-			case errors.Is( issue_err , models.ErrAPIKeyLimit ):
-				err = refuse( fiber.StatusBadRequest , "you already have the maximum number of live API keys -- revoke one first" )
-				return
-			case errors.Is( issue_err , models.ErrAPIKeyDisabled ):
-				// Not reachable through a live session today, since a disabled
-				// account cannot hold one. Mapped anyway so that a future path
-				// into this handler fails as a refusal rather than a 500.
-				err = refuse( fiber.StatusForbidden , "this account is disabled" )
-				return
-			case issue_err != nil:
-				err = issue_err
-				return
-			}
+	user := security.UserFrom( c )
+	credential , key , issue_err := models.IssueAPIKey( handlers.Store , user.ID , in.Name , keyRole( in.Role ) , ttl )
+	switch {
+	case errors.Is( issue_err , models.ErrAPIKeyRole ):
+		err = refuse( fiber.StatusForbidden , "you cannot create an API key with more permission than your own account" )
+		return
+	case errors.Is( issue_err , models.ErrAPIKeyLimit ):
+		err = refuse( fiber.StatusBadRequest , "you already have the maximum number of live API keys -- revoke one first" )
+		return
+	case errors.Is( issue_err , models.ErrAPIKeyDisabled ):
+		// Not reachable through a live session today, since a disabled
+		// account cannot hold one. Mapped anyway so that a future path
+		// into this handler fails as a refusal rather than a 500.
+		err = refuse( fiber.StatusForbidden , "this account is disabled" )
+		return
+	case issue_err != nil:
+		err = issue_err
+		return
+	}
 
-			// The credential appears here and nowhere else, ever.
-			reply = &newAPIKeyReply{ apiKeyRow: newAPIKeyRow( key , "" ) , Credential: credential }
-			handlers.audit( c , logs.KindAdmin , "api key created" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role } )
-			handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role } ) // feature:webhooks
-			return
-		} )
+	// The credential appears here and nowhere else, ever.
+	reply = &newAPIKeyReply{ apiKeyRow: newAPIKeyRow( key , "" ) , Credential: credential }
+	handlers.audit( c , logs.KindAdmin , "api key created" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role } )
+	handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role } ) // feature:webhooks
+	return
 }
 
-// CreateAPIKeyForUser mints a key that acts as another account, for setting up
+// createAPIKeyForUser mints a key that acts as another account, for setting up
 // someone's integration for them. It needs a browser session, like every route
 // that makes a credential: the admin_keys group in routes.go adds it, so a
 // leaked admin key cannot mint itself a way in as somebody else.
 //
 // Who may mint for whom is models.IssueAPIKeyFor's to say. The key records who
 // made it, and shows that to the person it acts as.
-func ( handlers *Handlers ) CreateAPIKeyForUser() *apidoc.Endpoint[ createUserAPIKeyRequest , newAPIKeyReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Create a key that acts as someone else" , Description: "Any admin may do this for an ordinary user, and only the owner for another admin. Nobody may do it for the owner. The key records who made it and shows that to the person it acts as." , Tag: "API keys" , Access: apidoc.SessionOnly , Role: apidoc.Admin , Feature: "api_keys" , Status: fiber.StatusCreated , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *createUserAPIKeyRequest ) ( reply *newAPIKeyReply , err error ) {
-			if models.ValidAPIKeyName( in.Name ) == false {
-				err = refuse( fiber.StatusBadRequest , "name must be 1-80 characters" )
-				return
-			}
-			ttl , ok := models.APIKeyTTLFromDays( in.ExpiresInDays , handlers.cfg().APIKeyTTL )
-			if ok == false {
-				err = refuse( fiber.StatusBadRequest , "expires_in_days must be 0 (never) or up to 3650" )
-				return
-			}
+//
+// @route("POST /api/admin/keys", summary="Create a key that acts as someone else",
+//     tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", status=201,
+//     description="Any admin may do this for an ordinary user, and only the owner for another admin. "
+//         "Nobody may do it for the owner. The key records who made it and shows that to the person it "
+//         "acts as.",
+// )
+func ( handlers *Handlers ) createAPIKeyForUser( c fiber.Ctx , in *createUserAPIKeyRequest ) ( reply *newAPIKeyReply , err error ) {
+	if models.ValidAPIKeyName( in.Name ) == false {
+		err = refuse( fiber.StatusBadRequest , "name must be 1-80 characters" )
+		return
+	}
+	ttl , ok := models.APIKeyTTLFromDays( in.ExpiresInDays , handlers.cfg().APIKeyTTL )
+	if ok == false {
+		err = refuse( fiber.StatusBadRequest , "expires_in_days must be 0 (never) or up to 3650" )
+		return
+	}
 
-			actor := security.UserFrom( c )
-			credential , key , issue_err := models.IssueAPIKeyFor( handlers.Store , actor.ID , in.UserID , in.Name , keyRole( in.Role ) , ttl )
-			switch {
-			case errors.Is( issue_err , db.ErrNotFound ):
-				err = refuse( fiber.StatusNotFound , "no such user" )
-				return
-			case errors.Is( issue_err , models.ErrOwnerProtected ):
-				err = refuse( fiber.StatusForbidden , "a key for the owner can only be made by the owner, or from a shell" )
-				return
-			case errors.Is( issue_err , models.ErrOwnerRequired ):
-				err = refuse( fiber.StatusForbidden , "only the owner can create a key for an admin" )
-				return
-			case errors.Is( issue_err , models.ErrAPIKeyRole ):
-				err = refuse( fiber.StatusForbidden , "a key cannot have more permission than the account it belongs to" )
-				return
-			case errors.Is( issue_err , models.ErrAPIKeyLimit ):
-				err = refuse( fiber.StatusBadRequest , "that account already has the maximum number of live API keys" )
-				return
-			case errors.Is( issue_err , models.ErrAPIKeyDisabled ):
-				err = refuse( fiber.StatusForbidden , "that account is disabled" )
-				return
-			case issue_err != nil:
-				err = issue_err
-				return
-			}
+	actor := security.UserFrom( c )
+	credential , key , issue_err := models.IssueAPIKeyFor( handlers.Store , actor.ID , in.UserID , in.Name , keyRole( in.Role ) , ttl )
+	switch {
+	case errors.Is( issue_err , db.ErrNotFound ):
+		err = refuse( fiber.StatusNotFound , "no such user" )
+		return
+	case errors.Is( issue_err , models.ErrOwnerProtected ):
+		err = refuse( fiber.StatusForbidden , "a key for the owner can only be made by the owner, or from a shell" )
+		return
+	case errors.Is( issue_err , models.ErrOwnerRequired ):
+		err = refuse( fiber.StatusForbidden , "only the owner can create a key for an admin" )
+		return
+	case errors.Is( issue_err , models.ErrAPIKeyRole ):
+		err = refuse( fiber.StatusForbidden , "a key cannot have more permission than the account it belongs to" )
+		return
+	case errors.Is( issue_err , models.ErrAPIKeyLimit ):
+		err = refuse( fiber.StatusBadRequest , "that account already has the maximum number of live API keys" )
+		return
+	case errors.Is( issue_err , models.ErrAPIKeyDisabled ):
+		err = refuse( fiber.StatusForbidden , "that account is disabled" )
+		return
+	case issue_err != nil:
+		err = issue_err
+		return
+	}
 
-			// The credential appears here and nowhere else, ever.
-			reply = &newAPIKeyReply{ apiKeyRow: newAPIKeyRow( key , "" ) , Credential: credential }
-			handlers.audit( c , logs.KindAdmin , "api key created" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role , "user_id": key.UserID , "created_by": actor.ID } )
-			handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role , "created_by": actor.ID } ) // feature:webhooks
-			return
-		} )
+	// The credential appears here and nowhere else, ever.
+	reply = &newAPIKeyReply{ apiKeyRow: newAPIKeyRow( key , "" ) , Credential: credential }
+	handlers.audit( c , logs.KindAdmin , "api key created" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role , "user_id": key.UserID , "created_by": actor.ID } )
+	handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role , "created_by": actor.ID } ) // feature:webhooks
+	return
 }
 
-// RenameMyAPIKey renames one of your own keys. Someone else's is "no such api
+// renameMyAPIKey renames one of your own keys. Someone else's is "no such api
 // key", for the same reason as in RevokeMyAPIKey.
-func ( handlers *Handlers ) RenameMyAPIKey() *apidoc.Endpoint[ renameAPIKeyRequest , renameAPIKeyReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Rename one of your keys" , Tag: "API keys" , Access: apidoc.SessionOnly , Feature: "api_keys" , Errors: []int{ 400 , 401 , 403 , 404 , 409 } },
-		func( c fiber.Ctx , in *renameAPIKeyRequest ) ( reply *renameAPIKeyReply , err error ) {
-			reply , err = handlers.renameKey( c , in , true )
-			return
-		} )
+//
+// @route("POST /api/keys/{key_id}/rename", summary="Rename one of your keys",
+//     tag="API keys", access=SESSION_ONLY, feature="api_keys", errors=(409,),
+// )
+func ( handlers *Handlers ) renameMyAPIKey( c fiber.Ctx , in *renameAPIKeyRequest ) ( reply *renameAPIKeyReply , err error ) {
+	reply , err = handlers.renameKey( c , in , true )
+	return
 }
 
-// RenameAnyAPIKey is an admin renaming anyone's key. A name changes nothing about
+// renameAnyAPIKey is an admin renaming anyone's key. A name changes nothing about
 // what a key can do, so unlike its expiry this needs no ladder.
-func ( handlers *Handlers ) RenameAnyAPIKey() *apidoc.Endpoint[ renameAPIKeyRequest , renameAPIKeyReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Rename anyone's key" , Tag: "API keys" , Access: apidoc.SessionOnly , Role: apidoc.Admin , Feature: "api_keys" , Errors: []int{ 400 , 401 , 403 , 404 , 409 } },
-		func( c fiber.Ctx , in *renameAPIKeyRequest ) ( reply *renameAPIKeyReply , err error ) {
-			reply , err = handlers.renameKey( c , in , false )
-			return
-		} )
+//
+// @route("POST /api/admin/keys/{key_id}/rename", summary="Rename anyone's key",
+//     tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", errors=(409,),
+// )
+func ( handlers *Handlers ) renameAnyAPIKey( c fiber.Ctx , in *renameAPIKeyRequest ) ( reply *renameAPIKeyReply , err error ) {
+	reply , err = handlers.renameKey( c , in , false )
+	return
 }
 
 func ( handlers *Handlers ) renameKey( c fiber.Ctx , in *renameAPIKeyRequest , own_only bool ) ( reply *renameAPIKeyReply , err error ) {
@@ -382,24 +387,26 @@ func ( handlers *Handlers ) renameKey( c fiber.Ctx , in *renameAPIKeyRequest , o
 	return
 }
 
-// SetMyAPIKeyExpiry changes when one of your own keys expires. The session this
+// setMyAPIKeyExpiry changes when one of your own keys expires. The session this
 // group requires is what stops a leaked key from extending itself.
-func ( handlers *Handlers ) SetMyAPIKeyExpiry() *apidoc.Endpoint[ apiKeyExpiryRequest , apiKeyRow ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Change when one of your keys expires" , Tag: "API keys" , Access: apidoc.SessionOnly , Feature: "api_keys" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *apiKeyExpiryRequest ) ( reply *apiKeyRow , err error ) {
-			reply , err = handlers.setKeyExpiry( c , in , true )
-			return
-		} )
+//
+// @route("POST /api/keys/{key_id}/expiry", summary="Change when one of your keys expires",
+//     tag="API keys", access=SESSION_ONLY, feature="api_keys",
+// )
+func ( handlers *Handlers ) setMyAPIKeyExpiry( c fiber.Ctx , in *apiKeyExpiryRequest ) ( reply *apiKeyRow , err error ) {
+	reply , err = handlers.setKeyExpiry( c , in , true )
+	return
 }
 
-// SetAnyAPIKeyExpiry is the same for an admin. Whose keys they may change is
+// setAnyAPIKeyExpiry is the same for an admin. Whose keys they may change is
 // models.SetAPIKeyExpiry's to say.
-func ( handlers *Handlers ) SetAnyAPIKeyExpiry() *apidoc.Endpoint[ apiKeyExpiryRequest , apiKeyRow ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Change when anyone's key expires" , Tag: "API keys" , Access: apidoc.SessionOnly , Role: apidoc.Admin , Feature: "api_keys" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *apiKeyExpiryRequest ) ( reply *apiKeyRow , err error ) {
-			reply , err = handlers.setKeyExpiry( c , in , false )
-			return
-		} )
+//
+// @route("POST /api/admin/keys/{key_id}/expiry", summary="Change when anyone's key expires",
+//     tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys",
+// )
+func ( handlers *Handlers ) setAnyAPIKeyExpiry( c fiber.Ctx , in *apiKeyExpiryRequest ) ( reply *apiKeyRow , err error ) {
+	reply , err = handlers.setKeyExpiry( c , in , false )
+	return
 }
 
 func ( handlers *Handlers ) setKeyExpiry( c fiber.Ctx , in *apiKeyExpiryRequest , own_only bool ) ( reply *apiKeyRow , err error ) {
@@ -438,72 +445,76 @@ func ( handlers *Handlers ) setKeyExpiry( c fiber.Ctx , in *apiKeyExpiryRequest 
 	return
 }
 
-// RevokeMyAPIKey takes effect immediately -- the next request carrying that
+// revokeMyAPIKey takes effect immediately -- the next request carrying that
 // key fails. Someone else's key is reported as "no such api key" rather than
 // "forbidden", so the endpoint does not confirm which key ids exist.
-func ( handlers *Handlers ) RevokeMyAPIKey() *apidoc.Endpoint[ keyIDPath , okReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Revoke one of your keys" , Tag: "API keys" , Access: apidoc.SessionOnly , Feature: "api_keys" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *keyIDPath ) ( reply *okReply , err error ) {
-			user := security.UserFrom( c )
-			key , get_err := models.GetAPIKey( handlers.Store , in.KeyID )
-			if get_err != nil || key.Deleted() || key.UserID != user.ID {
-				err = refuse( fiber.StatusNotFound , "no such api key" )
-				return
-			}
-			if err = models.RevokeAPIKey( handlers.Store , key.ID ); err != nil { return }
-			handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": in.KeyID } )
-			handlers.Webhooks.Emit( models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } ) // feature:webhooks
-			reply = &okReply{ Ok: true }
-			return
-		} )
+//
+// @route("POST /api/keys/{key_id}/revoke", summary="Revoke one of your keys",
+//     tag="API keys", access=SESSION_ONLY, feature="api_keys",
+// )
+func ( handlers *Handlers ) revokeMyAPIKey( c fiber.Ctx , in *keyIDPath ) ( reply *okReply , err error ) {
+	user := security.UserFrom( c )
+	key , get_err := models.GetAPIKey( handlers.Store , in.KeyID )
+	if get_err != nil || key.Deleted() || key.UserID != user.ID {
+		err = refuse( fiber.StatusNotFound , "no such api key" )
+		return
+	}
+	if err = models.RevokeAPIKey( handlers.Store , key.ID ); err != nil { return }
+	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": in.KeyID } )
+	handlers.Webhooks.Emit( models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } ) // feature:webhooks
+	reply = &okReply{ Ok: true }
+	return
 }
 
-// DeleteMyAPIKey deletes one of your own keys -- live or already dead. It
+// deleteMyAPIKey deletes one of your own keys -- live or already dead. It
 // stops working at once, and RestoreMyAPIKey can bring it back for a few
 // minutes. Someone else's key is "no such api key", for the same reason as in
 // RevokeMyAPIKey.
-func ( handlers *Handlers ) DeleteMyAPIKey() *apidoc.Endpoint[ keyIDPath , okReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Delete one of your keys" , Tag: "API keys" , Access: apidoc.SessionOnly , Feature: "api_keys" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *keyIDPath ) ( reply *okReply , err error ) {
-			user := security.UserFrom( c )
-			key , get_err := models.GetAPIKey( handlers.Store , in.KeyID )
-			if get_err != nil || key.UserID != user.ID {
-				err = refuse( fiber.StatusNotFound , "no such api key" )
-				return
-			}
-			if delete_err := models.DeleteAPIKey( handlers.Store , key.ID , user.ID ); delete_err != nil {
-				err = deleteKeyRefusal( delete_err )
-				return
-			}
-			handlers.audit( c , logs.KindAdmin , "api key deleted" , fiber.Map{ "key_id": in.KeyID } )
-			reply = &okReply{ Ok: true }
-			return
-		} )
+//
+// @route("POST /api/keys/{key_id}/delete", summary="Delete one of your keys",
+//     tag="API keys", access=SESSION_ONLY, feature="api_keys",
+// )
+func ( handlers *Handlers ) deleteMyAPIKey( c fiber.Ctx , in *keyIDPath ) ( reply *okReply , err error ) {
+	user := security.UserFrom( c )
+	key , get_err := models.GetAPIKey( handlers.Store , in.KeyID )
+	if get_err != nil || key.UserID != user.ID {
+		err = refuse( fiber.StatusNotFound , "no such api key" )
+		return
+	}
+	if delete_err := models.DeleteAPIKey( handlers.Store , key.ID , user.ID ); delete_err != nil {
+		err = deleteKeyRefusal( delete_err )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "api key deleted" , fiber.Map{ "key_id": in.KeyID } )
+	reply = &okReply{ Ok: true }
+	return
 }
 
-// RestoreMyAPIKey undoes DeleteMyAPIKey, within models.RestoreWindow. A key
+// restoreMyAPIKey undoes DeleteMyAPIKey, within models.RestoreWindow. A key
 // an admin deleted is the admin's to restore, not its owner's.
-func ( handlers *Handlers ) RestoreMyAPIKey() *apidoc.Endpoint[ keyIDPath , apiKeyRow ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Undo deleting one of your keys" , Tag: "API keys" , Access: apidoc.SessionOnly , Feature: "api_keys" , Errors: []int{ 400 , 401 , 403 , 404 , 409 } },
-		func( c fiber.Ctx , in *keyIDPath ) ( reply *apiKeyRow , err error ) {
-			user := security.UserFrom( c )
-			key , get_err := models.GetAPIKey( handlers.Store , in.KeyID )
-			if get_err != nil || key.UserID != user.ID {
-				err = refuse( fiber.StatusNotFound , "no such api key" )
-				return
-			}
-			reply , err = handlers.restoreKey( c , key.ID , user )
-			return
-		} )
+//
+// @route("POST /api/keys/{key_id}/restore", summary="Undo deleting one of your keys",
+//     tag="API keys", access=SESSION_ONLY, feature="api_keys", errors=(409,),
+// )
+func ( handlers *Handlers ) restoreMyAPIKey( c fiber.Ctx , in *keyIDPath ) ( reply *apiKeyRow , err error ) {
+	user := security.UserFrom( c )
+	key , get_err := models.GetAPIKey( handlers.Store , in.KeyID )
+	if get_err != nil || key.UserID != user.ID {
+		err = refuse( fiber.StatusNotFound , "no such api key" )
+		return
+	}
+	reply , err = handlers.restoreKey( c , key.ID , user )
+	return
 }
 
-// RestoreAnyAPIKey undoes a delete, any key's, within models.RestoreWindow.
-func ( handlers *Handlers ) RestoreAnyAPIKey() *apidoc.Endpoint[ keyIDPath , apiKeyRow ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Undo deleting anyone's key" , Tag: "API keys" , Access: apidoc.SessionOnly , Role: apidoc.Admin , Feature: "api_keys" , Errors: []int{ 400 , 401 , 403 , 404 , 409 } },
-		func( c fiber.Ctx , in *keyIDPath ) ( reply *apiKeyRow , err error ) {
-			reply , err = handlers.restoreKey( c , in.KeyID , security.UserFrom( c ) )
-			return
-		} )
+// restoreAnyAPIKey undoes a delete, any key's, within models.RestoreWindow.
+//
+// @route("POST /api/admin/keys/{key_id}/restore", summary="Undo deleting anyone's key",
+//     tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", errors=(409,),
+// )
+func ( handlers *Handlers ) restoreAnyAPIKey( c fiber.Ctx , in *keyIDPath ) ( reply *apiKeyRow , err error ) {
+	reply , err = handlers.restoreKey( c , in.KeyID , security.UserFrom( c ) )
+	return
 }
 
 func ( handlers *Handlers ) restoreKey( c fiber.Ctx , key_id string , actor *models.User ) ( reply *apiKeyRow , err error ) {
@@ -537,63 +548,66 @@ func deleteKeyRefusal( delete_err error ) ( err error ) {
 	return
 }
 
-// ListAllAPIKeys is the admin view: every key in the app, with whose it is.
+// listAllAPIKeys is the admin view: every key in the app, with whose it is.
 // This is the "who and what has standing access" question, and it is the
 // reason admins can see keys they did not create.
-func ( handlers *Handlers ) ListAllAPIKeys() *apidoc.Endpoint[ listAllAPIKeysRequest , apiKeysReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Every key in the app" , Tag: "API keys" , Access: apidoc.SessionOnly , Role: apidoc.Admin , Feature: "api_keys" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *listAllAPIKeysRequest ) ( reply *apiKeysReply , err error ) {
-			keys , err := models.ListAPIKeys( handlers.Store )
-			if err != nil { return }
-			names , err := handlers.displayNames()
-			if err != nil { return }
-			rows := []apiKeyRow{}
-			for _ , key := range keys {
-				row := newAPIKeyRow( key , names[ key.UserID ] )
-				nameCreator( &row , key , names )
-				rows = append( rows , row )
-			}
-			rows = onlyLiveKeys( in.Live , matchRows( rows , in.Q , "name" , "display_name" ) )
-			reply = &apiKeysReply{}
-			reply.Keys , reply.Paged = sortedPage( rows , in.Sort , in.Direction , in.Page )
-			return
-		} )
+//
+// @route("GET /api/admin/keys", summary="Every key in the app",
+//     tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys",
+// )
+func ( handlers *Handlers ) listAllAPIKeys( c fiber.Ctx , in *listAllAPIKeysRequest ) ( reply *apiKeysReply , err error ) {
+	keys , err := models.ListAPIKeys( handlers.Store )
+	if err != nil { return }
+	names , err := handlers.displayNames()
+	if err != nil { return }
+	rows := []apiKeyRow{}
+	for _ , key := range keys {
+		row := newAPIKeyRow( key , names[ key.UserID ] )
+		nameCreator( &row , key , names )
+		rows = append( rows , row )
+	}
+	rows = onlyLiveKeys( in.Live , matchRows( rows , in.Q , "name" , "display_name" ) )
+	reply = &apiKeysReply{}
+	reply.Keys , reply.Paged = sortedPage( rows , in.Sort , in.Direction , in.Page )
+	return
 }
 
-// RevokeAnyAPIKey is how an admin kills a credential belonging to someone
+// revokeAnyAPIKey is how an admin kills a credential belonging to someone
 // else -- a laptop that went missing, a CI system being decommissioned, a
 // contractor who has finished.
-func ( handlers *Handlers ) RevokeAnyAPIKey() *apidoc.Endpoint[ keyIDPath , okReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Revoke anyone's key" , Tag: "API keys" , Access: apidoc.SessionOnly , Role: apidoc.Admin , Feature: "api_keys" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *keyIDPath ) ( reply *okReply , err error ) {
-			key , get_err := models.GetAPIKey( handlers.Store , in.KeyID )
-			if get_err != nil {
-				err = refuse( fiber.StatusNotFound , "no such api key" )
-				return
-			}
-			if revoke_err := models.RevokeAPIKeyAs( handlers.Store , key.ID , security.UserFrom( c ).ID ); revoke_err != nil {
-				err = deleteKeyRefusal( revoke_err )
-				return
-			}
-			handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": in.KeyID } )
-			handlers.Webhooks.Emit( models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } ) // feature:webhooks
-			reply = &okReply{ Ok: true }
-			return
-		} )
+//
+// @route("POST /api/admin/keys/{key_id}/revoke", summary="Revoke anyone's key",
+//     tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys",
+// )
+func ( handlers *Handlers ) revokeAnyAPIKey( c fiber.Ctx , in *keyIDPath ) ( reply *okReply , err error ) {
+	key , get_err := models.GetAPIKey( handlers.Store , in.KeyID )
+	if get_err != nil {
+		err = refuse( fiber.StatusNotFound , "no such api key" )
+		return
+	}
+	if revoke_err := models.RevokeAPIKeyAs( handlers.Store , key.ID , security.UserFrom( c ).ID ); revoke_err != nil {
+		err = deleteKeyRefusal( revoke_err )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": in.KeyID } )
+	handlers.Webhooks.Emit( models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } ) // feature:webhooks
+	reply = &okReply{ Ok: true }
+	return
 }
 
-// DeleteAnyAPIKey stops the key working and takes it off every listing, its
+// deleteAnyAPIKey stops the key working and takes it off every listing, its
 // owner's included. Unlike RevokeAnyAPIKey it can be undone, by
 // RestoreAnyAPIKey.
-func ( handlers *Handlers ) DeleteAnyAPIKey() *apidoc.Endpoint[ keyIDPath , okReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Delete anyone's key" , Tag: "API keys" , Access: apidoc.SessionOnly , Role: apidoc.Admin , Feature: "api_keys" , Errors: []int{ 400 , 401 , 403 , 404 } },
-		func( c fiber.Ctx , in *keyIDPath ) ( reply *okReply , err error ) {
-			if delete_err := models.DeleteAPIKey( handlers.Store , in.KeyID , security.UserFrom( c ).ID ); delete_err != nil {
-				err = deleteKeyRefusal( delete_err )
-				return
-			}
-			handlers.audit( c , logs.KindAdmin , "api key deleted" , fiber.Map{ "key_id": in.KeyID } )
-			reply = &okReply{ Ok: true }
-			return
-		} )
+//
+// @route("POST /api/admin/keys/{key_id}/delete", summary="Delete anyone's key",
+//     tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys",
+// )
+func ( handlers *Handlers ) deleteAnyAPIKey( c fiber.Ctx , in *keyIDPath ) ( reply *okReply , err error ) {
+	if delete_err := models.DeleteAPIKey( handlers.Store , in.KeyID , security.UserFrom( c ).ID ); delete_err != nil {
+		err = deleteKeyRefusal( delete_err )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "api key deleted" , fiber.Map{ "key_id": in.KeyID } )
+	reply = &okReply{ Ok: true }
+	return
 }

@@ -15,16 +15,12 @@ import (
 	fiber "github.com/gofiber/fiber/v3"
 )
 
-// A route is declared once, as a typed handler next to its code:
+// A route is declared once, as a method on *Handlers whose doc comment ends
+// with its // @route(...) (see server/apidoc/routegen), and the route table
+// that apidoc/gen writes mounts it with Mount or MountStream:
 //
-//	func ( handlers *Handlers ) CreateUser() *apidoc.Endpoint[ createUserRequest , createUserReply ] {
-//		return apidoc.Handle( apidoc.Op{ Summary: "...", Tag: "Admin", Role: apidoc.Admin, Status: 201, Errors: []int{ 400 , 401 , 403 } },
-//			func( c fiber.Ctx , in *createUserRequest ) ( reply *createUserReply , err error ) { ... } )
-//	}
-//
-// and mounted in routes.go, behind its group's guards and any of its own:
-//
-//	apidoc.Post( admins , "/users" , handlers.CreateUser )
+//	// @route("POST /api/admin/users", summary="Create an account", tag="Admin", role=ADMIN, status=201)
+//	func ( handlers *Handlers ) createUser( c fiber.Ctx , in *createUserRequest ) ( reply *createUserReply , err error ) { ... }
 //
 // The request type is the whole of what the route takes. A field tagged
 // path:"name" or query:"name" comes from the URL, every other field from the
@@ -60,39 +56,53 @@ type Sender interface {
 // CheckCSRF is security.Guard.CheckCSRF, set when the routes are registered.
 var CheckCSRF func( c fiber.Ctx , token string ) bool
 
-// Endpoint is a declared route: its docs, its types and its handler.
-type Endpoint[ In any , Out any ] struct {
+// endpoint is a declared route: its docs and its handler.
+type endpoint[ In any , Out any ] struct {
 	op     Op
 	serve  func( c fiber.Ctx , in *In ) ( *Out , error )
 	stream func( c fiber.Ctx , in *In ) error
 }
 
-// Handle declares a route that answers JSON: the reply, with op.Status.
-func Handle[ In any , Out any ]( op Op , serve func( c fiber.Ctx , in *In ) ( *Out , error ) ) ( endpoint *Endpoint[ In , Out ] ) {
-	endpoint = &Endpoint[ In , Out ]{ op: op , serve: serve }
+// Mount puts a declared route on the app at method and path (as the spec
+// writes it: /users/{user_id}), after the guards given. The route table that
+// apidoc/gen writes from the @route(...) declarations calls it for every route;
+// nothing else needs to.
+func Mount[ In any , Out any ]( app fiber.Router , method string , path string , op Op , serve func( c fiber.Ctx , in *In ) ( *Out , error ) , guards ...any ) {
+	mountRoute( app , method , path , &endpoint[ In , Out ]{ op: op , serve: serve } , guards )
+}
+
+// MountStream is Mount for a route that writes its own reply: bytes, a
+// download, an event stream. op.ReplyType says what it sends; without one,
+// the route answers with its status alone.
+func MountStream[ In any ]( app fiber.Router , method string , path string , op Op , serve func( c fiber.Ctx , in *In ) error , guards ...any ) {
+	mountRoute( app , method , path , &endpoint[ In , None ]{ op: op , stream: serve } , guards )
+}
+
+// RouteKey is how a declared route is known: "POST /api/admin/users".
+func RouteKey( method string , path string ) ( key string ) {
+	key = method + " " + SpecPath( path )
 	return
 }
 
-// Stream declares a route that writes its own reply: bytes, a download, an
-// event stream. op.ReplyType says what it sends; without one, the route
-// answers with its status alone.
-func Stream[ In any ]( op Op , serve func( c fiber.Ctx , in *In ) error ) ( endpoint *Endpoint[ In , None ] ) {
-	endpoint = &Endpoint[ In , None ]{ op: op , stream: serve }
-	return
+func mountRoute[ In any , Out any ]( app fiber.Router , method string , path string , route *endpoint[ In , Out ] , guards []any ) {
+	key := RouteKey( method , path )
+	found := declare( key , route )
+	declaredMutex.Lock()
+	found.method , found.path , found.mounted = method , SpecPath( path ) , true
+	declaredMutex.Unlock()
+	handler := func( c fiber.Ctx ) ( err error ) {
+		err = route.handle( c , found )
+		return
+	}
+	handlers := append( append( []any{} , guards... ) , handler )
+	fiber_path := specParameter.ReplaceAllString( path , ":$1" )
+	app.Add( []string{ method } , fiber_path , handlers[ 0 ] , handlers[ 1 : ]... ).Name( routeName( key ) )
 }
 
-// Post, Get and Delete mount a declared route on a router (the app or a
-// group), after the router's own guards and the middleware given here.
-func Post[ In any , Out any ]( router fiber.Router , path string , route func() *Endpoint[ In , Out ] , middleware ...any ) {
-	mount( router , fiber.MethodPost , path , route , middleware )
-}
-
-func Get[ In any , Out any ]( router fiber.Router , path string , route func() *Endpoint[ In , Out ] , middleware ...any ) {
-	mount( router , fiber.MethodGet , path , route , middleware )
-}
-
-func Delete[ In any , Out any ]( router fiber.Router , path string , route func() *Endpoint[ In , Out ] , middleware ...any ) {
-	mount( router , fiber.MethodDelete , path , route , middleware )
+// DeclareRoute records the request type of the route at key, for an MCP
+// tool registered before the route is mounted.
+func DeclareRoute[ In any , Out any ]( key string ) {
+	declare( key , &endpoint[ In , Out ]{} )
 }
 
 // declared is a mounted route as the docs and MCP see it.
@@ -109,33 +119,6 @@ type declared struct {
 var declaredMutex sync.Mutex
 var declaredRoutes = map[string]*declared{}
 
-func mount[ In any , Out any ]( router fiber.Router , method string , path string , route func() *Endpoint[ In , Out ] , middleware []any ) {
-	name := HandlerName( route )
-	endpoint := route()
-	found := declare( name , endpoint )
-	prefix := ""
-	if group , ok := router.( *fiber.Group ); ok { prefix = group.Prefix }
-	declaredMutex.Lock()
-	found.method = method
-	found.path = SpecPath( strings.TrimSuffix( prefix , "/" ) + path )
-	found.mounted = true
-	declaredMutex.Unlock()
-	handler := func( c fiber.Ctx ) ( err error ) {
-		err = endpoint.handle( c , found )
-		return
-	}
-	handlers := append( []any{} , middleware... )
-	handlers = append( handlers , handler )
-	switch method {
-	case fiber.MethodPost:
-		router.Post( path , handlers[ 0 ] , handlers[ 1 : ]... ).Name( routeName( name ) )
-	case fiber.MethodGet:
-		router.Get( path , handlers[ 0 ] , handlers[ 1 : ]... ).Name( routeName( name ) )
-	case fiber.MethodDelete:
-		router.Delete( path , handlers[ 0 ] , handlers[ 1 : ]... ).Name( routeName( name ) )
-	}
-}
-
 // routeName marks a route in the app's route table as declared here, so
 // Build finds its docs; the path comes from the route table.
 func routeName( name string ) ( result string ) {
@@ -143,41 +126,34 @@ func routeName( name string ) ( result string ) {
 	return
 }
 
-// declare records a route's types under its handler's name, once.
-func declare[ In any , Out any ]( name string , endpoint *Endpoint[ In , Out ] ) ( found *declared ) {
+// declare records a route's types under its key, once.
+func declare[ In any , Out any ]( name string , route *endpoint[ In , Out ] ) ( found *declared ) {
 	declaredMutex.Lock()
 	defer declaredMutex.Unlock()
 	found = declaredRoutes[ name ]
 	if found != nil {
-		found.op = endpoint.op
+		if route.serve != nil || route.stream != nil {
+			found.op = route.op
+			found.reply = nil
+			if route.stream == nil { found.reply = reflect.TypeOf( ( *Out )( nil ) ).Elem() }
+		}
 		return
 	}
 	found = &declared{
 		name:  name,
-		op:    endpoint.op,
+		op:    route.op,
 		input: inputOf( reflect.TypeOf( ( *In )( nil ) ).Elem() ),
 	}
-	if endpoint.stream == nil { found.reply = reflect.TypeOf( ( *Out )( nil ) ).Elem() }
+	if route.stream == nil { found.reply = reflect.TypeOf( ( *Out )( nil ) ).Elem() }
 	declaredRoutes[ name ] = found
 	return
 }
 
-// Serve runs the handler on a request already checked: what an MCP tool does
-// once DecodeArguments has passed.
-func ( endpoint *Endpoint[ In , Out ] ) Serve( c fiber.Ctx , in *In ) ( reply *Out , err error ) {
-	if endpoint.serve == nil {
-		err = fmt.Errorf( "apidoc: a streamed route has no MCP tool" )
-		return
-	}
-	reply , err = endpoint.serve( c , in )
-	return
-}
-
-func ( endpoint *Endpoint[ In , Out ] ) handle( c fiber.Ctx , found *declared ) ( err error ) {
+func ( route *endpoint[ In , Out ] ) handle( c fiber.Ctx , found *declared ) ( err error ) {
 	values := map[string]any{}
 	// HEAD is GET without the body, which fiber answers on every GET route.
 	reads := c.Method() == fiber.MethodGet || c.Method() == fiber.MethodHead
-	raw_body := endpoint.op.BodyType == "" && endpoint.op.RawBody == nil && reads == false
+	raw_body := route.op.BodyType == "" && route.op.RawBody == nil && reads == false
 	token := ""
 	if raw_body {
 		body := bytes.TrimSpace( c.Body() )
@@ -192,8 +168,8 @@ func ( endpoint *Endpoint[ In , Out ] ) handle( c fiber.Ctx , found *declared ) 
 		token , _ = values[ "csrf_token" ].( string )
 		delete( values , "csrf_token" )
 	}
-	if endpoint.op.Access != Public && reads == false && endpoint.op.NoCSRF == false && endpoint.op.RawBody == nil && CheckCSRF != nil {
-		if endpoint.op.BodyType != "" { token = c.Get( "X-CSRF-Token" ) }
+	if route.op.Access != Public && reads == false && route.op.NoCSRF == false && route.op.RawBody == nil && CheckCSRF != nil {
+		if route.op.BodyType != "" { token = c.Get( "X-CSRF-Token" ) }
 		if CheckCSRF( c , token ) == false {
 			err = answer( c , fiber.StatusForbidden , "invalid csrf token" )
 			return
@@ -225,12 +201,12 @@ func ( endpoint *Endpoint[ In , Out ] ) handle( c fiber.Ctx , found *declared ) 
 		err = answer( c , fiber.StatusBadRequest , message )
 		return
 	}
-	if endpoint.stream != nil {
-		err = endpoint.stream( c , in )
+	if route.stream != nil {
+		err = route.stream( c , in )
 		if sender , ok := err.( Sender ); ok { err = sender.Send( c ) }
 		return
 	}
-	reply , serve_err := endpoint.serve( c , in )
+	reply , serve_err := route.serve( c , in )
 	if serve_err != nil {
 		if sender , ok := serve_err.( Sender ); ok {
 			err = sender.Send( c )
@@ -239,7 +215,7 @@ func ( endpoint *Endpoint[ In , Out ] ) handle( c fiber.Ctx , found *declared ) 
 		err = serve_err
 		return
 	}
-	status := endpoint.op.Status
+	status := route.op.Status
 	if status == 0 { status = fiber.StatusOK }
 	if reply == nil {
 		err = c.SendStatus( status )
@@ -606,7 +582,7 @@ func sameValue( allowed any , value any ) ( same bool ) {
 func InputSchema( name string ) ( schema map[string]any , err error ) {
 	found := lookup( name )
 	if found == nil {
-		err = fmt.Errorf( "apidoc: %s is not a declared route" , shortName( name ) )
+		err = fmt.Errorf( "apidoc: %s is not a declared route" , name )
 		return
 	}
 	schema = found.input.argumentsSchema()
@@ -641,16 +617,12 @@ func DecodeArguments( name string , raw []byte , out any ) ( message string , ma
 // it: "POST /api/admin/users". Empty until it is mounted.
 func RouteOf( name string ) ( route string ) {
 	found := lookup( name )
-	if found == nil || found.path == "" { return }
+	if found == nil { return }
+	if found.path == "" {
+		if strings.Contains( name , " " ) { route = name }
+		return
+	}
 	route = found.method + " " + found.path
-	return
-}
-
-// Declare records a route's types without mounting it, for an MCP tool
-// registered before the routes are.
-func Declare[ In any , Out any ]( route func() *Endpoint[ In , Out ] ) ( name string ) {
-	name = HandlerName( route )
-	declare( name , route() )
 	return
 }
 

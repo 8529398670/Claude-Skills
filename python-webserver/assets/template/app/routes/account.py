@@ -24,6 +24,7 @@ from app.routes.admin import CancelLoginLinkReply, DisplayName, ExpiresInMinutes
 from app.routes.helpers import Refused, get_config, get_store, run
 from app.routes.logs import audit
 from app.routes.themes import Theme, theme_list  # feature:appearance
+from app.routes.mcp_tools_accounts import with_login_url  # feature:mcp
 
 
 class Me(Reply, kw_only=True):
@@ -69,7 +70,13 @@ class Me(Reply, kw_only=True):
     api_key_name: Annotated[str, Meta(description="API keys only.")] | UnsetType = UNSET  # feature:api_keys
 
 
-@route(summary="Who am I", tag="Account", errors=(401,))
+@route(
+    "GET /api/me", summary="Who am I",
+    tag="Account",
+    description="The account this API key belongs to, the role it acts with (role -- never higher than the "
+    "key's own scope), and the account's own role.",
+    mcp="whoami", read_only=True,  # feature:mcp
+)
 def me(request: Request) -> Me:
     """The frontend's first call on every page load: it answers "who am I,
     what may I do, and what CSRF token do I echo back". Handing the token out
@@ -163,7 +170,14 @@ class Rename(RequestType):
     expect: str | None = None
 
 
-@route(summary="Change your display name", tag="Account", errors=(400, 401, 403, 409))
+@route(
+    "POST /api/account/rename", summary="Rename your account",
+    tag="Account", errors=(409,),
+    description="Change your own display name (1-80 characters). expect, when given, is the name you think "
+    "it has now; if someone changed it meanwhile the rename is refused with the current name, so nothing is "
+    "overwritten unseen.",
+    mcp="rename_account",  # feature:mcp
+)
 def rename(request: Request, body: Rename) -> RenameUserReply:
     """Rename yourself, over HTTP or the MCP rename_account tool. expect is
     the name the caller expects to replace: the frontend always sends it, so
@@ -191,7 +205,10 @@ class SetPINReply(Reply):
     has_pin: bool
 
 
-@route(summary="Set or clear your PIN", tag="Account", access=SESSION_ONLY, feature="invite_links", errors=(400, 401, 403))
+@route(
+    "POST /api/account/pin", summary="Set or clear your PIN",
+    tag="Account", access=SESSION_ONLY, feature="invite_links",
+)
 def set_pin(request: Request, body: SetPIN) -> SetPINReply:
     """Set, or with an empty pin clear, the PIN asked for when this account
     signs back in through an invite link (see app/models/pins.py)."""
@@ -210,7 +227,17 @@ class MyLoginLink(RequestType):
     expires_in_minutes: ExpiresInMinutes | None = None
 
 
-@route(summary="A login link for yourself", tag="Account", errors=(400, 401, 403))
+@route(
+    "POST /api/account/login-link", summary="A login link for yourself",
+    tag="Account",
+    description="A link that signs your own account in on a browser or another device. Only a key with your "
+    "account's full role may ask: one scoped down to user on an admin account is refused.",
+    mcp_note="Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), "  # feature:mcp
+    "expires_at and max_uses. Any older link the account could still use stops working; its signed-in "  # feature:mcp
+    "devices stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs "  # feature:mcp
+    "out every device it signed in.",  # feature:mcp
+    mcp="create_my_login_link", call=with_login_url,  # feature:mcp
+)
 def create_my_login_link(request: Request, body: MyLoginLink) -> LoginLinkReply:
     """Mint a login link for the caller's own account: the way to sign in on
     another device without asking an admin. Once by default, or reusable,
@@ -231,7 +258,13 @@ def create_my_login_link(request: Request, body: MyLoginLink) -> LoginLinkReply:
     return LoginLinkReply(**link_reply(credential, info))
 
 
-@route(summary="Stop your own login link working", tag="Account", errors=(400, 401, 403))
+@route(
+    "POST /api/account/login-link/cancel", summary="Stop your own login link working",
+    tag="Account",
+    description="Void your account's live login link without making a new one. Devices it already signed in "
+    "stay signed in. Answers with removed: 0 or 1.",
+    mcp="cancel_my_login_link", destructive=True,  # feature:mcp
+)
 def cancel_my_login_link(request: Request) -> CancelLoginLinkReply:
     """Stop the caller's own live login link working."""
     removed = login_tokens.cancel_login_link(get_store(request), actor_from(request).user.id)
@@ -239,7 +272,11 @@ def cancel_my_login_link(request: Request) -> CancelLoginLinkReply:
     return CancelLoginLinkReply(ok=True, removed=removed)
 
 
-@route(summary="Sign out", tag="Account", mcp_http="Ends a browser session; a key has none to end.", errors=(400, 401, 403))
+@route(
+    "POST /api/logout", summary="Sign out",
+    tag="Account",
+    mcp_http="Ends a browser session; a key has none to end.",
+)
 async def logout(request: Request) -> OkReply:
     """Deletes the session server-side as well as clearing the cookie, so a
     copy of the cookie captured earlier is dead too.

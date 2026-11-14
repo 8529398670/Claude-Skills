@@ -72,7 +72,10 @@ An app scaffolded before stamps existed needs one.
 4. **Resolve conflicts** in the staged files, not in the app. Each has
    `<<<<<<< app`, `||||||| base`, `=======`, `>>>>>>> template` sections. Keep
    what the app does and add what the template adds. If you can't tell what the
-   app needs, ask.
+   app needs, ask. Generated files are never merged by hand: for
+   `server/routes/routes_generated.go` (Go) and `config/openapi.json`,
+   `mcp.json` and `api.md`, take either side whole, and step 8 writes them
+   again.
 5. **Cut out what was left out,** also in the staged files. The report lists each
    left-out upgrade and where its marks are. Marks are only a sample: use the
    upgrade's entry to find all of it, including routes (each with its declaration and request/reply types),
@@ -97,8 +100,10 @@ An app scaffolded before stamps existed needs one.
    left-out upgrade remains. It writes the left-out upgrades to `skipped:` in the
    stamp, so they are not offered again.
 8. **Finish the dependencies and test:**
-   - Go: `go mod tidy`, `go build ./...`, `go test ./...`.
-   - Python: install `app/requirements.txt` in the app's venv, then run its tests.
+   - Go: `go mod tidy`, `scripts/api_docs.sh` (it rewrites the route table and
+     the API docs), `go build ./...`, `go test ./...`.
+   - Python: install `app/requirements.txt` in the app's venv, run
+     `scripts/api_docs.sh`, then its tests.
    - Run `config check` against a **copy** of the real `config.yaml`. The decoder
      is strict, so a key the merge lost makes the app refuse to start.
 9. **Report** what changed, what you decided, and anything not verified. Name

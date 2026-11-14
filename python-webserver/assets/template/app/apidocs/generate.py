@@ -1,12 +1,11 @@
 """The three files of the API reference, as the code describes them.
 
-The route table is build_routes() itself, with the activity log's routes in
-(they exist only while logs are on), so every route the app can have is there.
-Nothing is built that a route needs to run: the docs only read the table."""
+The route table is build_routes() itself, so every route the app can have is
+there. Nothing is built that a route needs to run: the docs only read the
+table."""
 from __future__ import annotations
 
 import json  # feature:mcp
-from types import SimpleNamespace
 from typing import Any
 
 from starlette.routing import Route
@@ -38,8 +37,7 @@ def every_route() -> list[tuple[str, str, Any]]:
     from app.core.static_files import StaticServer
     from app.routes import build_routes
 
-    started_with = SimpleNamespace(logs=SimpleNamespace(enabled=True))
-    return documented_routes(build_routes(StaticServer(assets.BUNDLED_STATIC), started_with))
+    return documented_routes(build_routes(StaticServer(assets.BUNDLED_STATIC)))
 
 
 def spec() -> tuple[dict[str, Any], list[str]]:

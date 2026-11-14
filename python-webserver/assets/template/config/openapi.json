@@ -1439,6 +1439,7 @@
   "paths": {
     "/api/account/login-link": {
       "post": {
+        "description": "A link that signs your own account in on a browser or another device. Only a key with your account's full role may ask: one scoped down to user on an admin account is refused.",
         "operationId": "post_api_account_login_link",
         "requestBody": {
           "content": {
@@ -1550,6 +1551,7 @@
     },
     "/api/account/login-link/cancel": {
       "post": {
+        "description": "Void your account's live login link without making a new one. Devices it already signed in stay signed in. Answers with removed: 0 or 1.",
         "operationId": "post_api_account_login_link_cancel",
         "requestBody": {
           "content": {
@@ -1770,6 +1772,9 @@
           "403": {
             "$ref": "#/components/responses/E403"
           },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
           "429": {
             "$ref": "#/components/responses/E429"
           },
@@ -1791,6 +1796,7 @@
     },
     "/api/account/rename": {
       "post": {
+        "description": "Change your own display name (1-80 characters). expect, when given, is the name you think it has now; if someone changed it meanwhile the rename is refused with the current name, so nothing is overwritten unseen.",
         "operationId": "post_api_account_rename",
         "requestBody": {
           "content": {
@@ -1873,7 +1879,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Change your display name",
+        "summary": "Rename your account",
         "tags": [
           "Account"
         ]
@@ -1881,6 +1887,7 @@
     },
     "/api/account/sessions": {
       "get": {
+        "description": "Where your account is signed in, a page at a time: id, when it started and was last seen, the browser, and the name you gave it. Through an API key no device is current. next is the offset of the following page, or null on the last one.",
         "operationId": "get_api_account_sessions",
         "parameters": [
           {
@@ -2045,7 +2052,7 @@
     },
     "/api/account/sessions/{session_id}/label": {
       "post": {
-        "description": "This device included. Empty clears the name.",
+        "description": "Give one of your devices a name (at most 80 characters; empty clears it). expect, when given, is the name you think it has now.",
         "operationId": "post_api_account_sessions_session_id_label",
         "parameters": [
           {
@@ -2152,6 +2159,7 @@
     },
     "/api/account/sessions/{session_id}/revoke": {
       "post": {
+        "description": "End one of your signed-in sessions; that browser has to sign in again.",
         "operationId": "post_api_account_sessions_session_id_revoke",
         "parameters": [
           {
@@ -2227,7 +2235,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Sign out one device",
+        "summary": "Sign out one of your devices",
         "tags": [
           "Account"
         ]
@@ -2236,6 +2244,7 @@
     },
     "/api/account/shortcuts": {
       "post": {
+        "description": "Replace your changed keyboard shortcuts: action name to binding, such as \"search\": \"Mod+K\" (Mod is Cmd on a Mac, Ctrl elsewhere). Send the whole set; an empty binding switches a key off, and {} puts every key back to its default.",
         "operationId": "post_api_account_shortcuts",
         "requestBody": {
           "content": {
@@ -2323,6 +2332,7 @@
     },
     "/api/account/storage": {
       "get": {
+        "description": "How many bytes your files use, and your quota (0 is no limit).",
         "operationId": "get_api_account_storage",
         "responses": {
           "200": {
@@ -2368,7 +2378,7 @@
             "apiKey": []
           }
         ],
-        "summary": "How much of your quota is used",
+        "summary": "Your storage",
         "tags": [
           "Files"
         ]
@@ -2377,6 +2387,7 @@
     },
     "/api/account/theme": {
       "post": {
+        "description": "Switch to another theme from your list (or the defaults), by its id.",
         "operationId": "post_api_account_theme",
         "requestBody": {
           "content": {
@@ -2449,7 +2460,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Pick which theme you use",
+        "summary": "Pick your theme",
         "tags": [
           "Account"
         ]
@@ -2458,6 +2469,7 @@
     },
     "/api/account/themes": {
       "post": {
+        "description": "Replace your whole list of color themes (1 to 40) and pick the one you use. themes: null goes back to following the app's defaults. A theme is the Theme schema in the API reference (config/openapi.json): id, name, mode light|dark, accent, second, and optional colors as #rrggbb.",
         "operationId": "post_api_account_themes",
         "requestBody": {
           "content": {
@@ -2803,6 +2815,7 @@
     },
     "/api/admin/files": {
       "get": {
+        "description": "Every account's files, a page at a time, with whose each one is (user_id, user_name). next is the offset of the following page, or null on the last one.",
         "operationId": "get_api_admin_files",
         "parameters": [
           {
@@ -2970,7 +2983,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Every account's files",
+        "summary": "List everyone's files",
         "tags": [
           "Files"
         ],
@@ -3086,6 +3099,9 @@
               }
             },
             "description": "The file, always as an attachment"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
           },
           "401": {
             "$ref": "#/components/responses/E401"
@@ -3299,6 +3315,7 @@
     },
     "/api/admin/invite-links": {
       "get": {
+        "description": "Group invite links, a page at a time: label, places used and left, expiry, and whether each still works. The links themselves are never shown again after creation. next is the offset of the following page, or null on the last one.",
         "operationId": "get_api_admin_invite_links",
         "parameters": [
           {
@@ -3398,6 +3415,9 @@
           "403": {
             "$ref": "#/components/responses/E403"
           },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
           "429": {
             "$ref": "#/components/responses/E429"
           },
@@ -3413,13 +3433,14 @@
             "apiKey": []
           }
         ],
-        "summary": "Every invite link",
+        "summary": "List invite links",
         "tags": [
           "Invite links"
         ],
         "x-required-role": "admin"
       },
       "post": {
+        "description": "One link for a group: each person who opens it joins as a new user, up to max_uses people, for days days.",
         "operationId": "post_api_admin_invite_links",
         "requestBody": {
           "content": {
@@ -3527,6 +3548,9 @@
           "403": {
             "$ref": "#/components/responses/E403"
           },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
           "429": {
             "$ref": "#/components/responses/E429"
           },
@@ -3552,6 +3576,7 @@
     },
     "/api/admin/invite-links/{link_id}/delete": {
       "post": {
+        "description": "Take an invite link off the list and stop it working. The accounts it made stay.",
         "operationId": "post_api_admin_invite_links_link_id_delete",
         "parameters": [
           {
@@ -3637,6 +3662,7 @@
     },
     "/api/admin/invite-links/{link_id}/limits": {
       "post": {
+        "description": "Set how many people the link may take in (never fewer than have joined) and, when days is given, a new expiry counted from now. The link then counts as this key's: revoking the key switches it off.",
         "operationId": "post_api_admin_invite_links_link_id_limits",
         "parameters": [
           {
@@ -3722,7 +3748,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Change a link's places and expiry",
+        "summary": "Change an invite link's places and expiry",
         "tags": [
           "Invite links"
         ],
@@ -3732,6 +3758,7 @@
     },
     "/api/admin/invite-links/{link_id}/rename": {
       "post": {
+        "description": "Change the label people see on an invite link's join page (1-80 characters). expect, when given, is the label you think it has now.",
         "operationId": "post_api_admin_invite_links_link_id_rename",
         "parameters": [
           {
@@ -3830,7 +3857,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Rename a link",
+        "summary": "Rename an invite link",
         "tags": [
           "Invite links"
         ],
@@ -3840,6 +3867,7 @@
     },
     "/api/admin/invite-links/{link_id}/restore": {
       "post": {
+        "description": "Bring back an invite link deleted in the last few minutes, working as before. The link then counts as this key's: revoking the key switches it off.",
         "operationId": "post_api_admin_invite_links_link_id_restore",
         "parameters": [
           {
@@ -3920,6 +3948,7 @@
     },
     "/api/admin/invite-links/{link_id}/revoke": {
       "post": {
+        "description": "Stop an invite link from letting anyone else join or sign in through it. Accounts it already made keep working. Cannot be switched back on.",
         "operationId": "post_api_admin_invite_links_link_id_revoke",
         "parameters": [
           {
@@ -3995,7 +4024,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Switch an invite link off",
+        "summary": "Switch off an invite link",
         "tags": [
           "Invite links"
         ],
@@ -4072,7 +4101,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Switch a link back on",
+        "summary": "Switch an invite link back on",
         "tags": [
           "Invite links"
         ],
@@ -4740,6 +4769,7 @@
     },
     "/api/admin/storage": {
       "get": {
+        "description": "How many bytes everyone's files use together, and the disk's free and total bytes where the system says.",
         "operationId": "get_api_admin_storage",
         "responses": {
           "200": {
@@ -4792,7 +4822,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Every account's files together, and room on the disk",
+        "summary": "Storage for everyone",
         "tags": [
           "Files"
         ],
@@ -4802,6 +4832,7 @@
     },
     "/api/admin/theme-defaults": {
       "get": {
+        "description": "The theme list everyone without their own list sees. themes is null while the built-in ones apply.",
         "operationId": "get_api_admin_theme_defaults",
         "responses": {
           "200": {
@@ -4857,13 +4888,14 @@
             "apiKey": []
           }
         ],
-        "summary": "The themes everyone without their own list sees",
+        "summary": "Default themes",
         "tags": [
           "Admin"
         ],
         "x-required-role": "admin"
       },
       "post": {
+        "description": "Replace the theme list everyone without their own list sees, 1 to 40 themes in the Theme schema of the API reference. null puts the built-in themes back.",
         "operationId": "post_api_admin_theme_defaults",
         "requestBody": {
           "content": {
@@ -4966,6 +4998,7 @@
     },
     "/api/admin/users": {
       "get": {
+        "description": "Accounts, a page at a time, including disabled ones, with each one's role and which is the owner. next is the offset of the following page, or null on the last one.",
         "operationId": "get_api_admin_users",
         "parameters": [
           {
@@ -5081,13 +5114,14 @@
             "apiKey": []
           }
         ],
-        "summary": "Every account",
+        "summary": "List users",
         "tags": [
           "Admin"
         ],
         "x-required-role": "admin"
       },
       "post": {
+        "description": "Make a new account and its first login link, to hand to the person. role is admin or user. Answers with user_id and the link.",
         "operationId": "post_api_admin_users",
         "requestBody": {
           "content": {
@@ -5211,7 +5245,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Create an account and its login link",
+        "summary": "Create an account",
         "tags": [
           "Admin"
         ],
@@ -5220,6 +5254,7 @@
     },
     "/api/admin/users/{user_id}/cancel-login-link": {
       "post": {
+        "description": "Void an account's live login link without making a new one: a link that went somewhere it should not have.",
         "operationId": "post_api_admin_users_user_id_cancel_login_link",
         "parameters": [
           {
@@ -5310,6 +5345,7 @@
     },
     "/api/admin/users/{user_id}/delete": {
       "post": {
+        "description": "Remove an account for good, with its sessions, login link and API keys.",
         "operationId": "post_api_admin_users_user_id_delete",
         "parameters": [
           {
@@ -5399,6 +5435,7 @@
     },
     "/api/admin/users/{user_id}/disabled": {
       "post": {
+        "description": "Switch an account off (disabled: true) or back on (false). Disabling signs it out everywhere and voids its live login link; its API keys stop working while it is off. Reversible. The owner and your own account cannot be disabled.",
         "operationId": "post_api_admin_users_user_id_disabled",
         "parameters": [
           {
@@ -5481,7 +5518,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Disable or enable an account",
+        "summary": "Disable or enable a user",
         "tags": [
           "Admin"
         ],
@@ -5490,6 +5527,7 @@
     },
     "/api/admin/users/{user_id}/reissue-login": {
       "post": {
+        "description": "For someone who lost their device or their link: a fresh login link for their account.",
         "operationId": "post_api_admin_users_user_id_reissue_login",
         "parameters": [
           {
@@ -5617,7 +5655,7 @@
     },
     "/api/admin/users/{user_id}/rename": {
       "post": {
-        "description": "Only the owner can rename an admin.",
+        "description": "Change another account's display name (1-80 characters). Only the owner renames an admin. expect, when given, is the name you think it has now; if it changed meanwhile the rename is refused with the current name.",
         "operationId": "post_api_admin_users_user_id_rename",
         "parameters": [
           {
@@ -5717,7 +5755,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Rename someone else",
+        "summary": "Rename someone",
         "tags": [
           "Admin"
         ],
@@ -5726,6 +5764,7 @@
     },
     "/api/admin/users/{user_id}/reset-two-factor": {
       "post": {
+        "description": "For someone who lost both their phone and their recovery codes: switches their two-factor sign-in off so a login link lets them in again. Only the owner resets an admin's; the owner's is reset from a shell.",
         "operationId": "post_api_admin_users_user_id_reset_two_factor",
         "parameters": [
           {
@@ -5812,6 +5851,7 @@
     },
     "/api/admin/users/{user_id}/revoke-access": {
       "post": {
+        "description": "For an account that may be compromised: ends every session and voids its live login link and every API key it holds, at once.",
         "operationId": "post_api_admin_users_user_id_revoke_access",
         "parameters": [
           {
@@ -5892,7 +5932,7 @@
             "apiKey": []
           }
         ],
-        "summary": "End every credential an account holds",
+        "summary": "Revoke a user's access",
         "tags": [
           "Admin"
         ],
@@ -5901,7 +5941,7 @@
     },
     "/api/admin/users/{user_id}/role": {
       "post": {
-        "description": "Only the owner can take an admin's rights away. Becoming an admin ends the account's sessions and live login link.",
+        "description": "Make an account an admin or an ordinary user. Only the owner takes an admin's rights away; the owner is always an admin, and nobody changes their own role. Becoming an admin ends the account's sessions and live login link.",
         "operationId": "post_api_admin_users_user_id_role",
         "parameters": [
           {
@@ -6001,7 +6041,7 @@
     },
     "/api/admin/users/{user_id}/sessions": {
       "get": {
-        "description": "The owner's are the owner's alone, and only the owner sees addresses.",
+        "description": "Where an account is signed in: every session, with when it started and was last seen. Addresses are shown to the owner only, and only the owner sees the owner's.",
         "operationId": "get_api_admin_users_user_id_sessions",
         "parameters": [
           {
@@ -6201,6 +6241,7 @@
     },
     "/api/files": {
       "get": {
+        "description": "Your uploaded files, a page at a time: id, name, type, size, state (uploading or ready) and when. next is the offset of the following page, or null on the last one.",
         "operationId": "get_api_files",
         "parameters": [
           {
@@ -6315,7 +6356,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Your files, newest first",
+        "summary": "List your files",
         "tags": [
           "Files"
         ]
@@ -6451,7 +6492,7 @@
     },
     "/api/files/{file_id}": {
       "get": {
-        "description": "received is where to resume an upload.",
+        "description": "One file: its details, and for an unfinished upload how many pieces have arrived (received), which is where to resume.",
         "operationId": "get_api_files_file_id",
         "parameters": [
           {
@@ -6520,6 +6561,9 @@
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
           },
           "401": {
             "$ref": "#/components/responses/E401"
@@ -6651,7 +6695,7 @@
     },
     "/api/files/{file_id}/delete": {
       "post": {
-        "description": "It can be restored for ten minutes.",
+        "description": "Move one of your files to the bin. It can be restored for ten minutes; after that it is gone.",
         "operationId": "post_api_files_file_id_delete",
         "parameters": [
           {
@@ -6727,7 +6771,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Delete one of your files",
+        "summary": "Delete a file",
         "tags": [
           "Files"
         ]
@@ -6760,6 +6804,9 @@
             },
             "description": "The file, always as an attachment"
           },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
           "401": {
             "$ref": "#/components/responses/E401"
           },
@@ -6790,6 +6837,7 @@
     },
     "/api/files/{file_id}/finish": {
       "post": {
+        "description": "Seal an upload once every piece has arrived; the file is then ready to download. Asked again, it answers the same. If pieces are missing it says how many arrived (received).",
         "operationId": "post_api_files_file_id_finish",
         "parameters": [
           {
@@ -6869,6 +6917,7 @@
     },
     "/api/files/{file_id}/rename": {
       "post": {
+        "description": "Give one of your files a new name. expect, when given, is the name you think it has now; a rename made meanwhile is refused with the current name.",
         "operationId": "post_api_files_file_id_rename",
         "parameters": [
           {
@@ -6966,7 +7015,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Rename one of your files",
+        "summary": "Rename a file",
         "tags": [
           "Files"
         ]
@@ -6975,6 +7024,7 @@
     },
     "/api/files/{file_id}/restore": {
       "post": {
+        "description": "Bring back a file you deleted, while it is still in the bin and your storage quota has room.",
         "operationId": "post_api_files_file_id_restore",
         "parameters": [
           {
@@ -7045,7 +7095,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Put back a file you deleted",
+        "summary": "Restore a deleted file",
         "tags": [
           "Files"
         ]
@@ -7199,6 +7249,9 @@
           "400": {
             "$ref": "#/components/responses/E400"
           },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
           "404": {
             "$ref": "#/components/responses/E404"
           },
@@ -7273,6 +7326,12 @@
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
           },
           "404": {
             "$ref": "#/components/responses/E404"
@@ -7367,6 +7426,9 @@
           },
           "400": {
             "$ref": "#/components/responses/E400"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
           },
           "404": {
             "$ref": "#/components/responses/E404"
@@ -8484,6 +8546,7 @@
     },
     "/api/me": {
       "get": {
+        "description": "The account this API key belongs to, the role it acts with (role -- never higher than the key's own scope), and the account's own role.",
         "operationId": "get_api_me",
         "responses": {
           "200": {
@@ -8716,6 +8779,9 @@
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
           },
           "404": {
             "$ref": "#/components/responses/E404"
@@ -9236,6 +9302,9 @@
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
           },
           "404": {
             "$ref": "#/components/responses/E404"
@@ -10591,6 +10660,7 @@
     },
     "/api/team": {
       "get": {
+        "description": "People with an active account, a page at a time: id and display name.",
         "operationId": "get_api_team",
         "parameters": [
           {
@@ -10669,7 +10739,7 @@
             "apiKey": []
           }
         ],
-        "summary": "Everyone's names",
+        "summary": "List team",
         "tags": [
           "Account"
         ]
@@ -10749,6 +10819,9 @@
           },
           "401": {
             "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
           },
           "404": {
             "$ref": "#/components/responses/E404"

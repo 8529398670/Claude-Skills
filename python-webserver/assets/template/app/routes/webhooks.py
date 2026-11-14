@@ -11,7 +11,7 @@ import msgspec
 from msgspec import UNSET, Meta, UnsetType
 from starlette.requests import Request
 
-from app.apidocs import OWNER, PATH, QUERY, SESSION_ONLY, Reply, route
+from app.apidocs import OWNER, PATH, QUERY, Reply, route
 from app.apidocs import Request as RequestType
 from app.core import webhooks
 from app.core.logs import KIND_ADMIN
@@ -92,7 +92,10 @@ class EventsReply(Reply):
     events: list[str]
 
 
-@route(summary="Events a webhook can ask for", tag="Webhooks", access=SESSION_ONLY, role=OWNER, feature="webhooks", errors=(404,))
+@route(
+    "GET /api/owner/webhooks/events", summary="Events a webhook can ask for",
+    tag="Webhooks", role=OWNER, feature="webhooks",
+)
 def list_events(request: Request) -> EventsReply:
     """What the form offers."""
     return EventsReply(events=models.EVENTS)
@@ -108,7 +111,7 @@ class WebhooksReply(Paged):
     webhooks: list[Webhook]
 
 
-@route(summary="Webhooks", tag="Webhooks", access=SESSION_ONLY, role=OWNER, feature="webhooks", errors=(400, 404))
+@route("GET /api/owner/webhooks", summary="Webhooks", tag="Webhooks", role=OWNER, feature="webhooks")
 def list_webhooks(request: Request, body: ListWebhooks) -> WebhooksReply:
     rows = match_rows([_row(hook) for hook in models.list_webhooks(get_store(request))], body.q, "name", "url")
     page = sorted_page(rows, body.sort, body.dir, body)
@@ -133,7 +136,10 @@ class NewWebhook(Webhook):
     secret: Annotated[str, Meta(description="Shown in this response only.")]
 
 
-@route(summary="Create a webhook", tag="Webhooks", access=SESSION_ONLY, role=OWNER, feature="webhooks", status=201, errors=(400, 403, 404))
+@route(
+    "POST /api/owner/webhooks", summary="Create a webhook",
+    tag="Webhooks", role=OWNER, feature="webhooks", status=201,
+)
 def create_webhook(request: Request, body: CreateWebhook) -> NewWebhook:
     """Answers with the signing secret, the only time it is shown."""
     if not models.valid_webhook(body.name, body.url, body.events):
@@ -152,7 +158,10 @@ class SetEnabled(WebhookIDPath):
     enabled: Annotated[bool, Meta(extra={"error": "enabled must be true or false"})]
 
 
-@route(summary="Switch a webhook on or off", tag="Webhooks", access=SESSION_ONLY, role=OWNER, feature="webhooks", errors=(400, 403, 404))
+@route(
+    "POST /api/owner/webhooks/{webhook_id}/enabled", summary="Switch a webhook on or off",
+    tag="Webhooks", role=OWNER, feature="webhooks",
+)
 def set_enabled(request: Request, body: SetEnabled) -> OkReply:
     if not models.set_enabled(get_store(request), body.webhook_id, body.enabled):
         raise Refused(404, "no such webhook")
@@ -172,7 +181,10 @@ class RenameWebhookReply(Reply):
     name: str
 
 
-@route(summary="Rename a webhook", tag="Webhooks", access=SESSION_ONLY, role=OWNER, feature="webhooks", errors=(400, 403, 404, 409))
+@route(
+    "POST /api/owner/webhooks/{webhook_id}/rename", summary="Rename a webhook",
+    tag="Webhooks", role=OWNER, feature="webhooks", errors=(409,),
+)
 def rename_webhook(request: Request, body: RenameWebhook) -> RenameWebhookReply:
     if not models.valid_webhook_name(body.name):
         raise Refused(400, models.BAD_NAME_MESSAGE)
@@ -201,7 +213,10 @@ class SetWebhookTarget(WebhookIDPath):
     expect: Annotated[TargetExpect | None, Meta(description="What you think it has now. Answers 409 if it has something else.")] = None
 
 
-@route(summary="Change a webhook's address and events", tag="Webhooks", access=SESSION_ONLY, role=OWNER, feature="webhooks", errors=(400, 403, 404, 409))
+@route(
+    "POST /api/owner/webhooks/{webhook_id}/target", summary="Change a webhook's address and events",
+    tag="Webhooks", role=OWNER, feature="webhooks", errors=(409,),
+)
 def set_webhook_target(request: Request, body: SetWebhookTarget) -> OkReply:
     """Change the address and the events. The address gets the same check as a
     new endpoint's, every time: an events-only edit of one that has since been
@@ -227,7 +242,10 @@ class SecretReply(Reply):
     secret: Annotated[str, Meta(description="Shown only here. The old one has stopped working.")]
 
 
-@route(summary="Replace a webhook's signing secret", tag="Webhooks", access=SESSION_ONLY, role=OWNER, feature="webhooks", errors=(400, 403, 404))
+@route(
+    "POST /api/owner/webhooks/{webhook_id}/rotate-secret", summary="Replace a webhook's signing secret",
+    tag="Webhooks", role=OWNER, feature="webhooks",
+)
 def rotate_webhook_secret(request: Request, body: WebhookIDPath) -> SecretReply:
     """Answers with the new signing secret, the only time it is shown."""
     secret = models.rotate_webhook_secret(get_store(request), get_config(request).secret_key, body.webhook_id)
@@ -237,7 +255,10 @@ def rotate_webhook_secret(request: Request, body: WebhookIDPath) -> SecretReply:
     return SecretReply(secret=secret)
 
 
-@route(summary="Delete a webhook", tag="Webhooks", access=SESSION_ONLY, role=OWNER, feature="webhooks", errors=(400, 403, 404))
+@route(
+    "POST /api/owner/webhooks/{webhook_id}/delete", summary="Delete a webhook",
+    tag="Webhooks", role=OWNER, feature="webhooks",
+)
 def delete_webhook(request: Request, body: WebhookIDPath) -> OkReply:
     if not models.delete_webhook(get_store(request), body.webhook_id, actor_from(request).user.id):
         raise Refused(404, "no such webhook")
@@ -245,7 +266,10 @@ def delete_webhook(request: Request, body: WebhookIDPath) -> OkReply:
     return OkReply(ok=True)
 
 
-@route(summary="Undo deleting a webhook", tag="Webhooks", access=SESSION_ONLY, role=OWNER, feature="webhooks", errors=(400, 403, 404, 409))
+@route(
+    "POST /api/owner/webhooks/{webhook_id}/restore", summary="Undo deleting a webhook",
+    tag="Webhooks", role=OWNER, feature="webhooks", errors=(409,),
+)
 def restore_webhook(request: Request, body: WebhookIDPath) -> Webhook:
     actor = actor_from(request).user
     try:
@@ -264,7 +288,10 @@ def _live_webhook(request: Request, webhook_id: str) -> models.Webhook:
     return hook
 
 
-@route(summary="Send a test event", tag="Webhooks", access=SESSION_ONLY, role=OWNER, feature="webhooks", status=202, errors=(400, 403, 404))
+@route(
+    "POST /api/owner/webhooks/{webhook_id}/test", summary="Send a test event",
+    tag="Webhooks", role=OWNER, feature="webhooks", status=202,
+)
 def send_test(request: Request, body: WebhookIDPath) -> OkReply:
     """Queues a webhook.test event. For an endpoint that is switched off, the
     delivery says so rather than the event going out."""
@@ -277,8 +304,9 @@ class DeliveryIDPath(WebhookIDPath):
 
 
 @route(
-    summary="Send a failed delivery again", description="A new delivery with the same body. The failed one stays listed.",
-    tag="Webhooks", access=SESSION_ONLY, role=OWNER, feature="webhooks", status=202, errors=(400, 401, 403, 404, 409),
+    "POST /api/owner/webhooks/{webhook_id}/deliveries/{delivery_id}/resend", summary="Send a failed delivery again",
+    tag="Webhooks", role=OWNER, feature="webhooks", status=202, errors=(401, 409),
+    description="A new delivery with the same body. The failed one stays listed.",
 )
 def resend_delivery(request: Request, body: DeliveryIDPath) -> OkReply:
     """Queues a delivery that was given up on."""
@@ -302,7 +330,10 @@ class DeliveriesReply(Paged):
     deliveries: list[WebhookDelivery]
 
 
-@route(summary="Recent deliveries", tag="Webhooks", access=SESSION_ONLY, role=OWNER, feature="webhooks", errors=(400, 404))
+@route(
+    "GET /api/owner/webhooks/{webhook_id}/deliveries", summary="Recent deliveries",
+    tag="Webhooks", role=OWNER, feature="webhooks",
+)
 def list_deliveries(request: Request, body: ListDeliveries) -> DeliveriesReply:
     hook = _live_webhook(request, body.webhook_id)
     page = cut_page([_delivery_row(delivery) for delivery in models.list_deliveries(get_store(request), hook.id)], body)

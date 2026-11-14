@@ -386,9 +386,10 @@ ports they ran on. Do not reset either to a shared value.
                               #   two_factor.py, sign_in.py, attempts.py, jobs.py,
                               #   webhooks.py, files.py
     mcp/                      # protocol.py: the /mcp JSON-RPC protocol
-                              # registry.py: Tool, Call.bind, Refusal
-    routes/                   # __init__.py (the URL map) + one module per group,
-                              #   including mcp_tools.py (the MCP tools),
+                              # registry.py: Tool, mcp_tool, Refusal
+    routes/                   # __init__.py (the route list, from the declarations)
+                              #   + one module per group, each handler with its
+                              #   @route(...); mcp_tools.py (the tools' calls),
                               #   logs.py (the owner's log API, page events, audit()),
                               #   sessions.py, jobs.py, webhooks.py and metrics.py
     tests/                    # stdlib unittest: python -m unittest discover app/tests
@@ -458,11 +459,12 @@ but stay consistent with the patterns already there:
   Never hardcode a user-facing string in HTML or JS. A missing or empty
   key hides its element -- that is the documented way to switch a label or
   a section off.
-- **New endpoints** get a new module in `app/routes/`, registered in
-  `app/routes/__init__.py` through one of the `group(...)` builders there
-  (`signed_in`, `admins`, ...). Protection comes from which builder a route is
-  registered with, so it cannot be silently forgotten. Keep the static
-  catch-all last; it matches everything after it.
+- **New endpoints** get a new module in `app/routes/`, added to `MODULES` in
+  `app/routes/__init__.py`, with each route declared by its `@route(...)`.
+  Protection comes from the declaration (see "A new route"): no `role=` and no
+  `access=PUBLIC` is anyone signed in, so it cannot be silently forgotten, and
+  each route gets its own guards. The static catch-all stays last; it matches
+  everything after it.
 - **Never call the database or bcrypt directly from an async handler.** They
   are synchronous; call them as `await run(fn, ...)` (from
   `app/routes/helpers.py`), which runs them in a worker thread. A direct call
@@ -489,25 +491,30 @@ but stay consistent with the patterns already there:
   other people's files and the owner's screens, which need a browser session
   (`RequireSession`). So a feature's routes take API keys by
   default, and each one a key may call gets a tool made from the route itself
-  (`Tool.for_route`). A route with no use to an agent (file bytes: MCP
+  (`mcp="name"` in its `@route(...)`). A route with no use to an agent (file bytes: MCP
   messages are JSON, and clients cap their size) gets `mcp_http="<why>"` in its
   `@route(...)` instead, and its tool hands back the address -- `files_start_upload`
   and `files_download_url` are the pattern. `app/tests/test_mcp_parity.py`
-  fails until every key route is covered, and until each route's `access`
-  matches what the guards really do. Then run `scripts/api_docs.sh`, which
+  fails until every key route is covered, and until each route's documented
+  access matches what its guards really do. Then run `scripts/api_docs.sh`, which
   rewrites `config/mcp.json` (committed, linked from the MCP card as the MCP
   reference) with the rest of the API reference; `test_api_docs.py` fails
   while it is stale.
-- **New MCP tools** go in `app/routes/mcp_tools_<feature>.py`, registered
-  from `build_registry` in `mcp_tools.py`, as
-  `registry.register(Tool.for_route(module.handler, name=..., title=..., description=..., ...))`.
-  The tool runs the route's own handler (so make it a plain function, not a
-  coroutine), the two doors share one set of rules and refuse in the same
-  words, and its arguments are the route's request type, checked the same way:
-  there is no schema to write. Pass `call=` only to add to the reply
-  (`_with_route_login_url` adds `login_url`). Set `admin_only` only when the
-  matching route is admin-only, and `read_only`/`destructive` honestly; clients
-  use them to decide when to ask the person first.
+- **A new MCP tool** is `mcp="x"` in its route's `@route(...)`, with
+  `read_only=True` / `destructive=True` as they apply, each tool line ending
+  `# feature:mcp`. Its title is the route's summary (` (admin)` is added for an
+  admin-only tool) and its description the route's description, then
+  `mcp_note="..."` for words only the tool needs (other tools' names,
+  `login_url`): one text, written once. `mcp_title`/`mcp_description` replace
+  them only where a browser and an agent get different things
+  (`files_download_url`). The tool runs the route's own handler (so
+  make it a plain function, not a coroutine), the two doors share one set of
+  rules and refuse in the same words, and its arguments are the route's
+  request type, checked the same way: there is no schema to write. Give
+  `call=` only to add to the reply (`call=with_login_url` adds `login_url`).
+  `admin_only` is on by default for a `role=ADMIN` route; set
+  `read_only`/`destructive` honestly, since clients use them to decide when to
+  ask the person first.
 - **Log what matters, never what is secret.** Requests and page activity are
   logged for free. A new action worth an audit line (something changed,
   someone was let in or refused) calls
@@ -573,9 +580,13 @@ but stay consistent with the patterns already there:
   `data`, since it leaves the server, and never rename one once it has shipped.
 - **A new route** is one declaration, next to its code: a request type (a
   `app.apidocs.Request` Struct), a reply type (a `Reply` Struct), and the handler
-  `@route(summary=..., tag=..., access=..., role=..., feature=..., errors=(...))`
-  `def x(request: Request, body: XRequest) -> XReply:`, mounted in `app/routes/__init__.py`
-  like any route. A field marked `Annotated[int, PATH]` or `Annotated[str, QUERY]` comes from
+  `@route("POST /api/things/{thing_id}/rename", summary=..., tag=..., access=..., role=..., feature=..., errors=(...))`
+  `def x(request: Request, body: XRequest) -> XReply:`. Each `{param}` is a `PATH` field. The
+  guards follow from the declaration: the feature's switch (`FEATURE_GUARDS`), then
+  `RequireLogin`, `RequireAdmin`, `RequireOwner` (`role=OWNER`, session-only too) or
+  `RequireAPIKey`, then `RequireSession` for `SESSION_ONLY`; `use=[...]` adds Guard classes.
+  `errors=` is only what the handler itself answers: the guards' and the request checks'
+  statuses are added. A field marked `Annotated[int, PATH]` or `Annotated[str, QUERY]` comes from
   the URL, any other from the JSON body; `Meta(min_length=1, max_length=80)`, `Literal[...]`,
   `Meta(ge=0)`, `Meta(description=...)` and `Meta(extra={"error": "the 400 it answers"})` say
   the rest (`app/apidocs/reflect.py` lists them), a default makes it optional and `T | None`

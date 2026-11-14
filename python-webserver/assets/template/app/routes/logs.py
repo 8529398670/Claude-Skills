@@ -25,7 +25,7 @@ from typing import Annotated, ClassVar
 from msgspec import Meta
 from starlette.responses import Response, StreamingResponse
 
-from app.apidocs import OWNER, PATH, QUERY, SESSION_ONLY, Reply, route
+from app.apidocs import OWNER, PATH, QUERY, Reply, route
 from app.apidocs import Request as RequestType
 from app.core import logs, request_id, sse
 from app.core.config import trusted_proxy_networks
@@ -87,7 +87,7 @@ class LogDays(Reply):
     settings: dict[str, Any]
 
 
-@route(summary="The days on record", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs", errors=(404,))
+@route("GET /api/owner/logs/days", summary="The days on record", tag="Owner", role=OWNER, feature="logs")
 def list_log_days(request: Request, body: LogSearch) -> LogDays:
     logger = get_logs(request)
     days, total = logger.days(_query(request, body.q))
@@ -114,7 +114,10 @@ class LogDay(Reply):
     next: int | None
 
 
-@route(summary="One day's entries", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs", errors=(400, 404))
+@route(
+    "GET /api/owner/logs/days/{date}", summary="One day's entries",
+    tag="Owner", role=OWNER, feature="logs",
+)
 def get_log_day(request: Request, body: GetLogDay) -> LogDay:
     if not logs.valid_day(body.date):
         raise Refused(400, "bad_day")
@@ -124,8 +127,8 @@ def get_log_day(request: Request, body: GetLogDay) -> LogDay:
 
 
 @route(
-    summary="One day's entries as a file", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs",
-    reply_type="application/x-ndjson", errors=(400, 404),
+    "GET /api/owner/logs/days/{date}/download", summary="One day's entries as a file",
+    tag="Owner", role=OWNER, feature="logs", reply_type="application/x-ndjson",
 )
 async def download_log_day(request: Request, body: DatePath) -> Response:
     """A day as plain JSON lines, decrypted: the file a person can grep, or
@@ -146,7 +149,10 @@ class DeletedReply(Reply):
     deleted: bool
 
 
-@route(summary="Delete one day", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs", errors=(400, 403, 404, 409))
+@route(
+    "POST /api/owner/logs/days/{date}/delete", summary="Delete one day",
+    tag="Owner", role=OWNER, feature="logs", errors=(409,),
+)
 def delete_log_day(request: Request, body: DatePath) -> DeletedReply:
     try:
         get_logs(request).delete_day(body.date)
@@ -168,7 +174,10 @@ class PruneResult(Reply):
     bytes_after: int
 
 
-@route(summary="Apply the retention rules now", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs", errors=(400, 403, 404))
+@route(
+    "POST /api/owner/logs/prune", summary="Apply the retention rules now",
+    tag="Owner", role=OWNER, feature="logs",
+)
 def prune_logs(request: Request) -> PruneResult:
     result = get_logs(request).prune()
     audit(request, logs.KIND_ADMIN, "logs pruned", {"compressed": result["compressed"], "deleted": result["deleted"]})
@@ -186,7 +195,10 @@ class IPNames(Reply):
     names: list[IPName]
 
 
-@route(summary="What the owner calls addresses", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs", errors=(403, 404))
+@route(
+    "GET /api/owner/logs/ip-names", summary="What the owner calls addresses",
+    tag="Owner", role=OWNER, feature="logs", errors=(403,),
+)
 def list_ip_names(request: Request) -> IPNames:
     """Everything the owner has named. It is short by nature, so unlike the lists
     people's activity grows, it comes whole."""
@@ -209,8 +221,8 @@ class SetIPNameReply(Reply):
 
 
 @route(
-    summary="Name an address or a range, or rename one", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs",
-    errors=(400, 403, 404),
+    "POST /api/owner/logs/ip-names", summary="Name an address or a range, or rename one",
+    tag="Owner", role=OWNER, feature="logs",
 )
 def set_ip_name(request: Request, body: SetIPName) -> SetIPNameReply:
     """Names an address or a range, or renames one. The answer gives the target
@@ -230,8 +242,8 @@ class DeleteIPName(RequestType):
 
 
 @route(
-    summary="Take a name off an address or a range", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs",
-    errors=(400, 403, 404),
+    "POST /api/owner/logs/ip-names/delete", summary="Take a name off an address or a range",
+    tag="Owner", role=OWNER, feature="logs",
 )
 def delete_ip_name(request: Request, body: DeleteIPName) -> DeletedReply:
     """Takes a name away. Its target is in the body, because a range has a slash
@@ -245,8 +257,8 @@ def delete_ip_name(request: Request, body: DeleteIPName) -> DeletedReply:
 
 
 @route(
-    summary="New log entries as they happen", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="logs",
-    reply_type="text/event-stream", errors=(404,),
+    "GET /api/owner/logs/stream", summary="New log entries as they happen",
+    tag="Owner", role=OWNER, feature="logs", reply_type="text/event-stream",
 )
 async def stream_log_changes(request: Request, body: LogSearch) -> Response:
     """The Logs screen's live tail: "something changed" nudges, and logs.js
@@ -331,8 +343,9 @@ class RecordUIEventsReply(Reply):
 
 
 @route(
-    summary="Record what happened on the page", tag="Account", feature="logs",
-    mcp_http="The browser's own activity reports (track.js), not an action.", errors=(400, 401, 403, 404),
+    "POST /api/logs/events", summary="Record what happened on the page",
+    tag="Account", feature="logs",
+    mcp_http="The browser's own activity reports (track.js), not an action.",
 )
 def record_ui_events(request: Request, body: RecordUIEvents) -> RecordUIEventsReply:
     """A batch from track.js. The server stamps each with its own time, the

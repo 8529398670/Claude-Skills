@@ -13,10 +13,10 @@ import (
 
 // Tool is one thing an agent can do through /mcp.
 //
-// Adding one is the MCP version of adding a route: write it next to the
-// others in server/routes/mcp_tools.go with ForRoute, so it runs the route's
-// own handler and a rule enforced there holds whichever door a change comes
-// through. The rules match the rest of the template:
+// Adding one is part of adding a route: mcp="tool_name" in the @route(...)
+// of the route's handler, which the route table registers with ForRoute, so it runs
+// the route's own handler and a rule enforced there holds whichever door a
+// change comes through. The rules match the rest of the template:
 //
 //   - One tool per route an API key may call. ForRoute ties it to its route,
 //     and mcp_parity_test.go fails until every key-callable route in the API

@@ -28,6 +28,7 @@ from app.routes.auth import SIGN_IN, SignedIn, sign_in_response, sign_in_rules
 from app.routes.helpers import Refused, get_config, get_store, run
 from app.routes.logs import audit, audit_as, user_actor
 from app.routes.two_factor import CODES  # feature:two_factor
+from app.routes.auth import SameOriginLogin
 
 # Per name typed, not per account, so a lockout does not say which names are
 # real. A wrong guess from one address across many names is what the second
@@ -42,7 +43,10 @@ class LoginOptions(Reply, kw_only=True):
     salt: str | UnsetType = UNSET
 
 
-@route(summary="What sign-in offers", tag="Sign-in", access=PUBLIC, feature="passwords")
+@route(
+    "GET /api/login/options", summary="What sign-in offers",
+    tag="Sign-in", access=PUBLIC, feature="passwords", no_switch=True,
+)
 def login_options(request: Request) -> LoginOptions:
     """What the signed-out page needs to know. Public, and the same for
     everyone: the salt is not a secret, and there is deliberately nothing here
@@ -60,7 +64,10 @@ class PasswordLogin(RequestType):
     password_digest: Annotated[str, Meta(extra={"error": "invalid_login"})]
 
 
-@route(summary="Sign in with a password", tag="Sign-in", access=PUBLIC, feature="passwords", errors=(400, 403, 404))
+@route(
+    "POST /api/login/password", summary="Sign in with a password",
+    tag="Sign-in", access=PUBLIC, feature="passwords", use=[SameOriginLogin],
+)
 async def password_login(request: Request, body: PasswordLogin) -> SIGN_IN:
     """Unknown name, wrong password, a blocked or disabled account: all the
     same answer, after the same bcrypt. No CSRF token, for the same reason as
@@ -125,7 +132,10 @@ class SetPasswordReply(Reply):
     has_password: bool
 
 
-@route(summary="Set or clear your password", tag="Account", access=SESSION_ONLY, feature="passwords", errors=(400, 401, 403, 404, 409))
+@route(
+    "POST /api/account/password", summary="Set or clear your password",
+    tag="Account", access=SESSION_ONLY, feature="passwords", errors=(409,),
+)
 def set_password(request: Request, body: SetPassword) -> SetPasswordReply:
     """Set the account's username and password, or with an empty
     password_digest remove the password. Session only: a key that could set
@@ -172,7 +182,10 @@ class SetPasswordAccessReply(Reply):
     password_blocked: bool
 
 
-@route(summary="Allow or block an account's password", tag="Owner", access=SESSION_ONLY, role=OWNER, feature="passwords", errors=(400, 403, 404))
+@route(
+    "POST /api/owner/users/{user_id}/password-access", summary="Allow or block an account's password",
+    tag="Owner", role=OWNER, feature="passwords",
+)
 def set_password_access(request: Request, body: SetPasswordAccess) -> SetPasswordAccessReply:
     """The owner's per-account switch (RequireOwner). {allowed: false} stops
     this account's password working and stops it setting one."""

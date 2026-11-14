@@ -30,7 +30,7 @@ type readyProbe struct {
 	ok   bool
 }
 
-// GetReady says whether this server can do real work: the database answers,
+// getReady says whether this server can do real work: the database answers,
 // is at the schema this build expects, and can be read with this key, which
 // reading the owner record proves.
 //
@@ -38,18 +38,17 @@ type readyProbe struct {
 // what fails it, so that one touches nothing; this is for a load balancer, or a
 // person, deciding whether to send traffic. The body says no more than yes or
 // no, because the route is public.
-func ( handlers *Handlers ) GetReady() *apidoc.Endpoint[ apidoc.None , okReply ] {
-	return apidoc.Handle( apidoc.Op{ Summary: "Can the server do real work" , Tag: "Monitoring" , Access: apidoc.Public },
-		func( c fiber.Ctx , in *apidoc.None ) ( reply *okReply , err error ) {
-			probe := handlers.readyProbe()
-			select {
-			case <-probe.done:
-				if probe.ok { reply = &okReply{ Ok: true } }
-			case <-time.After( readyWait ):
-			}
-			if reply == nil { err = notReady{} }
-			return
-		} )
+//
+// @route("GET /api/ready", summary="Can the server do real work", tag="Monitoring", access=PUBLIC)
+func ( handlers *Handlers ) getReady( c fiber.Ctx , in *apidoc.None ) ( reply *okReply , err error ) {
+	probe := handlers.readyProbe()
+	select {
+	case <-probe.done:
+		if probe.ok { reply = &okReply{ Ok: true } }
+	case <-time.After( readyWait ):
+	}
+	if reply == nil { err = notReady{} }
+	return
 }
 
 // notReady is GetReady's no: a 503 with the same body as its yes.

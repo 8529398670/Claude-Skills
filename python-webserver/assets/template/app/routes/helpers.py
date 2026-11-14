@@ -203,14 +203,6 @@ def not_found(message: str) -> JSONResponse:
     return error(404, message)
 
 
-def conflict(message: str, **extra: Any) -> JSONResponse:
-    """409: the request was fine but the record has moved on -- an undo whose
-    window has passed, or a rename that expected a name someone else has
-    since changed. extra carries the current state, so the caller can show
-    it."""
-    return JSONResponse({"error": message, **extra}, status_code=409)
-
-
 # >>> feature:api_keys|files|invite_links|webhooks
 def restore_refusal(refusal: RestoreError) -> Refused:
     """The refusal for each way a restore can be refused."""

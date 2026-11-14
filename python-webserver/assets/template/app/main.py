@@ -117,7 +117,7 @@ def build_app(
             await run_in_threadpool(logger.close)  # feature:logs
 
     app = Starlette(
-        routes=build_routes(static_server, cfg),
+        routes=build_routes(static_server),
         # Outermost first. Every request gets its reference and is counted,
         # whatever becomes of it; headers go on everything; the body limit is
         # here rather than Starlette's max_body_size= because that one sits

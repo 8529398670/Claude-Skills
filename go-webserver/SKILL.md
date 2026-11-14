@@ -166,8 +166,8 @@ project.
   applied live from Settings. Everyone but the owner's browser session gets a
   503 with `Retry-After`: a page in a browser, JSON for a script.
 - **An API reference written from the code.** Each route is declared once,
-  as a typed handler (`apidoc.Handle`) beside its code: a summary, who may
-  call it, and the Go types of what it takes and gives back, with the limits
+  as a method whose doc comment ends with `// @route(...)`: its path, a summary, who
+  may call it, and the Go types of what it takes and gives back, with the limits
   and 400 messages in struct tags. Those types also parse and check every
   request before the handler runs, and are the input schema of the route's
   MCP tool. `scripts/api_docs.sh` writes `config/openapi.json`, `config/mcp.json` and
@@ -388,9 +388,11 @@ ports they ran on. Do not reset either to a shared value.
     stream/stream.go          # server-sent events: Hub, Serve, heartbeats
     webhooks/webhooks.go      # the outbox's sender, signing, and the address guard
     errorpage/errorpage.go    # the page a browser gets when a page load fails
-    routes/                   # routes.go (the URL map) + one file per group,
-                              #   including api_keys.go, files.go, mcp_tools.go
-                              #   (the MCP tools, + mcp_test.go) and logs.go
+    routes/                   # one file per group of routes, each handler with its
+                              #   // @route(...); routes_generated.go (the
+                              #   route table, from go generate); routes.go (the
+                              #   pages, the catch-alls, featureGuards); mcp_tools.go
+                              #   (the tools' calls, + mcp_test.go) and logs.go
                               #   (the owner's log API, page events, audit())
     bootstrap/bootstrap.go    # first-run admin + printing links as full URLs
     assets/assets.go          # picks disk assets when present, embedded otherwise
@@ -489,30 +491,33 @@ but stay consistent with the patterns already there:
   other people's files and the owner's screens, which need a browser session
   (`RequireSession`). So a feature's routes take API keys by
   default, and each one a key may call gets a tool made from the route itself
-  (`mcp.ForRoute`). A route with no use to an agent (file bytes: MCP
-  messages are JSON, and clients cap their size) gets `MCPHTTP: "<why>"` in its
-  `apidoc.Op` instead, and its tool hands back the address --
+  (`mcp="name"` in its `@route(...)`). A route with no use to an agent (file bytes: MCP
+  messages are JSON, and clients cap their size) gets `mcp_http="<why>"` in its
+  `@route(...)` instead, and its tool hands back the address --
   `files_start_upload` and `files_download_url` are the pattern.
   `go test ./server/routes` fails until every key route is covered, and until
-  each route's `Access` matches what the guards really do. Then run
+  each route's documented access matches what its guards really do. Then run
   `scripts/api_docs.sh`, which rewrites `config/mcp.json` (committed, linked
   from the MCP card as the MCP reference) with the rest of the API reference;
   the same tests fail while it is stale.
-- **New MCP tools** go in `server/routes/mcp_tools_<feature>.go`, registered
-  from `registerMCPTools` in `mcp_tools.go`, as
-  `server.Register( mcp.ForRoute( handlers.X , mcp.Tool{ Name , Title , Description , ... } , nil ) )`.
-  The tool runs the route's own handler, so the two doors share one set of
-  rules and refuse in the same words, and its arguments are the route's
-  request type, checked the same way: there is no schema to write. Pass a call
-  instead of nil only to add to the reply (`withLoginLinkURL` adds `login_url`).
-  Set `AdminOnly` only when the matching route is admin-only, and
-  `ReadOnly`/`Destructive` honestly; clients use them to decide when to ask the
-  person first.
-- **Group middleware is mounted on a path prefix,** not on the routes written
-  under it: `app.Group( "/api" , mw )` puts `mw` in front of every later route
-  starting with `/api`, including `/api/admin/...`. Give a group that should
-  not do that its own prefix -- that is why the key routes live under
-  `/api/keys` and `/api/admin/keys`.
+- **A new MCP tool** is `mcp="x"` in its route's `@route(...)`, with
+  `read_only=True` / `destructive=True` as they apply, each tool line ending
+  `// feature:mcp`. Its title is the route's summary (` (admin)` is added for
+  an admin-only tool) and its description the route's description, then
+  `mcp_note="..."` for words only the tool needs (other tools' names,
+  `login_url`): one text, written once. `mcp_title`/`mcp_description` replace
+  them only where a browser and an agent get different things
+  (`files_download_url`). The tool runs the route's own handler, so the two
+  doors share one set of rules and refuse in the same words, and its
+  arguments are the route's request type, checked the same way: there is no
+  schema to write. Give `call=` only to add to the reply
+  (`call=withLoginLinkURL` adds `login_url`). `admin_only` is on by default
+  for a `role=ADMIN` route; mark `read_only`/`destructive` honestly, since
+  clients use them to decide when to ask the person first.
+- **Guards come from the declaration, never from where a route is written.**
+  `role=`, `access=` and `feature=` decide them (see "A new route"), each route
+  gets its own, and nothing is mounted on a path prefix. Read
+  `server/routes/routes_generated.go` to see every route with its guards.
 - **Log what matters, never what is secret.** Requests and page activity are
   logged for free. A new action worth an audit line (something changed,
   someone was let in or refused) calls
@@ -556,20 +561,27 @@ but stay consistent with the patterns already there:
 - **A new event** goes in the list in `server/models/webhook.go`, and is sent with
   `handlers.Webhooks.Emit( name , data )` where the thing happens. Ids and names only
   in `data`, since it leaves the server, and never rename one once it has shipped.
-- **A new route** is one declaration, next to its code: a request type, a reply type, and
-  a method returning `apidoc.Handle( apidoc.Op{ Summary , Tag , Access , Role , Feature , Errors , ... } , func( c fiber.Ctx , in *Req ) ( reply *Reply , err error ) { ... } )`,
-  mounted in `routes.go` with `apidoc.Post( group , "/path/:id" , handlers.X , middleware... )`
-  (`apidoc.Get`, `apidoc.Delete`). A field tagged `path:"id"` or `query:"q"` comes from the URL,
+- **A new route** is one annotated method, next to its code: a request type, a reply type, and
+  `func ( handlers *Handlers ) x( c fiber.Ctx , in *Req ) ( reply *Reply , err error )` with
+  its doc comment ending in
+  `// @route("POST /api/things/{thing_id}/rename", summary="...", tag="Things", [role=ADMIN|OWNER,] [access=PUBLIC|SESSION_ONLY|KEY_ONLY,] [feature="x",] [errors=(404, 409),])`,
+  spelled exactly like the Python template's decorator (`server/apidoc/routegen` lists every
+  key; long text wraps as adjacent `"strings"`, and a declaration longer than a line ends with
+  `// )` on its own). The guards follow from it: the feature's switch (`featureGuards` in
+  `routes.go`), then `RequireLogin`, `RequireAdmin`, `RequireOwner` or `RequireAPIKey`, then
+  `RequireSession` for `SESSION_ONLY`; `use=[...]` adds more, as Go expressions. `errors=` is only what the handler itself answers: the guards' and the request checks'
+  statuses are added. A field tagged `path:"thing_id"` or `query:"q"` comes from the URL,
   any other from the JSON body; `jsonschema:"minLength=1,maxLength=80"`, `enum=`, `minimum=`,
   `jsonschema_description:"..."` and `error:"the 400 it answers"` say the rest
   (`server/apidoc/reflect.go` lists them), `omitempty` makes it optional and a pointer may be null.
   The framework refuses a bad request before the handler runs (malformed JSON, a missing
   csrf_token, an unknown field, a value that breaks a limit) and encodes the reply; the handler
   returns the reply or `refuse( status , "..." )`. `admin.go` is the worked example. Then run
-  `scripts/api_docs.sh`. `go test ./server/routes` fails until it has an MCP tool or an `MCPHTTP`
+  `scripts/api_docs.sh`, which writes the route table (`routes_generated.go`) and the docs.
+  `go test ./server/routes` fails until it has an MCP tool or an `mcp_http`
   reason (see above), and when a reply a test gets has a field the docs lack or lacks one they
   promise. A route that changes something must not be a GET, or `read_only` maintenance will not
-  stop it. One that writes its own reply (bytes, a stream) is `apidoc.Stream` with `Op.ReplyType`.
+  stop it. One that writes its own reply (bytes, a stream) returns only `error`, with `reply_type=`.
 - **A new list route** takes `Page` (and `Direction`, after its own `sort` enum) in its request,
   answers a reply embedding `Paged`, filled by `cutPage` or `sortedPage`, and its screen
   uses `Pager.load`: a plain `forEach` would stop at the first page.

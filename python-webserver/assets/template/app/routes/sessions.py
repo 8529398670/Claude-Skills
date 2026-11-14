@@ -77,7 +77,14 @@ def current_session_id(request: Request) -> str:
     return session.id if session is not None else ""
 
 
-@route(summary="Your signed-in devices", tag="Account", feature="sessions", errors=(400, 401, 403))
+@route(
+    "GET /api/account/sessions", summary="Your signed-in devices",
+    tag="Account", feature="sessions", errors=(403,),
+    description="Where your account is signed in, a page at a time: id, when it started and was last seen, "
+    "the browser, and the name you gave it. Through an API key no device is current. next is the offset of "
+    "the following page, or null on the last one.",
+    mcp="list_my_sessions", read_only=True,  # feature:mcp
+)
 def list_my_sessions(request: Request, body: Page) -> SessionsReply:
     """Where the caller is signed in, over HTTP and as the MCP
     list_my_sessions tool."""
@@ -122,9 +129,11 @@ class ListUserSessions(UserIDPath):
 
 
 @route(
-    summary="An account's signed-in devices",
-    description="The owner's are the owner's alone, and only the owner sees addresses.",
-    tag="Admin", role=ADMIN, feature="sessions", errors=(400, 401, 403, 404),
+    "GET /api/admin/users/{user_id}/sessions", summary="An account's signed-in devices",
+    tag="Admin", role=ADMIN, feature="sessions", errors=(404,),
+    description="Where an account is signed in: every session, with when it started and was last seen. "
+    "Addresses are shown to the owner only, and only the owner sees the owner's.",
+    mcp="admin_list_user_sessions", read_only=True,  # feature:mcp
 )
 def list_user_sessions(request: Request, body: ListUserSessions) -> SessionsReply:
     """Where an account is signed in, for ending one device rather than
@@ -147,7 +156,12 @@ class RevokeUserSession(UserIDPath):
     session_id: Annotated[str, PATH, Meta(description="The device's id, from GET /api/account/sessions or GET /api/admin/users/{user_id}/sessions (list_my_sessions or admin_list_user_sessions over MCP).")]
 
 
-@route(summary="Sign out one of an account's devices", tag="Admin", role=ADMIN, feature="sessions", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/admin/users/{user_id}/sessions/{session_id}/revoke", summary="Sign out one of an account's devices",
+    tag="Admin", role=ADMIN, feature="sessions", errors=(404,),
+    mcp_note="End one of an account's sessions, rather than all of them with admin_revoke_access.",  # feature:mcp
+    mcp="admin_revoke_user_session", destructive=True,  # feature:mcp
+)
 def revoke_user_session(request: Request, body: RevokeUserSession) -> OkReply:
     """Sign one of an account's devices out, and only that: over HTTP or the
     MCP admin_revoke_user_session tool."""
@@ -174,8 +188,11 @@ class LabelOneReply(Reply):
 
 
 @route(
-    summary="Name one of your devices", description="This device included. Empty clears the name.",
-    tag="Account", feature="sessions", errors=(400, 401, 403, 404, 409),
+    "POST /api/account/sessions/{session_id}/label", summary="Name one of your devices",
+    tag="Account", feature="sessions", errors=(404, 409),
+    description="Give one of your devices a name (at most 80 characters; empty clears it). expect, when "
+    "given, is the name you think it has now.",
+    mcp="label_my_session",  # feature:mcp
 )
 def label_one(request: Request, body: LabelOne) -> LabelOneReply:
     """Name one of your own devices, this one included, over HTTP or the MCP
@@ -194,7 +211,12 @@ def label_one(request: Request, body: LabelOne) -> LabelOneReply:
     return LabelOneReply(ok=True, label=body.label.strip())
 
 
-@route(summary="Sign out one device", tag="Account", feature="sessions", errors=(400, 401, 403, 404))
+@route(
+    "POST /api/account/sessions/{session_id}/revoke", summary="Sign out one of your devices",
+    tag="Account", feature="sessions", errors=(404,),
+    description="End one of your signed-in sessions; that browser has to sign in again.",
+    mcp="revoke_my_session", destructive=True,  # feature:mcp
+)
 def revoke_one(request: Request, body: SessionIDPath) -> OkReply:
     """Sign out one other device, over HTTP or the MCP revoke_my_session
     tool. This device is refused: ending it here would leave the browser
@@ -213,7 +235,14 @@ class RevokeOthersReply(Reply):
     removed: int
 
 
-@route(summary="Sign out every other device", tag="Account", feature="sessions", errors=(400, 401, 403))
+@route(
+    "POST /api/account/sessions/revoke-others", summary="Sign out every other device",
+    tag="Account", feature="sessions",
+    mcp_title="Sign out all your devices",  # feature:mcp
+    mcp_description="End every session your account has: through an API key there is no current device to "  # feature:mcp
+    "keep, so every browser signs in again. API keys keep working. Answers with how many were removed.",  # feature:mcp
+    mcp="revoke_my_other_sessions", destructive=True,  # feature:mcp
+)
 def revoke_others(request: Request) -> RevokeOthersReply:
     """The button for a lost phone or a shared computer: everything but this
     device, over HTTP or the MCP revoke_my_other_sessions tool. Through an API

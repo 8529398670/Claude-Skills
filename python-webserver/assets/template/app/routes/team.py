@@ -29,7 +29,14 @@ class ListTeamReply(Paged):
     members: list[Member]
 
 
-@route(summary="Everyone's names", tag="Account", errors=(400, 401))
+@route(
+    "GET /api/team", summary="List team",
+    tag="Account",
+    description="People with an active account, a page at a time: id and display name.",
+    mcp_note="Use the id wherever another tool asks for a user. next is the offset of the following page, "  # feature:mcp
+    "or null on the last one.",  # feature:mcp
+    mcp="list_team", read_only=True,  # feature:mcp
+)
 def list_team(request: Request, body: Page) -> ListTeamReply:
     """Over HTTP and as the MCP list_team tool."""
     rows = [Member(id=user.id, display_name=user.display_name) for user in users.list_users(get_store(request)) if not user.disabled]
