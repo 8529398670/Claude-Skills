@@ -21,10 +21,10 @@ import (
 
 // The API reference is written from the code: config/openapi.json and
 // config/api.md from each route's declaration (the // @route(...) at the
-// end of its handler's doc comment), and config/mcp.json from the registered MCP tools.
+// end of its handler's doc comment), and config/mcp.json and config/mcp.md from the registered MCP tools.
 // scripts/api_docs.sh runs TestAPIDocsAreCurrent with -update to rewrite
 // them; without it, the test fails while a committed file is out of date.
-var updateAPIDocs = flag.Bool( "update" , false , "rewrite config/openapi.json, config/mcp.json and config/api.md from the code" )
+var updateAPIDocs = flag.Bool( "update" , false , "rewrite config/openapi.json, config/mcp.json, config/api.md and config/mcp.md from the code" )
 
 // notDocumented is what the route table has that is not an API: the pages a
 // link opens, and the catch-alls.
@@ -129,6 +129,7 @@ func TestAPIDocsAreCurrent( t *testing.T ) {
 	// >>> feature:mcp
 	if files[ "mcp.json" ] , err = mcpManifest( fixture.handlers.MCP.Tools() , specOperations( t ) ); err != nil { t.Fatal( err ) }
 	if err = json.Unmarshal( files[ "mcp.json" ] , &manifest ); err != nil { t.Fatal( err ) }
+	files[ "mcp.md" ] = apidoc.MCPMarkdown( spec , manifest )
 	// <<< feature:mcp
 	files[ "api.md" ] = apidoc.Markdown( spec , manifest )
 	for name , want := range files {

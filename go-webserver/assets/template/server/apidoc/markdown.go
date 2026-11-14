@@ -10,7 +10,7 @@ import (
 
 // Markdown is config/api.md: the same reference as openapi.json, as tables a
 // person reads. spec and manifest are in Plain form; manifest is nil when the
-// app has no MCP. The Python template renders the same bytes from the same
+// app has no MCP. A route's MCP tool links into config/mcp.md (MCPMarkdown). The Python template renders the same bytes from the same
 // documents, so keep the two in step.
 func Markdown( spec map[string]any , manifest map[string]any ) ( text []byte ) {
 	out := &strings.Builder{}
@@ -53,7 +53,6 @@ func Markdown( spec map[string]any , manifest map[string]any ) ( text []byte ) {
 	out.WriteString( "- [Calling the API](#calling-the-api)\n- [Errors](#errors)\n" )
 	for _ , tag := range tag_names { fmt.Fprintf( out , "- [%s](#%s)\n" , tag , slug( tag ) ) }
 	out.WriteString( "- [Schemas](#schemas)\n" )
-	if manifest != nil { out.WriteString( "- [MCP tools](#mcp-tools)\n" ) }
 	out.WriteString( "\n## Calling the API\n\n" )
 	schemes := object( components[ "securitySchemes" ] )
 	table( out , []string{ "Way in" , "How" } , [][]string{
@@ -88,7 +87,7 @@ func Markdown( spec map[string]any , manifest map[string]any ) ( text []byte ) {
 			if manifest != nil {
 				if names , found := tools[ entry.method + " " + entry.path ]; found {
 					cells := []string{}
-					for _ , name := range names { cells = append( cells , "[`" + name + "`](#" + slug( name ) + ")" ) }
+					for _ , name := range names { cells = append( cells , "[`" + name + "`](mcp.md#" + slug( name ) + ")" ) }
 					facts = append( facts , []string{ "MCP tool" , strings.Join( cells , ", " ) } )
 				} else if reason := str( op[ "x-mcp-http" ] ); reason != "" {
 					facts = append( facts , []string{ "MCP tool" , "None, HTTP only: " + reason } )
@@ -133,46 +132,61 @@ func Markdown( spec map[string]any , manifest map[string]any ) ( text []byte ) {
 		block( out , object( schemas[ name ] ) )
 	}
 
-	if manifest != nil {
-		out.WriteString( "## MCP tools\n\n" )
-		fmt.Fprintf( out , "%s\n\n" , str( manifest[ "description" ] ) )
+	text = []byte( strings.TrimRight( out.String() , "\n" ) + "\n" )
+	return
+}
+
+// MCPMarkdown is config/mcp.md: mcp.json as tables a person reads, beside
+// api.md, which each tool's route links into. spec and manifest are in Plain
+// form. The Python template renders the same bytes, so keep the two in step.
+func MCPMarkdown( spec map[string]any , manifest map[string]any ) ( text []byte ) {
+	out := &strings.Builder{}
+	title := strings.TrimSuffix( str( object( spec[ "info" ] )[ "title" ] ) , " API" )
+	fmt.Fprintf( out , "# %s MCP tools\n\n" , title )
+	out.WriteString( "This file is generated: do not edit it. Change the tools next to their handlers and run `scripts/api_docs.sh`. Every route is in [api.md](api.md).\n\n" )
+	fmt.Fprintf( out , "%s\n\n" , str( manifest[ "description" ] ) )
+	table( out , []string{ "" , "" } , [][]string{
+		{ "Endpoint" , "`POST " + str( manifest[ "endpoint" ] ) + "`" },
+		{ "Transport" , str( manifest[ "transport" ] ) },
+		{ "Auth" , str( manifest[ "auth" ] ) },
+	} )
+	rows := [][]string{}
+	for _ , raw := range list( manifest[ "tools" ] ) {
+		tool := object( raw )
+		admin := "any key"
+		if tool[ "adminOnly" ] == true { admin = "admin keys" }
+		rows = append( rows , []string{ "[`" + str( tool[ "name" ] ) + "`](#" + slug( str( tool[ "name" ] ) ) + ")" , routeLink( tool[ "route" ] ) , admin , str( tool[ "title" ] ) } )
+	}
+	table( out , []string{ "Tool" , "Route" , "Who" , "What" } , rows )
+	for _ , raw := range list( manifest[ "tools" ] ) {
+		tool := object( raw )
+		fmt.Fprintf( out , "## %s\n\n" , str( tool[ "name" ] ) )
+		fmt.Fprintf( out , "%s\n\n" , str( tool[ "description" ] ) )
+		hints := object( tool[ "annotations" ] )
 		table( out , []string{ "" , "" } , [][]string{
-			{ "Endpoint" , "`POST " + str( manifest[ "endpoint" ] ) + "`" },
-			{ "Transport" , str( manifest[ "transport" ] ) },
-			{ "Auth" , str( manifest[ "auth" ] ) },
+			{ "Route" , routeLink( tool[ "route" ] ) },
+			{ "Read only" , yes( hints[ "readOnlyHint" ] == true ) },
+			{ "Destructive" , yes( hints[ "destructiveHint" ] == true ) },
 		} )
+		out.WriteString( "**Arguments**\n\n" )
+		block( out , object( tool[ "inputSchema" ] ) )
+	}
+	if http_only := list( manifest[ "http_only" ] ); len( http_only ) > 0 {
+		out.WriteString( "## HTTP only\n\nRoutes an API key may call that have no tool, and why.\n\n" )
 		rows := [][]string{}
-		for _ , raw := range list( manifest[ "tools" ] ) {
-			tool := object( raw )
-			admin := "any key"
-			if tool[ "adminOnly" ] == true { admin = "admin keys" }
-			rows = append( rows , []string{ "[`" + str( tool[ "name" ] ) + "`](#" + slug( str( tool[ "name" ] ) ) + ")" , "`" + str( tool[ "route" ] ) + "`" , admin , str( tool[ "title" ] ) } )
+		for _ , raw := range http_only {
+			entry := object( raw )
+			rows = append( rows , []string{ routeLink( entry[ "route" ] ) , str( entry[ "reason" ] ) } )
 		}
-		table( out , []string{ "Tool" , "Route" , "Who" , "What" } , rows )
-		for _ , raw := range list( manifest[ "tools" ] ) {
-			tool := object( raw )
-			fmt.Fprintf( out , "### %s\n\n" , str( tool[ "name" ] ) )
-			fmt.Fprintf( out , "%s\n\n" , str( tool[ "description" ] ) )
-			hints := object( tool[ "annotations" ] )
-			table( out , []string{ "" , "" } , [][]string{
-				{ "Route" , "`" + str( tool[ "route" ] ) + "`" },
-				{ "Read only" , yes( hints[ "readOnlyHint" ] == true ) },
-				{ "Destructive" , yes( hints[ "destructiveHint" ] == true ) },
-			} )
-			out.WriteString( "**Arguments**\n\n" )
-			block( out , object( tool[ "inputSchema" ] ) )
-		}
-		if http_only := list( manifest[ "http_only" ] ); len( http_only ) > 0 {
-			out.WriteString( "### HTTP only\n\nRoutes an API key may call that have no tool, and why.\n\n" )
-			rows := [][]string{}
-			for _ , raw := range http_only {
-				entry := object( raw )
-				rows = append( rows , []string{ "`" + str( entry[ "route" ] ) + "`" , str( entry[ "reason" ] ) } )
-			}
-			table( out , []string{ "Route" , "Why" } , rows )
-		}
+		table( out , []string{ "Route" , "Why" } , rows )
 	}
 	text = []byte( strings.TrimRight( out.String() , "\n" ) + "\n" )
+	return
+}
+
+// routeLink is a tool's route, linked to its section of api.md.
+func routeLink( raw any ) ( text string ) {
+	text = "[`" + str( raw ) + "`](api.md#" + slug( str( raw ) ) + ")"
 	return
 }
 

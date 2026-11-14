@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Rewrite the template's route table (server/routes/routes_generated.go) and
-its config/openapi.json, config/mcp.json and config/api.md.
+its config/openapi.json, config/mcp.json, config/api.md and config/mcp.md.
 
 They are written from the code, but the template itself cannot build: it is full
 of {{PLACEHOLDERS}} that only scaffold.py fills in. So this scaffolds a project
@@ -27,7 +27,7 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent.parent
 TEMPLATE = SKILL_DIR / "assets" / "template"
 NAME = "Refresh"
-FILES = ("openapi.json", "mcp.json", "api.md")
+FILES = ("openapi.json", "mcp.json", "api.md", "mcp.md")
 
 
 def main() -> None:
@@ -40,7 +40,7 @@ def main() -> None:
         print(f"wrote {TEMPLATE / 'server' / 'routes' / 'routes_generated.go'}")
         for name in FILES:
             text = (project / "config" / name).read_text(encoding="utf-8")
-            text = text.replace(f'"title": "{NAME} API"', '"title": "{{PROJECT_NAME}} API"').replace(f"# {NAME} API\n", "# {{PROJECT_NAME}} API\n", 1)
+            text = text.replace(f'"title": "{NAME} API"', '"title": "{{PROJECT_NAME}} API"').replace(f"# {NAME} API\n", "# {{PROJECT_NAME}} API\n", 1).replace(f"# {NAME} MCP tools\n", "# {{PROJECT_NAME}} MCP tools\n", 1)
             (TEMPLATE / "config" / name).write_text(text, encoding="utf-8", newline="\n")
             print(f"wrote {TEMPLATE / 'config' / name}")
 

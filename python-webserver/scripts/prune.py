@@ -31,7 +31,7 @@ the API docs' generator writes from the route's Feature (Go) or feature (Python)
 
 config/mcp.json is written from the registered tools, so it names no features:
 each tool and http_only entry goes with the openapi.json path its route is on.
-config/api.md is left as it is. All three are written from the code by the
+config/api.md and config/mcp.md are left as they are. All of them are written from the code by the
 project's scripts/api_docs.sh, so a project that lost parts runs that once to
 bring them in line with what is left.
 
@@ -50,6 +50,7 @@ NAMES = {"Dockerfile"}
 OPENAPI = "config/openapi.json"
 MCP_JSON = "config/mcp.json"
 API_MD = "config/api.md"
+MCP_MD = "config/mcp.md"
 
 EXPRESSION = r"!?[a-z0-9_]+(?:\|!?[a-z0-9_]+)*"
 WHOLE_FILE = re.compile(r"whole-file feature:(" + EXPRESSION + r")")
@@ -210,7 +211,7 @@ def prune_tree(root: Path, removed: set[str], data_files: dict[str, tuple[str, .
         if relative == MCP_JSON:
             path.write_text(prune_mcp(path.read_text(encoding="utf-8"), removed, features), encoding="utf-8", newline="")
             continue
-        if relative == API_MD:
+        if relative in (API_MD, MCP_MD):
             continue
         if not prunable(path):
             continue

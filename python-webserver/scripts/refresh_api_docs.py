@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Rewrite the template's config/openapi.json, config/mcp.json and config/api.md.
+"""Rewrite the template's config/openapi.json, config/mcp.json, config/api.md and config/mcp.md.
 
 They are written from the code, but the template itself cannot run: it is full
 of {{PLACEHOLDERS}} that only scaffold.py fills in. So this scaffolds a project
 with every part into a temporary folder, writes its API reference the way its
-scripts/api_docs.sh does, and copies the three files back with the project's
+scripts/api_docs.sh does, and copies the files back with the project's
 name put back as {{PROJECT_NAME}}.
 
 Run it after changing a route's declaration (@route on its handler), an MCP
@@ -28,7 +28,7 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent.parent
 TEMPLATE = SKILL_DIR / "assets" / "template"
 NAME = "Refresh"
-FILES = ("openapi.json", "mcp.json", "api.md")
+FILES = ("openapi.json", "mcp.json", "api.md", "mcp.md")
 
 
 def main() -> None:
@@ -41,7 +41,7 @@ def main() -> None:
         subprocess.run([arguments.python, "-m", "app.apidocs"], cwd=project, check=True)
         for name in FILES:
             text = (project / "config" / name).read_text(encoding="utf-8")
-            text = text.replace(f'"title": "{NAME} API"', '"title": "{{PROJECT_NAME}} API"').replace(f"# {NAME} API\n", "# {{PROJECT_NAME}} API\n", 1)
+            text = text.replace(f'"title": "{NAME} API"', '"title": "{{PROJECT_NAME}} API"').replace(f"# {NAME} API\n", "# {{PROJECT_NAME}} API\n", 1).replace(f"# {NAME} MCP tools\n", "# {{PROJECT_NAME}} MCP tools\n", 1)
             (TEMPLATE / "config" / name).write_text(text, encoding="utf-8", newline="\n")
             print(f"wrote {TEMPLATE / 'config' / name}")
 

@@ -5,6 +5,15 @@ Read by the `webserver-upgrade` skill. Add an entry whenever
 
 ## After 3731d9a
 
+**The MCP tools get their own readable page (2026-11-14). Optional, cheap.**
+`scripts/api_docs.sh` now also writes `config/mcp.md`: the MCP tools section
+that used to end `config/api.md`, moved to its own file (each tool's route
+links back into api.md, and api.md's "MCP tool" rows link into mcp.md). The
+MCP card on Account gets "readable version (mcp.md)" beside the mcp.json link
+when `app.repo` is set (`mcp.doc_link` in language.yaml, `mcp-doc-part` in
+index.html, mcp.js). Take the renderer, the docs test/generator line and the
+card changes, then run `scripts/api_docs.sh` and commit `config/mcp.md`.
+
 **New apps leave the tests out (2026-11-14). Nothing changes in existing
 apps.** `scaffold.py` takes `--tests` / `--no-tests`, defaulting to `tests:` in
 `~/.claude/skills/config.yaml` (off). The stamp gets `tests: true|false`; a stamp

@@ -1070,10 +1070,12 @@ The rules are in `app/core/maintenance.py`, and the check is in `app/core/mainte
 
 ## The API reference
 
-The API reference is three files, all written from the code and committed:
+The API reference is four files, all written from the code and committed:
 `config/openapi.json` (OpenAPI 3.1), `config/mcp.json` (the MCP tools, see
-[above](#configmcpjson-the-mcp-reference)) and `config/api.md`, the same
-again as tables a person reads. Nobody edits them by hand. `GET /api/openapi.json`
+[above](#configmcpjson-the-mcp-reference)), and `config/api.md` and
+`config/mcp.md`, the same two again as tables a person reads. The API keys
+and MCP cards on Account link each JSON file and, with `app.repo` set, its
+readable `.md` on the repository's site. Nobody edits them by hand. `GET /api/openapi.json`
 serves the spec to any signed-in caller, session or key: it maps the admin
 surface, and nobody who cannot sign in has a use for it.
 

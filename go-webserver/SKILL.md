@@ -170,8 +170,8 @@ project.
   may call it, and the Go types of what it takes and gives back, with the limits
   and 400 messages in struct tags. Those types also parse and check every
   request before the handler runs, and are the input schema of the route's
-  MCP tool. `scripts/api_docs.sh` writes `config/openapi.json`, `config/mcp.json` and
-  `config/api.md` (all of it as tables) from those and the registered MCP
+  MCP tool. `scripts/api_docs.sh` writes `config/openapi.json`, `config/mcp.json`,
+  `config/api.md` and `config/mcp.md` (the routes and the tools as tables) from those and the registered MCP
   tools. Nobody edits them by hand: a test fails while one is out of date, or a
   route has no docs, and every reply the tests see is checked against its docs.
   `GET /api/openapi.json` hands the spec to anyone signed in.
@@ -345,8 +345,9 @@ ports they ran on. Do not reset either to a shared value.
                               #   scaffold.py; gitignored, 0600) -- back it up
     openapi.json              # the API reference, as OpenAPI 3.1
     mcp.json                  # the MCP tools
-    api.md                    # both, as tables to read; scripts/api_docs.sh
-                              #   writes all three from the code
+    api.md                    # every route, as tables to read
+    mcp.md                    # every MCP tool, as tables to read;
+                              #   scripts/api_docs.sh writes all four from the code
     config.example.yaml       # every default -- commit this; a fresh clone
                               #   copies it to config/config.yaml
                               #   (`go run . config example` regenerates it)
@@ -434,7 +435,7 @@ ports they ran on. Do not reset either to a shared value.
     run.sh, run.bat           # local run: (re)starts the server; with args, the CLI
     login.sh, login.bat       # the owner's login link, from whatever is live
                               # (starts the server right there if nothing is)
-    api_docs.sh               # rewrites config/openapi.json, mcp.json and api.md
+    api_docs.sh               # rewrites config/openapi.json, mcp.json, api.md and mcp.md
     build.sh                  # cross-compiles single-file portable binaries
     lib.sh                    # shared by run.sh and login.sh (sourced)
   docker/

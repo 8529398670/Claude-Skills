@@ -571,6 +571,9 @@ mcp:
   # in app.repo, or this server's own copy.
   spec_text: "What an agent can call:"
   spec_link: "MCP reference (mcp.json)"
+  # Beside it when app.repo is set: the same reference as tables, config/mcp.md,
+  # which the repository's site shows as a readable page.
+  doc_link: "readable version (mcp.md)"
   endpoint_label: "Endpoint"
   client_label: "Set up for"
   # Also the name a new key is given, until someone types another.

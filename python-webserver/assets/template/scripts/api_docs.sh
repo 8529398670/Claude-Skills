@@ -3,7 +3,8 @@
 #
 #   config/openapi.json   every route, from its @route(...) declaration in app/routes
 #   config/mcp.json       every MCP tool, from app/routes/mcp_tools.py
-#   config/api.md         both, as tables to read
+#   config/api.md         every route, as tables to read
+#   config/mcp.md         every MCP tool, as tables to read
 #
 # Run it after adding or changing a route or a tool, and commit the files with
 # the change. python -m unittest discover app/tests fails while they are out of

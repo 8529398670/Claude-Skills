@@ -224,7 +224,7 @@ PIECES: dict[str, tuple[str, ...]] = {
 DATA_FILES: dict[str, tuple[str, ...]] = {
     "webhooks": ("server/webhooks/webhook_cases.json",),
     "openapi": ("config/openapi.json",),
-    "mcp": ("config/mcp.json",),
+    "mcp": ("config/mcp.json", "config/mcp.md"),
 }
 TOP_LEVEL_KEY = re.compile(r"^[a-z_]+:")
 SWITCH_VALUE = re.compile(r"\b(true|false)\b( *)")

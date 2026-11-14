@@ -74,7 +74,7 @@ An app scaffolded before stamps existed needs one.
    what the app does and add what the template adds. If you can't tell what the
    app needs, ask. Generated files are never merged by hand: for
    `server/routes/routes_generated.go` (Go) and `config/openapi.json`,
-   `mcp.json` and `api.md`, take either side whole, and step 8 writes them
+   `mcp.json`, `api.md` and `mcp.md`, take either side whole, and step 8 writes them
    again.
 5. **Cut out what was left out,** also in the staged files. The report lists each
    left-out upgrade and where its marks are. Marks are only a sample: use the

@@ -164,7 +164,7 @@ def check(skill: str, name: str, cut: set[str], arguments: argparse.Namespace, b
     else:
         regenerate = [arguments.python, "-m", "app.apidocs"]
         steps = [[arguments.python, "-m", "compileall", "-q", "app"]] + ([] if arguments.no_tests else [regenerate, [arguments.python, "-m", "unittest", "discover", "app/tests"]])
-    generated = [project / "config" / file for file in ("openapi.json", "mcp.json", "api.md")]
+    generated = [project / "config" / file for file in ("openapi.json", "mcp.json", "api.md", "mcp.md")]
     shipped = {path: path.read_bytes() for path in generated if path.is_file()}
     for step in steps:
         ok, output = run(step, project)

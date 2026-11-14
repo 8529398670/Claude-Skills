@@ -1,4 +1,4 @@
-"""The three files of the API reference, as the code describes them.
+"""The files of the API reference, as the code describes them.
 
 The route table is build_routes() itself, so every route the app can have is
 there. Nothing is built that a route needs to run: the docs only read the
@@ -11,7 +11,7 @@ from typing import Any
 from starlette.routing import Route
 
 from app import apidocs
-from app.apidocs.markdown import render
+from app.apidocs.markdown import render, render_mcp
 from app.core import assets
 
 CONFIG = assets.CODE_ROOT / "config"
@@ -59,6 +59,7 @@ def documents() -> dict[str, str]:
 
     files["mcp.json"] = manifest.build(build_registry(), document)
     manifest_document = json.loads(files["mcp.json"])
+    files["mcp.md"] = render_mcp(document, manifest_document)
     # <<< feature:mcp
     files["api.md"] = render(document, manifest_document)
     return files

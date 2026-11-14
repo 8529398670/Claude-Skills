@@ -1,5 +1,5 @@
 """config/api.md: the same reference as openapi.json, as tables a person
-reads. Go's server/apidoc/markdown.go renders the same bytes from the same
+reads, and config/mcp.md, the MCP tools the same way. Go's server/apidoc/markdown.go renders the same bytes from the same
 documents, so keep the two in step."""
 from __future__ import annotations
 
@@ -36,8 +36,6 @@ def render(spec: dict[str, Any], manifest: dict[str, Any] | None) -> str:
     for tag in tag_names:
         write(f"- [{tag}](#{slug(tag)})\n")
     write("- [Schemas](#schemas)\n")
-    if manifest is not None:
-        write("- [MCP tools](#mcp-tools)\n")
     write("\n## Calling the API\n\n")
     schemes = components.get("securitySchemes", {})
     table(out, ["Way in", "How"], [
@@ -67,7 +65,7 @@ def render(spec: dict[str, Any], manifest: dict[str, Any] | None) -> str:
             if manifest is not None:
                 names = tools.get(f"{method} {path}")
                 if names is not None:
-                    facts.append(["MCP tool", ", ".join(f"[`{name}`](#{slug(name)})" for name in names)])
+                    facts.append(["MCP tool", ", ".join(f"[`{name}`](mcp.md#{slug(name)})" for name in names)])
                 elif op.get("x-mcp-http"):
                     facts.append(["MCP tool", "None, HTTP only: " + op["x-mcp-http"]])
             errors, success = [], ""
@@ -99,33 +97,47 @@ def render(spec: dict[str, Any], manifest: dict[str, Any] | None) -> str:
         write(f"### {name}\n\n")
         block(out, schemas[name])
 
-    if manifest is not None:
-        write("## MCP tools\n\n")
-        write(f"{manifest.get('description', '')}\n\n")
-        table(out, ["", ""], [
-            ["Endpoint", f"`POST {manifest.get('endpoint', '')}`"],
-            ["Transport", manifest.get("transport", "")],
-            ["Auth", manifest.get("auth", "")],
-        ])
-        table(out, ["Tool", "Route", "Who", "What"], [
-            [f"[`{tool.get('name', '')}`](#{slug(tool.get('name', ''))})", f"`{tool.get('route', '')}`", "admin keys" if tool.get("adminOnly") is True else "any key", tool.get("title", "")]
-            for tool in manifest.get("tools", [])
-        ])
-        for tool in manifest.get("tools", []):
-            write(f"### {tool.get('name', '')}\n\n")
-            write(f"{tool.get('description', '')}\n\n")
-            hints = tool.get("annotations", {})
-            table(out, ["", ""], [
-                ["Route", f"`{tool.get('route', '')}`"],
-                ["Read only", yes(hints.get("readOnlyHint") is True)],
-                ["Destructive", yes(hints.get("destructiveHint") is True)],
-            ])
-            write("**Arguments**\n\n")
-            block(out, tool.get("inputSchema", {}))
-        if manifest.get("http_only"):
-            write("### HTTP only\n\nRoutes an API key may call that have no tool, and why.\n\n")
-            table(out, ["Route", "Why"], [[f"`{entry.get('route', '')}`", entry.get("reason", "")] for entry in manifest["http_only"]])
     return "".join(out).rstrip("\n") + "\n"
+
+
+def render_mcp(spec: dict[str, Any], manifest: dict[str, Any]) -> str:
+    """config/mcp.md: mcp.json as tables a person reads, beside api.md, which
+    each tool's route links into. Go's MCPMarkdown renders the same bytes."""
+    out: list[str] = []
+    write = out.append
+    title = spec.get("info", {}).get("title", "").removesuffix(" API")
+    write(f"# {title} MCP tools\n\n")
+    write("This file is generated: do not edit it. Change the tools next to their handlers and run `scripts/api_docs.sh`. Every route is in [api.md](api.md).\n\n")
+    write(f"{manifest.get('description', '')}\n\n")
+    table(out, ["", ""], [
+        ["Endpoint", f"`POST {manifest.get('endpoint', '')}`"],
+        ["Transport", manifest.get("transport", "")],
+        ["Auth", manifest.get("auth", "")],
+    ])
+    table(out, ["Tool", "Route", "Who", "What"], [
+        [f"[`{tool.get('name', '')}`](#{slug(tool.get('name', ''))})", route_link(tool.get('route', '')), "admin keys" if tool.get("adminOnly") is True else "any key", tool.get("title", "")]
+        for tool in manifest.get("tools", [])
+    ])
+    for tool in manifest.get("tools", []):
+        write(f"## {tool.get('name', '')}\n\n")
+        write(f"{tool.get('description', '')}\n\n")
+        hints = tool.get("annotations", {})
+        table(out, ["", ""], [
+            ["Route", route_link(tool.get('route', ''))],
+            ["Read only", yes(hints.get("readOnlyHint") is True)],
+            ["Destructive", yes(hints.get("destructiveHint") is True)],
+        ])
+        write("**Arguments**\n\n")
+        block(out, tool.get("inputSchema", {}))
+    if manifest.get("http_only"):
+        write("## HTTP only\n\nRoutes an API key may call that have no tool, and why.\n\n")
+        table(out, ["Route", "Why"], [[route_link(entry.get('route', '')), entry.get("reason", "")] for entry in manifest["http_only"]])
+    return "".join(out).rstrip("\n") + "\n"
+
+
+def route_link(route: str) -> str:
+    """A tool's route, linked to its section of api.md."""
+    return f"[`{route}`](api.md#{slug(route)})"
 
 
 def content(out: list[str], types: dict[str, Any]) -> None:
