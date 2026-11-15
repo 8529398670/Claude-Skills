@@ -667,6 +667,11 @@ var (
 	targetPattern    = regexp.MustCompile( `^[a-z0-9]+/[a-z0-9]+$` )
 	binaryPattern    = regexp.MustCompile( `^[A-Za-z0-9][A-Za-z0-9._-]*$` )
 	secretPattern    = regexp.MustCompile( `^[0-9a-fA-F]{64}$` )
+	// originPattern is the whole of an accepted server.public_url: a plain
+	// hostname or IP (IPv6 in brackets), an optional port, an optional
+	// trailing /. Nothing else, because scripts\run.bat and login.bat print
+	// the URL, and cmd would run what follows a & | < > ^ % or ".
+	originPattern    = regexp.MustCompile( `^(?i:https?)://([A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?/?$` )
 )
 
 // Validate rejects values that would fail later in a confusing way -- a port
@@ -714,7 +719,7 @@ func ( file *File ) Validate() ( err error ) {
 	check( strings.TrimSpace( server.Host ) != "" , "server.host must not be empty" )
 	check( server.Port >= 1 && server.Port <= 65535 , "server.port must be 1-65535, got %d" , server.Port )
 	check( validPublicURL( server.PublicURL ) ,
-		"server.public_url %q must be empty or a bare origin like https://app.example.com (http or https, no path)" , server.PublicURL )
+		"server.public_url %q must be empty or a bare origin like https://app.example.com (http or https, a plain hostname or IP, optional port, no path)" , server.PublicURL )
 	check( strings.TrimSpace( server.CookieName ) != "" , "server.cookie_name must not be empty" )
 	check( strings.TrimSpace( server.ProxyHeader ) != "" , "server.proxy_header must not be empty" )
 	check( server.TrustProxy == false || len( server.TrustedProxies ) > 0 ,
@@ -817,7 +822,8 @@ func validPublicURL( value string ) ( result bool ) {
 	}
 	parsed , err := url.Parse( value )
 	result = err == nil && ( parsed.Scheme == "http" || parsed.Scheme == "https" ) && parsed.Host != "" &&
-		( parsed.Path == "" || parsed.Path == "/" ) && parsed.RawQuery == "" && parsed.Fragment == "" && parsed.User == nil
+		( parsed.Path == "" || parsed.Path == "/" ) && parsed.RawQuery == "" && parsed.Fragment == "" && parsed.User == nil &&
+		originPattern.MatchString( value )
 	return
 }
 

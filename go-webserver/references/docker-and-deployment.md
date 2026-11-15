@@ -203,8 +203,12 @@ and the dependencies before a release -- and scan the built image too, which
   (no `app.db`, no `.<slug>-data` marker, which it leaves in every data
   directory it sets up). The marker is written as root inside the container
   as well as from the host, because after the first chown the host user can
-  no longer touch anything in the data directory on Linux. It also prints any
-  `docker:` setting that changed since the last run (`.run/docker.last`).
+  no longer touch anything in the data directory on Linux. Any other
+  `docker:` setting that changed since the last run (`.run/docker.last`,
+  written on the host and never mounted) is shown and waits for a yes before
+  anything acts on it: the script asks at a terminal, and without one it stops
+  unless run as `docker/run.sh --accept-docker-changes`. The check runs inside
+  `build_image`, so `build.sh`, `restore.sh` and `rotate-key.sh` ask too.
 - **`--read-only`** plus a `noexec,nosuid` tmpfs for `/tmp`: the container
   cannot write to its own filesystem. This is what turns the Dockerfile's
   ownership choices into an actual guarantee. The tmpfs also holds the control

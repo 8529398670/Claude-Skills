@@ -164,7 +164,8 @@ Ask a binary which file it uses, without starting it:
 Login, invite and API-key links are printed as one full URL. The server
 cannot see what sits in front of it, so it takes the origin from
 `server.public_url` (e.g. `https://app.example.com`; validated as a bare
-http(s) origin, no path). Empty, it falls back to the listen address --
+http(s) origin, no path: a plain hostname or IP and an optional port, because
+`scripts\run.bat` prints it and cmd would run what follows a `&` or `|`). Empty, it falls back to the listen address --
 `http://server.host:server.port`, a wildcard host shown as `127.0.0.1` -- or,
 inside the container, to `http://docker.bind_address:docker.host_port`. Every
 printed link says which of those it used, so a `127.0.0.1` link is not

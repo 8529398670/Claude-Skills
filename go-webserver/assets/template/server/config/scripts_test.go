@@ -35,3 +35,44 @@ func TestRunDirIsPrivate( t *testing.T ) {
 		}
 	}
 }
+
+// F12: config.yaml is writable from inside the container, so a docker:
+// section that changed since the last start waits for a yes at the host.
+// .run/docker.last is the copy that counts; the container never sees it.
+func TestDockerChangesWaitForAYes( t *testing.T ) {
+	if runtime.GOOS == "windows" { t.Skip( "docker/run.sh is for unix shells" ) }
+	lib , err := filepath.Abs( "../../docker/lib.sh" )
+	if err != nil { t.Fatal( err ) }
+	const was = "docker_container='app'"
+	const now = "docker_container='someone-elses'"
+	cases := []struct {
+		name   string
+		last   string // "" means no .run/docker.last yet
+		accept string
+		ok     bool
+		after  string
+	}{
+		{ "first start" , "" , "false" , true , "" },
+		{ "unchanged" , now , "false" , true , now },
+		{ "changed, no terminal, no flag" , was , "false" , false , was },
+		{ "changed, --accept-docker-changes" , was , "true" , true , now },
+	}
+	for _ , test := range cases {
+		dir := t.TempDir()
+		last_file := filepath.Join( dir , ".run" , "docker.last" )
+		if test.last != "" {
+			os.MkdirAll( filepath.Dir( last_file ) , 0o700 )
+			os.WriteFile( last_file , []byte( test.last + "\n" ) , 0o600 )
+		}
+		command := exec.Command( "bash" , "-c" ,
+			`set -euo pipefail; source "$1"; DOCKER_SETTINGS="$2"; ACCEPT_DOCKER_CHANGES="$3"; confirm_docker_changes` ,
+			"bash" , lib , now , test.accept )
+		command.Dir = dir
+		output , run_err := command.CombinedOutput()
+		if ( run_err == nil ) != test.ok { t.Errorf( "%s: ok = %v, want %v: %s" , test.name , run_err == nil , test.ok , output ) }
+		if test.after != "" {
+			got , _ := os.ReadFile( last_file )
+			if string( got ) != test.after + "\n" { t.Errorf( "%s: docker.last = %q, want %q" , test.name , got , test.after ) }
+		}
+	}
+}

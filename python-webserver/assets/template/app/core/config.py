@@ -712,6 +712,11 @@ _RESTART = re.compile(r"^(no|always|unless-stopped|on-failure(:[0-9]+)?)$")
 _SIZE = re.compile(r"^[0-9]+[bkmgBKMG]?$")
 _CPUS = re.compile(r"^[0-9]+(\.[0-9]+)?$")
 _SECRET = re.compile(r"^[0-9a-fA-F]{64}$")
+# The whole of an accepted server.public_url: a plain hostname or IP (IPv6 in
+# brackets), an optional port, an optional trailing /. Nothing else, because
+# scripts\run.bat and login.bat print the URL, and cmd would run what follows
+# a & | < > ^ % or ".
+_ORIGIN = re.compile(r"^(?i:https?)://([A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?/?$")
 
 
 def _valid_repo(value: str) -> bool:
@@ -759,6 +764,7 @@ def _valid_public_url(value: str) -> bool:
         and not parts.query
         and not parts.fragment
         and parts.username is None
+        and _ORIGIN.fullmatch(value) is not None
     )
 
 
@@ -811,7 +817,7 @@ def validate(file: File) -> list[str]:
     check(
         _valid_public_url(server.public_url),
         f"server.public_url {server.public_url!r} must be empty or a bare origin like "
-        "https://app.example.com (http or https, no path)",
+        "https://app.example.com (http or https, a plain hostname or IP, optional port, no path)",
     )
     check(server.cookie_name.strip() != "", "server.cookie_name must not be empty")
     check(server.proxy_header.strip() != "", "server.proxy_header must not be empty")

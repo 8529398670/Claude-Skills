@@ -3,6 +3,33 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After c396a24
+
+**Two template security fixes from the review (2026-11-14): F11 and F12.**
+
+- **F11: `server.public_url` must be a plain origin.** `scripts\run.bat` and
+  `login.bat` printed it unquoted, so `https://a&calc&b` ran `calc`. The
+  check now takes only `http(s)://`, a hostname or IP (IPv6 in brackets), an
+  optional port and an optional `/`. Take `_valid_public_url` and its pattern
+  (`_ORIGIN`) in `app/core/config.py`, and the .bat lines that print a URL, which now
+  use `setlocal EnableDelayedExpansion` / `echo(!url!` / `endlocal`. Test:
+  `PublicURLTest in the new app/tests/test_public_url.py`. An app whose config.yaml has an odd `public_url` will now refuse
+  to start, with a message naming it.
+- **F12: a changed `docker:` section waits for a yes at the host.** config.yaml
+  is writable from inside the container, so a compromised container could
+  steer the next `docker/run.sh` (`docker rm -f` another container, publish on
+  0.0.0.0, retag an image). `confirm_docker_changes` in `docker/lib.sh` runs
+  inside `build_image`: if `.run/docker.last` exists and differs, it shows the
+  change and asks; with no terminal it stops unless the script was run as
+  `docker/run.sh --accept-docker-changes`. A yes is written to `docker.last` at
+  once. `docker/run.sh` takes the flag (and now refuses other arguments) and
+  drops its own "settings changed" notice. Take `docker/lib.sh` and
+  `docker/run.sh`. Test: `DockerChangesTest in app/tests/test_scripts.py`. Tell the user: anything that runs
+  `docker/run.sh` unattended (cron, CI) needs `--accept-docker-changes` after a
+  `docker:` edit.
+- Both regression tests are security tests, so `prune.py` keeps them in apps
+  stamped `tests: false` too.
+
 ## After 3731d9a
 
 **`config/openapi.json` is now `config/api.json`, served at `GET /api/api.json`

@@ -52,6 +52,9 @@ rem permissions -- none of docker\run.sh's read-only filesystem, dropped
 rem capabilities, or pid and memory limits apply -- so use Docker for anything
 rem long-lived or internet-facing.
 setlocal
+rem Lines that print a URL turn delayed expansion on just for themselves and
+rem use !url!: that is expanded after cmd has parsed the line, so a & or | in
+rem the value is printed, not run. Validate already refuses those characters.
 cd /d "%~dp0.."
 
 rem >>> template demo -- scaffold.py removes this block from every project.
@@ -133,13 +136,19 @@ echo   and %secret_file%
 echo   (secret.key holds a new key -- back it up with the database; it is the
 echo   only thing that can read it).
 echo.
-echo It will serve %url%
-echo   (from %url_source%).
+setlocal EnableDelayedExpansion
+echo(It will serve !url!
+endlocal
+setlocal EnableDelayedExpansion
+echo(  (from !url_source!).
+endlocal
 if not "%secure_cookies%"=="true" goto first_done
 if not "%url:~0,7%"=="http://" goto first_done
 call :config_line secure_cookies
 echo.
-echo server.secure_cookies is true. That is right behind HTTPS, but at %url%
+setlocal EnableDelayedExpansion
+echo(server.secure_cookies is true. That is right behind HTTPS, but at !url!
+endlocal
 echo the browser drops a Secure cookie and signing in silently does nothing.
 echo For local use, change line %LINE% of %config_file%:
 echo.
@@ -193,7 +202,9 @@ exit /b 1
 if not "%secure_cookies%"=="true" goto cookies_ok
 if not "%url:~0,7%"=="http://" goto cookies_ok
 call :config_line secure_cookies
-echo WARNING: server.secure_cookies is true but the URL is %url%.
+setlocal EnableDelayedExpansion
+echo(WARNING: server.secure_cookies is true but the URL is !url!.
+endlocal
 echo          The browser will drop the session cookie and signing in will silently
 echo          do nothing. Set it to false on line %LINE% of %config_file%
 echo          for local use, or set server.public_url to the https:// address in front.
@@ -210,8 +221,12 @@ set "CONTROL_NOTE=%control_socket_path%  (manage works while it runs)"
 if not "%control_socket%"=="true" set "CONTROL_NOTE=off (server.control_socket: false) -- manage needs the server stopped"
 
 echo Starting {{PROJECT_SLUG}} %VERSION% (commit %COMMIT%)
-echo   url       %url%
-echo             from %url_source%
+setlocal EnableDelayedExpansion
+echo(  url       !url!
+endlocal
+setlocal EnableDelayedExpansion
+echo(            from !url_source!
+endlocal
 echo   config    %config_file%
 echo   app dir   %app_dir%
 echo   database  %database%  (%DB_NOTE%)
