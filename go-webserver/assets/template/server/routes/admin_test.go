@@ -225,23 +225,54 @@ func TestAnAdminKeyManagesAccounts( t *testing.T ) {
 	if status , _ = fixture.withKey( t , user_key , http.MethodPost , "/api/admin/users" , fiber.Map{ "display_name": "Eve" , "role": "admin" } ); status != fiber.StatusForbidden { t.Fatalf( "narrowed key made an account: %d" , status ) }
 }
 
-// S9: a login link becomes an ordinary browser session, so no API key may
-// make one for its own account, not even one with the account's full role. A
-// browser session still gets its link.
-func TestNoKeyMakesItsOwnLoginLink( t *testing.T ) {
+// S9: a login link becomes an ordinary browser session, so an API key may
+// make one for its own account only once that account allowed it, from a
+// session. Its link then works once and for at most 15 minutes, whatever it
+// asked for. A browser session always gets its link.
+func TestAKeyMakesItsOwnLoginLinkOnlyWhenAllowed( t *testing.T ) {
 	fixture := newAuthFixture( t )
-	narrow , _ , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "narrow" , models.RoleUser , time.Hour )
+	narrow , narrow_key , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "narrow" , models.RoleUser , time.Hour )
 	if err != nil { t.Fatal( err ) }
 	admin , _ , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "admin" , models.RoleAdmin , time.Hour )
 	if err != nil { t.Fatal( err ) }
-	full , _ , err := models.IssueAPIKey( fixture.store , fixture.alice.ID , "full" , models.RoleUser , time.Hour )
+	full , full_key , err := models.IssueAPIKey( fixture.store , fixture.alice.ID , "full" , models.RoleUser , time.Hour )
 	if err != nil { t.Fatal( err ) }
+	unlimited := fiber.Map{ "max_uses": 0 , "expires_in_minutes": 0 }
 	for _ , key := range []string{ narrow , admin , full } {
-		if status , reply := fixture.withKey( t , key , http.MethodPost , "/api/account/login-link" , fiber.Map{ "max_uses": 0 , "expires_in_minutes": 0 } ); status != fiber.StatusForbidden {
-			t.Fatalf( "a key made its own login link: %d %v" , status , reply )
+		if status , reply := fixture.withKey( t , key , http.MethodPost , "/api/account/login-link" , unlimited ); status != fiber.StatusForbidden {
+			t.Fatalf( "a key made its own login link unasked: %d %v" , status , reply )
 		}
 	}
-	status , reply := send( t , fixture.signIn( t , fixture.alice.ID ) , "/api/account/login-link" , fiber.Map{} )
+
+	// A key cannot allow itself, and nobody but the key's own account can.
+	allow := fiber.Map{ "may_sign_in": true }
+	if status , _ := fixture.withKey( t , narrow , http.MethodPost , "/api/keys/"+narrow_key.ID+"/sign-in" , allow ); status != fiber.StatusForbidden {
+		t.Fatalf( "a key allowed itself: %d" , status )
+	}
+	owner_session := fixture.signIn( t , fixture.owner.ID )
+	if status , _ := send( t , owner_session , "/api/keys/"+full_key.ID+"/sign-in" , allow ); status != fiber.StatusNotFound {
+		t.Fatalf( "the owner allowed someone else's key: %d" , status )
+	}
+	if status , reply := send( t , owner_session , "/api/keys/"+narrow_key.ID+"/sign-in" , allow ); status != fiber.StatusOK || reply[ "may_sign_in" ] != true {
+		t.Fatalf( "allowing own key: %d %v" , status , reply )
+	}
+
+	status , reply := fixture.withKey( t , narrow , http.MethodPost , "/api/account/login-link" , unlimited )
+	if status != fiber.StatusOK { t.Fatalf( "allowed key: %d %v" , status , reply ) }
+	if seconds := reply[ "expires_in_seconds" ].( float64 ); seconds <= 0 || seconds > 15*60 { t.Fatalf( "a key's link lasts %v seconds" , seconds ) }
+	path := reply[ "login_path" ].( string )
+	if fixture.loginWith( t , path ) == false { t.Fatal( "the key's link did not sign in" ) }
+	if fixture.loginWith( t , path ) { t.Fatal( "the key's link worked twice" ) }
+
+	// Turned off again, the unused link it made stops working and the key is
+	// refused again.
+	_ , reply = fixture.withKey( t , narrow , http.MethodPost , "/api/account/login-link" , fiber.Map{} )
+	unused := reply[ "login_path" ].( string )
+	if status , _ := send( t , owner_session , "/api/keys/"+narrow_key.ID+"/sign-in" , fiber.Map{ "may_sign_in": false } ); status != fiber.StatusOK { t.Fatalf( "turning off: %d" , status ) }
+	if fixture.loginWith( t , unused ) { t.Fatal( "an unused link worked after turning sign-in links off" ) }
+	if status , _ := fixture.withKey( t , narrow , http.MethodPost , "/api/account/login-link" , fiber.Map{} ); status != fiber.StatusForbidden { t.Fatalf( "turned off, still allowed: %d" , status ) }
+
+	status , reply = send( t , fixture.signIn( t , fixture.alice.ID ) , "/api/account/login-link" , fiber.Map{} )
 	if status != fiber.StatusOK || fixture.loginWith( t , reply[ "login_path" ].( string ) ) == false { t.Fatalf( "session: %d %v" , status , reply ) }
 }
 

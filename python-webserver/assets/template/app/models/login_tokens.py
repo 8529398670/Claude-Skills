@@ -340,6 +340,17 @@ def delete_pending_login_tokens(tx: Transaction, user_id: int) -> int:
     )
 
 
+def void_unused_links_minted_by_key(tx: Transaction, key_id: str) -> int:
+    """Delete every login link the key made that could still sign someone in,
+    and nothing else: what turning off a key's sign-in links does."""
+    if not key_id:
+        return 0
+    return tx.delete_where(
+        BUCKET_LOGIN_TOKENS,
+        lambda _key, record: record.get("minted_by_key") == key_id and LoginToken.from_record(record).usable(),
+    )
+
+
 def void_links_minted_by_key(tx: Transaction, key_id: str) -> int:
     """What keeps revoking a key meaningful now that a key may hand out login
     links and invite links: inside the caller's transaction (the one revoking

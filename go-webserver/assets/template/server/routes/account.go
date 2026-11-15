@@ -226,22 +226,44 @@ func ( handlers *Handlers ) setPin( c fiber.Ctx , in *pinRequest ) ( reply *pinR
 // has the same effect: any link the account could still use stops working,
 // and existing sessions stay signed in.
 //
-// Only a browser session may ask. An API key may not: the link becomes an
-// ordinary browser session, which would open everything kept from keys (the
-// API keys card, the owner's screens, minting keys) to whoever holds one.
+// A browser session may always ask. An API key may only when its account
+// turned that on for it, from a session (POST /api/keys/{key_id}/sign-in):
+// the link becomes an ordinary browser session, which opens everything kept
+// from keys (the API keys card, the owner's screens, minting keys) to whoever
+// holds the key. A key's link works once and for at most 15 minutes,
+// whatever it asked for, and revoking the key voids it while it is unused.
 //
 // @route("POST /api/account/login-link", summary="A login link for yourself",
-//     tag="Account", access=SESSION_ONLY,
-//     description="A link that signs your own account in on a browser or another device. Only a browser "
-//         "session may ask: an API key is refused, so that a key cannot turn itself into a session.",
+//     tag="Account",
+//     description="A link that signs your own account in on a browser or another device. An API key may "
+//         "ask only if your account let it, from a browser session (POST /api/keys/{key_id}/sign-in); "
+//         "its link works once, for at most 15 minutes.",
+//     mcp_note="Only works if this key was allowed to make sign-in links, on the API keys card. Answers "  // feature:mcp
+//         "with login_url (open it to sign in; it works once, for at most 15 minutes), expires_at and "  // feature:mcp
+//         "max_uses. Any older link the account could still use stops working; its signed-in devices "  // feature:mcp
+//         "stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs "  // feature:mcp
+//         "out every device it signed in.",  // feature:mcp
+//     mcp="create_my_login_link", call=withLoginLinkURL,  // feature:mcp
 // )
 func ( handlers *Handlers ) createMyLoginLink( c fiber.Ctx , in *models.LoginLinkRequest ) ( reply *loginLinkReply , err error ) {
 	actor := security.ActorFrom( c )
+	// >>> feature:api_keys
+	if actor.ViaAPIKey() && actor.APIKey.MaySignIn == false {
+		err = refuse( fiber.StatusForbidden , "this key may not make sign-in links: turn that on for it on the API keys card" )
+		return
+	}
+	// <<< feature:api_keys
 	options , refused := handlers.loginLinkOptions( c , *in )
 	if refused != nil {
 		err = refused
 		return
 	}
+	// >>> feature:api_keys
+	if actor.ViaAPIKey() {
+		options.MaxUses , options.Unlimited = 1 , false
+		if options.TTL <= 0 || options.TTL > models.KeyLoginLinkTTL { options.TTL = models.KeyLoginLinkTTL }
+	}
+	// <<< feature:api_keys
 	credential , info , err := models.IssueLoginLink( handlers.Store , actor.User.ID , options )
 	if err != nil { return }
 	handlers.audit( c , logs.KindAuth , "own login link created" , fiber.Map{ "max_uses": info.MaxUses , "expires_at": info.ExpiresAt } )

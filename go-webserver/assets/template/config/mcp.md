@@ -37,6 +37,7 @@ Every tool POST /mcp offers. Written by scripts/api_docs.sh from the registered 
 | [`admin_storage`](#admin_storage) | [`GET /api/admin/storage`](api.md#get-apiadminstorage) | admin keys | Storage for everyone (admin) |
 | [`admin_switch_on_invite_link`](#admin_switch_on_invite_link) | [`POST /api/admin/invite-links/{link_id}/switch-on`](api.md#post-apiadmininvite-linkslink_idswitch-on) | admin keys | Switch an invite link back on (admin) |
 | [`cancel_my_login_link`](#cancel_my_login_link) | [`POST /api/account/login-link/cancel`](api.md#post-apiaccountlogin-linkcancel) | any key | Stop your own login link working |
+| [`create_my_login_link`](#create_my_login_link) | [`POST /api/account/login-link`](api.md#post-apiaccountlogin-link) | any key | A login link for yourself |
 | [`files_delete`](#files_delete) | [`POST /api/files/{file_id}/delete`](api.md#post-apifilesfile_iddelete) | any key | Delete a file |
 | [`files_download_url`](#files_download_url) | [`GET /api/files/{file_id}/download`](api.md#get-apifilesfile_iddownload) | any key | Where to download a file |
 | [`files_finish_upload`](#files_finish_upload) | [`POST /api/files/{file_id}/finish`](api.md#post-apifilesfile_idfinish) | any key | Finish an upload |
@@ -508,6 +509,23 @@ Void your account's live login link without making a new one. Devices it already
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
+
+## create_my_login_link
+
+A link that signs your own account in on a browser or another device. An API key may ask only if your account let it, from a browser session (POST /api/keys/{key_id}/sign-in); its link works once, for at most 15 minutes. Only works if this key was allowed to make sign-in links, on the API keys card. Answers with login_url (open it to sign in; it works once, for at most 15 minutes), expires_at and max_uses. Any older link the account could still use stops working; its signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs out every device it signed in.
+
+|  |  |
+|---|---|
+| Route | [`POST /api/account/login-link`](api.md#post-apiaccountlogin-link) |
+| Read only | no |
+| Destructive | no |
+
+**Arguments**
+
+| Field | Type | Required | Limits | Description |
+|---|---|---|---|---|
+| `expires_in_minutes` | integer or null | no | 0 to 525600 | 0 never expires. Default auth.login_token_ttl_seconds for a link that works once, auth.multi_use_login_token_ttl_seconds otherwise. |
+| `max_uses` | integer or null | no | 0 to 1000 | Sign-ins the link allows: 1-1000, or 0 for unlimited. Default 1. |
 
 ## files_delete
 

@@ -49,8 +49,10 @@ project.
   carries the same admin/user role a person does -- one permission model, not
   two -- sent as `Authorization: Bearer <key>`. A key can never outrank the
   account that owns it. It cannot mint keys, but an admin key can create
-  accounts and hand out login and invite links. No key can make a login link
-  for its own account, so a key never turns itself into a browser session.
+  accounts and hand out login and invite links. A key makes a login link for
+  its own account only once that account switched it on for that key, from a
+  browser session ("Sign-in links" on the API keys card); its links work once,
+  for 15 minutes. Off, the default, a key never turns itself into a session.
   Every link records the key
   that made it, and revoking or deleting the key voids the ones still unused.
   That is what lets a cron job, a CI pipeline, or a sidecar call the app.
@@ -695,8 +697,8 @@ gets `"role":"user"` back, because the effective role is the lower of the two.
 Also confirm a non-admin is refused when asking for an admin key, that a key
 cannot mint a key (403, session required), that an admin key gets 201 from
 `POST /api/admin/users` with a working `login_path`, that the admin's
-user-scoped key gets 403 from `POST /api/account/login-link` (the session
-would be an admin's), and that revoking a key kills it on the next request
+keys get 403 from `POST /api/account/login-link` until "Sign-in links" is
+switched on for them (then a link that works once), and that revoking a key kills it on the next request
 and voids the unused link it made. `manage list-keys` works from a shell either way.
 
 Then `/mcp` with the same two keys (`go test ./server/routes -run MCP` covers

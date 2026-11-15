@@ -279,9 +279,16 @@ func TestMCPAccountTools( t *testing.T ) {
 		t.Fatalf( "admin_create_user: %s" , text )
 	}
 
-	// S9: no key may make itself a login link, so there is no tool for it.
+	// S9: a key makes itself a login link only once its account allowed it.
 	_ , reply = fixture.post( t , fixture.admin_key , callTool( "create_my_login_link" , `{}` ) )
-	if _ , refused := reply[ "error" ]; refused == false { t.Errorf( "a key made its own login link: %v" , reply ) }
+	if failed , text = toolFailed( t , reply ); failed == false || strings.Contains( text , "may not make sign-in links" ) == false {
+		t.Errorf( "a key made its own login link unasked: %s" , text )
+	}
+	if _ , err := models.SetAPIKeySignIn( fixture.store , strings.SplitN( fixture.admin_key , "." , 2 )[ 0 ] , fixture.owner.ID , true ); err != nil { t.Fatal( err ) }
+	_ , reply = fixture.post( t , fixture.admin_key , callTool( "create_my_login_link" , `{}` ) )
+	if failed , text = toolFailed( t , reply ); failed || strings.Contains( text , "login_url" ) == false {
+		t.Errorf( "allowed key's own link: %s" , text )
+	}
 
 	// The owner rules hold through the tools.
 	_ , reply = fixture.post( t , fixture.admin_key , callTool( "admin_set_user_role" , `{"user_id":`+itoa( fixture.owner.ID )+`,"role":"user"}` ) )

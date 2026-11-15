@@ -118,9 +118,16 @@ class MCPParity(RoutesTestCase):
         self.assertFalse(failed, reply)
         self.assertTrue(reply["login_url"].startswith("http") and "/login/" in reply["login_url"], reply)
 
-        # S9: no key may make itself a login link, so there is no tool for it.
-        status, reply = self.call("POST", "/mcp", key=self.admin_key, body={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "create_my_login_link", "arguments": {}}})
-        self.assertIn("error", reply, reply)
+        # S9: a key makes itself a login link only once its account allowed it.
+        failed, reply = tool("create_my_login_link", {}, self.admin_key)
+        self.assertTrue(failed)
+        self.assertIn("may not make sign-in links", reply["error"])
+        from app.models import api_keys
+
+        api_keys.set_api_key_sign_in(self.store, self.admin_key.split(".", 1)[0], self.owner.id, True)
+        failed, reply = tool("create_my_login_link", {}, self.admin_key)
+        self.assertFalse(failed, reply)
+        self.assertIn("login_url", reply)
 
         # The owner rules hold through the tools.
         self.assertTrue(tool("admin_set_user_role", {"user_id": self.owner.id, "role": "user"}, self.admin_key)[0])

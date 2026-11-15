@@ -3,6 +3,33 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 2ad0dbf
+
+**S9 gets an opt-in: a key may make sign-in links once you switch it on.**
+A feature. Take it with the S9 fix, or after it. Off by default, so an app
+that takes it behaves as after 236539f until someone flips the switch.
+
+- `APIKey.may_sign_in` (`app/models/api_keys.py`), `set_api_key_sign_in`
+  (only the key's own account; switching off voids the key's unused login
+  links through `login_tokens.void_unused_links_minted_by_key`) and
+  `KEY_LOGIN_LINK_TTL_SECONDS` (15 minutes).
+- `POST /api/keys/{key_id}/sign-in` (`set_my_key_sign_in`, session-only, no
+  admin version) in `app/routes/api_keys.py`; the `APIKey` reply gains
+  `may_sign_in`.
+- `POST /api/account/login-link` is no longer `SESSION_ONLY`: a key without
+  the switch gets 403, a key with it gets a link that works once, for at most
+  15 minutes. The `create_my_login_link` MCP tool is back
+  (`app/routes/account.py`). Run `scripts/api_docs.sh`.
+- The API keys card: a "Sign-in links: off/on" button on your own keys
+  (`static/js/keys.js` `signInButton`, `statusCell`; `Api.setKeySignIn` in
+  `static/js/api.js`) and the `api_keys.sign_in_*` and `status_sign_in`
+  strings in `config/language.yaml`.
+- An app that kept its own MCP tool for this points it at the same check
+  instead of removing it.
+- Tests: `test_a_key_makes_its_own_login_link_only_when_allowed`
+  (test_admin_users.py, replaces `test_no_key_makes_its_own_login_link`),
+  `test_mcp_parity.py`.
+
 ## After 236539f
 
 **Security fixes from the third review (2026-11-15): S9 to S17. Take them as

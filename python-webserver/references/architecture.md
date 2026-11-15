@@ -459,10 +459,14 @@ two-factor, other people's files, and the owner's screens.
 Accounts and sign-in are not on that list. An admin key may create and delete
 accounts, change roles, reset two-factor, hand out login links and invite links
 and sign devices out; any key may list and sign out its own account's devices
-and make that account a login link. That last one needs a key carrying the
-account's full role (`actor.role == actor.user.role`): the link becomes a
-session, and a session acts with the account's role, so an admin's user-scoped
-key would otherwise turn itself into an admin.
+and make that account a login link. That last one is off for every key until
+the account switches it on for that key (`APIKey.may_sign_in`, set only from a browser
+session by the key's own account, not by an admin, not even the owner). The
+link becomes an ordinary browser session, which can do everything kept from
+keys, so without the switch a leaked key would turn itself into a session. A
+key's link works once and for at most 15 minutes, whatever it asked for.
+Switching it off voids the key's unused links; the browsers they already
+signed in stay signed in until the key is revoked.
 
 What keeps revoking a leaked key meaningful is provenance. Every login link and
 invite link records the key that made it (`minted_by_key`, from

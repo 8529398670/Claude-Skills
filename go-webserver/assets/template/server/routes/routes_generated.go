@@ -14,11 +14,10 @@ import (
 func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 	apidoc.Mount( app , "POST" , "/api/account/login-link" , apidoc.Op{
 		Summary: "A login link for yourself",
-		Description: "A link that signs your own account in on a browser or another device. Only a browser session may ask: an API key is refused, so that a key cannot turn itself into a session.",
+		Description: "A link that signs your own account in on a browser or another device. An API key may ask only if your account let it, from a browser session (POST /api/keys/{key_id}/sign-in); its link works once, for at most 15 minutes.",
 		Tag: "Account",
-		Access: apidoc.SessionOnly,
 		Errors: []int{ 400 , 401 , 403 },
-	} , handlers.createMyLoginLink , handlers.Guard.RequireLogin , handlers.Guard.RequireSession )
+	} , handlers.createMyLoginLink , handlers.Guard.RequireLogin )
 	apidoc.Mount( app , "POST" , "/api/account/login-link/cancel" , apidoc.Op{
 		Summary: "Stop your own login link working",
 		Description: "Void your account's live login link without making a new one. Devices it already signed in stay signed in. Answers with removed: 0 or 1.",
@@ -592,6 +591,14 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 		Feature: "api_keys",
 		Errors: []int{ 400 , 401 , 403 , 404 },
 	} , handlers.revokeMyAPIKey , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireLogin , handlers.Guard.RequireSession )
+	apidoc.Mount( app , "POST" , "/api/keys/{key_id}/sign-in" , apidoc.Op{
+		Summary: "Let one of your keys make sign-in links",
+		Description: "Off by default. When on, the key may ask POST /api/account/login-link for a link that signs your account in on a browser, which then can do everything you can, including what keys may not. The link works once, for at most 15 minutes.",
+		Tag: "API keys",
+		Access: apidoc.SessionOnly,
+		Feature: "api_keys",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.setMyAPIKeySignIn , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireLogin , handlers.Guard.RequireSession )
 	// <<< feature:api_keys
 	apidoc.MountStream( app , "GET" , "/api/language" , apidoc.Op{
 		Summary: "The UI's text",
@@ -1146,6 +1153,11 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		Description: "Void your account's live login link without making a new one. Devices it already signed in stay signed in. Answers with removed: 0 or 1.",
 		Destructive: true,
 	} , nil ) )
+	server.Register( mcp.ForRoute( "POST /api/account/login-link" , handlers.createMyLoginLink , mcp.Tool{
+		Name: "create_my_login_link",
+		Title: "A login link for yourself",
+		Description: "A link that signs your own account in on a browser or another device. An API key may ask only if your account let it, from a browser session (POST /api/keys/{key_id}/sign-in); its link works once, for at most 15 minutes. Only works if this key was allowed to make sign-in links, on the API keys card. Answers with login_url (open it to sign in; it works once, for at most 15 minutes), expires_at and max_uses. Any older link the account could still use stops working; its signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs out every device it signed in.",
+	} , withLoginLinkURL ) )
 	// >>> feature:files
 	server.Register( mcp.ForRoute( "POST /api/files/{file_id}/delete" , handlers.deleteMyFile , mcp.Tool{
 		Name: "files_delete",

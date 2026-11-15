@@ -50,6 +50,13 @@ type APIKey struct {
 	// and rows from before this field read as zero too. It is what lets the
 	// person a key acts as see that someone else made it.
 	CreatedBy uint64 `json:"created_by,omitempty"`
+	// MaySignIn lets this key ask for a login link for its own account
+	// (POST /api/account/login-link). Off by default: the link becomes an
+	// ordinary browser session, so a key that may make one is as good as a
+	// session to whoever holds it. Only the key's own account turns it on,
+	// and only from a browser session (SetAPIKeySignIn). The links it makes
+	// work once and for at most KeyLoginLinkTTL.
+	MaySignIn bool `json:"may_sign_in,omitempty"`
 	// Set by DeleteAPIKey. A deleted key is dead and out of every listing,
 	// but RestoreAPIKey can bring it back for RestoreWindow.
 	SoftDelete
@@ -60,6 +67,7 @@ var (
 	ErrAPIKeyRole     = errors.New( "an API key cannot be given a role its owner does not have" )
 	ErrAPIKeyDisabled = errors.New( "cannot issue an API key for a disabled account" )
 	ErrAPIKeyDead     = errors.New( "only a live API key can have its expiry changed" )
+	ErrAPIKeyNotYours = errors.New( "only the account a key acts as may let it make sign-in links" )
 )
 
 const (
@@ -447,6 +455,51 @@ func RenameAPIKey( store *db.Store , key_id string , actor_id uint64 , name stri
 		}
 		key.Name = strings.TrimSpace( name )
 		tx_err = tx.Put( db.BucketAPIKeys , []byte( key_id ) , key )
+		return
+	} )
+	return
+}
+
+// KeyLoginLinkTTL is the longest a login link made by an API key works for.
+// Such a link always works once, whatever the request asked.
+const KeyLoginLinkTTL = 15 * time.Minute
+
+// SetAPIKeySignIn turns MaySignIn on or off. Only the account the key acts as
+// may change it, not an admin, not even the owner: it decides whether that
+// key is as good as a browser session to that account, which is the account's
+// own call. A dead key stays as it is (ErrAPIKeyDead) when turning it on;
+// turning it off always works, and voids any link the key made that is still
+// unused. Browsers those links already signed in stay signed in: turning the
+// switch off is "no more links", and revoking the key is "sign them out too".
+// db.ErrNotFound when there is no such key or it is deleted.
+func SetAPIKeySignIn( store *db.Store , key_id string , user_id uint64 , on bool ) ( key *APIKey , err error ) {
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		stored := &APIKey{}
+		if tx_err = tx.Get( db.BucketAPIKeys , []byte( key_id ) , stored ); tx_err != nil { return }
+		if stored.Deleted() {
+			tx_err = db.ErrNotFound
+			return
+		}
+		if stored.UserID != user_id {
+			tx_err = ErrAPIKeyNotYours
+			return
+		}
+		if on && stored.Live() == false {
+			tx_err = ErrAPIKeyDead
+			return
+		}
+		stored.MaySignIn = on
+		if tx_err = tx.Put( db.BucketAPIKeys , []byte( key_id ) , stored ); tx_err != nil { return }
+		if on == false {
+			_ , tx_err = tx.DeleteWhere( db.BucketLoginTokens ,
+				func() any { return &LoginToken{} } ,
+				func( _ []byte , item any ) bool {
+					token := item.( *LoginToken )
+					return token.MintedByKey == key_id && token.Usable()
+				} )
+			if tx_err != nil { return }
+		}
+		key = stored
 		return
 	} )
 	return

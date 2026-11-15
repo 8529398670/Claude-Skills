@@ -76,6 +76,11 @@ type apiKeyExpiryRequest struct {
 	ExpiresInDays int `json:"expires_in_days" jsonschema:"minimum=0,maximum=3650" jsonschema_description:"Counted from now. 0 means it never expires." error:"expires_in_days must be 0 (never) or up to 3650"`
 }
 
+type apiKeySignInRequest struct {
+	keyIDPath
+	MaySignIn bool `json:"may_sign_in" jsonschema_description:"true lets the key make a login link for your account: one that works once, for at most 15 minutes."`
+}
+
 type listMyAPIKeysRequest struct {
 	Page
 	Q    string `json:"q,omitempty" query:"q" jsonschema_description:"Keep keys whose name contains this, in any case."`
@@ -129,6 +134,7 @@ type apiKeyRow struct {
 	DisplayName   string    `json:"display_name,omitempty" jsonschema_description:"The key's owner. On the admin list only."`
 	CreatedBy     uint64    `json:"created_by,omitempty" jsonschema_description:"The admin who made this key for its owner. Absent if the owner made it."`
 	CreatedByName string    `json:"created_by_name,omitempty"`
+	MaySignIn     bool      `json:"may_sign_in" jsonschema_description:"Whether this key may make a login link for its own account."`
 }
 
 func ( apiKeyRow ) APIName() ( name string ) { name = "APIKey"; return }
@@ -145,6 +151,7 @@ func newAPIKeyRow( key *models.APIKey , display_name string ) ( row apiKeyRow ) 
 		Live:        key.Live(),
 		CreatedBy:   key.CreatedBy,
 		DisplayName: display_name,
+		MaySignIn:   key.MaySignIn,
 	}
 	if key.ExpiresAt != nil { row.ExpiresAt = *key.ExpiresAt }
 	if key.LastUsedAt != nil { row.LastUsedAt = *key.LastUsedAt }
@@ -448,6 +455,37 @@ func ( handlers *Handlers ) setKeyExpiry( c fiber.Ctx , in *apiKeyExpiryRequest 
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "api key expiry changed" , fiber.Map{ "key_id": key.ID , "expires_in_days": in.ExpiresInDays } )
+	row := newAPIKeyRow( key , "" )
+	reply = &row
+	return
+}
+
+// setMyAPIKeySignIn lets one of your own keys make a login link for your
+// account, or stops it. Session-only, so a key cannot give itself the right:
+// a link becomes a browser session, which opens everything kept from keys.
+// There is no admin version. Whether a key may sign in as you is yours alone
+// to decide.
+//
+// @route("POST /api/keys/{key_id}/sign-in", summary="Let one of your keys make sign-in links",
+//     tag="API keys", access=SESSION_ONLY, feature="api_keys",
+//     description="Off by default. When on, the key may ask POST /api/account/login-link for a link that "
+//         "signs your account in on a browser, which then can do everything you can, including what keys "
+//         "may not. The link works once, for at most 15 minutes.",
+// )
+func ( handlers *Handlers ) setMyAPIKeySignIn( c fiber.Ctx , in *apiKeySignInRequest ) ( reply *apiKeyRow , err error ) {
+	key , set_err := models.SetAPIKeySignIn( handlers.Store , in.KeyID , security.UserFrom( c ).ID , in.MaySignIn )
+	switch {
+	case errors.Is( set_err , db.ErrNotFound ) , errors.Is( set_err , models.ErrAPIKeyNotYours ):
+		err = refuse( fiber.StatusNotFound , "no such api key" )
+		return
+	case errors.Is( set_err , models.ErrAPIKeyDead ):
+		err = refuse( fiber.StatusBadRequest , "only a live key can be allowed to make sign-in links" )
+		return
+	case set_err != nil:
+		err = set_err
+		return
+	}
+	handlers.audit( c , logs.KindAuth , "api key sign-in links changed" , fiber.Map{ "key_id": key.ID , "may_sign_in": key.MaySignIn } )
 	row := newAPIKeyRow( key , "" )
 	reply = &row
 	return

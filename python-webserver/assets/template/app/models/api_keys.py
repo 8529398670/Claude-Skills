@@ -101,6 +101,11 @@ class APIKeyDeadError(APIKeyError):
         super().__init__("only a live API key can have its expiry changed")
 
 
+class APIKeyNotYoursError(APIKeyError):
+    def __init__(self) -> None:
+        super().__init__("only the account a key acts as may let it make sign-in links")
+
+
 class APIKeyOwnerError(APIKeyError):
     def __init__(self, user_id: int) -> None:
         super().__init__(f"no user with id {user_id}")
@@ -154,6 +159,13 @@ class APIKey:
     # before this field read as None too. It is what lets the person a key
     # acts as see that someone else made it.
     created_by: int | None = None
+    # Whether this key may ask for a login link for its own account (POST
+    # /api/account/login-link). Off by default: the link becomes an ordinary
+    # browser session, so a key that may make one is as good as a session to
+    # whoever holds it. Only the key's own account turns it on, and only from
+    # a browser session (set_api_key_sign_in). Its links work once and for at
+    # most KEY_LOGIN_LINK_TTL_SECONDS.
+    may_sign_in: bool = False
 
     @property
     def revoked(self) -> bool:
@@ -188,6 +200,7 @@ class APIKey:
             "deleted_at": to_iso(self.deleted_at),
             "deleted_by": self.deleted_by,
             "created_by": self.created_by,
+            "may_sign_in": self.may_sign_in,
         }
 
     @classmethod
@@ -205,6 +218,7 @@ class APIKey:
             deleted_at=from_iso(record.get("deleted_at")),
             deleted_by=record.get("deleted_by"),
             created_by=record.get("created_by"),
+            may_sign_in=bool(record.get("may_sign_in", False)),
         )
 
 
@@ -485,6 +499,38 @@ def set_api_key_expiry(store: Store, key_id: str, actor_id: int, ttl_seconds: in
             raise APIKeyExpiryAdminError() from None
         key.expires_at = utc_now() + timedelta(seconds=ttl_seconds) if ttl_seconds > 0 else None
         tx.put(BUCKET_API_KEYS, key_id, key.to_record())
+    return key
+
+
+# The longest a login link made by an API key works for. Such a link always
+# works once, whatever the request asked.
+KEY_LOGIN_LINK_TTL_SECONDS = 15 * 60
+
+
+def set_api_key_sign_in(store: Store, key_id: str, user_id: int, on: bool) -> APIKey | None:
+    """Turn may_sign_in on or off. Only the account the key acts as may change
+    it, not an admin, not even the owner: it decides whether that key is as
+    good as a browser session to that account, which is the account's own
+    call. A dead key cannot be turned on (APIKeyDeadError); turning it off
+    always works, and voids any link the key made that is still unused.
+    Browsers those links already signed in stay signed in: the switch off is
+    "no more links", and revoking the key is "sign them out too". None when
+    there is no such key or it is deleted."""
+    with store.transaction() as tx:
+        record = tx.get(BUCKET_API_KEYS, key_id)
+        if record is None:
+            return None
+        key = APIKey.from_record(record)
+        if key.deleted:
+            return None
+        if key.user_id != user_id:
+            raise APIKeyNotYoursError()
+        if on and not key.live:
+            raise APIKeyDeadError()
+        key.may_sign_in = on
+        tx.put(BUCKET_API_KEYS, key_id, key.to_record())
+        if not on:
+            login_tokens.void_unused_links_minted_by_key(tx, key_id)
     return key
 
 

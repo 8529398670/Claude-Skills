@@ -2,6 +2,7 @@
 a login link for another device, log out. The account screen itself is static/js/app.js, calling these."""
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Annotated, ClassVar, Literal
 
 from msgspec import UNSET, Meta, UnsetType
@@ -16,6 +17,7 @@ from app.core.encryption import BadKeyError, CipherTextError
 from app.core.logs import KIND_AUTH
 from app.core.security import actor_from, clear_session_cookie, decrypt_cookie
 from app.models import login_tokens, sessions, users
+from app.models import api_keys  # feature:api_keys
 from app.models import passwords  # feature:passwords
 from app.models import pins  # feature:invite_links
 from app.models import themes  # feature:appearance
@@ -24,6 +26,7 @@ from app.routes.admin import CancelLoginLinkReply, DisplayName, ExpiresInMinutes
 from app.routes.helpers import Refused, get_config, get_store, run
 from app.routes.logs import audit
 from app.routes.themes import Theme, theme_list  # feature:appearance
+from app.routes.mcp_tools_accounts import with_login_url  # feature:mcp
 
 
 class Me(Reply, kw_only=True):
@@ -228,9 +231,15 @@ class MyLoginLink(RequestType):
 
 @route(
     "POST /api/account/login-link", summary="A login link for yourself",
-    tag="Account", access=SESSION_ONLY,
-    description="A link that signs your own account in on a browser or another device. Only a browser "
-    "session may ask: an API key is refused, so that a key cannot turn itself into a session.",
+    tag="Account",
+    description="A link that signs your own account in on a browser or another device. An API key may ask "
+    "only if your account let it, from a browser session (POST /api/keys/{key_id}/sign-in); its link works "
+    "once, for at most 15 minutes.",
+    mcp_note="Only works if this key was allowed to make sign-in links, on the API keys card. Answers with "  # feature:mcp
+    "login_url (open it to sign in; it works once, for at most 15 minutes), expires_at and max_uses. Any "  # feature:mcp
+    "older link the account could still use stops working; its signed-in devices stay signed in. Revoking "  # feature:mcp
+    "or deleting this API key voids the link while it is unused, and signs out every device it signed in.",  # feature:mcp
+    mcp="create_my_login_link", call=with_login_url,  # feature:mcp
 )
 def create_my_login_link(request: Request, body: MyLoginLink) -> LoginLinkReply:
     """Mint a login link for the caller's own account: the way to sign in on
@@ -239,11 +248,26 @@ def create_my_login_link(request: Request, body: MyLoginLink) -> LoginLinkReply:
     has the same effect: any link the account could still use stops working,
     and existing sessions stay signed in.
 
-    Only a browser session may ask. An API key may not: the link becomes an
-    ordinary browser session, which would open everything kept from keys (the
-    API keys card, the owner's screens, minting keys) to whoever holds one."""
+    A browser session may always ask. An API key may only when its account
+    turned that on for it, from a session (POST /api/keys/{key_id}/sign-in):
+    the link becomes an ordinary browser session, which opens everything kept
+    from keys (the API keys card, the owner's screens, minting keys) to
+    whoever holds the key. A key's link works once and for at most 15
+    minutes, whatever it asked for, and revoking the key voids it while it is
+    unused."""
     actor = actor_from(request)
+    # >>> feature:api_keys
+    if actor.api_key is not None and not actor.api_key.may_sign_in:
+        raise Refused(403, "this key may not make sign-in links: turn that on for it on the API keys card")
+    # <<< feature:api_keys
     options = link_options(request, body)
+    # >>> feature:api_keys
+    if actor.api_key is not None:
+        ttl = options.ttl_seconds
+        if ttl <= 0 or ttl > api_keys.KEY_LOGIN_LINK_TTL_SECONDS:
+            ttl = api_keys.KEY_LOGIN_LINK_TTL_SECONDS
+        options = replace(options, max_uses=1, unlimited=False, ttl_seconds=ttl)
+    # <<< feature:api_keys
     credential, info = login_tokens.issue_login_link(get_store(request), actor.user.id, options)
     audit(request, KIND_AUTH, "own login link created", {"max_uses": info["max_uses"], "expires_at": info["expires_at"]})
     return LoginLinkReply(**link_reply(credential, info))

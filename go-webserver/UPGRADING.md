@@ -3,6 +3,32 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 2ad0dbf
+
+**S9 gets an opt-in: a key may make sign-in links once you switch it on.**
+A feature. Take it with the S9 fix, or after it. Off by default, so an app
+that takes it behaves as after 236539f until someone flips the switch.
+
+- `APIKey.MaySignIn` (`server/models/api_key.go`), `models.SetAPIKeySignIn`
+  (only the key's own account; switching off voids the key's unused login
+  links) and `models.KeyLoginLinkTTL` (15 minutes).
+- `POST /api/keys/{key_id}/sign-in` (`setMyAPIKeySignIn`, session-only, no
+  admin version) in `server/routes/api_keys.go`; `apiKeyRow` gains
+  `may_sign_in`.
+- `POST /api/account/login-link` is no longer `SESSION_ONLY`: a key without
+  the switch gets 403, a key with it gets a link that works once, for at most
+  15 minutes. The `create_my_login_link` MCP tool is back
+  (`server/routes/account.go`). Run `go generate ./server/routes` and
+  `scripts/api_docs.sh`.
+- The API keys card: a "Sign-in links: off/on" button on your own keys
+  (`static/js/keys.js` `signInButton`, `statusCell`; `Api.setKeySignIn` in
+  `static/js/api.js`) and the `api_keys.sign_in_*` and `status_sign_in`
+  strings in `config/language.yaml`.
+- An app that kept its own MCP tool for this (TodoBoard) points it at the same
+  check instead of removing it.
+- Tests: `TestAKeyMakesItsOwnLoginLinkOnlyWhenAllowed` (admin_test.go, replaces
+  `TestNoKeyMakesItsOwnLoginLink`), `TestMCPAccountTools`.
+
 ## After 236539f
 
 **Security fixes from the third review (2026-11-15): S9 to S17. Take them as

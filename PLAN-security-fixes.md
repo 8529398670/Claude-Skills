@@ -57,8 +57,9 @@ Fix:
    caller.
 2. If a script really needs a sign-in link, keep a separate opt-in. A key
    flag, `may_sign_in`, off by default, set only from a session. Its links
-   are single-use, at most 15 minutes, never for the owner and never for an
-   admin role.
+   are single-use, at most 15 minutes. Done after commit 43, with one change:
+   the owner and admins may switch it on for their own keys too (the owner's
+   agent key is the reason it exists), and only the key's own account can.
 3. Tests:
    - A full-role key gets 403 from the route, and from the MCP tool where
      there is one.
