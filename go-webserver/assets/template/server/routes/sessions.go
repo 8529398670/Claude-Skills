@@ -172,6 +172,7 @@ type userSessionRequest struct {
 // revokeUserSession signs one of an account's devices out, and only that.
 //
 // @route("POST /api/admin/users/{user_id}/sessions/{session_id}/revoke", summary="Sign out one of an account's devices",
+//     bulk=True,
 //     tag="Admin", role=ADMIN, feature="sessions", errors=(404,),
 //     mcp_note="End one of an account's sessions, rather than all of them with admin_revoke_access.",  // feature:mcp
 //     mcp="admin_revoke_user_session", destructive=True,  // feature:mcp
@@ -247,6 +248,7 @@ func ( handlers *Handlers ) labelMySession( c fiber.Ctx , in *labelSessionReques
 // device", so any of them may go.
 //
 // @route("POST /api/account/sessions/{session_id}/revoke", summary="Sign out one of your devices",
+//     bulk=True,
 //     tag="Account", feature="sessions", errors=(404,),
 //     description="End one of your signed-in sessions; that browser has to sign in again.",
 //     mcp="revoke_my_session", destructive=True,  // feature:mcp

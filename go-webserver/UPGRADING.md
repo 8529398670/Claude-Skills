@@ -3,6 +3,35 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After bbf7241
+
+**Upgrade `bulk-routes`: `bulk=True` gives a route a bulk version, `POST /api/bulk/...`, and its MCP tool `<tool>_bulk`.**
+Marks: `MountBulk`, `ForBulk`, `BulkReply`, `bulk_of`
+Files: `server/apidoc/bulk.go`, `server/routes/bulk_test.go`, `server/routes/bulk_mcp_test.go`
+
+One request changes many things: `{"items": [...], "shared": {...}}`, up to
+100 items, each run through the route's own handler and checks, in order,
+with a result per item; one failing does not stop the rest (see "Bulk routes"
+in `references/architecture.md`).
+
+- `server/apidoc/bulk.go` (new): `MountBulk`, `DeclareBulk`, `CallBulk`,
+  `BulkReply`/`BulkResult`, `LogFailure`, the bulk schemas.
+  `server/apidoc/route.go` (`declared.bulkOf`, `InputSchema`) and `apidoc.go`
+  (`Op.BulkOf`, `x-bulk-of`, the bulk body in `operation`).
+- `server/apidoc/routegen/routegen.go`: the `bulk` and `bulk_path` keys, their
+  checks (`checkBulk`), `bulkOp`/`bulkTool`, and the bulk entries in the
+  route table; tests in `routegen_test.go`.
+- `server/mcp/route.go`: `ForBulk`.
+- `server/routes/routes.go`: `apidoc.LogFailure = bulkFailure` (imports `log`
+  and `middleware`).
+- `bulk=True` on the template's own single-thing actions: files delete and
+  restore; admin disable, delete, revoke access, role, reset two-factor and
+  cancel login link; session revokes (yours and an account's); invite link
+  switch on, revoke, delete and restore. An app takes whichever of those it
+  wants, and adds `bulk=True` to its own routes where people change many at
+  once (TodoBoard: card update, move, archive, delete, label).
+- Then `go generate ./server/routes` and `scripts/api_docs.sh`.
+
 ## After 4eb03a2
 
 **Security fixes from the fourth review (2026-11-15): S19 to S21. Take them as

@@ -63,6 +63,9 @@ type Op struct {
 	Feature string
 	// MCPHTTP is why a route an API key may call has no MCP tool.
 	MCPHTTP string
+	// BulkOf, on a bulk route, is the route it runs once per item:
+	// x-bulk-of in api.json (see bulk.go).
+	BulkOf string
 	// NoCSRF lets a browser session's POST through without its csrf_token.
 	// Only for a route the page calls before it has one.
 	NoCSRF bool
@@ -239,10 +242,15 @@ func ( builder *schemas ) operation( method string , path string , typed *declar
 	}
 	if op.Role != "" { operation[ "x-required-role" ] = op.Role }
 	if op.MCPHTTP != "" { operation[ "x-mcp-http" ] = op.MCPHTTP }
-	parameters , parameter_problems := builder.parameters( path , typed )
-	problems = append( problems , parameter_problems... )
-	if len( parameters ) > 0 { operation[ "parameters" ] = parameters }
+	if op.BulkOf != "" { operation[ "x-bulk-of" ] = op.BulkOf }
+	if typed.bulkOf == "" {
+		parameters , parameter_problems := builder.parameters( path , typed )
+		problems = append( problems , parameter_problems... )
+		if len( parameters ) > 0 { operation[ "parameters" ] = parameters }
+	}
 	switch {
+	case typed.bulkOf != "":
+		operation[ "requestBody" ] = map[string]any{ "required": true , "content": jsonContent( builder.bulkBodySchema( typed.input , op ) ) }
 	case op.BodyType != "":
 		operation[ "requestBody" ] = map[string]any{ "required": true , "content": map[string]any{ op.BodyType: map[string]any{ "schema": rawSchema( op.BodyType ) } } }
 	case op.RawBody != nil:

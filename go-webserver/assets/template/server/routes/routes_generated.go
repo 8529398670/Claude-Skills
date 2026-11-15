@@ -434,7 +434,133 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 		Errors: []int{ 401 , 404 },
 	} , handlers.getOpenAPI , handlers.Guard.RequireLogin )
 	// <<< feature:openapi
+	// >>> feature:sessions
+	apidoc.MountBulk( app , "/api/bulk/account/sessions/revoke" , "POST /api/account/sessions/{session_id}/revoke" , apidoc.Op{
+		Summary: "Sign out one of your devices, for many at once",
+		Description: "Runs POST /api/account/sessions/{session_id}/revoke once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Account",
+		Feature: "sessions",
+		BulkOf: "POST /api/account/sessions/{session_id}/revoke",
+		Errors: []int{ 400 , 401 , 403 },
+	} , handlers.revokeMySession , handlers.Guard.RequireLogin )
+	// <<< feature:sessions
+	// >>> feature:invite_links
+	apidoc.MountBulk( app , "/api/bulk/admin/invite-links/delete" , "POST /api/admin/invite-links/{link_id}/delete" , apidoc.Op{
+		Summary: "Delete an invite link, for many at once",
+		Description: "Runs POST /api/admin/invite-links/{link_id}/delete once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Invite links",
+		Role: apidoc.Admin,
+		Feature: "invite_links",
+		BulkOf: "POST /api/admin/invite-links/{link_id}/delete",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.deleteInviteLink , handlers.featureGuards()[ "invite_links" ] , handlers.Guard.RequireAdmin )
+	apidoc.MountBulk( app , "/api/bulk/admin/invite-links/restore" , "POST /api/admin/invite-links/{link_id}/restore" , apidoc.Op{
+		Summary: "Undo deleting an invite link, for many at once",
+		Description: "Runs POST /api/admin/invite-links/{link_id}/restore once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Invite links",
+		Role: apidoc.Admin,
+		Feature: "invite_links",
+		BulkOf: "POST /api/admin/invite-links/{link_id}/restore",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.restoreInviteLink , handlers.featureGuards()[ "invite_links" ] , handlers.Guard.RequireAdmin )
+	apidoc.MountBulk( app , "/api/bulk/admin/invite-links/revoke" , "POST /api/admin/invite-links/{link_id}/revoke" , apidoc.Op{
+		Summary: "Switch off an invite link, for many at once",
+		Description: "Runs POST /api/admin/invite-links/{link_id}/revoke once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Invite links",
+		Role: apidoc.Admin,
+		Feature: "invite_links",
+		BulkOf: "POST /api/admin/invite-links/{link_id}/revoke",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.revokeInviteLink , handlers.featureGuards()[ "invite_links" ] , handlers.Guard.RequireAdmin )
+	apidoc.MountBulk( app , "/api/bulk/admin/invite-links/switch-on" , "POST /api/admin/invite-links/{link_id}/switch-on" , apidoc.Op{
+		Summary: "Switch an invite link back on, for many at once",
+		Description: "Runs POST /api/admin/invite-links/{link_id}/switch-on once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Invite links",
+		Role: apidoc.Admin,
+		Feature: "invite_links",
+		BulkOf: "POST /api/admin/invite-links/{link_id}/switch-on",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.switchOnInviteLink , handlers.featureGuards()[ "invite_links" ] , handlers.Guard.RequireAdmin )
+	// <<< feature:invite_links
+	apidoc.MountBulk( app , "/api/bulk/admin/users/cancel-login-link" , "POST /api/admin/users/{user_id}/cancel-login-link" , apidoc.Op{
+		Summary: "Stop an account's login link working, for many at once",
+		Description: "Runs POST /api/admin/users/{user_id}/cancel-login-link once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Admin",
+		Role: apidoc.Admin,
+		BulkOf: "POST /api/admin/users/{user_id}/cancel-login-link",
+		Errors: []int{ 400 , 401 , 403 },
+	} , handlers.cancelLoginLink , handlers.Guard.RequireAdmin )
+	apidoc.MountBulk( app , "/api/bulk/admin/users/delete" , "POST /api/admin/users/{user_id}/delete" , apidoc.Op{
+		Summary: "Delete an account, for many at once",
+		Description: "Runs POST /api/admin/users/{user_id}/delete once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Admin",
+		Role: apidoc.Admin,
+		BulkOf: "POST /api/admin/users/{user_id}/delete",
+		Errors: []int{ 400 , 401 , 403 },
+	} , handlers.deleteUser , handlers.Guard.RequireAdmin )
+	apidoc.MountBulk( app , "/api/bulk/admin/users/disabled" , "POST /api/admin/users/{user_id}/disabled" , apidoc.Op{
+		Summary: "Disable or enable a user, for many at once",
+		Description: "Runs POST /api/admin/users/{user_id}/disabled once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Admin",
+		Role: apidoc.Admin,
+		BulkOf: "POST /api/admin/users/{user_id}/disabled",
+		Errors: []int{ 400 , 401 , 403 },
+	} , handlers.setUserDisabled , handlers.Guard.RequireAdmin )
+	// >>> feature:two_factor
+	apidoc.MountBulk( app , "/api/bulk/admin/users/reset-two-factor" , "POST /api/admin/users/{user_id}/reset-two-factor" , apidoc.Op{
+		Summary: "Turn off an account's two-factor, for many at once",
+		Description: "Runs POST /api/admin/users/{user_id}/reset-two-factor once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Admin",
+		Role: apidoc.Admin,
+		Feature: "two_factor",
+		BulkOf: "POST /api/admin/users/{user_id}/reset-two-factor",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.resetTwoFactor , handlers.featureGuards()[ "two_factor" ] , handlers.Guard.RequireAdmin )
+	// <<< feature:two_factor
+	apidoc.MountBulk( app , "/api/bulk/admin/users/revoke-access" , "POST /api/admin/users/{user_id}/revoke-access" , apidoc.Op{
+		Summary: "Revoke a user's access, for many at once",
+		Description: "Runs POST /api/admin/users/{user_id}/revoke-access once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Admin",
+		Role: apidoc.Admin,
+		BulkOf: "POST /api/admin/users/{user_id}/revoke-access",
+		Errors: []int{ 400 , 401 , 403 },
+	} , handlers.revokeAccess , handlers.Guard.RequireAdmin )
+	apidoc.MountBulk( app , "/api/bulk/admin/users/role" , "POST /api/admin/users/{user_id}/role" , apidoc.Op{
+		Summary: "Change an account's role, for many at once",
+		Description: "Runs POST /api/admin/users/{user_id}/role once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Admin",
+		Role: apidoc.Admin,
+		BulkOf: "POST /api/admin/users/{user_id}/role",
+		Errors: []int{ 400 , 401 , 403 },
+	} , handlers.setUserRole , handlers.Guard.RequireAdmin )
+	// >>> feature:sessions
+	apidoc.MountBulk( app , "/api/bulk/admin/users/sessions/revoke" , "POST /api/admin/users/{user_id}/sessions/{session_id}/revoke" , apidoc.Op{
+		Summary: "Sign out one of an account's devices, for many at once",
+		Description: "Runs POST /api/admin/users/{user_id}/sessions/{session_id}/revoke once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Admin",
+		Role: apidoc.Admin,
+		Feature: "sessions",
+		BulkOf: "POST /api/admin/users/{user_id}/sessions/{session_id}/revoke",
+		Errors: []int{ 400 , 401 , 403 },
+	} , handlers.revokeUserSession , handlers.Guard.RequireAdmin )
+	// <<< feature:sessions
 	// >>> feature:files
+	apidoc.MountBulk( app , "/api/bulk/files/delete" , "POST /api/files/{file_id}/delete" , apidoc.Op{
+		Summary: "Delete a file, for many at once",
+		Description: "Runs POST /api/files/{file_id}/delete once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Files",
+		Feature: "files",
+		BulkOf: "POST /api/files/{file_id}/delete",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.deleteMyFile , handlers.featureGuards()[ "files" ] , handlers.Guard.RequireLogin )
+	apidoc.MountBulk( app , "/api/bulk/files/restore" , "POST /api/files/{file_id}/restore" , apidoc.Op{
+		Summary: "Restore a deleted file, for many at once",
+		Description: "Runs POST /api/files/{file_id}/restore once per item: items holds each one's id and fields, shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing does not stop the rest; the reply says how each went. At most 100 items.",
+		Tag: "Files",
+		Feature: "files",
+		BulkOf: "POST /api/files/{file_id}/restore",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.restoreMyFile , handlers.featureGuards()[ "files" ] , handlers.Guard.RequireLogin )
 	apidoc.Mount( app , "GET" , "/api/files" , apidoc.Op{
 		Summary: "List your files",
 		Description: "Your uploaded files, a page at a time: id, name, type, size, state (uploading or ready) and when. next is the offset of the following page, or null on the last one.",
@@ -956,6 +1082,13 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		Destructive: true,
 		AdminOnly: true,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/admin/users/cancel-login-link" , "POST /api/admin/users/{user_id}/cancel-login-link" , handlers.cancelLoginLink , mcp.Tool{
+		Name: "admin_cancel_login_link_bulk",
+		Title: "Stop an account's login link working, for many at once (admin)",
+		Description: "Runs admin_cancel_login_link once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		Destructive: true,
+		AdminOnly: true,
+	} ) )
 	// >>> feature:invite_links
 	server.Register( mcp.ForRoute( "POST /api/admin/invite-links" , handlers.createInviteLink , mcp.Tool{
 		Name: "admin_create_invite_link",
@@ -980,6 +1113,14 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		AdminOnly: true,
 		Enabled: handlers.inviteLinksOn,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/admin/invite-links/delete" , "POST /api/admin/invite-links/{link_id}/delete" , handlers.deleteInviteLink , mcp.Tool{
+		Name: "admin_delete_invite_link_bulk",
+		Title: "Delete an invite link, for many at once (admin)",
+		Description: "Runs admin_delete_invite_link once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		Destructive: true,
+		AdminOnly: true,
+		Enabled: handlers.inviteLinksOn,
+	} ) )
 	// <<< feature:invite_links
 	server.Register( mcp.ForRoute( "POST /api/admin/users/{user_id}/delete" , handlers.deleteUser , mcp.Tool{
 		Name: "admin_delete_user",
@@ -988,6 +1129,13 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		Destructive: true,
 		AdminOnly: true,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/admin/users/delete" , "POST /api/admin/users/{user_id}/delete" , handlers.deleteUser , mcp.Tool{
+		Name: "admin_delete_user_bulk",
+		Title: "Delete an account, for many at once (admin)",
+		Description: "Runs admin_delete_user once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		Destructive: true,
+		AdminOnly: true,
+	} ) )
 	// >>> feature:appearance
 	server.Register( mcp.ForRoute( "GET /api/admin/theme-defaults" , handlers.getThemeDefaults , mcp.Tool{
 		Name: "admin_get_theme_defaults",
@@ -1063,6 +1211,14 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		AdminOnly: true,
 		Enabled: handlers.twoFactorOn,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/admin/users/reset-two-factor" , "POST /api/admin/users/{user_id}/reset-two-factor" , handlers.resetTwoFactor , mcp.Tool{
+		Name: "admin_reset_two_factor_bulk",
+		Title: "Turn off an account's two-factor, for many at once (admin)",
+		Description: "Runs admin_reset_two_factor once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		Destructive: true,
+		AdminOnly: true,
+		Enabled: handlers.twoFactorOn,
+	} ) )
 	// <<< feature:two_factor
 	// >>> feature:invite_links
 	server.Register( mcp.ForRoute( "POST /api/admin/invite-links/{link_id}/restore" , handlers.restoreInviteLink , mcp.Tool{
@@ -1072,6 +1228,13 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		AdminOnly: true,
 		Enabled: handlers.inviteLinksOn,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/admin/invite-links/restore" , "POST /api/admin/invite-links/{link_id}/restore" , handlers.restoreInviteLink , mcp.Tool{
+		Name: "admin_restore_invite_link_bulk",
+		Title: "Undo deleting an invite link, for many at once (admin)",
+		Description: "Runs admin_restore_invite_link once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		AdminOnly: true,
+		Enabled: handlers.inviteLinksOn,
+	} ) )
 	// <<< feature:invite_links
 	server.Register( mcp.ForRoute( "POST /api/admin/users/{user_id}/revoke-access" , handlers.revokeAccess , mcp.Tool{
 		Name: "admin_revoke_access",
@@ -1080,6 +1243,13 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		Destructive: true,
 		AdminOnly: true,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/admin/users/revoke-access" , "POST /api/admin/users/{user_id}/revoke-access" , handlers.revokeAccess , mcp.Tool{
+		Name: "admin_revoke_access_bulk",
+		Title: "Revoke a user's access, for many at once (admin)",
+		Description: "Runs admin_revoke_access once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		Destructive: true,
+		AdminOnly: true,
+	} ) )
 	// >>> feature:invite_links
 	server.Register( mcp.ForRoute( "POST /api/admin/invite-links/{link_id}/revoke" , handlers.revokeInviteLink , mcp.Tool{
 		Name: "admin_revoke_invite_link",
@@ -1089,6 +1259,14 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		AdminOnly: true,
 		Enabled: handlers.inviteLinksOn,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/admin/invite-links/revoke" , "POST /api/admin/invite-links/{link_id}/revoke" , handlers.revokeInviteLink , mcp.Tool{
+		Name: "admin_revoke_invite_link_bulk",
+		Title: "Switch off an invite link, for many at once (admin)",
+		Description: "Runs admin_revoke_invite_link once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		Destructive: true,
+		AdminOnly: true,
+		Enabled: handlers.inviteLinksOn,
+	} ) )
 	// <<< feature:invite_links
 	// >>> feature:sessions
 	server.Register( mcp.ForRoute( "POST /api/admin/users/{user_id}/sessions/{session_id}/revoke" , handlers.revokeUserSession , mcp.Tool{
@@ -1098,6 +1276,13 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		Destructive: true,
 		AdminOnly: true,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/admin/users/sessions/revoke" , "POST /api/admin/users/{user_id}/sessions/{session_id}/revoke" , handlers.revokeUserSession , mcp.Tool{
+		Name: "admin_revoke_user_session_bulk",
+		Title: "Sign out one of an account's devices, for many at once (admin)",
+		Description: "Runs admin_revoke_user_session once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		Destructive: true,
+		AdminOnly: true,
+	} ) )
 	// <<< feature:sessions
 	// >>> feature:invite_links
 	server.Register( mcp.ForRoute( "POST /api/admin/invite-links/{link_id}/limits" , handlers.setInviteLinkLimits , mcp.Tool{
@@ -1122,12 +1307,24 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		Description: "Switch an account off (disabled: true) or back on (false). Disabling signs it out everywhere and voids its live login link; its API keys stop working while it is off. Reversible. The owner and your own account cannot be disabled.",
 		AdminOnly: true,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/admin/users/disabled" , "POST /api/admin/users/{user_id}/disabled" , handlers.setUserDisabled , mcp.Tool{
+		Name: "admin_set_user_disabled_bulk",
+		Title: "Disable or enable a user, for many at once (admin)",
+		Description: "Runs admin_set_user_disabled once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		AdminOnly: true,
+	} ) )
 	server.Register( mcp.ForRoute( "POST /api/admin/users/{user_id}/role" , handlers.setUserRole , mcp.Tool{
 		Name: "admin_set_user_role",
 		Title: "Change an account's role (admin)",
 		Description: "Make an account an admin or an ordinary user. Only the owner takes an admin's rights away; the owner is always an admin, and nobody changes their own role. Becoming an admin ends the account's sessions and live login link.",
 		AdminOnly: true,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/admin/users/role" , "POST /api/admin/users/{user_id}/role" , handlers.setUserRole , mcp.Tool{
+		Name: "admin_set_user_role_bulk",
+		Title: "Change an account's role, for many at once (admin)",
+		Description: "Runs admin_set_user_role once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		AdminOnly: true,
+	} ) )
 	// >>> feature:files
 	server.Register( mcp.ForRoute( "GET /api/admin/storage" , handlers.allStorage , mcp.Tool{
 		Name: "admin_storage",
@@ -1146,6 +1343,13 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		AdminOnly: true,
 		Enabled: handlers.inviteLinksOn,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/admin/invite-links/switch-on" , "POST /api/admin/invite-links/{link_id}/switch-on" , handlers.switchOnInviteLink , mcp.Tool{
+		Name: "admin_switch_on_invite_link_bulk",
+		Title: "Switch an invite link back on, for many at once (admin)",
+		Description: "Runs admin_switch_on_invite_link once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		AdminOnly: true,
+		Enabled: handlers.inviteLinksOn,
+	} ) )
 	// <<< feature:invite_links
 	server.Register( mcp.ForRoute( "POST /api/account/login-link/cancel" , handlers.cancelMyLoginLink , mcp.Tool{
 		Name: "cancel_my_login_link",
@@ -1166,6 +1370,13 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		Destructive: true,
 		Enabled: handlers.filesOn,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/files/delete" , "POST /api/files/{file_id}/delete" , handlers.deleteMyFile , mcp.Tool{
+		Name: "files_delete_bulk",
+		Title: "Delete a file, for many at once",
+		Description: "Runs files_delete once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		Destructive: true,
+		Enabled: handlers.filesOn,
+	} ) )
 	server.Register( mcp.ForStream( "GET /api/files/{file_id}/download" , handlers.downloadMyFile , mcp.Tool{
 		Name: "files_download_url",
 		Title: "Where to download a file",
@@ -1205,6 +1416,12 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		Description: "Bring back a file you deleted, while it is still in the bin and your storage quota has room.",
 		Enabled: handlers.filesOn,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/files/restore" , "POST /api/files/{file_id}/restore" , handlers.restoreMyFile , mcp.Tool{
+		Name: "files_restore_bulk",
+		Title: "Restore a deleted file, for many at once",
+		Description: "Runs files_restore once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		Enabled: handlers.filesOn,
+	} ) )
 	server.Register( mcp.ForRoute( "POST /api/files" , handlers.createFile , mcp.Tool{
 		Name: "files_start_upload",
 		Title: "Start uploading a file",
@@ -1258,6 +1475,12 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		Description: "End one of your signed-in sessions; that browser has to sign in again.",
 		Destructive: true,
 	} , nil ) )
+	server.Register( mcp.ForBulk( "POST /api/bulk/account/sessions/revoke" , "POST /api/account/sessions/{session_id}/revoke" , handlers.revokeMySession , mcp.Tool{
+		Name: "revoke_my_session_bulk",
+		Title: "Sign out one of your devices, for many at once",
+		Description: "Runs revoke_my_session once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
+		Destructive: true,
+	} ) )
 	// <<< feature:sessions
 	// >>> feature:shortcuts
 	server.Register( mcp.ForRoute( "POST /api/account/shortcuts" , handlers.setMyShortcuts , mcp.Tool{

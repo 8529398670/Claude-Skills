@@ -561,6 +561,7 @@ func ( handlers *Handlers ) renameFile( c fiber.Ctx , file_id string , body rena
 }
 
 // @route("POST /api/files/{file_id}/delete", summary="Delete a file",
+//     bulk=True,
 //     tag="Files", feature="files",
 //     description="Move one of your files to the bin. It can be restored for ten minutes; after that it is "
 //         "gone.",
@@ -607,6 +608,7 @@ func ( handlers *Handlers ) deleteFile( c fiber.Ctx , file_id string , own_only 
 }
 
 // @route("POST /api/files/{file_id}/restore", summary="Restore a deleted file",
+//     bulk=True,
 //     tag="Files", feature="files", errors=(409,),
 //     description="Bring back a file you deleted, while it is still in the bin and your storage quota has "
 //         "room.",

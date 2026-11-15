@@ -297,6 +297,13 @@ func TestItRefusesWhatCannotBeRight( t *testing.T ) {
 		{ "tool keys without mcp" , "// @route(\"GET /a\", summary=\"x\", description=\"y\", read_only=True)\nfunc ( handlers *Handlers ) a( c fiber.Ctx , in *apidoc.None ) ( out *apidoc.None , err error ) { return }\n" , "need mcp=" },
 		{ "tool without words" , "// @route(\"GET /a\", mcp=\"a\")\nfunc ( handlers *Handlers ) a( c fiber.Ctx , in *apidoc.None ) ( out *apidoc.None , err error ) { return }\n" , "the tool's title is the summary" },
 		{ "stream tool without call" , "// @route(\"GET /a\", summary=\"x\", description=\"y\", mcp=\"a\")\nfunc ( handlers *Handlers ) a( c fiber.Ctx , in *apidoc.None ) ( err error ) { return }\n" , "needs call=" },
+		{ "bulk on a GET" , "// @route(\"GET /api/a/{id}\", bulk=True)\nfunc ( handlers *Handlers ) a( c fiber.Ctx , in *path ) ( out *apidoc.None , err error ) { return }\n" , "bulk=True: a bulk route changes things" },
+		{ "bulk without an id" , "// @route(\"POST /api/a\", bulk=True)\nfunc ( handlers *Handlers ) a( c fiber.Ctx , in *apidoc.None ) ( out *apidoc.None , err error ) { return }\n" , "has no {id}" },
+		{ "bulk on a stream" , "// @route(\"POST /api/a/{id}\", bulk=True)\nfunc ( handlers *Handlers ) a( c fiber.Ctx , in *path ) ( err error ) { return }\n" , "writes its own reply" },
+		{ "bulk with call" , "// @route(\"POST /api/a/{id}\", summary=\"x\", description=\"y\", bulk=True, mcp=\"a\", call=wrap)\nfunc ( handlers *Handlers ) a( c fiber.Ctx , in *path ) ( out *apidoc.None , err error ) { return }\n" , "its tool has call=" },
+		{ "bulk outside /api" , "// @route(\"POST /a/{id}\", bulk=True)\nfunc ( handlers *Handlers ) a( c fiber.Ctx , in *path ) ( out *apidoc.None , err error ) { return }\n" , "give bulk_path=" },
+		{ "bulk_path alone" , "// @route(\"POST /api/a/{id}\", bulk_path=\"/api/many\")\nfunc ( handlers *Handlers ) a( c fiber.Ctx , in *path ) ( out *apidoc.None , err error ) { return }\n" , "bulk_path= goes with bulk=True" },
+		{ "bulk clash" , "// @route(\"POST /api/a/{id}/x\", bulk=True)\nfunc ( handlers *Handlers ) a( c fiber.Ctx , in *path ) ( out *apidoc.None , err error ) { return }\n\n// @route(\"POST /api/bulk/a/x\")\nfunc ( handlers *Handlers ) b( c fiber.Ctx , in *apidoc.None ) ( out *apidoc.None , err error ) { return }\n" , "can match the same request" },
 		{ "bad use" , "// @route(\"GET /a\", use=[handlers.)])\nfunc ( handlers *Handlers ) a( c fiber.Ctx , in *apidoc.None ) ( out *apidoc.None , err error ) { return }\n" , "use=handlers.) is not a Go expression" },
 		{ "owner with a key" , "// @route(\"GET /a\", role=OWNER, access=KEY_ONLY)\nfunc ( handlers *Handlers ) a( c fiber.Ctx , in *apidoc.None ) ( out *apidoc.None , err error ) { return }\n" , "role=OWNER is a browser session" },
 	}
@@ -333,4 +340,27 @@ func TestTheMostSpecificPathComesFirst( t *testing.T ) {
 	if ambiguous( mounted{ method: "GET" , path: "/a/{x}" } , mounted{ method: "GET" , path: "/a/{y}" } ) == false {
 		t.Error( "two parameters in one place clash" )
 	}
+}
+
+func TestBulkGivesARouteAndATool( t *testing.T ) {
+	source := "package routes\n\nimport (\n\tfiber \"github.com/gofiber/fiber/v3\"\n\n\tapidoc \"example.com/app/server/apidoc\"\n)\n\ntype path struct {\n\tID int `json:\"id\" path:\"id\"`\n}\n\n" +
+		"// @route(\"POST /api/things/{id}/archive\", summary=\"Archive a thing\", tag=\"Things\", errors=(404,),\n//     description=\"Archive it.\",\n//     bulk=True,\n//     mcp=\"things_archive\", destructive=True,  // feature:mcp\n// )\n" +
+		"func ( handlers *Handlers ) archive( c fiber.Ctx , in *path ) ( out *apidoc.None , err error ) { return }\n"
+	dir := fixture( t , map[string]string{ "server/routes/things.go": source } )
+	written , err := Generate( dir )
+	if err != nil { t.Fatal( err ) }
+	text := string( written )
+	for _ , want := range []string{
+		`apidoc.MountBulk( app , "/api/bulk/things/archive" , "POST /api/things/{id}/archive" , apidoc.Op{`,
+		`Summary: "Archive a thing, for many at once",`,
+		`BulkOf: "POST /api/things/{id}/archive",`,
+		`server.Register( mcp.ForBulk( "POST /api/bulk/things/archive" , "POST /api/things/{id}/archive" , handlers.archive , mcp.Tool{`,
+		`Name: "things_archive_bulk",`,
+	} {
+		if strings.Contains( text , want ) == false { t.Errorf( "no %s in:\n%s" , want , text ) }
+	}
+	// The bulk route's errors are the request's own; 404 is each item's.
+	bulk := text[ strings.Index( text , "apidoc.MountBulk" ) : ]
+	bulk = bulk[ : strings.Index( bulk , "handlers.archive" ) ]
+	if strings.Contains( bulk , "404" ) { t.Errorf( "the bulk route lists the route's own 404:\n%s" , bulk ) }
 }

@@ -39,6 +39,29 @@ func ForStream[ In any ]( route string , serve func( c fiber.Ctx , in *In ) erro
 	return
 }
 
+// ForBulk is the tool for a route's bulk version (bulk=True in its
+// @route(...)): route is the bulk route, single the route it runs once per
+// item. Its arguments are the bulk route's body, items and shared, and it
+// answers the bulk route's reply.
+func ForBulk[ In any , Out any ]( route string , single string , serve func( c fiber.Ctx , in *In ) ( *Out , error ) , tool Tool ) ( result *Tool ) {
+	apidoc.DeclareBulk[ In ]( route , single )
+	result = &tool
+	result.route = route
+	result.Call = func( mcp_call *Call ) ( reply any , err error ) {
+		answered , message , malformed := apidoc.CallBulk( mcp_call.Ctx , route , mcp_call.Args , serve )
+		switch {
+		case malformed:
+			err = &invalidArgs{ message: "invalid arguments: " + message }
+		case message != "":
+			err = Refuse( message )
+		default:
+			reply = answered
+		}
+		return
+	}
+	return
+}
+
 func bindRoute[ In any ]( route string , tool Tool , call func( call *Call , in *In ) ( any , error ) ) ( result *Tool ) {
 	result = &tool
 	result.route = route

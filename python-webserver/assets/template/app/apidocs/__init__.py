@@ -59,6 +59,9 @@ class Op:
     feature: str = ""
     # mcp_http is why a route an API key may call has no MCP tool.
     mcp_http: str = ""
+    # bulk_of, on a bulk route, is the route it runs once per item:
+    # x-bulk-of in api.json (see app/apidocs/bulk.py).
+    bulk_of: str = ""
     # no_csrf lets a browser session's POST through without its csrf_token.
     # Only for a route the page calls before it has one.
     no_csrf: bool = False
@@ -178,11 +181,18 @@ def operation(builder: Schemas, method: str, path: str, declared: Any) -> tuple[
         result["x-required-role"] = op.role
     if op.mcp_http:
         result["x-mcp-http"] = op.mcp_http
-    found, parameter_problems = parameters(builder, path, declared)
-    problems += parameter_problems
-    if found:
-        result["parameters"] = found
-    if op.body_type:
+    if op.bulk_of:
+        result["x-bulk-of"] = op.bulk_of
+    if declared.bulk_of is None:
+        found, parameter_problems = parameters(builder, path, declared)
+        problems += parameter_problems
+        if found:
+            result["parameters"] = found
+    if declared.bulk_of is not None:
+        from app.apidocs.bulk import bulk_body_schema
+
+        result["requestBody"] = {"required": True, "content": json_content(bulk_body_schema(builder, declared))}
+    elif op.body_type:
         result["requestBody"] = {"required": True, "content": {op.body_type: {"schema": raw_schema(op.body_type)}}}
     elif op.raw_body is not None:
         result["requestBody"] = {"required": True, "content": json_content(typed(builder, op.raw_body))}

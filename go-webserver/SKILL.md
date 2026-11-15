@@ -529,6 +529,16 @@ but stay consistent with the patterns already there:
   (`call=withLoginLinkURL` adds `login_url`). `admin_only` is on by default
   for a `role=ADMIN` route; mark `read_only`/`destructive` honestly, since
   clients use them to decide when to ask the person first.
+- **A bulk version of a route** is `bulk=True` in its `@route(...)`, on a
+  line of its own (not a `// feature:mcp` one). The table then mounts
+  `POST /api/bulk/...` (the path less its `{params}`; `bulk_path=` for
+  another) behind the same guards, plus the tool `<tool>_bulk`. It takes
+  `{"items": [...], "shared": {...}}`, up to 100 items, runs the route's own
+  handler once per item, and answers how each went (`apidoc.BulkReply`).
+  Use it where someone changes many of a thing at once: delete, restore,
+  archive, move, label, disable. The generator refuses it on a GET, a route
+  with no `{id}`, a stream, a raw body and a tool with `call=`. See
+  `server/apidoc/bulk.go`.
 - **Guards come from the declaration, never from where a route is written.**
   `role=`, `access=` and `feature=` decide them (see "A new route"), each route
   gets its own, and nothing is mounted on a path prefix. Read

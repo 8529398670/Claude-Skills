@@ -11,6 +11,7 @@ package routes
 import (
 	json "encoding/json" // feature:logs|settings
 	errors "errors"
+	log "log"
 
 	fiber "github.com/gofiber/fiber/v3"
 
@@ -21,6 +22,7 @@ import (
 	jobs "{{MODULE_PATH}}/server/jobs" // feature:jobs|metrics
 	language "{{MODULE_PATH}}/server/language"
 	logs "{{MODULE_PATH}}/server/logs" // feature:logs
+	middleware "{{MODULE_PATH}}/server/middleware"
 	metrics "{{MODULE_PATH}}/server/metrics" // feature:metrics
 	mcp "{{MODULE_PATH}}/server/mcp" // feature:mcp
 	models "{{MODULE_PATH}}/server/models" // feature:invite_links|two_factor|passwords|files|api_keys|webhooks
@@ -146,6 +148,7 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// Resolve the session once, before anything else looks at the request.
 	app.Use( handlers.Guard.LoadUser )
 	apidoc.CheckCSRF = handlers.Guard.CheckCSRF
+	apidoc.LogFailure = bulkFailure
 
 	// >>> feature:maintenance
 	// Next, because it needs to know who is asking and has to come before
@@ -265,6 +268,14 @@ func serverError( _ fiber.Ctx , cause error ) ( err error ) {
 	if err == nil {
 		err = errors.New( "internal error" )
 	}
+	return
+}
+
+// bulkFailure logs an item of a bulk request that failed on our side, the
+// way the ErrorHandler logs a request, and answers the reference to it.
+func bulkFailure( c fiber.Ctx , cause error ) ( request_id string ) {
+	request_id = middleware.RequestIDFrom( c )
+	log.Printf( "[error] %s %s %s (bulk item): %v" , request_id , c.Method() , c.Path() , cause )
 	return
 }
 

@@ -180,7 +180,7 @@ class PasswordTest(AuthRoutesTestCase):
         self.assertEqual(self.login(self.new_client(), "alice", "correct horse").status_code, 404)
         self.assertEqual(self.set_password(alice, "alice", "another one").status_code, 404)
         self.assertEqual(self.client.get("/api/login/options").json(), {"passwords": False, "two_factor": True})  # feature:two_factor
-        self.assertEqual(self.client.get("/api/login/options").json(), {"passwords": False, "two_factor": False})  # feature:!two_factor
+        self.assertEqual(self.client.get("/api/login/options").json(), {"passwords": False})  # feature:!two_factor
 
         self.set_config(passwords_enabled=True)
         self.assertEqual(self.login(self.new_client(), "alice", "correct horse").status_code, 200)

@@ -530,6 +530,16 @@ but stay consistent with the patterns already there:
   `admin_only` is on by default for a `role=ADMIN` route; set
   `read_only`/`destructive` honestly, since clients use them to decide when to
   ask the person first.
+- **A bulk version of a route** is `bulk=True` in its `@route(...)`, on a
+  line of its own (not a `# feature:mcp` one). The table then mounts
+  `POST /api/bulk/...` (the path less its `{params}`; `bulk_path=` for
+  another) behind the same guards, plus the tool `<tool>_bulk`. It takes
+  `{"items": [...], "shared": {...}}`, up to 100 items, runs the route's own
+  handler once per item, and answers how each went (`BulkReply`).
+  Use it where someone changes many of a thing at once: delete, restore,
+  archive, move, label, disable. `@route` refuses it on a GET, a route with no
+  `{id}`, a raw body, a tool with `call=` and a coroutine handler. See
+  `app/apidocs/bulk.py`.
 - **Log what matters, never what is secret.** Requests and page activity are
   logged for free. A new action worth an audit line (something changed,
   someone was let in or refused) calls

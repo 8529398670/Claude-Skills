@@ -43,7 +43,7 @@ class SealingTest(unittest.TestCase):
         is brought up to date the first time it is opened, once, the file
         before is kept beside it, and a field sealed on its own (a two-factor
         secret) moves to its subkey."""
-        secret = encryption.totp_new_secret()
+        secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"  # a 20-byte base32 secret, as two-factor makes
         record = {"name": "owner", "totp_secret": encryption.xchacha_encrypt_string(self.key, secret)}
         old = db.Store(self.path, self.key, True)
         old.initialise()

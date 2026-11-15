@@ -3,6 +3,33 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After bbf7241
+
+**Upgrade `bulk-routes`: `bulk=True` gives a route a bulk version, `POST /api/bulk/...`, and its MCP tool `<tool>_bulk`.**
+Marks: `bulk_declared`, `for_bulk`, `BulkReply`, `bulk_of`
+Files: `app/apidocs/bulk.py`, `app/tests/test_bulk.py`
+
+One request changes many things: `{"items": [...], "shared": {...}}`, up to
+100 items, each run through the route's own handler and checks, in order,
+with a result per item; one failing does not stop the rest (see "Bulk routes"
+in `references/architecture.md`).
+
+- `app/apidocs/bulk.py` (new): `BulkReply`/`BulkResult`, `check_bulk`,
+  `bulk_declared`, `handle_bulk`, `run_bulk`, `call_bulk`, the bulk schemas.
+- `app/apidocs/route.py`: `route(..., bulk=, bulk_path=)`, `Declared.bulk` and
+  `bulk_of`, `input_schema`. `app/apidocs/__init__.py`: `Op.bulk_of`,
+  `x-bulk-of`, the bulk body in `operation`.
+- `app/routes/__init__.py` (`declared_routes` adds each bulk route),
+  `app/routes/mcp_tools.py` (`build_registry` uses `Tool.for_bulk`),
+  `app/mcp/registry.py` (`Tool.for_bulk`).
+- `bulk=True` on the template's own single-thing actions: files delete and
+  restore; admin disable, delete, revoke access, role, reset two-factor and
+  cancel login link; session revokes (yours and an account's); invite link
+  switch on, revoke, delete and restore. An app takes whichever of those it
+  wants, and adds `bulk=True` to its own routes where people change many at
+  once (TodoBoard: card update, move, archive, delete, label).
+- Then `scripts/api_docs.sh`.
+
 ## After 4eb03a2
 
 **Security fixes from the fourth review (2026-11-15): S19 to S21. Take them as

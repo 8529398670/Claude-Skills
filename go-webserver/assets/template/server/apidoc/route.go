@@ -114,6 +114,8 @@ type declared struct {
 	input    *inputType
 	reply    reflect.Type
 	mounted  bool
+	// bulkOf is the route a bulk route runs once per item (see bulk.go).
+	bulkOf   string
 }
 
 var declaredMutex sync.Mutex
@@ -583,6 +585,10 @@ func InputSchema( name string ) ( schema map[string]any , err error ) {
 	found := lookup( name )
 	if found == nil {
 		err = fmt.Errorf( "apidoc: %s is not a declared route" , name )
+		return
+	}
+	if found.bulkOf != "" {
+		schema = found.input.bulkArgumentsSchema()
 		return
 	}
 	schema = found.input.argumentsSchema()

@@ -32,6 +32,12 @@
 //     while its feature is switched off.
 //   - use: more middleware, a list of Go expressions copied as they are into
 //     the route table, after the guards the declaration implies.
+//   - bulk=True gives a route with an {id} in its path a bulk version: POST
+//     at the path with /api/ made /api/bulk/ and its {params} left out
+//     (bulk_path= says another), behind the same guards, running the
+//     handler once per item (see server/apidoc/bulk.go). With mcp=, its tool
+//     is <tool>_bulk. Keep bulk=True off the // feature:mcp lines: the bulk
+//     route stays when mcp is pruned.
 //   - mcp="tool_name" gives the route an MCP tool, and the keys that mean
 //     something only with it: read_only, destructive, admin_only (on by
 //     default for role=ADMIN), and the Go expressions enabled (a func() bool)
@@ -520,6 +526,8 @@ var opKeys = map[string]keyKind{
 	"raw_body":          typeKey,
 	"no_switch":         boolKey,
 	"use":               useKey,
+	"bulk":              boolKey,
+	"bulk_path":         stringKey,
 }
 
 // The tool's keys, which mean something only with mcp=.
@@ -919,6 +927,7 @@ func ( loaded *pkg ) check( declared *route , found *problems ) {
 	}
 	if role != "" && access == "Public" { found.add( declared.file , line , "a PUBLIC route has no role" ) }
 	if role == "Owner" && access == "SessionOnly" { found.add( declared.file , line , "role=OWNER is session-only already: leave access out" ) }
+	declared.checkBulk( found )
 	if declared.tool != nil {
 		values := declared.tool.values
 		name , _ := values[ "mcp" ].( string )
@@ -935,6 +944,115 @@ func ( loaded *pkg ) check( declared *route , found *problems ) {
 			found.add( declared.file , declared.tool.line , "mcp=%q: %s writes its own reply, so its tool needs call=" , name , declared.handler )
 		}
 	}
+}
+
+// bulk is bulk=True.
+func ( declared *route ) bulk() ( on bool ) {
+	on , _ = declared.op[ "bulk" ].( bool )
+	return
+}
+
+// bulkPath is where the bulk version goes: bulk_path, or the route's path
+// with /api/ made /api/bulk/ and its {params} left out.
+func ( declared *route ) bulkPath() ( path string ) {
+	if given , ok := declared.op[ "bulk_path" ].( string ); ok {
+		path = given
+		return
+	}
+	if len( declared.routes ) == 0 { return }
+	rest , ok := strings.CutPrefix( declared.routes[ 0 ].path , "/api/" )
+	if ok == false { return }
+	kept := []string{}
+	for _ , segment := range strings.Split( rest , "/" ) {
+		if isParameter( segment ) == false { kept = append( kept , segment ) }
+	}
+	path = "/api/bulk/" + strings.Join( kept , "/" )
+	return
+}
+
+// singleKey is the route a bulk route runs per item, as the spec names it.
+func ( declared *route ) singleKey() ( key string ) {
+	key = declared.routes[ 0 ].method + " " + declared.routes[ 0 ].path
+	return
+}
+
+func ( declared *route ) checkBulk( found *problems ) {
+	line := declared.opLines[ "bulk" ]
+	if line == 0 { line = declared.line }
+	if declared.bulk() == false {
+		if _ , set := declared.op[ "bulk_path" ]; set { found.add( declared.file , declared.opLines[ "bulk_path" ] , "bulk_path= goes with bulk=True" ) }
+		return
+	}
+	no := func( format string , args ...any ) { found.add( declared.file , line , "bulk=True: " + format , args... ) }
+	_ , raw_body := declared.op[ "raw_body" ]
+	_ , body_type := declared.op[ "body_type" ]
+	has_path := false
+	for _ , entry := range declared.fields {
+		if entry.place == "path" { has_path = true }
+	}
+	switch {
+	case len( declared.routes ) != 1:
+		no( "the route needs exactly one \"METHOD /path\"" )
+	case declared.routes[ 0 ].method == "GET":
+		no( "a bulk route changes things, so not for a GET" )
+	case declared.stream:
+		no( "%s writes its own reply; a bulk route needs a JSON one per item" , declared.handler )
+	case raw_body || body_type:
+		no( "the route reads its own body; a bulk route needs a JSON one" )
+	case has_path == false:
+		no( "the route's path has no {id} for each item to name" )
+	}
+	if declared.tool != nil {
+		if _ , has := declared.tool.values[ "call" ]; has { no( "its tool has call=, and a bulk tool runs the route's handler as it is" ) }
+	}
+	path := declared.bulkPath()
+	switch {
+	case path == "":
+		no( "the path does not start /api/: give bulk_path=" )
+	case strings.HasPrefix( path , "/" ) == false || strings.ContainsAny( path , "{}:*" ):
+		no( "bulk_path=%q is a path with no parameters" , path )
+	}
+}
+
+// bulkOp is the bulk route's declaration: the route's, with its own words,
+// its own status and errors left to each item.
+func ( declared *route ) bulkOp() ( bulk *route ) {
+	copied := *declared
+	copied.op = map[string]any{}
+	for key , value := range declared.op {
+		switch key {
+		case "status" , "errors" , "reply_description" , "description" , "bulk" , "bulk_path":
+		default:
+			copied.op[ key ] = value
+		}
+	}
+	if summary , ok := declared.op[ "summary" ].( string ); ok { copied.op[ "summary" ] = summary + ", for many at once" }
+	copied.op[ "description" ] = "Runs " + declared.singleKey() + " once per item: items holds each one's id and fields, " +
+		"shared the fields they have in common (an item's own win). Each runs as that route would, in order, and one failing " +
+		"does not stop the rest; the reply says how each went. At most 100 items."
+	copied.op[ "bulk_of" ] = declared.singleKey()
+	bulk = &copied
+	return
+}
+
+// bulkTool is the bulk route's tool: <tool>_bulk, with the tool's hints.
+func ( declared *route ) bulkTool() ( bulk *route ) {
+	copied := *declared
+	values := map[string]any{}
+	for key , value := range declared.tool.values { values[ key ] = value }
+	name , _ := values[ "mcp" ].( string )
+	title , _ := declared.toolTexts()
+	title = strings.TrimSuffix( title , " (admin)" ) + ", for many at once"
+	if declared.adminOnly() { title += " (admin)" }
+	values[ "mcp" ] = name + "_bulk"
+	values[ "mcp_title" ] = title
+	values[ "mcp_description" ] = "Runs " + name + " once per item: items holds each call's arguments, shared the arguments " +
+		"they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. " +
+		"At most 100 items."
+	delete( values , "mcp_note" )
+	copied.tool = &tool{ values: values , line: declared.tool.line }
+	bulk = &copied
+	return
 }
 
 // toolTexts are the tool's title and description: mcp_title, or else the
@@ -1132,6 +1250,8 @@ type mounted struct {
 	method   string
 	path     string
 	line     int
+	// bulk is the bulk version of declared.
+	bulk     bool
 }
 
 func segments( path string ) ( result []string ) {
@@ -1184,6 +1304,10 @@ func order( routes []*route , found *problems ) ( ordered []mounted ) {
 	for _ , declared := range routes {
 		for _ , entry := range declared.routes {
 			ordered = append( ordered , mounted{ declared: declared , method: entry.method , path: entry.path , line: entry.line } )
+		}
+		if declared.bulk() && declared.bulkPath() != "" && len( declared.routes ) == 1 {
+			line := declared.opLines[ "bulk" ]
+			ordered = append( ordered , mounted{ declared: declared , method: "POST" , path: declared.bulkPath() , line: line , bulk: true } )
 		}
 	}
 	sort.SliceStable( ordered , func( a , b int ) bool { return before( ordered[ a ] , ordered[ b ] ) } )
@@ -1290,8 +1414,15 @@ func ( loaded *pkg ) write( ordered []mounted , routes []*route , switches map[s
 		if imports[ needed ] == "" { found.add( loaded.generating , 1 , "it imports no %s package for the generated table to use" , needed ) }
 	}
 	tools := []*route{}
+	bulk_of := map[*route]*route{}
 	for _ , declared := range routes {
-		if declared.tool != nil { tools = append( tools , declared ) }
+		if declared.tool == nil { continue }
+		tools = append( tools , declared )
+		if declared.bulk() {
+			bulk := declared.bulkTool()
+			bulk_of[ bulk ] = declared
+			tools = append( tools , bulk )
+		}
 	}
 	sort.SliceStable( tools , func( a , b int ) bool { return tools[ a ].tool.values[ "mcp" ].( string ) < tools[ b ].tool.values[ "mcp" ].( string ) } )
 	if len( tools ) > 0 && imports[ "mcp" ] == "" {
@@ -1315,7 +1446,11 @@ func ( loaded *pkg ) write( ordered []mounted , routes []*route , switches map[s
 		mount := "Mount"
 		if declared.stream { mount = "MountStream" }
 		var call bytes.Buffer
-		fmt.Fprintf( &call , "apidoc.%s( app , %q , %q , %s , handlers.%s" , mount , entry.method , entry.path , declared.opLiteral( entry.method , switches , "\t" ) , declared.handler )
+		if entry.bulk {
+			fmt.Fprintf( &call , "apidoc.MountBulk( app , %q , %q , %s , handlers.%s" , entry.path , declared.singleKey() , declared.bulkOp().opLiteral( entry.method , switches , "\t" ) , declared.handler )
+		} else {
+			fmt.Fprintf( &call , "apidoc.%s( app , %q , %q , %s , handlers.%s" , mount , entry.method , entry.path , declared.opLiteral( entry.method , switches , "\t" ) , declared.handler )
+		}
 		for _ , guard := range guards { fmt.Fprintf( &call , " , %s" , guard ) }
 		call.WriteString( " )" )
 		blocks.write( declared.conditions , call.String() )
@@ -1332,6 +1467,11 @@ func ( loaded *pkg ) write( ordered []mounted , routes []*route , switches map[s
 		out.WriteString( "func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {\n" )
 		blocks := &guarded{ out: out , indent: "\t" }
 		for _ , declared := range tools {
+			if single , is_bulk := bulk_of[ declared ]; is_bulk {
+				text := fmt.Sprintf( "server.Register( mcp.ForBulk( %q , %q , handlers.%s , %s ) )" , "POST " + single.bulkPath() , single.singleKey() , declared.handler , declared.toolLiteral( "\t" ) )
+				blocks.write( declared.conditions , text )
+				continue
+			}
 			entry := declared.routes[ 0 ]
 			for_route := "ForRoute"
 			if declared.stream { for_route = "ForStream" }
@@ -1388,6 +1528,7 @@ func ( declared *route ) opLiteral( method string , switches map[string]bool , i
 	if value , ok := op[ "role" ].( string ); ok { add( "Role" , "apidoc." + value ) }
 	if value , ok := op[ "feature" ].( string ); ok { add( "Feature" , strconv.Quote( value ) ) }
 	if value , ok := op[ "mcp_http" ].( string ); ok { add( "MCPHTTP" , strconv.Quote( value ) ) }
+	if value , ok := op[ "bulk_of" ].( string ); ok { add( "BulkOf" , strconv.Quote( value ) ) }
 	if value , ok := op[ "no_csrf" ].( bool ); ok && value { add( "NoCSRF" , "true" ) }
 	if value , ok := op[ "raw_body" ].( string ); ok { add( "RawBody" , value + "{}" ) }
 	if value , ok := op[ "body_type" ].( string ); ok { add( "BodyType" , strconv.Quote( value ) ) }

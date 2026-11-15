@@ -1140,6 +1140,45 @@ copies its files back and writes the template's own route table (with its featur
 markers, so pruning cuts each route with its handler); `check_features.py` fails
 while they are stale.
 
+### Bulk routes
+
+`bulk=True` in a route's `@route(...)` gives it a bulk version, so changing
+many of a thing is one request rather than one each. The generator mounts it
+at `POST` the route's path with `/api/` made `/api/bulk/` and its `{params}`
+left out (`POST /api/files/{file_id}/delete` becomes
+`POST /api/bulk/files/delete`; `bulk_path=` names another), behind the
+route's own guards, and with `mcp=` registers the tool `<tool>_bulk`.
+
+```json
+{ "items":  [ { "user_id": 3 } , { "user_id": 7 , "disabled": false } ],
+  "shared": { "disabled": true } }
+```
+
+An item is the route's request as its MCP tool takes it, URL fields and all;
+`shared` holds body fields every item gets unless it sets its own. The body's
+own shape is checked first (400: "items is required", "items must hold 1 to
+100 entries", "unknown field: shared.x", "malformed request body"); then each
+item, in order, gets `shared` under it, the route's own checks, and the
+route's own handler. So an item is refused in the single route's words, its
+audit entry and webhook are the single route's, and one failing does not stop
+the rest. The reply is 200 with `done`, `failed` and one `results` entry per
+item: `ok`, and `status` and `error` when it failed (`request_id` on a 5xx,
+which is logged as the ErrorHandler logs a request), or the route's own
+`reply` when it worked. `x-bulk-of` in api.json names the route it repeats.
+
+There is no shared transaction: each item writes as the route does, so what
+worked stays done. That is the trade for reusing the handler unchanged; a
+change that has to be all or nothing is its own route, with its own
+transaction. The request counts once against the rate limit, and 100 items
+(`apidoc.BulkMaxItems`) bounds the work. The generator refuses `bulk=True` on
+a GET, a route with no `{id}`, one that writes its own reply or reads its own
+body, and a tool with `call=`. Turn it on where people really do change many
+at once (delete, restore, archive, move, label, disable), not everywhere:
+every bulk route is another tool an agent has to read past. The code is
+`server/apidoc/bulk.go`, `mcp.ForBulk` and the bulk parts of
+`server/apidoc/routegen`; the tests are `server/routes/bulk_test.go` and
+`bulk_mcp_test.go`. The Python template's are the same, word for word.
+
 ## Webhooks
 
 The owner's Webhooks screen lists endpoints that want to hear about things. The
