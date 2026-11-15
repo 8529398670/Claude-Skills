@@ -213,9 +213,12 @@ func RenameUserAs( store *db.Store , user_id uint64 , actor_id uint64 , display_
 // promoted. An admin cannot sign in through an invite link, so a new login link
 // is the way back in.
 //
-// Losing admin rights ends nothing: the role is read on every request, so it
-// applies at once, and API keys narrow to it (see NarrowRole). Invite links the
-// account made stop working while it is not an admin (see inviteLinkUsable).
+// Losing admin rights ends nothing of the account's own: the role is read on
+// every request, so it applies at once, and API keys narrow to it (see
+// NarrowRole). Invite links the account made stop working while it is not an
+// admin (see inviteLinkUsable). What its API keys made as an admin does end:
+// their unused login links, and the browsers those signed in
+// (voidWhatKeysMadeTx). A link an admin's key made outlived the demotion.
 func SetUserRole( store *db.Store , user_id uint64 , actor_id uint64 , role string ) ( changed bool , err error ) {
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
 		key := encryption.Uint64ToBytes( user_id )
@@ -231,7 +234,10 @@ func SetUserRole( store *db.Store , user_id uint64 , actor_id uint64 , role stri
 		user.Role = role
 		if tx_err = tx.Put( db.BucketUsers , key , user ); tx_err != nil { return }
 		changed = true
-		if user.IsAdmin() == false { return }
+		if user.IsAdmin() == false {
+			tx_err = voidWhatKeysMadeTx( tx , user_id ) // feature:api_keys
+			return
+		}
 		if _ , tx_err = destroySessionsForUser( tx , user_id ); tx_err != nil { return }
 		if _ , tx_err = deletePendingLoginTokens( tx , user_id ); tx_err != nil { return }
 		tx_err = deleteChallengesForUser( tx , user_id ) // feature:two_factor
@@ -257,7 +263,9 @@ func ( conflict *RenameConflictError ) Error() ( result string ) {
 // in the same transaction as the change itself: a session or a link that
 // survived would come back to life the moment the account was re-enabled.
 // API keys are deliberately left alone -- see LoadAPIKey -- and use
-// RevokeAllCredentials when they should die too.
+// RevokeAllCredentials when they should die too. What the keys made is not:
+// their unused login links, and every browser one of those signed in, in any
+// account, end here too (voidWhatKeysMadeTx). They used to stay.
 //
 // The owner cannot be disabled by any route, the CLI included: the owner is
 // always an enabled admin (see owner.go). Transfer ownership first.
@@ -286,6 +294,7 @@ func SetUserDisabledAs( store *db.Store , user_id uint64 , actor_id uint64 , dis
 		if disabled == false { return }
 		if _ , tx_err = destroySessionsForUser( tx , user_id ); tx_err != nil { return }
 		if _ , tx_err = deletePendingLoginTokens( tx , user_id ); tx_err != nil { return }
+		if tx_err = voidWhatKeysMadeTx( tx , user_id ); tx_err != nil { return } // feature:api_keys
 		tx_err = deleteChallengesForUser( tx , user_id ) // feature:two_factor
 		return
 	} )

@@ -366,6 +366,26 @@ func ListAPIKeys( store *db.Store ) ( keys []*APIKey , err error ) {
 	return
 }
 
+// voidWhatKeysMadeTx is VoidLinksMintedByKeyTx for every API key an account
+// holds, live or not, inside the caller's transaction. Disabling an account,
+// or taking its admin role away, calls it: a login link its key made, and a
+// browser that link signed in, carry the right the account had then, so
+// they end with that right instead of outliving it.
+func voidWhatKeysMadeTx( tx *db.Tx , user_id uint64 ) ( err error ) {
+	key_ids := []string{}
+	err = tx.ForEach( db.BucketAPIKeys ,
+		func() any { return &APIKey{} } ,
+		func( key []byte , item any ) bool {
+			if item.( *APIKey ).UserID == user_id { key_ids = append( key_ids , string( key ) ) }
+			return true
+		} )
+	if err != nil { return }
+	for _ , key_id := range key_ids {
+		if _ , err = VoidLinksMintedByKeyTx( tx , key_id ); err != nil { return }
+	}
+	return
+}
+
 func ListAPIKeysForUser( store *db.Store , user_id uint64 ) ( keys []*APIKey , err error ) {
 	keys = []*APIKey{}
 	err = store.ForEach( db.BucketAPIKeys ,

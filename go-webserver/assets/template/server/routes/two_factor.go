@@ -89,7 +89,9 @@ func ( handlers *Handlers ) finishSignIn( c fiber.Ctx , in *finishSignInRequest 
 	outcome = models.AttemptPassed
 	message := "signed in with a two-factor code"
 	if method == models.CodeMethodRecovery { message = "signed in with a recovery code" }
-	handlers.auditAs( c , handlers.logUser( user_id , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , nil )
+	issuer , detail := handlers.issuer( signed.IssuedBy )
+	if issuer != "" { message += ", through a link issued by " + issuer }
+	handlers.auditAs( c , handlers.logUser( user_id , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , message , detail )
 	if _ , err = handlers.signIn( c , signed ); err != nil { return }
 	reply = &okReply{ Ok: true }
 	return

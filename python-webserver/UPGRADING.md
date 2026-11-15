@@ -3,6 +3,39 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 4eb03a2
+
+**Security fixes from the fourth review (2026-11-15): S19 to S21. Take them as
+one update.** Every item is a fix. Run the app's tests after. No route,
+MCP tool or API doc changes.
+
+- **S19: a sign-in through a link an admin reissued says so.**
+  `LoginToken.issued_by` (`app/models/login_tokens.py`, set by
+  `issue_login_link` when `actor_id` is someone else's account, so only by
+  `reissue-login`; never by the operator, account creation or the account
+  itself), carried by `SignInRules`/`SignIn.issued_by` and the two-factor
+  challenge (`app/models/sign_in.py`) onto `Session.issued_by`
+  (`app/models/sessions.py`). `redeem_login_link` (`app/routes/auth.py`, new
+  `issuer`) logs "signed in with a link issued by <name>", and
+  `finish_sign_in` (`app/routes/two_factor.py`) "signed in with a two-factor
+  code, through a link issued by <name>", both with detail
+  `{"issued_by": id}` on the account's own entry. Test:
+  `test_signing_in_through_an_admins_link_is_logged` (new
+  `app/tests/test_ways_in.py`).
+- **S20: disabling or demoting an account ends what its keys made.**
+  `api_keys.void_what_keys_made_tx` runs `login_tokens.void_links_minted_by_key`
+  for each of the account's keys: their usable login links, the sessions and
+  two-factor challenges those made, and their invite links.
+  `credentials.set_user_disabled` (disabling) and `set_user_role` (to user)
+  call it in their own transaction. Test:
+  `test_losing_the_right_ends_what_the_keys_made` (test_ways_in.py).
+- **S21: the request log's skip list ignores case and a trailing slash.**
+  New `middleware.normalise_path`, shared by `budget_for` and
+  `RequestLog._skip` (`app/core/request_log.py`). The `RequireSession`
+  docstring (`app/core/security.py`) now says a key makes its own account a
+  link only with `may_sign_in`. Test:
+  `test_the_skip_list_ignores_case_and_a_trailing_slash` (test_monitoring.py).
+
 ## After 2ad0dbf
 
 **S9 gets an opt-in: a key may make sign-in links once you switch it on.**

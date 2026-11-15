@@ -461,13 +461,23 @@ key's link works once and for at most 15 minutes, whatever it asked for.
 Switching it off voids the key's unused links; the browsers they already
 signed in stay signed in until the key is revoked.
 
+An admin can sign in as anyone below them, by resetting their two-factor
+and reissuing their link. That is how links work, so it is made visible: the
+link and the session it makes record the admin (`IssuedBy`), and the
+account's own log says "signed in with a link issued by" them. An app that
+keeps secrets in a session's reach (a keyring, say) should say so to its users
+and log each read.
+
 What keeps revoking a leaked key meaningful is provenance. Every login link and
 invite link records the key that made it (`minted_by_key`, from
 `actor.KeyID()`), and an invite link a key grows, switches on or restores
 becomes that key's too. Revoking or deleting the key runs
 `models.VoidLinksMintedByKeyTx` in the same transaction: its login links that
 could still sign someone in are deleted and its invite links are switched off.
-Restoring a deleted key does not bring them back.
+Restoring a deleted key does not bring them back. Disabling the key's
+account, or taking its admin role away, does the same for every key it holds
+(`voidWhatKeysMadeTx`): what an admin's key made carries the right the admin
+had then, so it ends with that right.
 
 What that does not undo is a session already signed in through such a link,
 or what that session did since -- a key it minted, say. Those show in the

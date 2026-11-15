@@ -42,6 +42,9 @@ type Session struct {
 	// the session too (VoidLinksMintedByKeyTx): a key that could sign a
 	// browser in must not leave one signed in after it dies.
 	MintedByKey string `json:"minted_by_key,omitempty"`
+	// IssuedBy is the admin who reissued the login link this session came
+	// from, zero when nobody else did (see LoginToken.IssuedBy).
+	IssuedBy uint64 `json:"issued_by,omitempty"`
 	// ID is the record's key, filled in when a session is read. It is not
 	// stored, since the key already says it, and is no use without the secret.
 	ID string `json:"-"`

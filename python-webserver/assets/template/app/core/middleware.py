@@ -223,6 +223,15 @@ def upload_chunk(method: str, normalised: str) -> bool:
 
 
 # <<< feature:files
+def normalise_path(path: str) -> str:
+    """A path as budget_for and the request log's skip list match it:
+    lowercased, without a trailing slash (see budget_for for why)."""
+    normalised = path.lower()
+    if len(normalised) > 1:
+        normalised = normalised.rstrip("/")
+    return normalised
+
+
 def budget_for(method: str, path: str) -> str:
     """Which limit a request counts against.
 
@@ -235,9 +244,7 @@ def budget_for(method: str, path: str) -> str:
     twenty, all no-store, so counting them meant about five reloads a minute
     hit a 429. Serving one touches no database and no credential. The page
     itself is not exempt, and neither is anything under /api."""
-    normalised = path.lower()
-    if len(normalised) > 1:
-        normalised = normalised.rstrip("/")
+    normalised = normalise_path(path)
     if method == "POST" and normalised in SIGN_IN_PATHS:
         return BUDGET_SIGN_IN
     # >>> feature:files

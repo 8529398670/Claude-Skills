@@ -38,6 +38,9 @@ type SignInRules struct {
 	// to the session (and through a two-factor challenge) so revoking the
 	// key ends it. RedeemLoginToken fills it in; callers leave it empty.
 	MintedByKey string
+	// IssuedBy is the admin who reissued that link (LoginToken.IssuedBy),
+	// carried the same way. RedeemLoginToken fills it in too.
+	IssuedBy uint64
 }
 
 // SignIn is a first factor that was accepted. Exactly one of
@@ -46,6 +49,8 @@ type SignIn struct {
 	UserID            uint64
 	SessionCredential string
 	Challenge         string // feature:two_factor
+	// IssuedBy: see SignInRules.IssuedBy. The route logs it.
+	IssuedBy uint64
 }
 
 // >>> feature:two_factor
@@ -55,6 +60,7 @@ type signInChallenge struct {
 	ExpiresAt  time.Time `json:"expires_at"`
 	// MintedByKey: see SignInRules.MintedByKey.
 	MintedByKey string `json:"minted_by_key,omitempty"`
+	IssuedBy    uint64 `json:"issued_by,omitempty"`
 }
 // <<< feature:two_factor
 
@@ -78,16 +84,18 @@ func startSignInTx( tx *db.Tx , user *User , rules SignInRules ) ( signed *SignI
 			SecretHash: encryption.Sha256Hex( secret ),
 			ExpiresAt:  time.Now().UTC().Add( ChallengeTTL ),
 			MintedByKey: rules.MintedByKey,
+			IssuedBy:    rules.IssuedBy,
 		}
 		if err = tx.Put( db.BucketSignInChallenges , []byte( challenge_id ) , challenge ); err != nil { return }
-		signed = &SignIn{ UserID: user.ID , Challenge: challenge_id + "." + secret }
+		signed = &SignIn{ UserID: user.ID , Challenge: challenge_id + "." + secret , IssuedBy: rules.IssuedBy }
 		return
 	}
 	// <<< feature:two_factor
 	session_id , credential , session := newSession( user.ID , rules.SessionTTL )
 	session.MintedByKey = rules.MintedByKey
+	session.IssuedBy = rules.IssuedBy
 	if err = tx.Put( db.BucketSessions , []byte( session_id ) , session ); err != nil { return }
-	signed = &SignIn{ UserID: user.ID , SessionCredential: credential }
+	signed = &SignIn{ UserID: user.ID , SessionCredential: credential , IssuedBy: rules.IssuedBy }
 	return
 }
 
@@ -134,8 +142,9 @@ func FinishChallenge( store *db.Store , credential string , code string , sessio
 		if tx_err = tx.Delete( db.BucketSignInChallenges , []byte( challenge_id ) ); tx_err != nil { return }
 		session_id , session_credential , session := newSession( user.ID , session_ttl )
 		session.MintedByKey = challenge.MintedByKey
+		session.IssuedBy = challenge.IssuedBy
 		if tx_err = tx.Put( db.BucketSessions , []byte( session_id ) , session ); tx_err != nil { return }
-		signed = &SignIn{ UserID: user.ID , SessionCredential: session_credential }
+		signed = &SignIn{ UserID: user.ID , SessionCredential: session_credential , IssuedBy: challenge.IssuedBy }
 		return
 	} )
 	if err != nil { signed , method = nil , "" }

@@ -169,6 +169,16 @@ class FindingTheLineTest(MonitoringTestCase):
             reference = client.get("/api/health/nope").headers["x-request-id"]
         self.assertNotIn("msg", self.line_for(reference))
 
+    def test_the_skip_list_ignores_case_and_a_trailing_slash(self) -> None:
+        """S21: the paths kept out of the log are matched the way budget_for
+        matches the sign-in paths, lowercased and without a trailing slash,
+        as the Go template's router does."""
+        with TestClient(self.app) as client:
+            references = [client.get(path, follow_redirects=False).headers["x-request-id"] for path in ("/API/Health", "/api/health/", "/Api/Ready")]
+        logger = self.app.state.logs
+        for reference in references:
+            self.assertEqual(logger.read_day(logger.today(), logs.Query(reference))[0], [])
+
     # >>> feature:metrics
     def test_probes_and_scrapes_stay_out_of_the_log(self) -> None:
         self.set_metrics(True)

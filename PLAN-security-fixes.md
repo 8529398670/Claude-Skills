@@ -263,3 +263,57 @@ Afterwards:
   `own login link created` entries made by a key (`by_key`). Revoke those
   keys if any of the entries are unexplained.
 - **Database re-seal.** S12 re-seals the database. Take a backup first.
+
+# Round 3 (S18-S21)
+
+Written 2026-11-15, from the fourth security review of E2EEDB. S19-S21 are in
+template code (`reissueLogin` and `resetTwoFactor` in
+`server/routes/admin.go` are identical to the Go template). The same rules
+as above: both templates, a failing test first, one `UPGRADING.md` entry,
+then E2EEDB takes it as step H0 of its plan.
+
+## S18: dropped (E2EEDB only)
+
+Not a template change. Keys making login links (`reissue-login`, the
+account link route, `may_sign_in`) is a deliberate template option and stays
+as it is. E2EEDB turns it off for itself, because a session there reads the
+keyring: step H0 of its own plan.
+
+## S19 (medium): an admin can sign in as any account below them
+
+**Go: confirmed.** `reset-two-factor` then `reissue-login` on a user gives
+the admin a session as that user: their keyring (offline passphrase
+guesses), their plaintext folder names, and replacing the keyring. That is
+how links work, so the fix is to make it visible:
+
+1. Record who issued a link on the session it makes (`IssuedBy`), and audit
+   "signed in with a link issued by <admin>" on the account's own log.
+2. Audit every keyring read, with the session's origin.
+3. Apps document it (E2EEDB README, "Known limits").
+
+## S20 (low): disabling or demoting an admin leaves their key's work alive
+
+**Go: confirmed.** `KeyLineageLive` checks only that the key is live. After
+the owner disabled Bob, a session from a link Bob's key made stayed signed
+in, the link still redeemed, and a key minted from that session worked.
+After demotion, a link Bob made as admin still redeemed.
+
+Fix: `KeyLineageLive` also refuses a key whose account is missing, disabled,
+or below the role it had when it made the link; or void every link and
+session a user's keys made when that user is disabled or demoted. Test: the
+three cases above end.
+
+## S21 (info)
+
+1. `skipRequestLog` (`server/middleware/request_log.go`) matches the raw,
+   case-sensitive path; normalise it as `budgetFor` does.
+2. The `RequireSession` comment in `server/security/security.go` still says
+   any key may make its own login link.
+
+## S22 (low): revoke-access and delete-user leave key-made work alive
+
+**Found by the round-3 session, not fixed.** `RevokeAllCredentials`
+(revoke-access) and delete-user stop a user's keys but do not void the login
+links and sessions those keys made in other accounts. Same class as S20: run
+`voidWhatKeysMadeTx` / `void_what_keys_made_tx` there too, in both templates,
+with a test like S20's.

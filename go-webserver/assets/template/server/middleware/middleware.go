@@ -144,10 +144,7 @@ func staticAsset( method string , request_path string ) ( result bool ) {
 // Serving one touches no database and no credential. The page itself is not
 // exempt, and neither is anything under /api.
 func budgetFor( method string , request_path string ) ( budget rateBudget ) {
-	normalised := strings.ToLower( request_path )
-	if len( normalised ) > 1 {
-		normalised = strings.TrimRight( normalised , "/" )
-	}
+	normalised := normalisedPath( request_path )
 	switch {
 	case method == fiber.MethodPost && signInPaths[ normalised ]:
 		budget = budgetSignIn
@@ -157,6 +154,18 @@ func budgetFor( method string , request_path string ) ( budget rateBudget ) {
 	// <<< feature:files
 	case staticAsset( method , normalised ):
 		budget = budgetNone
+	}
+	return
+}
+
+// normalisedPath is a request path the way the router matches it: in any
+// case, and with or without a trailing slash. Whatever decides by path (the
+// rate budgets, the request log's skip list) reads this, so no spelling of a
+// path gets a different answer from the route it reaches.
+func normalisedPath( request_path string ) ( normalised string ) {
+	normalised = strings.ToLower( request_path )
+	if len( normalised ) > 1 {
+		normalised = strings.TrimRight( normalised , "/" )
 	}
 	return
 }

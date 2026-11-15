@@ -37,7 +37,7 @@ func RequestLog( logger *logs.Logger ) ( handler fiber.Handler ) {
 			return
 		}
 		settings := logger.Settings()
-		if skipRequestLog( c , settings ) {
+		if skipRequestLog( c.Method() , c.Path() , settings ) {
 			err = c.Next()
 			return
 		}
@@ -66,14 +66,17 @@ func RequestLog( logger *logs.Logger ) ( handler fiber.Handler ) {
 	return
 }
 
-func skipRequestLog( c fiber.Ctx , settings config.LogsConfig ) ( skip bool ) {
-	request_path := c.Path()
+// skipRequestLog is whether a request is left out of the request log. It
+// reads the path as the router does (normalisedPath): matched raw, "/API/Health"
+// was logged where "/api/health" was not.
+func skipRequestLog( method string , raw_path string , settings config.LogsConfig ) ( skip bool ) {
+	request_path := normalisedPath( raw_path )
 	switch {
 	case request_path == "/api/logs/events" , request_path == "/api/health" , request_path == "/api/ready" , request_path == "/metrics":
 		skip = true
 	case strings.HasPrefix( request_path , "/api/owner/logs" ):
 		skip = true
-	case settings.StaticAssets == false && staticAsset( c.Method() , request_path ):
+	case settings.StaticAssets == false && staticAsset( method , request_path ):
 		skip = true
 	}
 	return

@@ -56,6 +56,12 @@ type LoginToken struct {
 	// person did. Revoking or deleting that key voids the link while it can
 	// still be used (VoidLinksMintedByKey).
 	MintedByKey string `json:"minted_by_key,omitempty"`
+	// IssuedBy is the admin who reissued this link for someone else's
+	// account, zero when the account, the operator or account creation made
+	// it. The session it makes records it too, and the sign-in is logged as
+	// "signed in with a link issued by" them: an admin can sign in as anyone
+	// below them this way, and the account's own log shows it.
+	IssuedBy uint64 `json:"issued_by,omitempty"`
 }
 
 // LoginLinkOptions says how a new link may be used. MaxUses is ignored when
@@ -275,6 +281,7 @@ func IssueLoginLink( store *db.Store , user_id uint64 , options LoginLinkOptions
 		Unlimited:  options.Unlimited,
 		MintedByKey: options.MintedByKey,
 	}
+	if options.ActorID != user_id { token.IssuedBy = options.ActorID }
 	if token.Unlimited { token.MaxUses = 0 }
 	if options.TTL > 0 { token.ExpiresAt = now.Add( options.TTL ) }
 	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
@@ -345,6 +352,7 @@ func RedeemLoginToken( store *db.Store , credential string , rules SignInRules )
 		if tx_err = tx.Put( db.BucketLoginTokens , []byte( token_id ) , current ); tx_err != nil { return }
 
 		rules.MintedByKey = current.MintedByKey
+		rules.IssuedBy = current.IssuedBy
 		signed , tx_err = startSignInTx( tx , owner , rules )
 		return
 	} )

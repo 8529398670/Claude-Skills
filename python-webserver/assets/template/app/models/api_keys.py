@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from app.core import encryption
-from app.core.db import BUCKET_API_KEYS, BUCKET_USERS, Record, Store
+from app.core.db import BUCKET_API_KEYS, BUCKET_USERS, Record, Store, Transaction
 from app.models import RestoreGoneError, deleted_long_ago, from_iso, mark_deleted, to_iso, unmark_deleted, utc_now
 from app.models import login_tokens
 from app.models.sessions import split_credential
@@ -407,6 +407,16 @@ def list_api_keys(store: Store) -> list[APIKey]:
 
 def list_api_keys_for_user(store: Store, user_id: int) -> list[APIKey]:
     return [key for key in list_api_keys(store) if key.user_id == user_id]
+
+
+def void_what_keys_made_tx(tx: Transaction, user_id: int) -> int:
+    """login_tokens.void_links_minted_by_key for every API key an account
+    holds, live or not, inside the caller's transaction. Disabling an
+    account, or taking its admin role away, calls it: a login link its key
+    made, and a browser that link signed in, carry the right the account had
+    then, so they end with that right instead of outliving it."""
+    key_ids = [key_id for key_id, record in tx.all(BUCKET_API_KEYS) if record["user_id"] == user_id]
+    return sum(login_tokens.void_links_minted_by_key(tx, key_id) for key_id in key_ids)
 
 
 def count_live_api_keys_for_user(store: Store, user_id: int) -> int:

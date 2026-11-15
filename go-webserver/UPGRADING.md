@@ -3,6 +3,41 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 4eb03a2
+
+**Security fixes from the fourth review (2026-11-15): S19 to S21. Take them as
+one update.** Every item is a fix. Login links, `may_sign_in`,
+`reissue-login` and `reset-two-factor` behave as before. Run the app's tests
+after, then check sign-in and Users by eye.
+
+- **S19: signing in through a link an admin reissued is logged on the
+  account.** `LoginToken.IssuedBy` (set in `models.IssueLoginLink` when
+  `ActorID` is someone else's account), carried by `SignInRules`, the
+  two-factor challenge and `SignIn` onto `Session.IssuedBy`; the sign-in entry
+  reads "signed in with a link issued by <admin>" (`handlers.issuer`,
+  auth.go), or "..., through a link issued by <admin>" after a code
+  (two_factor.go), with `issued_by` in its detail. Take
+  `server/models/login_token.go`, `sign_in.go`, `session.go`,
+  `server/routes/auth.go`, `two_factor.go`. An app whose sessions reach
+  secrets (E2EEDB's keyring) also logs each read and says in its README that
+  an admin can sign in as anyone below them. Test:
+  `TestSigningInThroughAnAdminsLinkIsLogged` (`server/routes/ways_in_test.go`).
+- **S20: disabling or demoting an account ends what its API keys made.**
+  `models.voidWhatKeysMadeTx` (api_key.go) runs `VoidLinksMintedByKeyTx` for
+  every key the account holds, inside `SetUserDisabledAs` (on disable) and
+  `SetUserRole` (on losing admin): unused login links those keys made or
+  reissued, the browsers they signed in in any account, waiting two-factor
+  sign-ins and invite links all end. They used to outlive the right that made
+  them. Take `server/models/user.go`, `api_key.go`. An app with its own record
+  of what a key made (E2EEDB's key lineage) checks the making account there
+  too. Test: `TestLosingTheRightEndsWhatTheKeysMade`.
+- **S21: the request log's skip list reads the path as the router does.**
+  `skipRequestLog( method , path , settings )` matches `normalisedPath` (lower
+  case, no trailing slash), which `budgetFor` now shares
+  (`server/middleware/request_log.go`, `middleware.go`); the `RequireSession`
+  comment in `security.go` now says a key makes its own login link only with
+  `may_sign_in`. Test: `TestSkippedPathsIgnoreCase`.
+
 ## After 2ad0dbf
 
 **S9 gets an opt-in: a key may make sign-in links once you switch it on.**

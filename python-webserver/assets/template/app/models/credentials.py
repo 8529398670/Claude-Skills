@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 from app.core.db import BUCKET_USERS, Store, Transaction
 from app.core.db import BUCKET_API_KEYS  # feature:api_keys
 from app.models import to_iso, utc_now
-from app.models.api_keys import APIKey  # feature:api_keys
+from app.models.api_keys import APIKey, void_what_keys_made_tx  # feature:api_keys
 from app.models.login_tokens import delete_login_tokens_for_user, delete_pending_login_tokens
 from app.models.sessions import destroy_sessions_for_user
 from app.models.sign_in import delete_challenges_for_user  # feature:two_factor
@@ -84,7 +84,9 @@ def set_user_disabled(store: Store, user_id: int, disabled: bool, actor_id: int 
     session or a link that survived would come back to life the moment the
     account was re-enabled. API keys are deliberately left alone -- see
     load_api_key -- and revoke_all_credentials is for when they should die
-    too.
+    too. What the keys made is not: their unused login links, and every
+    browser one of those signed in, in any account, end here too
+    (api_keys.void_what_keys_made_tx). They used to stay.
 
     The owner cannot be disabled by any route, the CLI included: the owner is
     always an enabled admin. Raises OwnerProtectedError; transfer ownership
@@ -106,6 +108,7 @@ def set_user_disabled(store: Store, user_id: int, disabled: bool, actor_id: int 
             destroy_sessions_for_user(tx, user_id)
             delete_pending_login_tokens(tx, user_id)
             delete_challenges_for_user(tx, user_id)  # feature:two_factor
+            void_what_keys_made_tx(tx, user_id)  # feature:api_keys
     return True
 
 
@@ -142,9 +145,12 @@ def set_user_role(store: Store, user_id: int, actor_id: int, role: str) -> bool 
     person being promoted. An admin cannot sign in through an invite link, so
     a new login link is the way back in.
 
-    Losing admin rights ends nothing: the role is read on every request, so it
-    applies at once, and API keys narrow to it. Invite links the account made
-    stop working while it is not an admin."""
+    Losing admin rights ends nothing of the account's own: the role is read
+    on every request, so it applies at once, and API keys narrow to it. Invite
+    links the account made stop working while it is not an admin. What its API
+    keys made as an admin does end: their unused login links, and the browsers
+    those signed in (api_keys.void_what_keys_made_tx). A link an admin's key
+    made outlived the demotion."""
     with store.transaction() as tx:
         record = tx.get(BUCKET_USERS, user_id)
         if record is None:
@@ -161,6 +167,8 @@ def set_user_role(store: Store, user_id: int, actor_id: int, role: str) -> bool 
             destroy_sessions_for_user(tx, user_id)
             delete_pending_login_tokens(tx, user_id)
             delete_challenges_for_user(tx, user_id)  # feature:two_factor
+        else:  # feature:api_keys
+            void_what_keys_made_tx(tx, user_id)  # feature:api_keys
     return True
 
 
