@@ -41,6 +41,7 @@ from app.models.users import (
     User,
     get_user,
     may_act_on_id_tx,
+    owner_id_tx,
     may_act_on_tx,
     valid_role,
 )
@@ -426,26 +427,31 @@ def revoke_api_key(store: Store, key_id: str, actor_id: int | None = None) -> AP
     return APIKey.from_record(record)
 
 
-def rename_api_key(store: Store, key_id: str, name: str, expect: str | None = None) -> bool:
+def rename_api_key(store: Store, key_id: str, actor_id: int | None, name: str, expect: str | None = None) -> bool:
     """Change a key's label, which is all a name is: nothing about what the
     key may do hangs off it, so a dead key can be renamed too. False if there
     is no such key or it is deleted.
 
     expect, when given, is the name the caller believes is stored, as in
     users.rename_user: RenameConflictError if it is not, which keeps an undo
-    from overwriting a rename made somewhere else."""
-    found = False
+    from overwriting a rename made somewhere else.
 
-    def mutate(record: Record) -> None:
-        nonlocal found
-        if record.get("deleted_at") is not None:
-            return
-        found = True
+    actor_id is who is asking (None for none, as from a shell). A name is what
+    the owner goes by when deciding which key to revoke, so renaming someone
+    else's key follows the same ladder as everything else done to it (S14):
+    nobody renames the owner's keys (OwnerProtectedError), and only the owner
+    renames another admin's (OwnerRequiredError)."""
+    with store.transaction() as tx:
+        record = tx.get(BUCKET_API_KEYS, key_id)
+        if record is None or record.get("deleted_at") is not None:
+            return False
+        if actor_id is not None:
+            may_act_on_id_tx(tx, actor_id, record["user_id"])
         if expect is not None and record["name"] != expect.strip():
             raise RenameConflictError(record["name"])
         record["name"] = name.strip()
-
-    return store.update_value(BUCKET_API_KEYS, key_id, mutate) is not None and found
+        tx.put(BUCKET_API_KEYS, key_id, record)
+    return True
 
 
 def set_api_key_expiry(store: Store, key_id: str, actor_id: int, ttl_seconds: int) -> APIKey | None:
@@ -521,7 +527,7 @@ def restore_api_key(store: Store, key_id: str, actor_id: int, actor_is_admin: bo
         # Bringing a key back is as much power over its account as minting
         # one, so the rule is the key's account's, not the deleter's.
         may_act_on_id_tx(tx, actor_id, record["user_id"])
-        unmark_deleted(record, actor_id, actor_is_admin)
+        unmark_deleted(record, actor_id, actor_is_admin, owner_id_tx(tx))
         key = APIKey.from_record(record)
         if key.live:
             owned = (APIKey.from_record(other) for _, other in tx.all(BUCKET_API_KEYS) if other["user_id"] == key.user_id)

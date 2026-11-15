@@ -24,7 +24,6 @@ from app.routes.admin import CancelLoginLinkReply, DisplayName, ExpiresInMinutes
 from app.routes.helpers import Refused, get_config, get_store, run
 from app.routes.logs import audit
 from app.routes.themes import Theme, theme_list  # feature:appearance
-from app.routes.mcp_tools_accounts import with_login_url  # feature:mcp
 
 
 class Me(Reply, kw_only=True):
@@ -229,14 +228,9 @@ class MyLoginLink(RequestType):
 
 @route(
     "POST /api/account/login-link", summary="A login link for yourself",
-    tag="Account",
-    description="A link that signs your own account in on a browser or another device. Only a key with your "
-    "account's full role may ask: one scoped down to user on an admin account is refused.",
-    mcp_note="Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), "  # feature:mcp
-    "expires_at and max_uses. Any older link the account could still use stops working; its signed-in "  # feature:mcp
-    "devices stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs "  # feature:mcp
-    "out every device it signed in.",  # feature:mcp
-    mcp="create_my_login_link", call=with_login_url,  # feature:mcp
+    tag="Account", access=SESSION_ONLY,
+    description="A link that signs your own account in on a browser or another device. Only a browser "
+    "session may ask: an API key is refused, so that a key cannot turn itself into a session.",
 )
 def create_my_login_link(request: Request, body: MyLoginLink) -> LoginLinkReply:
     """Mint a login link for the caller's own account: the way to sign in on
@@ -245,13 +239,10 @@ def create_my_login_link(request: Request, body: MyLoginLink) -> LoginLinkReply:
     has the same effect: any link the account could still use stops working,
     and existing sessions stay signed in.
 
-    An API key may ask too, but only one that carries the account's full
-    role: the link becomes a session, and a session acts with the account's
-    role, so a key scoped down to "user" on an admin's account would otherwise
-    climb. Revoking the key voids the link while it can still be used."""
+    Only a browser session may ask. An API key may not: the link becomes an
+    ordinary browser session, which would open everything kept from keys (the
+    API keys card, the owner's screens, minting keys) to whoever holds one."""
     actor = actor_from(request)
-    if actor.via_api_key and actor.role != actor.user.role:
-        raise Refused(403, "this key acts with less than your account's role, so it cannot make a login link")
     options = link_options(request, body)
     credential, info = login_tokens.issue_login_link(get_store(request), actor.user.id, options)
     audit(request, KIND_AUTH, "own login link created", {"max_uses": info["max_uses"], "expires_at": info["expires_at"]})
@@ -301,7 +292,7 @@ async def destroy_cookie_session(request: Request) -> None:
     the record rather than only the cookie is what matters: a copy of the
     cookie taken earlier is then dead too."""
     cfg = get_config(request)
-    raw = request.cookies.get(cfg.cookie_name, "")
+    raw = request.cookies.get(cfg.session_cookie_name, "")
     if not raw:
         return
     try:

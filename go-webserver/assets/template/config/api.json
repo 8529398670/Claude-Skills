@@ -1423,7 +1423,7 @@
         "type": "http"
       },
       "sessionCookie": {
-        "description": "A browser session. Its POSTs carry csrf_token in the body. The cookie's name is server.cookie_name.",
+        "description": "A browser session. Its POSTs carry csrf_token in the body. The cookie's name is server.cookie_name, with the __Host- prefix while server.secure_cookies is on.",
         "in": "cookie",
         "name": "session",
         "type": "apiKey"
@@ -1439,7 +1439,7 @@
   "paths": {
     "/api/account/login-link": {
       "post": {
-        "description": "A link that signs your own account in on a browser or another device. Only a key with your account's full role may ask: one scoped down to user on an admin account is refused.",
+        "description": "A link that signs your own account in on a browser or another device. Only a browser session may ask: an API key is refused, so that a key cannot turn itself into a session.",
         "operationId": "post_api_account_login_link",
         "requestBody": {
           "content": {
@@ -1538,9 +1538,6 @@
         "security": [
           {
             "sessionCookie": []
-          },
-          {
-            "apiKey": []
           }
         ],
         "summary": "A login link for yourself",

@@ -46,7 +46,7 @@ func errorPageApp( t *testing.T , rate_limit int ) ( app *fiber.App ) {
 	app.Use( RequestID() )
 	app.Use( Recover( settings ) )
 	app.Use( SecurityHeaders( settings ) )
-	app.Use( RateLimit( settings ) )
+	app.Use( RateLimit( settings , nil ) )
 	app.Get( "/boom" , func( fiber.Ctx ) error { return errors.New( "the disk is on fire" ) } )
 	app.Get( "/login/*" , server.ServeIndex )
 	app.Get( "/*" , server.Handler )

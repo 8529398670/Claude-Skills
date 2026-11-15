@@ -225,19 +225,24 @@ func TestAnAdminKeyManagesAccounts( t *testing.T ) {
 	if status , _ = fixture.withKey( t , user_key , http.MethodPost , "/api/admin/users" , fiber.Map{ "display_name": "Eve" , "role": "admin" } ); status != fiber.StatusForbidden { t.Fatalf( "narrowed key made an account: %d" , status ) }
 }
 
-// A login link becomes a full-role session, so only a key carrying the
-// account's full role may make one for its own account.
-func TestOnlyAFullRoleKeyMakesItsOwnLoginLink( t *testing.T ) {
+// S9: a login link becomes an ordinary browser session, so no API key may
+// make one for its own account, not even one with the account's full role. A
+// browser session still gets its link.
+func TestNoKeyMakesItsOwnLoginLink( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	narrow , _ , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "narrow" , models.RoleUser , time.Hour )
 	if err != nil { t.Fatal( err ) }
-	if status , reply := fixture.withKey( t , narrow , http.MethodPost , "/api/account/login-link" , fiber.Map{} ); status != fiber.StatusForbidden || strings.Contains( reply[ "error" ].( string ) , "less than your account's role" ) == false {
-		t.Fatalf( "narrowed key: %d %v" , status , reply )
-	}
+	admin , _ , err := models.IssueAPIKey( fixture.store , fixture.owner.ID , "admin" , models.RoleAdmin , time.Hour )
+	if err != nil { t.Fatal( err ) }
 	full , _ , err := models.IssueAPIKey( fixture.store , fixture.alice.ID , "full" , models.RoleUser , time.Hour )
 	if err != nil { t.Fatal( err ) }
-	status , reply := fixture.withKey( t , full , http.MethodPost , "/api/account/login-link" , fiber.Map{} )
-	if status != fiber.StatusOK || fixture.loginWith( t , reply[ "login_path" ].( string ) ) == false { t.Fatalf( "full key: %d %v" , status , reply ) }
+	for _ , key := range []string{ narrow , admin , full } {
+		if status , reply := fixture.withKey( t , key , http.MethodPost , "/api/account/login-link" , fiber.Map{ "max_uses": 0 , "expires_in_minutes": 0 } ); status != fiber.StatusForbidden {
+			t.Fatalf( "a key made its own login link: %d %v" , status , reply )
+		}
+	}
+	status , reply := send( t , fixture.signIn( t , fixture.alice.ID ) , "/api/account/login-link" , fiber.Map{} )
+	if status != fiber.StatusOK || fixture.loginWith( t , reply[ "login_path" ].( string ) ) == false { t.Fatalf( "session: %d %v" , status , reply ) }
 }
 
 // Revoking or deleting a key voids the login links it made that are still

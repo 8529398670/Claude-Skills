@@ -159,10 +159,13 @@ reproducible and does not silently resolve to newer versions.
   the peer is what makes this safe: without it, any client that reaches the
   backend directly picks its own rate-limit key. The config check refuses
   `trust_proxy: true` with an empty list. For the Docker setup the proxy
-  reaches the container from the bridge gateway, so `[172.16.0.0/12]` covers
-  the default bridge -- confirm with `docker network inspect bridge`. With a
-  single-value header from a CDN (`CF-Connecting-IP`, say), list the CDN's
-  ranges and make sure it overwrites what the client sent. `docker/run.sh`
+  reaches the container from the bridge gateway, so list that one address
+  (`[172.17.0.1]` on the default bridge -- confirm with `docker network
+  inspect bridge`), not `172.16.0.0/12`, which trusts every container on every
+  bridge network. A range wider than /8 (IPv4) or /16 (IPv6) is refused.
+  Behind Cloudflare, see [deploy-cloudflare.md](deploy-cloudflare.md). With a
+  single-value header from a CDN (`CF-Connecting-IP`, say), make sure it
+  overwrites what the client sent. `docker/run.sh`
   reminds you while it is off.
 - **`config.yaml` is mounted writable and `secret.key` read-only, both
   separately from the data directory,** so the key is never inside

@@ -4,15 +4,21 @@ import (
 	json "encoding/json"
 	fmt "fmt"
 
-	db "{{MODULE_PATH}}/server/db" // feature:two_factor|webhooks|files
+	db "{{MODULE_PATH}}/server/db"
 	encryption "{{MODULE_PATH}}/server/encryption"
 )
 
-// rekeyFields is every field sealed on its own with the secret key, by bucket.
-var rekeyFields = map[string][]string{
-	db.BucketUsers:    { "totp_secret" , "totp_pending" }, // feature:two_factor
-	db.BucketWebhooks: { "secret" }, // feature:webhooks
-	db.BucketFiles:    { "key" }, // feature:files
+// rekeyFields is every field sealed on its own, by bucket, with the purpose
+// whose subkey of secret.key seals it (see encryption.SubKey).
+var rekeyFields = map[string]map[string]string{
+	db.BucketUsers:    { "totp_secret": encryption.PurposeTOTP , "totp_pending": encryption.PurposeTOTP }, // feature:two_factor
+	db.BucketWebhooks: { "secret": encryption.PurposeWebhooks }, // feature:webhooks
+	db.BucketFiles:    { "key": encryption.PurposeFiles }, // feature:files
+}
+
+// db.Open brings a database sealed the old way up to date with this.
+func init() {
+	db.FieldRekey = RekeyRecord
 }
 
 // RekeyRecord is what moving the database to a new key has to do beyond the
@@ -31,18 +37,23 @@ func RekeyRecord( old_key string , new_key string ) ( rewrite func( bucket strin
 		record := map[string]json.RawMessage{}
 		if err = json.Unmarshal( plain , &record ); err != nil { return }
 		changed := false
-		for _ , field := range fields {
+		for field , purpose := range fields {
 			raw , present := record[ field ]
 			if present == false { continue }
 			var sealed string
 			if err = json.Unmarshal( raw , &sealed ); err != nil { return }
 			if sealed == "" { continue }
-			secret , open_err := encryption.ChaChaDecryptBase64String( old_key , sealed )
+			// A field sealed the old way, with secret.key itself, opens with
+			// that: this is also how an old database is brought up to date.
+			secret , open_err := encryption.ChaChaDecryptBase64String( encryption.SubKey( old_key , purpose ) , sealed )
+			if open_err != nil {
+				secret , open_err = encryption.ChaChaDecryptBase64String( old_key , sealed )
+			}
 			if open_err != nil {
 				err = fmt.Errorf( "%s: %w" , field , open_err )
 				return
 			}
-			if sealed , err = encryption.ChaChaEncryptString( new_key , secret ); err != nil { return }
+			if sealed , err = encryption.ChaChaEncryptString( encryption.SubKey( new_key , purpose ) , secret ); err != nil { return }
 			if record[ field ] , err = json.Marshal( sealed ); err != nil { return }
 			changed = true
 		}

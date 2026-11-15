@@ -174,7 +174,7 @@ func sameOriginJSON( c fiber.Ctx ) ( ok bool ) {
 // if any. Deleting the record rather than only the cookie is what matters: a
 // copy of the cookie taken earlier is then dead too.
 func ( handlers *Handlers ) destroyCookieSession( c fiber.Ctx ) {
-	raw := c.Cookies( handlers.cfg().CookieName )
+	raw := c.Cookies( handlers.cfg().SessionCookieName() )
 	if raw == "" { return }
 	if credential , decrypt_err := handlers.Guard.DecryptCookie( raw ); decrypt_err == nil {
 		models.DestroySession( handlers.Store , credential )

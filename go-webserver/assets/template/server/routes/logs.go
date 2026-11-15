@@ -172,7 +172,7 @@ func ( handlers *Handlers ) downloadLogDay( c fiber.Ctx , in *logDayPath ) ( err
 //     tag="Owner", role=OWNER, feature="logs", reply_type="text/event-stream",
 // )
 func ( handlers *Handlers ) streamLogs( c fiber.Ctx , in *logSearch ) ( err error ) {
-	credential , cookie_err := handlers.Guard.DecryptCookie( c.Cookies( handlers.cfg().CookieName ) )
+	credential , cookie_err := handlers.Guard.DecryptCookie( c.Cookies( handlers.cfg().SessionCookieName() ) )
 	if cookie_err != nil {
 		err = refuse( fiber.StatusNotFound , "not found" )
 		return

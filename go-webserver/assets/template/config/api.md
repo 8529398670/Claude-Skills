@@ -23,7 +23,7 @@ This file is generated: do not edit it. Change the docs next to the handlers and
 
 | Way in | How |
 |---|---|
-| Browser session | A browser session. Its POSTs carry csrf_token in the body. The cookie's name is server.cookie_name. |
+| Browser session | A browser session. Its POSTs carry csrf_token in the body. The cookie's name is server.cookie_name, with the __Host- prefix while server.secure_cookies is on. |
 | API key | An API key, as Authorization: Bearer <id>.<secret>. |
 
 ## Errors
@@ -44,7 +44,7 @@ An error reply is a JSON object whose `error` says what went wrong.
 
 | Method | Path | Summary | Who may call |
 |---|---|---|---|
-| POST | [`/api/account/login-link`](#post-apiaccountlogin-link) | A login link for yourself | browser session or API key, anyone signed in |
+| POST | [`/api/account/login-link`](#post-apiaccountlogin-link) | A login link for yourself | browser session only, anyone signed in |
 | POST | [`/api/account/login-link/cancel`](#post-apiaccountlogin-linkcancel) | Stop your own login link working | browser session or API key, anyone signed in |
 | POST | [`/api/account/password`](#post-apiaccountpassword) | Set or clear your password | browser session only, anyone signed in |
 | POST | [`/api/account/pin`](#post-apiaccountpin) | Set or clear your PIN | browser session only, anyone signed in |
@@ -69,12 +69,11 @@ An error reply is a JSON object whose `error` says what went wrong.
 
 A login link for yourself
 
-A link that signs your own account in on a browser or another device. Only a key with your account's full role may ask: one scoped down to user on an admin account is refused.
+A link that signs your own account in on a browser or another device. Only a browser session may ask: an API key is refused, so that a key cannot turn itself into a session.
 
 |  |  |
 |---|---|
-| Who may call | browser session or API key, anyone signed in |
-| MCP tool | [`create_my_login_link`](mcp.md#create_my_login_link) |
+| Who may call | browser session only, anyone signed in |
 | Errors | 400, 401, 403, 429, 503 |
 
 **Request body**

@@ -130,7 +130,9 @@ func ( handlers *Handlers ) confirmTwoFactor( c fiber.Ctx , in *codeRequest ) ( 
 	}
 	outcome := models.AttemptVoid
 	defer func() { handlers.Codes.Settle( user_id , outcome ) }()
-	codes , confirm_err := models.ConfirmTwoFactorSetup( handlers.Store , user_id , in.Code , handlers.cfg().SecretKey )
+	keep := ""
+	if actor := security.ActorFrom( c ); actor.Session != nil { keep = actor.Session.ID }
+	codes , confirm_err := models.ConfirmTwoFactorSetup( handlers.Store , user_id , in.Code , handlers.cfg().SecretKey , keep )
 	switch {
 	case errors.Is( confirm_err , models.ErrTwoFactorOn ):
 		err = refuse( fiber.StatusConflict , "two_factor_on" )

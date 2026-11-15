@@ -99,7 +99,7 @@ func ( d *deployment ) assertWhole( t *testing.T ) ( cfg *config.Config ) {
 	// >>> feature:two_factor
 	user , err := models.GetUser( store , d.userID )
 	if err != nil { t.Fatal( err ) }
-	opened , err := encryption.ChaChaDecryptBase64String( cfg.SecretKey , user.TOTPPending )
+	opened , err := encryption.ChaChaDecryptBase64String( encryption.SubKey( cfg.SecretKey , encryption.PurposeTOTP ) , user.TOTPPending )
 	if err != nil || opened != d.secret { t.Fatalf( "two-factor secret: %q %v" , opened , err ) }
 	// <<< feature:two_factor
 

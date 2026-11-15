@@ -24,7 +24,7 @@ from typing import Any
 from app.core import encryption
 from app.core.db import BUCKET_WEBHOOK_DELIVERIES, BUCKET_WEBHOOKS, Record, Store
 from app.models import RestoreGoneError, deleted_long_ago, from_iso, mark_deleted, to_iso, unmark_deleted, utc_now
-from app.models.users import RenameConflictError
+from app.models.users import RenameConflictError, get_owner_id
 
 EVENT_USER_CREATED = "user.created"
 EVENT_USER_DISABLED = "user.disabled"
@@ -216,7 +216,7 @@ def create_webhook(store: Store, secret_key: str, name: str, url: str, events: l
         name=name.strip(),
         url=url,
         events=list(events),
-        secret=encryption.xchacha_encrypt_string(secret_key, secret),
+        secret=encryption.xchacha_encrypt_string(encryption.subkey(secret_key, encryption.PURPOSE_WEBHOOKS), secret),
         created_by=created_by,
         created_at=utc_now(),
     )
@@ -226,7 +226,7 @@ def create_webhook(store: Store, secret_key: str, name: str, url: str, events: l
 
 def open_secret(hook: Webhook, secret_key: str) -> str:
     """The signing secret in the clear, for the sender."""
-    return encryption.xchacha_decrypt_string(secret_key, hook.secret)
+    return encryption.xchacha_decrypt_string(encryption.subkey(secret_key, encryption.PURPOSE_WEBHOOKS), hook.secret)
 
 
 def get_webhook(store: Store, webhook_id: str) -> Webhook | None:
@@ -307,7 +307,7 @@ def rotate_webhook_secret(store: Store, secret_key: str, webhook_id: str) -> str
     refuses deliveries until it has the new secret gets them on a retry. None
     when there is no such endpoint or it is deleted."""
     secret = "whsec_" + encryption.url_token(24)
-    sealed = encryption.xchacha_encrypt_string(secret_key, secret)
+    sealed = encryption.xchacha_encrypt_string(encryption.subkey(secret_key, encryption.PURPOSE_WEBHOOKS), secret)
     found = False
 
     def mutate(record: Record) -> None:
@@ -337,9 +337,10 @@ def delete_webhook(store: Store, webhook_id: str, actor_id: int) -> bool:
 
 def restore_webhook(store: Store, webhook_id: str, actor_id: int, actor_is_admin: bool) -> Webhook:
     """Undo delete_webhook. Raises a RestoreError when it may not happen."""
+    owner_id = get_owner_id(store)
 
     def mutate(record: Record) -> None:
-        unmark_deleted(record, actor_id, actor_is_admin)
+        unmark_deleted(record, actor_id, actor_is_admin, owner_id)
 
     record = store.update_value(BUCKET_WEBHOOKS, webhook_id, mutate)
     if record is None:

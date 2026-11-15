@@ -287,7 +287,9 @@ def rename_my_key(request: Request, body: RenameKey) -> RenameKeyReply:
 )
 def rename_any_key(request: Request, body: RenameKey) -> RenameKeyReply:
     """An admin renaming anyone's key. A name changes nothing about what a key
-    can do, so unlike its expiry this needs no ladder."""
+    can do, but it is what the owner goes by when choosing a key to revoke, so
+    it follows the same ladder as the key's expiry: nobody renames the owner's
+    keys, and only the owner renames another admin's."""
     return _rename(request, body, own_only=False)
 
 
@@ -299,9 +301,13 @@ def _rename(request: Request, body: RenameKey, own_only: bool) -> RenameKeyReply
     if key is None or (own_only and key.user_id != actor_from(request).user.id):
         raise Refused(404, "no such api key")
     try:
-        renamed = api_keys.rename_api_key(store, key.id, body.name, body.expect)
+        renamed = api_keys.rename_api_key(store, key.id, actor_from(request).user.id, body.name, body.expect)
     except users.RenameConflictError as refusal:
         raise Refused(409, str(refusal), name=refusal.current) from None
+    except users.OwnerProtectedError:
+        raise Refused(403, "only the owner can rename the owner's keys") from None
+    except users.OwnerRequiredError:
+        raise Refused(403, "only the owner can rename an admin's keys") from None
     if not renamed:
         raise Refused(404, "no such api key")
     audit(request, KIND_ADMIN, "api key renamed", {"key_id": key.id, "name": body.name.strip()})

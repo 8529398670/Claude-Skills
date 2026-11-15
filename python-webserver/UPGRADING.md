@@ -3,6 +3,83 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 236539f
+
+**Security fixes from the third review (2026-11-15): S9 to S17. Take them as
+one update.** Every item is a fix. Run the app's tests after, then check
+sign-in, Settings and the API keys card by eye. Two of them sign everyone out
+once (S12's cookie subkey, S16's cookie name); say so before deploying.
+
+- **S9: no API key can make a login link for its own account.**
+  `POST /api/account/login-link` is now `access=SESSION_ONLY`, and the
+  `create_my_login_link` MCP tool is gone (a key got an unlimited link, redeemed
+  it, and had a browser session: keyring, owner screens, minting keys). Take
+  the declaration and handler in `app/routes/account.py`, run
+  `scripts/api_docs.sh`. An app with its own
+  MCP tool that mints a link for the caller (TodoBoard's `create_my_login_link`)
+  removes it or makes its route session-only too. Tests:
+  `test_no_key_makes_its_own_login_link` (test_admin_users.py), `test_account_tools`.
+  Afterwards, look in the activity log for `own login link created` entries
+  with `by_key`; revoke any key behind one nobody can explain.
+- **S11: `Cache-Control: no-store, private` and `Vary: Cookie, Authorization`
+  on every response that does not set its own.** New `NoStore` in
+  `app/core/middleware.py`, in `app/main.py` right before `SecurityHeaders`.
+  Test: `app/tests/test_no_store.py`.
+- **S10: the rate limiter.** `RateLimit` takes `logger=` (main.py passes it;
+  None is fine). An IPv6 client is counted by its /64 (`rate_key`); a request carrying `CF-Connecting-IP`, `X-Forwarded-For` or
+  `X-Real-IP` while `server.trust_proxy` is off logs one warning per process;
+  the first 429 a budget gives per window is logged, to the server log and as a
+  `system` entry. Take `app/core/middleware.py`. Tests:
+  `test_ipv6_is_counted_by_its_slash_64`, `test_proxy_headers_and_refusals_are_logged`.
+- **S12: database records are bound to where they sit, and each purpose has
+  its own subkey.** `encryption.subkey(secret, purpose)` (keyed BLAKE2b, the
+  same keys as the Go template) for `db`, `logs`, `cookie`, `totp`, `files`,
+  `webhooks`; every SQLite value is sealed with the `db` subkey and associated
+  data `bucket || 0x00 || key` (an integer key as 8 bytes big-endian), so a
+  record copied to another key no longer opens. Take `app/core/encryption.py`,
+  `app/core/db.py` (`encode`/`decode` take bucket and key, a `sealing` table),
+  `app/models/sealed.py` (fields now name their purpose), the subkey call sites
+  in `app/models/two_factor.py`, `webhooks.py`, `files.py`,
+  `app/core/security.py`, `app/core/logs.py`, and `app/core/backup.py`. An app
+  field of its own sealed with the secret key goes into `SEALED_FIELDS` with a
+  purpose, and its seal/open calls use `encryption.subkey`. An app table made
+  through `connect()` is not touched. **The database re-seals itself once**:
+  the first start on this version copies `app.db` to
+  `app.db.before-reseal-<time>`, then rewrites every record in one transaction
+  (`[reseal]` in the log); a `manage` command refuses to do it under a running
+  server. Take a backup first. Old log lines still read. Restoring an older
+  backup re-seals it too. Test: `app/tests/test_sealing.py`.
+- **S13: `server.trusted_proxies` refuses any range wider than /8 (IPv4) or /16
+  (IPv6)**, not only `/0` (`_narrow_enough_proxy` in `app/core/config.py`). The `trust_proxy` comment in `defaults.yaml` and
+  `config.example.yaml` now suggests the exact Docker gateway (`172.17.0.1`)
+  instead of `172.16.0.0/12`, and Cloudflare Tunnel's settings. An app whose
+  config.yaml lists `172.16.0.0/12` or wider now refuses to start, naming the
+  entry: change it to the gateway address. Test: `test_a_trusted_proxy_range_is_narrow`.
+- **S14: renaming and restoring follow the ownership rules.** `rename_api_key`
+  takes the actor and calls `may_act_on_id_tx` (the admin rename route answers
+  403 for the owner's or another admin's key). `unmark_deleted` takes the
+  owner's id: what the owner deleted only the owner restores
+  (`RestoreOutrankedError`, 403), for keys, invite links, files and webhooks.
+  Tests: `test_only_the_owner_renames_an_admins_key`,
+  `test_what_the_owner_deleted_only_the_owner_restores`.
+- **S15: turning two-factor on ends the account's other sessions, and an admin
+  resetting it ends all of them.** `two_factor.confirm_setup` takes the session
+  to keep. Tests: `test_turning_two_factor_on_ends_other_sessions`,
+  `test_resetting_two_factor_ends_every_session` (test_passwords.py).
+- **S16: small hardening.** Any `Authorization` header is a key attempt, split
+  on any whitespace, and a bad one is nobody (`_has_bearer`, `_resolve_api_key`).
+  The session cookie is `__Host-<cookie_name>` while `secure_cookies` is on
+  (`Config.session_cookie_name`, used everywhere the cookie is read or written;
+  **this signs everyone out once**). The `auth.two_factor` comment, and so the
+  Settings screen, says that switching it off lets enrolled accounts in without
+  a code. Tests: `test_a_bearer_header_wins_over_the_cookie`,
+  `test_the_session_cookie_is_host_prefixed_when_secure`.
+- **S17: `references/deploy-cloudflare.md`** in the skill: Tunnel or proxied DNS,
+  and the dashboard settings. Nothing to take into an app beyond the S13
+  comment.
+- The new regression tests are security tests, so `prune.py` keeps them in apps
+  stamped `tests: false` too.
+
 ## After c396a24
 
 **Two template security fixes from the review (2026-11-14): F11 and F12.**

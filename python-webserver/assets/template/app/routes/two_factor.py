@@ -112,7 +112,9 @@ def confirm_setup(request: Request, body: Code) -> ConfirmSetupReply:
         raise Refused(429, "two_factor_locked")
     with attempt:
         try:
-            codes = two_factor.confirm_setup(get_store(request), user_id, body.code, get_config(request).secret_key)
+            session = actor_from(request).session
+            keep = session.id if session is not None else ""
+            codes = two_factor.confirm_setup(get_store(request), user_id, body.code, get_config(request).secret_key, keep)
         except two_factor.AlreadyOnError:
             raise Refused(409, "two_factor_on") from None
         except two_factor.WrongCodeError:

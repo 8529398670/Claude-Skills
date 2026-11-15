@@ -299,9 +299,10 @@ func run() ( err error ) {
 	// log being on.
 	app.Use( middleware.RequestID() )
 	app.Use( middleware.Metrics( recorder ) ) // feature:metrics
+	app.Use( middleware.NoStore() )
 	app.Use( middleware.Recover( settings ) )
 	app.Use( middleware.SecurityHeaders( settings ) )
-	app.Use( middleware.RateLimit( settings ) )
+	app.Use( middleware.RateLimit( settings , logger ) )
 	app.Use( middleware.RequestLog( logger ) ) // feature:logs
 
 	handlers.Register( app )

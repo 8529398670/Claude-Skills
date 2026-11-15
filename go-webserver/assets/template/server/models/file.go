@@ -175,7 +175,7 @@ func CreateFile( store *db.Store , cfg *config.Config , user_id uint64 , name st
 		err = ErrFileTooLarge
 		return
 	}
-	key , err := encryption.ChaChaEncryptString( cfg.SecretKey , encryption.GenerateKeyHex() )
+	key , err := encryption.ChaChaEncryptString( encryption.SubKey( cfg.SecretKey , encryption.PurposeFiles ) , encryption.GenerateKeyHex() )
 	if err != nil { return }
 	now := time.Now().UTC()
 	made := &File{
@@ -236,7 +236,7 @@ func WriteFileChunk( store *db.Store , cfg *config.Config , file *File , index i
 		err = ErrFileChunkSize
 		return
 	}
-	file_key , err := encryption.ChaChaDecryptBase64String( cfg.SecretKey , file.Key )
+	file_key , err := encryption.ChaChaDecryptBase64String( encryption.SubKey( cfg.SecretKey , encryption.PurposeFiles ) , file.Key )
 	if err != nil { return }
 	sealed , err := encryption.ChaChaEncryptBound( file_key , plain , file.chunkBound( index ) )
 	if err != nil { return }
@@ -366,7 +366,9 @@ func RestoreFile( store *db.Store , cfg *config.Config , file_id string , actor_
 	err = store.Write( func( tx *db.Tx ) ( write_err error ) {
 		stored := &File{}
 		if write_err = tx.Get( db.BucketFiles , []byte( file_id ) , stored ); write_err != nil { return }
-		if write_err = stored.unmarkDeleted( actor_id , actor_is_admin ); write_err != nil { return }
+		owner_id , write_err := ownerIDTx( tx )
+		if write_err != nil { return }
+		if write_err = stored.unmarkDeleted( actor_id , actor_is_admin , owner_id ); write_err != nil { return }
 		used , write_err := usedBytes( tx , stored.UserID )
 		if write_err != nil { return }
 		if used + stored.Size > cfg.Files.QuotaBytesPerUser {
@@ -399,7 +401,7 @@ type FileReader struct {
 // OpenFile starts reading a finished file. ErrFileMissing means the bytes are
 // gone, or are not the size the record says.
 func OpenFile( cfg *config.Config , file *File ) ( reader *FileReader , err error ) {
-	key , err := encryption.ChaChaDecryptBase64String( cfg.SecretKey , file.Key )
+	key , err := encryption.ChaChaDecryptBase64String( encryption.SubKey( cfg.SecretKey , encryption.PurposeFiles ) , file.Key )
 	if err != nil { return }
 	source , err := os.Open( finishedPath( cfg , file.ID ) )
 	if errors.Is( err , os.ErrNotExist ) { err = ErrFileMissing }

@@ -171,8 +171,8 @@ func sessionCookie( t *testing.T , store *db.Store , cfg *config.Config , user_i
 	if err != nil { t.Fatal( err ) }
 	signed , err := models.RedeemLoginToken( store , login , models.SignInRules{ SessionTTL: time.Hour } )
 	if err != nil { t.Fatal( err ) }
-	sealed , _ := encryption.ChaChaEncryptString( cfg.SecretKey , signed.SessionCredential )
-	cookie = cfg.CookieName + "=" + sealed
+	sealed , _ := encryption.ChaChaEncryptString( encryption.SubKey( cfg.SecretKey , encryption.PurposeCookie ) , signed.SessionCredential )
+	cookie = cfg.SessionCookieName() + "=" + sealed
 	return
 }
 

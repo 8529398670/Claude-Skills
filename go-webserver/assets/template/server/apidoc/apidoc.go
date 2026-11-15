@@ -160,7 +160,7 @@ func Build( routes []Route ) ( spec map[string]any , problems []string ) {
 		"paths": paths,
 		"components": map[string]any{
 			"securitySchemes": map[string]any{
-				"sessionCookie": map[string]any{ "type": "apiKey" , "in": "cookie" , "name": "session" , "description": "A browser session. Its POSTs carry csrf_token in the body. The cookie's name is server.cookie_name." },
+				"sessionCookie": map[string]any{ "type": "apiKey" , "in": "cookie" , "name": "session" , "description": "A browser session. Its POSTs carry csrf_token in the body. The cookie's name is server.cookie_name, with the __Host- prefix while server.secure_cookies is on." },
 				"apiKey":        map[string]any{ "type": "http" , "scheme": "bearer" , "description": "An API key, as Authorization: Bearer <id>.<secret>." },
 			},
 			"responses": responses,

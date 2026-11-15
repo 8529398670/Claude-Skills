@@ -85,14 +85,14 @@ def set_session_cookie(response: Response, cfg: Config, credential: str) -> None
     not what makes the session unforgeable -- it means the cookie is opaque to
     anyone reading it out of a browser profile or a proxy log, and that a
     tampered cookie fails to decrypt instead of reaching the lookup."""
-    _write_session_cookie(response, cfg, encryption.xchacha_encrypt_string(cfg.secret_key, credential), cfg.session_ttl_seconds)
+    _write_session_cookie(response, cfg, encryption.xchacha_encrypt_string(encryption.subkey(cfg.secret_key, encryption.PURPOSE_COOKIE), credential), cfg.session_ttl_seconds)
 
 
 def _write_session_cookie(response: Response, cfg: Config, sealed: str, max_age: int) -> None:
     """The one place the cookie's attributes are spelled, so the copy sent when
     a session extends cannot drift from the one sent at sign-in."""
     response.set_cookie(
-        cfg.cookie_name,
+        cfg.session_cookie_name,
         sealed,
         max_age=max_age,
         path="/",
@@ -103,7 +103,10 @@ def _write_session_cookie(response: Response, cfg: Config, sealed: str, max_age:
 
 
 def clear_session_cookie(response: Response, cfg: Config) -> None:
-    response.delete_cookie(cfg.cookie_name, path="/", secure=cfg.secure_cookies, httponly=True, samesite="strict")
+    response.delete_cookie(cfg.session_cookie_name, path="/", secure=cfg.secure_cookies, httponly=True, samesite="strict")
+    if cfg.secure_cookies:
+        # A cookie from before the __Host- prefix goes too.
+        response.delete_cookie(cfg.cookie_name, path="/", secure=True, httponly=True, samesite="strict")
 
 
 def decrypt_cookie(cfg: Config, raw: str) -> str:
@@ -111,7 +114,7 @@ def decrypt_cookie(cfg: Config, raw: str) -> str:
     logging out has to destroy the server-side record, not just drop the
     cookie -- otherwise a copy of the cookie taken earlier still works.
     Raises encryption.CipherTextError for anything that is not ours."""
-    return encryption.xchacha_decrypt_string(cfg.secret_key, raw)
+    return encryption.xchacha_decrypt_string(encryption.subkey(cfg.secret_key, encryption.PURPOSE_COOKIE), raw)
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +123,7 @@ def decrypt_cookie(cfg: Config, raw: str) -> str:
 
 
 def _resolve_session(store: Store, cfg: Config, cookies: dict[str, str]) -> Actor | None:
-    raw = cookies.get(cfg.cookie_name, "")
+    raw = cookies.get(cfg.session_cookie_name, "")
     if raw == "":
         return None
     try:
@@ -148,11 +151,11 @@ def _resolve_api_key(store: Store, cfg: Config, authorization: str) -> Actor | N
     stops being believed at all, and existing keys stop authenticating."""
     if not cfg.api_keys_enabled:
         return None
-    header = authorization.strip()
-    scheme, _, credential = header.partition(" ")
-    if scheme.lower() != "bearer" or credential.strip() == "":
+    # The scheme and the key, split on any whitespace, and nothing else.
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
         return None
-    loaded = load_api_key(store, credential.strip())
+    loaded = load_api_key(store, parts[1])
     if loaded is None:
         return None
     key, user = loaded
@@ -162,9 +165,12 @@ def _resolve_api_key(store: Store, cfg: Config, authorization: str) -> Actor | N
 
 
 def _has_bearer(authorization: str) -> bool:
-    """True when the request carries "Authorization: Bearer ..."."""
-    scheme, space, _ = authorization.strip().partition(" ")
-    return bool(space) and scheme.lower() == "bearer"
+    """True when the request carries any Authorization header. Any at all is
+    an attempt at a key, and one that does not hold a good key is nobody
+    (_resolve_api_key): it never falls back to the cookie. Splitting only on a
+    space let "Bearer<TAB>key" fall back and run as the signed-in account
+    (S16)."""
+    return authorization.strip() != ""
 
 
 # <<< feature:api_keys
@@ -210,7 +216,7 @@ class LoadActor:
             )
             request.state.actor = actor
             if actor is not None and actor.session_extended:
-                send = self._sending_cookie(send, request.cookies[self.settings.get().cookie_name], actor.session)
+                send = self._sending_cookie(send, request.cookies[self.settings.get().session_cookie_name], actor.session)
         await self.app(scope, receive, send)
 
     def _sending_cookie(self, send: Send, sealed: str, session: Session) -> Send:
@@ -223,7 +229,7 @@ class LoadActor:
         carrier = Response()
         _write_session_cookie(carrier, cfg, sealed, int((session.expires_at - utc_now()).total_seconds()))
         header = next(item for item in carrier.raw_headers if item[0] == b"set-cookie")
-        name = cfg.cookie_name.encode("latin-1") + b"="
+        name = cfg.session_cookie_name.encode("latin-1") + b"="
 
         async def send_with_cookie(message: Message) -> None:
             if message["type"] == "http.response.start":

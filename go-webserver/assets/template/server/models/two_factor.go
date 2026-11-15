@@ -60,7 +60,7 @@ func cleanCode( code string ) ( result string ) {
 }
 
 func matchesTOTP( encrypted_secret string , code string , after_step uint64 , secret_key string ) ( step uint64 , ok bool , err error ) {
-	secret , err := encryption.ChaChaDecryptBase64String( secret_key , encrypted_secret )
+	secret , err := encryption.ChaChaDecryptBase64String( encryption.SubKey( secret_key , encryption.PurposeTOTP ) , encrypted_secret )
 	if err != nil { return }
 	step , ok , err = encryption.TOTPMatch( secret , code , time.Now().Unix() , after_step )
 	return
@@ -125,7 +125,7 @@ func checkCode( user *User , code string , secret_key string ) ( method string ,
 // holds it until they prove it worked. Starting again replaces it.
 func StartTwoFactorSetup( store *db.Store , user_id uint64 , secret_key string ) ( secret string , err error ) {
 	new_secret := encryption.TOTPNewSecret()
-	encrypted , err := encryption.ChaChaEncryptString( secret_key , new_secret )
+	encrypted , err := encryption.ChaChaEncryptString( encryption.SubKey( secret_key , encryption.PurposeTOTP ) , new_secret )
 	if err != nil { return }
 	err = store.UpdateValue( db.BucketUsers , encryption.Uint64ToBytes( user_id ) ,
 		func() any { return &User{} } ,
@@ -144,41 +144,47 @@ func StartTwoFactorSetup( store *db.Store , user_id uint64 , secret_key string )
 
 // ConfirmTwoFactorSetup turns 2FA on, once a code proves the app has the
 // secret. It returns the recovery codes -- the only time they exist in
-// readable form.
-func ConfirmTwoFactorSetup( store *db.Store , user_id uint64 , code string , secret_key string ) ( codes []string , err error ) {
+// readable form. Every session of the account but keep_session_id (the one
+// asking) ends with it.
+func ConfirmTwoFactorSetup( store *db.Store , user_id uint64 , code string , secret_key string , keep_session_id string ) ( codes []string , err error ) {
 	new_codes := make( []string , RecoveryCodeCount )
 	hashes := make( []string , RecoveryCodeCount )
 	for index := range new_codes {
 		new_codes[ index ] = encryption.RecoveryCode()
 		hashes[ index ] = encryption.Sha256Hex( normalizeRecoveryCode( new_codes[ index ] ) )
 	}
-	err = store.UpdateValue( db.BucketUsers , encryption.Uint64ToBytes( user_id ) ,
-		func() any { return &User{} } ,
-		func( item any ) ( mutate_err error ) {
-			user := item.( *User )
-			if user.TwoFactorOn() {
-				mutate_err = ErrTwoFactorOn
-				return
-			}
-			if user.TOTPPending == "" {
-				mutate_err = ErrWrongCode
-				return
-			}
-			step , ok , match_err := matchesTOTP( user.TOTPPending , cleanCode( code ) , 0 , secret_key )
-			if match_err != nil {
-				mutate_err = match_err
-				return
-			}
-			if ok == false {
-				mutate_err = ErrWrongCode
-				return
-			}
-			user.TOTPSecret = user.TOTPPending
-			user.TOTPPending = ""
-			user.TOTPLastStep = step
-			user.RecoveryHashes = hashes
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		key := encryption.Uint64ToBytes( user_id )
+		user := &User{}
+		if tx_err = tx.Get( db.BucketUsers , key , user ); tx_err != nil { return }
+		if user.TwoFactorOn() {
+			tx_err = ErrTwoFactorOn
 			return
-		} )
+		}
+		if user.TOTPPending == "" {
+			tx_err = ErrWrongCode
+			return
+		}
+		step , ok , match_err := matchesTOTP( user.TOTPPending , cleanCode( code ) , 0 , secret_key )
+		if match_err != nil {
+			tx_err = match_err
+			return
+		}
+		if ok == false {
+			tx_err = ErrWrongCode
+			return
+		}
+		user.TOTPSecret = user.TOTPPending
+		user.TOTPPending = ""
+		user.TOTPLastStep = step
+		user.RecoveryHashes = hashes
+		if tx_err = tx.Put( db.BucketUsers , key , user ); tx_err != nil { return }
+		// S15: turning on two-factor is what someone does who fears another
+		// device has their account. Every other session ends with it, or the
+		// attacker's would stay signed in past the very step meant to stop it.
+		_ , tx_err = destroyOtherSessionsForUser( tx , user_id , keep_session_id )
+		return
+	} )
 	if err == nil { codes = new_codes }
 	return
 }

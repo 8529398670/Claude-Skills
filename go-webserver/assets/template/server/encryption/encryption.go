@@ -35,6 +35,7 @@ import (
 
 	kyberk2so "github.com/symbolicsoft/kyber-k2so"
 	bcrypt "golang.org/x/crypto/bcrypt"
+	blake2b "golang.org/x/crypto/blake2b"
 	chacha "golang.org/x/crypto/chacha20poly1305"
 	curve25519 "golang.org/x/crypto/curve25519"
 	secretbox "golang.org/x/crypto/nacl/secretbox"
@@ -215,6 +216,32 @@ func GenerateKeyHex() ( key_hex string ) {
 // needs. The prefix keeps this hash from matching any other use of the key.
 func KeyFingerprint( key_hex string ) ( result string ) {
 	result = Sha256Hex( "key-fingerprint-v1:" + key_hex )[ :16 ]
+	return
+}
+
+// The purposes secret.key is put to. Each seals with its own key, derived
+// from secret.key by SubKey, so a value sealed for one never opens as another:
+// a session cookie is not a log line, and a log line is not a database record.
+const (
+	PurposeDB       = "db"       // database records (server/db)
+	PurposeLogs     = "logs"     // activity log lines (server/logs)
+	PurposeCookie   = "cookie"   // the session cookie (server/security)
+	PurposeTOTP     = "totp"     // two-factor secrets, inside the user record
+	PurposeFiles    = "files"    // each uploaded file's own key, inside its record
+	PurposeWebhooks = "webhooks" // each webhook's signing secret, inside its record
+)
+
+// SubKey is the key one purpose seals with: keyed BLAKE2b-256 of a label,
+// with secret.key as the key. It is one-way, so a subkey that leaks gives away
+// neither secret.key nor any other purpose's key. A key that is not 32 bytes
+// of hex gives "", which every function here refuses with ErrBadKey.
+func SubKey( key_hex string , purpose string ) ( result string ) {
+	key , err := decodeKey( key_hex )
+	if err != nil { return }
+	mac , err := blake2b.New256( key[ : ] )
+	if err != nil { return }
+	mac.Write( []byte( "webserver subkey v1: " + purpose ) )
+	result = hex.EncodeToString( mac.Sum( nil ) )
 	return
 }
 

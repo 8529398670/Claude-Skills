@@ -216,7 +216,7 @@ def create_file(store: Store, cfg: Config, user_id: int, name: str, declared_typ
         chunks=chunk_count(size),
         received=0,
         state=UPLOADING,
-        key=encryption.xchacha_encrypt_string(cfg.secret_key, config_secret.generate_secret()),
+        key=encryption.xchacha_encrypt_string(encryption.subkey(cfg.secret_key, encryption.PURPOSE_FILES), config_secret.generate_secret()),
         created_at=now,
         updated_at=now,
     )
@@ -248,7 +248,7 @@ def write_chunk(store: Store, cfg: Config, file: File, index: int, plain: bytes)
     caller holds the UploadLocks entry and has checked index is the next one."""
     if len(plain) != file.chunk_length(index):
         raise ChunkSizeError()
-    file_key = encryption.xchacha_decrypt_string(cfg.secret_key, file.key)
+    file_key = encryption.xchacha_decrypt_string(encryption.subkey(cfg.secret_key, encryption.PURPOSE_FILES), file.key)
     sealed = encryption.xchacha_encrypt_bound(file_key, plain, file.bound(index))
 
     cfg.files.uploads_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -355,7 +355,7 @@ def restore_file(store: Store, cfg: Config, file_id: str, actor_id: int, actor_i
         record = transaction.get(BUCKET_FILES, file_id)
         if record is None:
             raise RestoreGoneError()
-        unmark_deleted(record, actor_id, actor_is_admin)
+        unmark_deleted(record, actor_id, actor_is_admin, users.owner_id_tx(transaction))
         if _used_bytes(transaction, record["user_id"]) + record["size"] > cfg.files.quota_bytes_per_user:
             raise FileQuotaError()
         transaction.put(BUCKET_FILES, file_id, record)
@@ -369,7 +369,7 @@ class FileReader:
 
     def __init__(self, cfg: Config, file: File) -> None:
         self.file = file
-        self.key = encryption.xchacha_decrypt_string(cfg.secret_key, file.key)
+        self.key = encryption.xchacha_decrypt_string(encryption.subkey(cfg.secret_key, encryption.PURPOSE_FILES), file.key)
         try:
             self.source = finished_path(cfg, file.id).open("rb")
         except FileNotFoundError:

@@ -261,7 +261,9 @@ def delete_user(store: Store, user_id: int, actor_id: int | None) -> Revoked | N
 def reset_two_factor(store: Store, user_id: int, actor_id: int | None) -> bool:
     """Take 2FA off an account whose person lost both the phone and the
     recovery codes; False if there is no such account. Sign-ins waiting on a
-    code end with it.
+    code end with it, and so does every session the account holds (S15): a
+    reset is the way back in for someone who lost their device, and the device
+    may be in someone else's hands.
 
     actor_id is who is asking. None means the operator, through the CLI, who
     may reset anyone: that is the way back for an owner locked out. Through
@@ -281,5 +283,6 @@ def reset_two_factor(store: Store, user_id: int, actor_id: int | None) -> bool:
         clear_record(record)
         tx.put(BUCKET_USERS, user_id, record)
         delete_challenges_for_user(tx, user_id)
+        destroy_sessions_for_user(tx, user_id)
     return True
 # <<< feature:two_factor

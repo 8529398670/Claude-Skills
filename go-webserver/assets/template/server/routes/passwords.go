@@ -138,7 +138,7 @@ func ( handlers *Handlers ) passwordLogin( c fiber.Ctx , in *passwordLoginReques
 // sessionID is the id of the session this request came with, to leave it
 // alone when the account's others end.
 func ( handlers *Handlers ) sessionID( c fiber.Ctx ) ( session_id string ) {
-	credential , err := handlers.Guard.DecryptCookie( c.Cookies( handlers.cfg().CookieName ) )
+	credential , err := handlers.Guard.DecryptCookie( c.Cookies( handlers.cfg().SessionCookieName() ) )
 	if err != nil { return }
 	session_id = models.SessionID( credential )
 	return

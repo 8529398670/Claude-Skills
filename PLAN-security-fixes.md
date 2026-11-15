@@ -1,167 +1,264 @@
-# Plan: security fixes in the go-webserver and python-webserver templates
+# Plan: security fixes in the go-webserver and python-webserver templates, round 2
 
-Written 2026-11-13, from a security review of E2EEDB (built from go-webserver
-at `5c06754`, which is the current `HEAD` of this repo). Every finding below
-is in template code, not E2EEDB's own code, so each app built from these
-templates probably has it too. The E2EEDB-only fixes are a separate plan in
-`~/WORKSPACE/PROJECTS/E2EEDB/PLAN-security-fixes.md`.
+Written 2026-11-15, from a third security review of E2EEDB. E2EEDB is built
+from go-webserver at `236539f`, the current `HEAD` of this repo. Round 1
+(S1-S8) is done and is in git history. Every finding below is in template
+code, not in E2EEDB's own code, so each app built from these templates
+probably has it too. The E2EEDB-only fixes are a separate plan, in
+`~/WORKSPACE/PROJECTS/E2EEDB/PLAN-security-fixes.md` (G0-G13).
 
 ## Scope and rules
 
-- Phase 1 changes only `~/.claude/skills`, on `master`. No branches or
+- Phase 1 changes only `~/.claude/skills`, on `master`. Use no branches or
   worktrees. Commits and pushes are left to `gitPushUpdate.sh`.
-- Fix both templates in the same pass. Findings marked **Go: confirmed** were
-  reproduced with a test against E2EEDB. Findings marked **Python: check
-  first** were found by reading the code and need a failing test before the
-  fix.
-- Every fix gets a regression test in that template's own suite. The test must
-  fail before the fix and pass after it.
-- Add one entry to each `UPGRADING.md` covering all of these fixes, so that
+- Fix both templates in the same pass.
+  - **Go: confirmed** means the finding was reproduced with a probe against
+    E2EEDB.
+  - **Python: check first** means it was found by reading the code. Write a
+    failing test before fixing it.
+- Every fix gets a regression test in that template's own suite. The test
+  must fail before the fix and pass after it.
+- Add one entry to each `UPGRADING.md` covering all of these fixes, so
   `webserver-upgrade` offers them as one security update.
-- Phase 2, rolling the fix out to the apps, comes only after phase 1 is
+- Phase 2, rolling the fixes out to the apps, starts only after phase 1 is
   committed. See the end of this plan.
 
-## S1 (high): an admin can sign in as the owner or another admin
+## S9 (high): an API key can turn itself into a browser session
 
-**Go: confirmed. Python: same code shape, check first.**
+**Go: confirmed. Python: same shape (`test_only_a_full_role_key_makes_its_own_login_link` asserts it).**
 
-`reissueLogin` returns a fresh login link for any account that exists. It
-skips the rule every other "act on an account" route applies: nobody acts on
-the owner, and only the owner acts on another admin. As a result, a non-owner
-admin, or an admin API key, can get an owner session.
+`POST /api/account/login-link` accepts any key that carries its account's full
+role. Such a key can:
 
-- Go: `server/routes/admin.go`, `reissueLogin` (it serves both the route and
-  the MCP tool `admin_reissue_login`), and `cancelLoginLink`.
-- Python: `app/routes/admin.py`, `reissue_login_checked` and
-  `cancel_login_link`.
+1. ask for `{"max_uses":0,"expires_in_minutes":0}` and get an unlimited link
+   that never expires;
+2. redeem the link, which gives an ordinary browser session (unless 2FA is
+   on).
+
+Everything marked session-only then opens to that key. In E2EEDB that means:
+
+- the keyring (an offline passphrase guess, or replacing the keyring);
+- the owner screens and Settings, which also chains with S2's class of bug;
+- minting new keys (201).
+
+An admin key could also reach `reissue-login` for ordinary users.
+
+Code:
+
+- Go: `server/routes/account.go`, `createMyLoginLink`.
+- Python: the matching handler in `app/routes/account.py`.
+- Apps with MCP: check whether an MCP tool (TodoBoard has
+  `create_my_login_link`) offers the same thing to a key.
 
 Fix:
 
-1. Add one shared helper, `mayActOn(actor, target)` (Python:
-   `may_act_on`). It refuses when the target is the owner, and it refuses
-   when the target is an admin and the actor is not the owner. Make the
-   existing checks (delete, role, 2FA reset, minting a key for someone else)
-   call it, so the rule lives in one place.
-2. Call the helper at the top of reissue and cancel. Answer 403, with the
-   same wording the other routes use.
+1. Make the route session-only, using the same guard the other session-only
+   routes use. Do the same for any MCP tool that mints a login link for the
+   caller.
+2. If a script really needs a sign-in link, keep a separate opt-in. A key
+   flag, `may_sign_in`, off by default, set only from a session. Its links
+   are single-use, at most 15 minutes, never for the owner and never for an
+   admin role.
 3. Tests:
-   - A non-owner admin, signed in with a session, cannot reissue a link for the
-     owner or for another admin.
-   - The same holds for an admin API key.
-   - The same holds through the MCP tool, in apps that have MCP.
-   - The owner can still reissue links for admins.
+   - A full-role key gets 403 from the route, and from the MCP tool where
+     there is one.
+   - A session still gets its link.
+   - Update the existing Python test.
 
-## S2 (medium): Settings can make `static_dir` serve secrets to the public
+## S10 (medium): the rate limiter's key is wrong behind a proxy and on IPv6
 
-**Go: confirmed. Python: `locked()` only applies inside a container, check first.**
+**Go: confirmed. Python: check first.**
 
-The owner's Settings screen accepts any path for `server.static_dir`. After a
-restart, the catch-all static handler serves every file in that directory
-without login, dotfiles included. That breaks the promise in `secret.go` that
-config.yaml can never read the key. Chained with S1, a leaked admin key is
-enough to download `secret.key` and the databases.
+- **Behind a proxy with `trust_proxy: false`.** Every visitor shares the
+  proxy's address, which is the default config behind Cloudflare Tunnel or a
+  local proxy. 60 POSTs a minute to `/api/login` then block every sign-in and
+  every 2FA code, for everyone.
+- **On IPv6.** Each /128 has its own budget. Twelve addresses in one /64 got
+  twelve tries against a limit of five.
+- **Not logged.** 429s never reach the activity log, because `RequestLog`
+  runs after `RateLimit` (`main.go`). So the lockout above cannot be seen.
+
+Code: `server/middleware/middleware.go`, `KeyGenerator`
+(`prefix + c.IP()`).
 
 Fix:
 
-1. Make `server.static_dir` and `server.language_file` file-only: they are
-   not editable from Settings, inside a container or out. Then audit every
-   other path-typed key (storage, backups, logs, and so on) for the same
-   pattern.
-2. At startup, refuse a `static_dir` that is the config dir or the state dir,
-   is inside either of them, or contains the secret key or a database. Exit
-   with a clear message rather than serving it.
-3. Make the static handler refuse dotfiles and anything outside the resolved
-   root, as defense in depth.
+1. Key IPv6 clients by their /64 (`netip.Addr.Prefix(64)`). Leave IPv4 as
+   it is.
+2. When `trust_proxy` is false and a request carries `CF-Connecting-IP`,
+   `X-Forwarded-For` or `X-Real-IP`, log one warning per process. The warning
+   names the header and points to `server.trust_proxy`.
+3. Log 429s, at most one line per bucket per window.
 4. Tests:
-   - Settings refuses an edit to `static_dir`.
-   - Startup refuses a `static_dir` set to the config dir.
-   - The static handler never serves a dotfile.
+   - Two addresses in one /64 share a bucket.
+   - A warning is logged once.
+   - A 429 shows up in the log.
 
-## S3 (low): the owner rule is applied unevenly to other admin actions
+## S11 (medium): API responses never say `Cache-Control: no-store`
 
-Disabling a user, revoking all access, ending sessions, and revoking or
-deleting any API key only protect the owner. A non-owner admin can therefore
-lock out another admin, though not take the account over.
-`RestoreAnyAPIKey` also lets any admin bring back a key the owner deleted.
+**Go: confirmed. Python: check first.**
 
-Fix: route all of these through `mayActOn` from S1. Restoring a key must
-apply the rule to the key's account. Add one test per route. Python: the same
-routes in `admin.py`, `sessions.py` and `api_keys.py`.
+No API response sends `Cache-Control` or `Vary`. That covers `/api/me`,
+`/api/owner/settings`, `/api/account/sessions` and
+`/api/owner/logs/days/<date>`, download included. Only static files, SSE,
+`/api/language` and error pages send it. The risks:
 
-## S4 (low): the 2FA guess lockout can be raced
+- **A cache-everything rule.** If a Cloudflare rule caches everything, the
+  owner's log for a day is served from the cache at a URL anyone can guess.
+- **File extensions.** By default Cloudflare caches any path ending in a
+  file extension.
 
-Go `two_factor.go:61-73` checks `Codes.Locked` before the transaction and
-records the failure after it, so guesses sent in parallel all pass the check.
-Python has the same check-then-record shape.
+Fix:
 
-Fix: reserve the attempt atomically before checking the code. Increment under
-the limiter's mutex, refuse if the count is over the limit, and release the
-reservation on success. Test: 20 concurrent wrong codes lead to at most 5
-evaluated attempts.
+1. One middleware, early in the chain, sets `Cache-Control: no-store,
+   private` and `Vary: Cookie, Authorization` on every response that the
+   static handler did not serve.
+2. Test: each route in the generated route table answers with `no-store`.
 
-## S5 (low): `.run/server.log` is readable by every account on the machine
+## S12 (medium): encrypted database records are not bound to where they sit
 
-`scripts/lib.sh` (`start_in_background`) creates the log as 0644 in a 0755
-directory. On a first run that log holds the owner's one-time login link.
+**Go: confirmed. Python: check how SQLite records are sealed.**
 
-Fix: in both templates' `lib.sh`, set `umask 077` before creating `.run/`
-and the log, and `chmod 700`/`chmod 600` any that already exist. Do the same
-for `run.bat` where Windows ACLs allow it, or leave a note there if they
-don't.
+`db.encode` / `db.open` (`server/db/db.go:214-233`) seal every bbolt value
+with `ChaChaEncryptBytes(secretKey, raw)` and no associated data.
 
-## S6 (info): log redaction misses mixed-case login paths (Go)
+The attack needs someone who can write `app.db` but does not have
+`secret.key`, for example through a backup, a restore pipeline or shared
+storage. That person copies the owner's `users` record over another user's
+key. The other user's cookie then passes `RequireOwner`, because the
+`User.ID` inside the copied record is 1. The same swap works between
+sessions, API keys and meta records.
 
-Fiber routes paths without regard to case, but `server/logs/redact.go` and
-`redactReferer` only match `/login/` and `/join/` exactly. So a visit to
-`/LOGIN/<credential>` writes the credential to the logs in clear text.
+Fix:
 
-Fix: match the prefixes without regard to case. Test with `/LOGIN/x` and
-`/Join/x`. Python: Starlette routes are case-sensitive, so this is likely not
-an issue there. Confirm and note it.
+1. Seal each value with associated data `bucket || 0x00 || key`, through
+   `ChaChaEncryptBound`.
+2. Derive one subkey per purpose from `secret.key`, using BLAKE2b or HKDF
+   with a label: `db`, `logs`, `cookie`, `totp`, `files`. Then a value from
+   one purpose never opens in another.
+3. Make the key-rotation path (`db.go:192`) and backup/restore use the same
+   functions.
+4. Tests:
+   - Copying a value to another key fails to open.
+   - A cookie sealed for one purpose does not open as a log line.
+5. In `UPGRADING.md`, the entry re-seals the database once, as `rotate-key`
+   already does.
 
-## S7 (info): a session cookie wins over an `Authorization` header
+## S13 (low): the check that refuses trusting every proxy compares strings
 
-`LoadUser` checks the cookie first. In a signed-in browser, a request that
-carries a different credential, such as a scoped key, runs as the signed-in
-account instead. That is confusing at best.
+**Go: confirmed. Python: check first.**
 
-Fix: when an `Authorization: Bearer` header is present, use it and ignore
-the cookie. Test: signed-in cookie plus a scoped key sends a request that acts
-as the key.
+`server/config/config.go` refuses only the strings `0.0.0.0/0` and `::/0`.
+These all pass, and each one trusts every address:
 
-## S8 (decide): revoking an API key leaves the sessions it made signed in
+- `1.2.3.4/0`;
+- `::1/0`;
+- `[0.0.0.0/1, 128.0.0.0/1]`.
 
-A full-role key can mint a login link, and redeeming that link gives a browser
-session. Revoking the key already voids the link, but the session survives.
+The value can be set from Settings and takes effect on restart.
 
-Options:
+The documented Docker example, `172.16.0.0/12`, also trusts every container
+on every bridge network.
 
-- Record the issuing key on each session and end those sessions when the key
-  is revoked.
-- Document the behavior in `references/` and change nothing.
+Fix:
 
-Recommend the first.
+1. After `ParseCIDR`, refuse a prefix narrower than /8 for IPv4 and /16 for
+   IPv6. Cloudflare's widest ranges are /13 and /29.
+2. Change the comments in `defaults.yaml` and `config.example.yaml` to
+   suggest the exact gateway, `172.17.0.1`. Point to
+   `docker network inspect bridge` to find it.
+3. Test: each entry above is refused.
+
+## S14 (low): two admin actions skip the rule about acting on another account
+
+**Go: confirmed. Python: check first.**
+
+- **Renaming.** `renameKey` with `own_only=false`
+  (`server/routes/api_keys.go:361`) has no ownership check. A non-owner admin
+  renamed the owner's `prod-deploy` key to `unused-delete-me`. That could
+  lead the owner to revoke the wrong key.
+- **Restoring.** Any admin may restore a soft-deleted key
+  (`server/models/soft_delete.go`). The owner deleted admin Bob's key, Bob
+  restored it, and it was live again.
+
+Fix:
+
+1. **Renaming.** Call `mayActOnIDTx` in `RenameAPIKey`.
+2. **Restoring.** Record who deleted the key. If the deleter outranks the
+   restorer, only the deleter or the owner may restore it.
+3. Tests: both cases above are refused.
+
+## S15 (low): turning on 2FA does not end other sessions
+
+**Go: confirmed. Python: check first.**
+
+An attacker's session stayed signed in after the victim enrolled 2FA
+(`server/models/two_factor.go`). The same happens when 2FA is reset.
+
+Fix:
+
+1. When 2FA is confirmed, call `RevokeOtherSessions(user, current)`.
+2. When an admin resets 2FA, end every session of that account.
+3. Test: after enrolment, the other session gets 401.
+
+## S16 (info): small hardening
+
+1. **Bearer header.** `hasBearer` (`server/security/security.go`) splits only
+   on a space. A request sending `Bearer<TAB>key` falls back to the cookie
+   and runs as the signed-in account. Split on any whitespace, and treat any
+   `Authorization` header as a bearer attempt: a bad one is nobody.
+2. **Cookie prefix.** When `secure_cookies` is on, name the cookie
+   `__Host-<cookie_name>`. Then an app on a sibling subdomain cannot plant a
+   session cookie and sign the visitor in as the attacker. This signs everyone
+   out once; say so in `UPGRADING.md`.
+3. **The `auth.two_factor` setting.** Switching it off lets enrolled accounts
+   sign in without a code. Say that in its comment and on the Settings screen.
+
+## S17: document running behind Cloudflare
+
+Add `references/deploy-cloudflare.md` to both templates, and link to it from
+the `trust_proxy` comment.
+
+- **Tunnel, recommended.**
+  - Set `trust_proxy: true`, `trusted_proxies: [127.0.0.1, "::1"]` (or the
+    exact Docker gateway), `proxy_header: CF-Connecting-IP`,
+    `secure_cookies: true`, and `public_url`.
+  - Check in Logs that real visitor IPs show up.
+- **Proxied DNS.**
+  - Use Full (strict) TLS with an Origin CA certificate.
+  - Turn on Authenticated Origin Pulls.
+  - Firewall the origin so only Cloudflare's ranges reach it.
+  - Never use Flexible.
+  - Trusting Cloudflare's ranges means trusting every Cloudflare customer,
+    which is why Origin Pulls are needed.
+- **Dashboard.**
+  - Add a Cache Rule that bypasses the hostname, with Cache Deception Armor
+    on.
+  - Turn off Rocket Loader, Email Obfuscation and automatic analytics
+    injection.
+  - Add a rate-limit rule on `POST /api/login*`.
+  - Keep challenges off `/api/*` when API keys are used.
+  - Leave Cloudflare's HSTS off, since the app sends its own.
 
 ## Order
 
-S1, S2, S3 (it shares the S1 helper), S4, S7, S5, S6, S8. Run the full test
-suite of both templates, then add the `UPGRADING.md` entry.
+S9, S11, S10, S12, then S13, S14, S15, S16 and S17. Run the full test suite of
+both templates, then add the `UPGRADING.md` entry.
 
 ## Phase 2: roll out with `webserver-upgrade` (after phase 1 is committed)
 
-| App | Template | Built from | Notes |
-|---|---|---|---|
-| E2EEDB | go | `5c06754` | No MCP. Do this rollout before its own plan's server work |
-| TodoBoard | go | `2028ee4` | Has MCP: test the MCP path for S1 |
-| IOSWebAppPushNotifications | go | `b286bc2` | |
-| MediaTracker | python | `2028ee4` | |
-| PaperReferenceManagerAddons | python | `990d33f` | |
+For each app built from these templates:
 
-For each app: run `webserver-upgrade`, take the security entry, run the app's
-tests, and check sign-in and Settings by eye. Then rotate anything that may
-have been exposed:
+1. Run `webserver-upgrade` and take the security entry.
+2. Run the app's tests.
+3. Check sign-in, Settings and the API keys card by eye.
 
-- Any app with a non-owner admin: check the audit log for `login link
-  reissued` entries that target the owner or another admin.
-- Any app where `static_dir` was ever changed from Settings: rotate
-  `secret.key` (`docker/rotate-key.sh` or `manage`).
+Start with E2EEDB, where S9 exposes the keyring: that is step G0 of its plan.
+TodoBoard has MCP, so test S9 through its MCP login-link tool.
+
+Afterwards:
+
+- **Audit log.** In any app where full-role keys were handed out, look for
+  `own login link created` entries made by a key (`by_key`). Revoke those
+  keys if any of the entries are unexplained.
+- **Database re-seal.** S12 re-seals the database. Take a backup first.

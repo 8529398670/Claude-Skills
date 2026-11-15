@@ -94,9 +94,9 @@ Anyone already signed in can also mint a fresh link for their own account
 from the account screen ("Sign in on another device",
 `POST /api/account/login-link`), which is how a second device gets in
 without an admin. It is a reissue pointed at yourself, so it behaves exactly
-like one. An API key may call it too (and the `create_my_login_link` tool), but
-only a key that carries the account's full role: the link becomes a session at
-the account's role, so an admin's user-scoped key would otherwise climb. See
+like one. Only a browser session may call it, and there is no MCP tool for it:
+the link becomes an ordinary browser session, so a key that could make one would
+reach everything kept from keys (the API keys card, the owner's screens). See
 [keys and the ways in they hand out](#keys-and-the-ways-in-they-hand-out).
 
 Four operations look alike and are not:
@@ -1497,6 +1497,30 @@ Turn it off (`server.encrypt_at_rest: false`) when operational simplicity beats
 at-rest confidentiality -- the data is not sensitive, or disk encryption
 already covers it. Decide before there is data: switching an existing database
 either way makes its records unreadable until switched back.
+
+
+### What a sealed value is bound to
+
+Nothing seals with `secret.key` itself. Each purpose seals with its own subkey,
+keyed BLAKE2b-256 of a label (`encryption.subkey`, the same in both
+templates): `db` for records, `logs` for log lines, `cookie` for the session
+cookie, `totp`, `files` and `webhooks` for the fields sealed on their own. A
+value sealed for one purpose never opens as another: a cookie is not a log
+line.
+
+A record is also sealed to where it sits: the associated data is
+`bucket || 0x00 || key`. Someone who can write `app.db` but has no
+`secret.key` (a backup, a restore pipeline, shared storage) used to be able to
+copy the owner's `users` record over another account's, and that account's
+cookie then passed the owner check. Now a moved record fails to open. They can
+still delete records, or put back an older copy of the same one.
+
+A database sealed the old way (no row in its `sealing` table) is
+brought up to date the first time this version opens it, in one transaction,
+with the file before kept as `app.db.before-reseal-<time>`. `db.rekey` reads
+either way and writes the new way, so rotating the key and restoring an old
+backup do the same. Log lines written before subkeys still read, with
+`secret.key` itself; the next rotation re-seals them.
 
 ## Why there is no control socket
 

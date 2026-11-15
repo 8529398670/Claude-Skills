@@ -25,7 +25,7 @@ from app.core import metrics  # feature:metrics
 from app.core import sse  # feature:logs
 from app.core import webhooks  # feature:webhooks
 from app.core.maintenance import Maintenance  # feature:maintenance
-from app.core.middleware import EXCEPTION_HANDLERS, RateLimit, SecurityHeaders
+from app.core.middleware import EXCEPTION_HANDLERS, NoStore, RateLimit, SecurityHeaders
 from app.core.request_id import RequestID
 from app.core.request_log import RequestLog  # feature:logs
 from app.core.security import LoadActor
@@ -129,9 +129,10 @@ def build_app(
         middleware=[
             Middleware(RequestID),
             Middleware(metrics.MeasureRequests, metrics=measured),  # feature:metrics
+            Middleware(NoStore),
             Middleware(SecurityHeaders, settings=settings),
             Middleware(RequestBodyLimitMiddleware, max_body_size=cfg.body_limit_bytes),
-            Middleware(RateLimit, settings=settings),
+            Middleware(RateLimit, settings=settings, logger=logger),
             Middleware(LoadActor, store=store, settings=settings),
             Middleware(RequestLog, settings=settings, logger=logger),  # feature:logs
             Middleware(Maintenance, store=store, settings=settings),  # feature:maintenance

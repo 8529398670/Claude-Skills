@@ -28,7 +28,7 @@ func TestTwoFactorSecretIsEncryptedOnItsOwn( t *testing.T ) {
 	secret , _ := fixture.signIn( t , fixture.alice.ID ).enrol( t )
 	stored , _ := models.GetUser( fixture.store , fixture.alice.ID )
 	if stored.TOTPSecret == secret { t.Fatalf( "stored in the clear" ) }
-	opened , err := encryption.ChaChaDecryptBase64String( fixture.cfg.SecretKey , stored.TOTPSecret )
+	opened , err := encryption.ChaChaDecryptBase64String( encryption.SubKey( fixture.cfg.SecretKey , encryption.PurposeTOTP ) , stored.TOTPSecret )
 	if err != nil || opened != secret { t.Errorf( "%q %v" , opened , err ) }
 }
 
@@ -214,4 +214,27 @@ func TestResetTwoFactorRules( t *testing.T ) {
 	if err := models.ResetTwoFactor( fixture.store , fixture.owner.ID , 0 ); err != nil { t.Fatal( err ) }
 	stored , _ := models.GetUser( fixture.store , fixture.owner.ID )
 	if stored.TwoFactorOn() { t.Errorf( "still on" ) }
+}
+
+// S15: turning two-factor on ends every other session of the account: an
+// attacker's session stayed signed in after the victim enrolled. The session
+// that turned it on stays.
+func TestTurningTwoFactorOnEndsOtherSessions( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	attacker := fixture.signIn( t , fixture.alice.ID )
+	victim := fixture.signIn( t , fixture.alice.ID )
+	victim.enrol( t )
+	if status , _ := attacker.do( t , fiber.MethodGet , "/api/me" , nil ); status != fiber.StatusUnauthorized { t.Fatalf( "the other session after enrolling: %d" , status ) }
+	if victim.signedIn( t ) == false { t.Fatal( "the session that turned it on was signed out" ) }
+}
+
+// S15: an admin resetting someone's two-factor ends every session that
+// account holds.
+func TestResettingTwoFactorEndsEverySession( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	alice.enrol( t )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	if status , reply := send( t , owner , fmt.Sprintf( "/api/admin/users/%d/reset-two-factor" , fixture.alice.ID ) , fiber.Map{} ); status != fiber.StatusOK { t.Fatalf( "reset: %d %v" , status , reply ) }
+	if alice.signedIn( t ) { t.Fatal( "still signed in after the reset" ) }
 }

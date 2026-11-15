@@ -239,6 +239,8 @@ func restoreRefusal( cause error ) ( refused *refusal ) {
 		refused = refuse( fiber.StatusNotFound , cause.Error() )
 	case errors.Is( cause , models.ErrRestoreForbidden ):
 		refused = refuse( fiber.StatusForbidden , cause.Error() )
+	case errors.Is( cause , models.ErrRestoreOutranked ):
+		refused = refuse( fiber.StatusForbidden , cause.Error() )
 	case errors.Is( cause , models.ErrRestoreExpired ):
 		refused = refuse( fiber.StatusConflict , cause.Error() )
 	case errors.Is( cause , models.ErrAPIKeyLimit ): // feature:api_keys

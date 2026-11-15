@@ -160,7 +160,7 @@ func CreateWebhook( store *db.Store , secret_key string , name string , url stri
 		return
 	}
 	secret = "whsec_" + encryption.GenerateURLToken( 24 )
-	sealed , err := encryption.ChaChaEncryptString( secret_key , secret )
+	sealed , err := encryption.ChaChaEncryptString( encryption.SubKey( secret_key , encryption.PurposeWebhooks ) , secret )
 	if err != nil { return }
 	hook = &Webhook{
 		ID:        encryption.GenerateURLToken( 12 ),
@@ -180,7 +180,7 @@ func CreateWebhook( store *db.Store , secret_key string , name string , url stri
 
 // OpenWebhookSecret is the signing secret in the clear, for the sender.
 func OpenWebhookSecret( hook *Webhook , secret_key string ) ( secret string , err error ) {
-	secret , err = encryption.ChaChaDecryptBase64String( secret_key , hook.Secret )
+	secret , err = encryption.ChaChaDecryptBase64String( encryption.SubKey( secret_key , encryption.PurposeWebhooks ) , hook.Secret )
 	return
 }
 
@@ -279,7 +279,7 @@ func SetWebhookTarget( store *db.Store , webhook_id string , target WebhookTarge
 // db.ErrNotFound when there is no such endpoint or it is deleted.
 func RotateWebhookSecret( store *db.Store , secret_key string , webhook_id string ) ( secret string , err error ) {
 	fresh := "whsec_" + encryption.GenerateURLToken( 24 )
-	sealed , err := encryption.ChaChaEncryptString( secret_key , fresh )
+	sealed , err := encryption.ChaChaEncryptString( encryption.SubKey( secret_key , encryption.PurposeWebhooks ) , fresh )
 	if err != nil { return }
 	err = store.UpdateValue( db.BucketWebhooks , []byte( webhook_id ) ,
 		func() any { return &Webhook{} } ,
@@ -313,11 +313,13 @@ func DeleteWebhook( store *db.Store , webhook_id string , actor_id uint64 ) ( er
 // RestoreWebhook undoes DeleteWebhook, or returns ErrRestoreGone,
 // ErrRestoreForbidden or ErrRestoreExpired.
 func RestoreWebhook( store *db.Store , webhook_id string , actor_id uint64 , actor_is_admin bool ) ( hook *Webhook , err error ) {
+	owner_id , err := OwnerID( store )
+	if err != nil { return }
 	err = store.UpdateValue( db.BucketWebhooks , []byte( webhook_id ) ,
 		func() any { return &Webhook{} } ,
 		func( item any ) ( mutate_err error ) {
 			hook = item.( *Webhook )
-			mutate_err = hook.unmarkDeleted( actor_id , actor_is_admin )
+			mutate_err = hook.unmarkDeleted( actor_id , actor_is_admin , owner_id )
 			return
 		} )
 	if errors.Is( err , db.ErrNotFound ) { err = ErrRestoreGone }

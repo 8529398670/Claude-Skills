@@ -162,14 +162,16 @@ class EditUsersTest(RoutesTestCase):
         # A user-scoped key on the same admin account is not an admin.
         self.assertEqual(self.by_key(self.user_key, "/api/admin/users", display_name="Eve", role="admin")[0], 403)
 
-    def test_only_a_full_role_key_makes_its_own_login_link(self) -> None:
-        """A login link becomes a full-role session, so only a key carrying the
-        account's full role may make one for its own account."""
-        status, reply = self.by_key(self.user_key, "/api/account/login-link")
-        self.assertEqual(status, 403)
-        self.assertIn("less than your account's role", reply["error"])
+    def test_no_key_makes_its_own_login_link(self) -> None:
+        """S9: a login link becomes an ordinary browser session, so no API key
+        may make one for its own account, not even one with the account's full
+        role. A browser session still gets its link."""
         full_key, _ = api_keys.issue_api_key(self.store, self.user.id, "full", users.ROLE_USER, 3600)
-        status, reply = self.by_key(full_key, "/api/account/login-link")
+        for key in (self.user_key, self.admin_key, full_key):
+            status, _ = self.by_key(key, "/api/account/login-link", max_uses=0, expires_in_minutes=0)
+            self.assertEqual(status, 403)
+        cookie = self.session(self.user.id)
+        status, reply = self.call("POST", "/api/account/login-link", cookie=cookie, body={"csrf_token": self.csrf(cookie)})
         self.assertEqual(status, 200, reply)
         self.assertTrue(self.signs_in(reply["login_path"]))
 

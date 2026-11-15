@@ -36,7 +36,11 @@ type Logger struct {
 	// settings changes while the server runs (see Apply), so everything reads
 	// it through Settings() rather than holding on to a copy.
 	settings atomic.Pointer[config.LogsConfig]
+	// key is secret.key's PurposeLogs subkey, which every line is sealed
+	// with; oldKey is secret.key itself, which lines written before subkeys
+	// were sealed with, so those still read.
 	key      string
+	oldKey   string
 	encrypt  bool
 
 	queue   chan Entry
@@ -69,7 +73,8 @@ type Logger struct {
 // the key in secret.key and server.encrypt_at_rest.
 func New( settings config.LogsConfig , key string , encrypt bool ) ( logger *Logger ) {
 	logger = &Logger{
-		key:      key,
+		key:      encryption.SubKey( key , encryption.PurposeLogs ),
+		oldKey:   key,
 		encrypt:  encrypt,
 		queue:    make( chan Entry , queueSize ),
 		stop:     make( chan struct{} ),
@@ -338,5 +343,8 @@ func ( logger *Logger ) decode( line []byte ) ( plain []byte , err error ) {
 	count , err := base64.StdEncoding.Decode( sealed , line )
 	if err != nil { return }
 	plain , err = encryption.ChaChaDecryptBytes( logger.key , sealed[ :count ] )
+	if err != nil && logger.oldKey != "" {
+		plain , err = encryption.ChaChaDecryptBytes( logger.oldKey , sealed[ :count ] )
+	}
 	return
 }

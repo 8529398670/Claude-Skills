@@ -18,6 +18,7 @@ var (
 	ErrRestoreGone      = errors.New( "it is not there to restore" )
 	ErrRestoreForbidden = errors.New( "only whoever deleted it, or an admin, can put it back" )
 	ErrRestoreExpired   = errors.New( "it was deleted too long ago to put back" )
+	ErrRestoreOutranked = errors.New( "the owner deleted it, so only the owner can put it back" )
 )
 
 // SoftDelete is embedded in the records that delete marks rather than
@@ -48,13 +49,20 @@ func ( mark *SoftDelete ) markDeleted( actor_id uint64 ) ( marked bool ) {
 }
 
 // unmarkDeleted is the restore, for UpdateValue: an error here aborts the
-// write.
-func ( mark *SoftDelete ) unmarkDeleted( actor_id uint64 , actor_is_admin bool ) ( err error ) {
+// write. owner_id is the owner's id (OwnerID).
+//
+// Whoever deleted it may put it back, and so may an admin -- unless the one who
+// deleted it outranks them (S14): what the owner deleted only the owner puts
+// back. Otherwise the owner deletes an admin's key, that admin restores it,
+// and it is live again. (What an admin deleted, a user cannot restore anyway.)
+func ( mark *SoftDelete ) unmarkDeleted( actor_id uint64 , actor_is_admin bool , owner_id uint64 ) ( err error ) {
 	switch {
 	case mark.DeletedAt == nil:
 		err = ErrRestoreGone
 	case actor_is_admin == false && mark.DeletedBy != actor_id:
 		err = ErrRestoreForbidden
+	case owner_id != 0 && mark.DeletedBy == owner_id && actor_id != owner_id:
+		err = ErrRestoreOutranked
 	case time.Since( *mark.DeletedAt ) > RestoreWindow:
 		err = ErrRestoreExpired
 	default:

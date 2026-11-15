@@ -348,7 +348,9 @@ func ( handlers *Handlers ) renameMyAPIKey( c fiber.Ctx , in *renameAPIKeyReques
 }
 
 // renameAnyAPIKey is an admin renaming anyone's key. A name changes nothing about
-// what a key can do, so unlike its expiry this needs no ladder.
+// what a key can do, but it is what the owner goes by when choosing a key to
+// revoke, so it follows the same ladder as the key's expiry: nobody renames the
+// owner's keys, and only the owner renames another admin's.
 //
 // @route("POST /api/admin/keys/{key_id}/rename", summary="Rename anyone's key",
 //     tag="API keys", access=SESSION_ONLY, role=ADMIN, feature="api_keys", errors=(409,),
@@ -368,7 +370,7 @@ func ( handlers *Handlers ) renameKey( c fiber.Ctx , in *renameAPIKeyRequest , o
 		err = refuse( fiber.StatusNotFound , "no such api key" )
 		return
 	}
-	rename_err := models.RenameAPIKey( handlers.Store , key.ID , in.Name , in.Expect )
+	rename_err := models.RenameAPIKey( handlers.Store , key.ID , security.UserFrom( c ).ID , in.Name , in.Expect )
 	var stale *models.RenameConflictError
 	switch {
 	case errors.As( rename_err , &stale ):
@@ -376,6 +378,12 @@ func ( handlers *Handlers ) renameKey( c fiber.Ctx , in *renameAPIKeyRequest , o
 		return
 	case errors.Is( rename_err , db.ErrNotFound ):
 		err = refuse( fiber.StatusNotFound , "no such api key" )
+		return
+	case errors.Is( rename_err , models.ErrOwnerProtected ):
+		err = refuse( fiber.StatusForbidden , "only the owner can rename the owner's keys" )
+		return
+	case errors.Is( rename_err , models.ErrOwnerRequired ):
+		err = refuse( fiber.StatusForbidden , "only the owner can rename an admin's keys" )
 		return
 	case rename_err != nil:
 		err = rename_err

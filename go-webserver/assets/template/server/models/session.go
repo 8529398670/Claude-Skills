@@ -306,6 +306,17 @@ func destroySessionsForUser( tx *db.Tx , user_id uint64 ) ( removed int , err er
 	return
 }
 
+// destroyOtherSessionsForUser is destroySessionsForUser keeping one session:
+// the one the account is using to make the change.
+func destroyOtherSessionsForUser( tx *db.Tx , user_id uint64 , keep_session_id string ) ( removed int , err error ) {
+	removed , err = tx.DeleteWhere( db.BucketSessions ,
+		func() any { return &Session{} } ,
+		func( key []byte , item any ) bool {
+			return item.( *Session ).UserID == user_id && string( key ) != keep_session_id
+		} )
+	return
+}
+
 // PurgeExpiredSessions is called on a timer from main. Expired rows are
 // already refused by LoadSession, so this is only housekeeping to stop the
 // bolt file growing without bound -- but it still runs as one transaction,

@@ -171,8 +171,11 @@ and the dependencies before a release -- and scan the built image too, which
   and no allowlist trusts no proxy at all (every visitor shares the proxy's
   budget, and one noisy client blocks the rest), and the config check refuses
   `trust_proxy: true` with an empty list. For the Docker setup the proxy
-  reaches the container from the bridge gateway, so `[172.16.0.0/12]` covers
-  the default bridge -- confirm with `docker network inspect bridge`. It
+  reaches the container from the bridge gateway, so list that one address
+  (`[172.17.0.1]` on the default bridge -- confirm with `docker network
+  inspect bridge`), not `172.16.0.0/12`, which trusts every container on every
+  bridge network. A range wider than /8 (IPv4) or /16 (IPv6) is refused.
+  Behind Cloudflare, see [deploy-cloudflare.md](deploy-cloudflare.md). It
   defaults to off because it is only correct when a proxy you control really
   is in front and clients cannot reach the backend any other way.
   `docker/run.sh` reminds you while it is off.

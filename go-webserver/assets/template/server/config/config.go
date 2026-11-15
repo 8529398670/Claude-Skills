@@ -31,6 +31,7 @@ import (
 	fmt "fmt"
 	io "io"
 	net "net"
+	netip "net/netip"
 	url "net/url"
 	os "os"
 	filepath "path/filepath"
@@ -440,6 +441,17 @@ type Config struct {
 	raw  []byte
 }
 
+// SessionCookieName is the session cookie's name: server.cookie_name, with
+// the __Host- prefix whenever cookies are Secure. A browser only accepts a
+// __Host- cookie that is Secure, has Path=/ and names no Domain, so a page on
+// a sibling subdomain cannot plant one here and sign the visitor in as
+// someone else. Switching secure_cookies therefore signs everyone out.
+func ( cfg *Config ) SessionCookieName() ( name string ) {
+	name = cfg.CookieName
+	if cfg.SecureCookies { name = "__Host-" + name }
+	return
+}
+
 // >>> feature:logs
 // LogsConfig is config.yaml's logs section, resolved: sizes in bytes, and the
 // directory the day files go in (<app_dir>/logs, created 0700 by Load).
@@ -726,7 +738,7 @@ func ( file *File ) Validate() ( err error ) {
 		"server.trust_proxy is true but server.trusted_proxies is empty -- list the address or CIDR range your reverse proxy connects from" )
 	for _ , entry := range server.TrustedProxies {
 		check( validProxyEntry( entry ) , "server.trusted_proxies entry %q must be an IP address or a CIDR range like 10.0.0.0/8" , entry )
-		check( entry != "0.0.0.0/0" && entry != "::/0" , "server.trusted_proxies entry %q trusts every address, which lets any client forge its own IP" , entry )
+		check( narrowEnoughProxy( entry ) , "server.trusted_proxies entry %q is wider than /8 (IPv4) or /16 (IPv6), so it trusts addresses that are not your proxy and lets them forge their own IP -- name the proxy's own address" , entry )
 	}
 	check( server.BodyLimitBytes > 0 , "server.body_limit_bytes must be positive" )
 	check( server.RateLimitMax > 0 , "server.rate_limit_max must be positive" )
@@ -802,6 +814,29 @@ type ValidationError struct {
 
 func ( validation *ValidationError ) Error() ( result string ) {
 	result = strings.Join( validation.Problems , "; " )
+	return
+}
+
+// narrowEnoughProxy refuses a trusted range wider than /8 for IPv4 or /16 for
+// IPv6 (an IPv4 range written as IPv6, ::ffff:a.b.c.d/n, counts as IPv4).
+// Comparing strings caught only 0.0.0.0/0 and ::/0, while 1.2.3.4/0, ::1/0 and
+// 0.0.0.0/1 with 128.0.0.0/1 trust every address just the same. Cloudflare's
+// widest ranges are /13 and /29. An address alone, or one that does not
+// parse (validProxyEntry says so), passes here.
+func narrowEnoughProxy( value string ) ( result bool ) {
+	result = true
+	if strings.Contains( value , "/" ) == false { return }
+	prefix , err := netip.ParsePrefix( strings.TrimSpace( value ) )
+	if err != nil { return }
+	bits := prefix.Bits()
+	switch {
+	case prefix.Addr().Is4():
+		result = bits >= 8
+	case prefix.Addr().Is4In6() && bits >= 96:
+		result = bits >= 96 + 8
+	default:
+		result = bits >= 16
+	}
 	return
 }
 

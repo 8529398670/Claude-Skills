@@ -443,14 +443,16 @@ func DeleteInviteLink( store *db.Store , link_id string , actor_id uint64 ) ( er
 
 // RestoreInviteLink undoes DeleteInviteLink, or returns ErrRestoreGone,
 // ErrRestoreForbidden or ErrRestoreExpired. Only admins reach it today, so
-// in practice any admin may restore any link. A key that restores a link
+// in practice any admin may restore any link the owner did not delete. A key that restores a link
 // takes it over, as in SetInviteLinkLimits.
 func RestoreInviteLink( store *db.Store , link_id string , actor_id uint64 , actor_is_admin bool , minted_by_key string ) ( link *InviteLink , err error ) {
+	owner_id , err := OwnerID( store )
+	if err != nil { return }
 	err = store.UpdateValue( db.BucketInviteLinks , []byte( link_id ) ,
 		func() any { return &InviteLink{} } ,
 		func( item any ) ( mutate_err error ) {
 			link = item.( *InviteLink )
-			mutate_err = link.unmarkDeleted( actor_id , actor_is_admin )
+			mutate_err = link.unmarkDeleted( actor_id , actor_is_admin , owner_id )
 			if mutate_err == nil && minted_by_key != "" { link.MintedByKey = minted_by_key }
 			return
 		} )

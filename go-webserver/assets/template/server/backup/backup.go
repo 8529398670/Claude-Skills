@@ -380,7 +380,9 @@ func Restore( cfg *config.Config , options RestoreOptions ) ( result RestoreResu
 	if err != nil { return }
 
 	staged_database := filepath.Join( staging , databaseName )
-	if source_key != cfg.SecretKey {
+	// A backup from before records were bound to their place goes through
+	// Rekey too, even on the same key: that is what brings it up to date.
+	if source_key != cfg.SecretKey || db.SealedTheOldWay( staged_database ) {
 		rewrite := models.RekeyRecord( source_key , cfg.SecretKey )
 		if err = db.Rekey( staged_database , source_key , cfg.SecretKey , cfg.EncryptAtRest , rewrite ); err != nil {
 			err = fmt.Errorf( "could not move this backup onto the current key: %w" , err )

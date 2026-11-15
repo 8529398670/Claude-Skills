@@ -262,6 +262,11 @@ KEEP_WITHOUT_TESTS = {
     "server/config/helpers_test.go",
     "server/config/public_url_test.go",
     "server/config/scripts_test.go",
+    "server/routes/no_store_test.go",
+    "server/middleware/no_store_test.go",
+    "server/db/sealing_test.go",
+    "server/encryption/subkey_test.go",
+    "server/models/reseal_test.go",
     # Python: the same, and the shared support modules.
     "app/tests/__init__.py",
     "app/tests/support.py",
@@ -277,6 +282,8 @@ KEEP_WITHOUT_TESTS = {
     "app/tests/test_config_secret.py",
     "app/tests/test_public_url.py",
     "app/tests/test_scripts.py",
+    "app/tests/test_no_store.py",
+    "app/tests/test_sealing.py",
 }
 PYTHON_TESTS = "app/tests"
 SKILLS_CONFIG = Path(__file__).resolve().parent.parent.parent / "config.yaml"

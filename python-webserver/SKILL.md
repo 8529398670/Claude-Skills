@@ -49,8 +49,9 @@ project.
   carries the same admin/user role a person does -- one permission model, not
   two -- sent as `Authorization: Bearer <key>`. A key can never outrank the
   account that owns it. It cannot mint keys, but an admin key can create
-  accounts and hand out login and invite links, and any key with its account's
-  full role can make that account a login link. Every link records the key
+  accounts and hand out login and invite links. No key can make a login link
+  for its own account, so a key never turns itself into a browser session.
+  Every link records the key
   that made it, and revoking or deleting the key voids the ones still unused.
   That is what lets a cron job, a CI pipeline, or a sidecar call the app.
 - **The same keys speak MCP at `/mcp`.** An agent such as Claude Code uses the
@@ -932,6 +933,9 @@ Read these when the task goes past "scaffold and build features":
   records in SQLite and what they cost, why there is no control socket, the
   threadpool rule, the static caching policy, and the known limits. Read
   before changing the template's structure rather than building on it.
+- `references/deploy-cloudflare.md` -- running behind Cloudflare: Tunnel or
+  proxied DNS, the `trust_proxy` settings for each, and the dashboard settings
+  (caching, Rocket Loader, rate limits, challenges) that break or expose the app.
 - `references/configuration.md` -- the single `config.yaml`: where it is
   found, how it is validated, `secret.key` and the migration out of older
   config files, changing settings while the server runs (the Settings screen,

@@ -21,3 +21,21 @@ func TestPublicURLIsAPlainOrigin( t *testing.T ) {
 		if validPublicURL( value ) == false { t.Errorf( "%q was refused" , value ) }
 	}
 }
+
+// S13: server.trusted_proxies refuses any range that trusts far more than a
+// proxy, not just the strings 0.0.0.0/0 and ::/0. Each of these trusts every
+// address, or every container.
+func TestATrustedProxyRangeIsNarrow( t *testing.T ) {
+	for _ , value := range []string{
+		"0.0.0.0/0" , "::/0" , "1.2.3.4/0" , "::1/0" , "0.0.0.0/1" , "128.0.0.0/1" , "10.0.0.0/7" ,
+		"2001::/15" , "::ffff:0.0.0.0/96" , "::ffff:10.0.0.0/100" ,
+	} {
+		if narrowEnoughProxy( value ) { t.Errorf( "%q was accepted" , value ) }
+	}
+	for _ , value := range []string{
+		"127.0.0.1" , "::1" , "172.17.0.1" , "10.0.0.0/8" , "173.245.48.0/20" , "104.16.0.0/13" ,
+		"2400:cb00::/32" , "2001::/16" , "::ffff:10.0.0.0/104" ,
+	} {
+		if narrowEnoughProxy( value ) == false { t.Errorf( "%q was refused" , value ) }
+	}
+}

@@ -140,7 +140,7 @@ func ( tx *Tx ) EachRecord( bucket string , visit func( key []byte , record map[
 	target := tx.tx.Bucket( []byte( bucket ) )
 	updates := map[string][]byte{}
 	err = target.ForEach( func( key []byte , value []byte ) ( record_err error ) {
-		plain , record_err := tx.store.open( value )
+		plain , record_err := tx.store.open( bucket , key , value )
 		if record_err != nil { return }
 		record := map[string]any{}
 		decoder := json.NewDecoder( bytes.NewReader( plain ) )
@@ -148,7 +148,7 @@ func ( tx *Tx ) EachRecord( bucket string , visit func( key []byte , record map[
 		if record_err = decoder.Decode( &record ); record_err != nil { return }
 		changed , record_err := visit( append( []byte( nil ) , key... ) , record )
 		if record_err != nil || changed == false { return }
-		encoded , record_err := tx.store.encode( record )
+		encoded , record_err := tx.store.encode( bucket , key , record )
 		if record_err != nil { return }
 		updates[ string( key ) ] = encoded
 		return

@@ -293,7 +293,7 @@ func ( client *browser ) cookieOn( t *testing.T , method string , path string , 
 	response , err := client.fixture.app.Test( request , fiber.TestConfig{ Timeout: 10 * time.Second } )
 	if err != nil { t.Fatal( err ) }
 	for _ , cookie := range response.Cookies() {
-		if cookie.Name == client.fixture.cfg.CookieName { found = cookie }
+		if cookie.Name == client.fixture.cfg.SessionCookieName() { found = cookie }
 	}
 	return
 }
@@ -346,7 +346,7 @@ func TestALiveStreamCheckIsNotUse( t *testing.T ) {
 	client := fixture.signIn( t , fixture.owner.ID )
 	session_id := fixture.age( t , fixture.owner.ID , 2 * time.Hour , 10 * time.Minute )
 	before := fixture.sessionEnd( t , session_id )
-	credential , err := fixture.handlers.Guard.DecryptCookie( strings.TrimPrefix( client.cookie , fixture.cfg.CookieName + "=" ) )
+	credential , err := fixture.handlers.Guard.DecryptCookie( strings.TrimPrefix( client.cookie , fixture.cfg.SessionCookieName() + "=" ) )
 	if err != nil { t.Fatal( err ) }
 
 	if fixture.handlers.Guard.StillOwner( credential ) == false {
@@ -605,3 +605,25 @@ func TestOnlyYouNameYourDevices( t *testing.T ) {
 	if status != fiber.StatusOK || len( rows ) != 1 || rows[ 0 ].( map[ string ]any )[ "label" ] != "Phone" { t.Fatalf( "%d %v" , status , page ) }
 }
 // <<< feature:sessions
+
+// S16: with secure cookies the session cookie is __Host-<cookie_name>, which a
+// page on a sibling subdomain cannot plant: a browser takes a __Host- cookie
+// only when it is Secure, has Path=/ and names no Domain.
+func TestTheSessionCookieIsHostPrefixedWhenSecure( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	fixture.cfg.SecureCookies = true
+	request , _ := http.NewRequest( http.MethodPost , "/api/login" , strings.NewReader( `{"credential":"` + fixture.link( t , fixture.alice.ID ) + `"}` ) )
+	request.Header.Set( "Content-Type" , "application/json" )
+	response , err := fixture.app.Test( request )
+	if err != nil { t.Fatal( err ) }
+	response.Body.Close()
+	var found *http.Cookie
+	for _ , cookie := range response.Cookies() {
+		if cookie.Name == "__Host-session" { found = cookie }
+		if cookie.Name == "session" && cookie.Value != "" { t.Errorf( "the plain name was set too" ) }
+	}
+	if found == nil || found.Secure == false || found.Path != "/" || found.Domain != "" { t.Fatalf( "%+v" , found ) }
+	client := &browser{ fixture: fixture , cookie: found.Name + "=" + found.Value }
+	if client.signedIn( t ) == false { t.Fatal( "the __Host- cookie does not sign in" ) }
+	if ( &browser{ fixture: fixture , cookie: "session=" + found.Value } ).signedIn( t ) { t.Fatal( "the plain name still signs in" ) }
+}

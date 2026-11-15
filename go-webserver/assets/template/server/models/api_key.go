@@ -427,22 +427,28 @@ func RevokeAPIKeyAs( store *db.Store , key_id string , actor_id uint64 ) ( err e
 // expect, when not nil, is the name the caller believes is stored, as in
 // RenameUser: a *RenameConflictError if it is not, which keeps an undo from
 // overwriting a rename made somewhere else.
-func RenameAPIKey( store *db.Store , key_id string , name string , expect *string ) ( err error ) {
-	err = store.UpdateValue( db.BucketAPIKeys , []byte( key_id ) ,
-		func() any { return &APIKey{} } ,
-		func( item any ) ( mutate_err error ) {
-			key := item.( *APIKey )
-			if key.Deleted() {
-				mutate_err = db.ErrNotFound
-				return
-			}
-			if expect != nil && key.Name != strings.TrimSpace( *expect ) {
-				mutate_err = &RenameConflictError{ Current: key.Name }
-				return
-			}
-			key.Name = strings.TrimSpace( name )
+//
+// actor_id is who is asking (0 for none, as from a shell). A name is what the
+// owner goes by when deciding which key to revoke, so renaming someone else's
+// key follows the same ladder as everything else done to it (S14): nobody
+// renames the owner's keys, and only the owner renames another admin's.
+func RenameAPIKey( store *db.Store , key_id string , actor_id uint64 , name string , expect *string ) ( err error ) {
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		key := &APIKey{}
+		if tx_err = tx.Get( db.BucketAPIKeys , []byte( key_id ) , key ); tx_err != nil { return }
+		if key.Deleted() {
+			tx_err = db.ErrNotFound
 			return
-		} )
+		}
+		if tx_err = mayActOnIDTx( tx , actor_id , key.UserID ); tx_err != nil { return }
+		if expect != nil && key.Name != strings.TrimSpace( *expect ) {
+			tx_err = &RenameConflictError{ Current: key.Name }
+			return
+		}
+		key.Name = strings.TrimSpace( name )
+		tx_err = tx.Put( db.BucketAPIKeys , []byte( key_id ) , key )
+		return
+	} )
 	return
 }
 
@@ -526,7 +532,9 @@ func RestoreAPIKey( store *db.Store , key_id string , actor_id uint64 , actor_is
 		// Bringing a key back is as much power over its account as minting
 		// one, so the rule is the key's account's, not the deleter's.
 		if tx_err = mayActOnIDTx( tx , actor_id , found.UserID ); tx_err != nil { return }
-		if tx_err = found.unmarkDeleted( actor_id , actor_is_admin ); tx_err != nil { return }
+		owner_id , tx_err := ownerIDTx( tx )
+		if tx_err != nil { return }
+		if tx_err = found.unmarkDeleted( actor_id , actor_is_admin , owner_id ); tx_err != nil { return }
 		if found.Live() {
 			live := 0
 			tx_err = tx.ForEach( db.BucketAPIKeys ,

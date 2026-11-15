@@ -147,7 +147,8 @@ func DeleteUser( store *db.Store , user_id uint64 , actor_id uint64 ) ( removed 
 
 // >>> feature:two_factor
 // ResetTwoFactor takes 2FA off an account whose person lost both the phone and
-// the recovery codes. Sign-ins waiting on a code end with it.
+// the recovery codes. Sign-ins waiting on a code end with it, and so does every
+// session the account holds.
 //
 // actor_id is who is asking. Zero means the operator, through the CLI or the
 // control socket, who may reset anyone: that is the way back for an owner
@@ -169,7 +170,11 @@ func ResetTwoFactor( store *db.Store , user_id uint64 , actor_id uint64 ) ( err 
 		if tx_err = mayActOnTx( tx , actor_id , target ); tx_err != nil { return }
 		clearTwoFactor( target )
 		if tx_err = tx.Put( db.BucketUsers , key , target ); tx_err != nil { return }
-		tx_err = deleteChallengesForUser( tx , user_id )
+		if tx_err = deleteChallengesForUser( tx , user_id ); tx_err != nil { return }
+		// S15: a reset is the way back in for someone who lost their device,
+		// and the device may be in someone else's hands. Every session the
+		// account holds ends with it; they sign in afresh.
+		_ , tx_err = destroySessionsForUser( tx , user_id )
 		return
 	} )
 	return

@@ -435,11 +435,11 @@ func RekeyFiles( directory string , staging string , old_key string , new_key st
 	entries , err := os.ReadDir( directory )
 	if err != nil { return }
 	if err = os.MkdirAll( staging , 0o700 ); err != nil { return }
-	reader := &Logger{ key: old_key , encrypt: true }
+	reader := &Logger{ key: encryption.SubKey( old_key , encryption.PurposeLogs ) , oldKey: old_key , encrypt: true }
 	for _ , entry := range entries {
 		if filePattern.MatchString( entry.Name() ) == false || entry.Type().IsRegular() == false { continue }
 		source := filepath.Join( directory , entry.Name() )
-		if err = rekeyFile( reader , source , filepath.Join( staging , entry.Name() ) , new_key ); err != nil {
+		if err = rekeyFile( reader , source , filepath.Join( staging , entry.Name() ) , encryption.SubKey( new_key , encryption.PurposeLogs ) ); err != nil {
 			err = fmt.Errorf( "could not move %s to the new key: %w" , source , err )
 			return
 		}

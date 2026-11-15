@@ -213,7 +213,7 @@ func TestRestoreMovesAnOldBackupOntoTheCurrentKey( t *testing.T ) {
 	// >>> feature:two_factor
 	stored , err := models.GetUser( reopened , user.ID )
 	if err != nil { t.Fatal( err ) }
-	opened , err := encryption.ChaChaDecryptBase64String( cfg.SecretKey , stored.TOTPPending )
+	opened , err := encryption.ChaChaDecryptBase64String( encryption.SubKey( cfg.SecretKey , encryption.PurposeTOTP ) , stored.TOTPPending )
 	if err != nil || opened != secret { t.Fatalf( "two-factor secret after the move: %q %v" , opened , err ) }
 	// <<< feature:two_factor
 }

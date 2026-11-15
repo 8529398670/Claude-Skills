@@ -5,8 +5,12 @@
 package middleware
 
 import (
+	log "log"
+	netip "net/netip"
 	path "path"
 	strings "strings"
+	sync "sync"
+	atomic "sync/atomic"
 	time "time"
 
 	fiber "github.com/gofiber/fiber/v3"
@@ -15,6 +19,7 @@ import (
 	recoverer "github.com/gofiber/fiber/v3/middleware/recover"
 
 	config "{{MODULE_PATH}}/server/config"
+	logs "{{MODULE_PATH}}/server/logs"
 )
 
 // robotsPolicy keeps every response out of search results.
@@ -170,7 +175,18 @@ func budgetFor( method string , request_path string ) ( budget rateBudget ) {
 // The budgets and the window are read per request, so an edit to any of
 // server.rate_limit_max, rate_limit_signin_max, rate_limit_upload_max or
 // rate_limit_window_seconds applies at once.
-func RateLimit( settings *config.Holder ) ( handler fiber.Handler ) {
+//
+// A budget belongs to an address, or for IPv6 to its /64 (rateKey): one home
+// or one server gets a whole /64, so counting each /128 alone would hand
+// whoever has one as many budgets as they care to pick addresses.
+//
+// It writes to logger (nil is fine) and the server's own log twice over: the
+// first 429 a budget gives in a window, so a lockout can be seen, and once per
+// process when a request carries a proxy's address header while
+// server.trust_proxy is off (warnProxyHeaders). RequestLog runs after this, so
+// those 429s would otherwise appear nowhere.
+func RateLimit( settings *config.Holder , logger *logs.Logger ) ( handler fiber.Handler ) {
+	refusals := &limitNotices{ last: map[ string ]time.Time{} }
 	limited := func( prefix string , limit func( cfg *config.Config ) int ) ( result fiber.Handler ) {
 		result = limiter.New( limiter.Config{
 			MaxFunc: func( fiber.Ctx ) ( max int ) {
@@ -182,10 +198,11 @@ func RateLimit( settings *config.Holder ) ( handler fiber.Handler ) {
 				return
 			},
 			KeyGenerator: func( c fiber.Ctx ) ( key string ) {
-				key = prefix + c.IP()
+				key = prefix + rateKey( c.IP() )
 				return
 			},
 			LimitReached: func( c fiber.Ctx ) ( err error ) {
+				refusals.note( c , logger , strings.TrimSuffix( prefix , ":" ) , rateKey( c.IP() ) , settings.Get().RateLimitWindow )
 				// Through the ErrorHandler: a page load gets the error page,
 				// and everything else the usual JSON.
 				err = fiber.ErrTooManyRequests
@@ -198,7 +215,9 @@ func RateLimit( settings *config.Holder ) ( handler fiber.Handler ) {
 	sign_in := limited( "sign-in:" , func( cfg *config.Config ) int { return cfg.RateLimitSignInMax } )
 	upload := limited( "upload:" , func( cfg *config.Config ) int { return cfg.RateLimitUploadMax } ) // feature:files
 
+	var warned atomic.Bool
 	handler = func( c fiber.Ctx ) ( err error ) {
+		if warned.Load() == false { warnProxyHeaders( c , settings.Get() , logger , &warned ) }
 		switch budgetFor( c.Method() , c.Path() ) {
 		case budgetNone:
 			err = c.Next()
@@ -214,6 +233,73 @@ func RateLimit( settings *config.Holder ) ( handler fiber.Handler ) {
 		return
 	}
 	return
+}
+
+// rateKey is who a budget belongs to: an IPv4 address as it is, an IPv6
+// address by its /64. Anything that does not parse is used as it is.
+func rateKey( ip string ) ( key string ) {
+	key = ip
+	address , err := netip.ParseAddr( ip )
+	if err != nil { return }
+	address = address.Unmap()
+	if address.Is4() {
+		key = address.String()
+		return
+	}
+	prefix , err := address.WithZone( "" ).Prefix( 64 )
+	if err != nil { return }
+	key = prefix.String()
+	return
+}
+
+// proxyHeaders are the headers a proxy names the visitor's address in.
+var proxyHeaders = []string{ "CF-Connecting-IP" , "X-Forwarded-For" , "X-Real-IP" }
+
+// warnProxyHeaders says, once per process, that a request came through a
+// proxy the server does not trust. Then every visitor has the proxy's address,
+// so they all share one budget: 60 sign-in attempts a minute from anyone
+// would lock everyone out. That is the default behind Cloudflare Tunnel or a
+// local proxy until server.trust_proxy is set.
+func warnProxyHeaders( c fiber.Ctx , cfg *config.Config , logger *logs.Logger , warned *atomic.Bool ) {
+	if cfg.TrustProxy { return }
+	for _ , name := range proxyHeaders {
+		if c.Get( name ) == "" { continue }
+		if warned.Swap( true ) { return }
+		message := "requests carry " + name + " but server.trust_proxy is off, so every visitor is counted as the proxy's address " +
+			c.IP() + " and they share one rate limit; see server.trust_proxy in config.yaml"
+		log.Printf( "[rate-limit] %s" , message )
+		if logger != nil { logger.System( logs.LevelWarn , message , map[string]any{ "header": name , "peer": c.IP() } ) }
+		return
+	}
+}
+
+// limitNotices remembers when each budget last said it was used up, so a
+// flood of refused requests writes one line per budget per window, not one
+// each.
+type limitNotices struct {
+	lock sync.Mutex
+	last map[ string ]time.Time
+}
+
+func ( notices *limitNotices ) note( c fiber.Ctx , logger *logs.Logger , budget string , key string , window time.Duration ) {
+	now := time.Now()
+	bucket := budget + ":" + key
+	notices.lock.Lock()
+	if now.Sub( notices.last[ bucket ] ) < window {
+		notices.lock.Unlock()
+		return
+	}
+	if len( notices.last ) > 10000 {
+		for name , when := range notices.last {
+			if now.Sub( when ) >= window { delete( notices.last , name ) }
+		}
+	}
+	notices.last[ bucket ] = now
+	notices.lock.Unlock()
+	log.Printf( "[rate-limit] %s budget used up for %s (%s %s); more 429s for it this window are not logged" , budget , key , c.Method() , c.Path() )
+	if logger != nil {
+		logger.System( logs.LevelWarn , "rate limit reached" , map[string]any{ "budget": budget , "key": key , "method": c.Method() , "path": c.Path() , "window_seconds": int( window.Seconds() ) } )
+	}
 }
 
 // Recover keeps one panicking handler from taking the process down with it.

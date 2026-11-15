@@ -118,14 +118,9 @@ class MCPParity(RoutesTestCase):
         self.assertFalse(failed, reply)
         self.assertTrue(reply["login_url"].startswith("http") and "/login/" in reply["login_url"], reply)
 
-        # The narrowed key on the owner's admin account may not make itself a
-        # login link: the session would be an admin's.
-        failed, reply = tool("create_my_login_link", {}, self.user_key)
-        self.assertTrue(failed)
-        self.assertIn("less than your account's role", reply["error"])
-        failed, reply = tool("create_my_login_link", {}, self.admin_key)
-        self.assertFalse(failed, reply)
-        self.assertIn("login_url", reply)
+        # S9: no key may make itself a login link, so there is no tool for it.
+        status, reply = self.call("POST", "/mcp", key=self.admin_key, body={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "create_my_login_link", "arguments": {}}})
+        self.assertIn("error", reply, reply)
 
         # The owner rules hold through the tools.
         self.assertTrue(tool("admin_set_user_role", {"user_id": self.owner.id, "role": "user"}, self.admin_key)[0])

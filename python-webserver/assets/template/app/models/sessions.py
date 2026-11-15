@@ -301,6 +301,12 @@ def destroy_sessions_for_user(tx: Transaction, user_id: int) -> int:
     return tx.delete_where(BUCKET_SESSIONS, lambda _key, record: record["user_id"] == user_id)
 
 
+def destroy_other_sessions_for_user(tx: Transaction, user_id: int, keep_id: str) -> int:
+    """destroy_sessions_for_user keeping one session: the one the account is
+    using to make the change."""
+    return tx.delete_where(BUCKET_SESSIONS, lambda key, record: record["user_id"] == user_id and key != keep_id)
+
+
 def purge_expired_sessions(store: Store) -> int:
     """Part of the hourly purge job. Expired rows are already
     refused by load_session, so this is only housekeeping to stop the file
