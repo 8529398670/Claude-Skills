@@ -25,6 +25,7 @@
   --app-text: #212529;
   --app-accent: #1f5fd6;
   --app-accent-fg: #ffffff;
+  --app-accent-text: #1f5fd6;
   --app-second: #0b7a75;
   --app-second-fg: #ffffff;
   --app-second-text: #0b7a75;
@@ -74,6 +75,7 @@
   --app-text: #dee2e6;
   --app-accent: #6ea0ff;
   --app-accent-fg: #0b0d10;
+  --app-accent-text: #6ea0ff;
   --app-second: #5fd3c4;
   --app-second-fg: #0b0d10;
   --app-second-text: #5fd3c4;
@@ -138,9 +140,11 @@ a:not([class]):hover { color: var(--bs-link-hover-color); }
   --bs-btn-disabled-bg: var(--app-accent);
   --bs-btn-disabled-border-color: var(--app-accent);
 }
+/* The outline's label and border are the accent made readable on a card
+   (accentText), which a dark theme's deep accent may not be. */
 .btn-outline-primary {
-  --bs-btn-color: var(--app-accent);
-  --bs-btn-border-color: var(--app-accent);
+  --bs-btn-color: var(--app-accent-text);
+  --bs-btn-border-color: var(--app-accent-text);
   --bs-btn-hover-color: var(--app-accent-fg);
   --bs-btn-hover-bg: var(--app-accent);
   --bs-btn-hover-border-color: var(--app-accent);

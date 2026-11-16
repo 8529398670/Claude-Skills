@@ -562,6 +562,7 @@ Replace the theme list everyone without their own list sees, 1 to 40 themes in t
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
+| `builtins` | integer | no |  | Which built-in themes this list has seen: the highest since in Theme.builtIn (static/js/theme.js) when it was saved. Built-in themes added after that join the list the browser shows. Left out: 0, the first ones. |
 | `themes` | array of object or null | no |  | 1 to 40 themes. null goes back to the built-in ones. |
 | `themes[].accent` | string | yes |  | The main color: what you can press. |
 | `themes[].background` | string | no |  | The page. Left out: the mode's own. |
@@ -573,19 +574,19 @@ Replace the theme list everyone without their own list sees, 1 to 40 themes in t
 | `themes[].dark` | object or null | no |  | A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped. |
 | `themes[].dark.accent` | string | yes |  | The main color: what you can press. |
 | `themes[].dark.background` | string | no |  | The page. Left out: the mode's own. |
-| `themes[].dark.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `themes[].dark.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `themes[].dark.second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `themes[].dark.surface` | string | no |  | Cards. Left out: the mode's own. |
 | `themes[].id` | string | yes |  | Lower-case letters, digits, - and _, up to 32. |
 | `themes[].light` | object or null | no |  | A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in. |
 | `themes[].light.accent` | string | yes |  | The main color: what you can press. |
 | `themes[].light.background` | string | no |  | The page. Left out: the mode's own. |
-| `themes[].light.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `themes[].light.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `themes[].light.second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `themes[].light.surface` | string | no |  | Cards. Left out: the mode's own. |
 | `themes[].mode` | string | yes | one of `light`, `dark` |  |
 | `themes[].name` | string | yes |  | 1 to 60 characters. |
-| `themes[].overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `themes[].overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `themes[].second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `themes[].surface` | string | no |  | Cards. Left out: the mode's own. |
 
@@ -1095,6 +1096,7 @@ Replace your whole list of color themes (1 to 40) and pick the one you use. them
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
+| `builtins` | integer | no |  | Which built-in themes this list has seen: the highest since in Theme.builtIn (static/js/theme.js) when it was saved. Built-in themes added after that join the list the browser shows. Left out: 0, the first ones. |
 | `theme_id` | string | no |  | The theme you use. |
 | `themes` | array of object or null | no |  | Your whole list, 1 to 40 themes. null goes back to following the app's defaults. |
 | `themes[].accent` | string | yes |  | The main color: what you can press. |
@@ -1107,19 +1109,19 @@ Replace your whole list of color themes (1 to 40) and pick the one you use. them
 | `themes[].dark` | object or null | no |  | A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped. |
 | `themes[].dark.accent` | string | yes |  | The main color: what you can press. |
 | `themes[].dark.background` | string | no |  | The page. Left out: the mode's own. |
-| `themes[].dark.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `themes[].dark.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `themes[].dark.second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `themes[].dark.surface` | string | no |  | Cards. Left out: the mode's own. |
 | `themes[].id` | string | yes |  | Lower-case letters, digits, - and _, up to 32. |
 | `themes[].light` | object or null | no |  | A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in. |
 | `themes[].light.accent` | string | yes |  | The main color: what you can press. |
 | `themes[].light.background` | string | no |  | The page. Left out: the mode's own. |
-| `themes[].light.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `themes[].light.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `themes[].light.second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `themes[].light.surface` | string | no |  | Cards. Left out: the mode's own. |
 | `themes[].mode` | string | yes | one of `light`, `dark` |  |
 | `themes[].name` | string | yes |  | 1 to 60 characters. |
-| `themes[].overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `themes[].overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `themes[].second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `themes[].surface` | string | no |  | Cards. Left out: the mode's own. |
 

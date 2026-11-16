@@ -86,8 +86,10 @@ class User:
     # <<< feature:shortcuts
     # >>> feature:appearance
     # This person's own list on the Appearance screen; None follows the app's
-    # defaults. theme_id is the one they use. See app/models/themes.py.
+    # defaults; themes_builtins is which built-in themes it has seen. theme_id
+    # is the one they use. See app/models/themes.py.
     themes: list[dict[str, Any]] | None = None
+    themes_builtins: int = 0
     theme_id: str = ""
     # <<< feature:appearance
 
@@ -120,6 +122,7 @@ class User:
             # <<< feature:two_factor
             "shortcuts": self.shortcuts,  # feature:shortcuts
             "themes": self.themes,  # feature:appearance
+            "themes_builtins": self.themes_builtins,  # feature:appearance
             "theme_id": self.theme_id,  # feature:appearance
         }
 
@@ -145,6 +148,7 @@ class User:
             # <<< feature:two_factor
             shortcuts=record.get("shortcuts") or {},  # feature:shortcuts
             themes=record.get("themes"),  # feature:appearance
+            themes_builtins=record.get("themes_builtins", 0),  # feature:appearance
             theme_id=record.get("theme_id", ""),  # feature:appearance
         )
 

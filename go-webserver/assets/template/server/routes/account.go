@@ -49,6 +49,7 @@ type meReply struct {
 	Shortcuts          map[string]string     `json:"shortcuts" jsonschema_description:"The keyboard shortcuts you changed, by action. Mod is Cmd on a Mac and Ctrl elsewhere."` // feature:shortcuts
 	Themes             []models.Theme        `json:"themes" jsonschema:"nullable" jsonschema_description:"Your themes (see the Theme schema): your own list, else the app's defaults, else null for the built-in ones."` // feature:appearance
 	ThemesCustom       bool                  `json:"themes_custom" jsonschema_description:"Whether you have your own list rather than following the defaults."` // feature:appearance
+	ThemesBuiltIns     int                   `json:"themes_builtins" jsonschema_description:"Which built-in themes that list has seen (see builtins on POST /api/account/themes)."` // feature:appearance
 	ThemeID            string                `json:"theme_id" jsonschema_description:"The theme you use. Empty: the first."` // feature:appearance
 	LoginLink          *models.LoginLinkInfo `json:"login_link" jsonschema_description:"Your own live login link, or null."`
 }
@@ -85,7 +86,7 @@ func ( handlers *Handlers ) getMe( c fiber.Ctx , in *apidoc.None ) ( reply *meRe
 	if err != nil { return }
 
 	// >>> feature:appearance
-	themes , themes_custom , err := handlers.myThemes( user )
+	themes , themes_custom , themes_builtins , err := handlers.myThemes( user )
 	if err != nil { return }
 	// <<< feature:appearance
 	cfg := handlers.cfg()
@@ -108,6 +109,7 @@ func ( handlers *Handlers ) getMe( c fiber.Ctx , in *apidoc.None ) ( reply *meRe
 		Shortcuts:          myShortcuts( user ), // feature:shortcuts
 		Themes:             themes, // feature:appearance
 		ThemesCustom:       themes_custom, // feature:appearance
+		ThemesBuiltIns:     themes_builtins, // feature:appearance
 		ThemeID:            user.ThemeID, // feature:appearance
 		HasPIN:             user.HasPin(), // feature:invite_links
 		Username:           user.Username, // feature:passwords

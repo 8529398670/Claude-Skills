@@ -677,6 +677,10 @@
               }
             ]
           },
+          "themes_builtins": {
+            "description": "Which built-in themes that list has seen (see builtins on POST /api/account/themes).",
+            "type": "integer"
+          },
           "themes_custom": {
             "description": "Whether you have your own list rather than following the defaults.",
             "type": "boolean"
@@ -728,6 +732,7 @@
           "show_about",
           "theme_id",
           "themes",
+          "themes_builtins",
           "themes_custom",
           "two_factor",
           "two_factor_enabled",
@@ -1236,7 +1241,7 @@
                     "additionalProperties": {
                       "type": "string"
                     },
-                    "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                    "description": "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
                     "type": "object"
                   },
                   "second": {
@@ -1280,7 +1285,7 @@
                     "additionalProperties": {
                       "type": "string"
                     },
-                    "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                    "description": "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
                     "type": "object"
                   },
                   "second": {
@@ -1318,7 +1323,7 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+            "description": "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
             "type": "object"
           },
           "second": {
@@ -2544,6 +2549,10 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "builtins": {
+                    "description": "Which built-in themes this list has seen: the highest since in Theme.builtIn (static/js/theme.js) when it was saved. Built-in themes added after that join the list the browser shows. Left out: 0, the first ones.",
+                    "type": "integer"
+                  },
                   "csrf_token": {
                     "description": "From GET /api/me. Browser sessions only.",
                     "type": "string"
@@ -2599,6 +2608,10 @@
                         }
                       ]
                     },
+                    "themes_builtins": {
+                      "description": "Which built-in themes that list has seen (see builtins on POST /api/account/themes).",
+                      "type": "integer"
+                    },
                     "themes_custom": {
                       "type": "boolean"
                     }
@@ -2607,6 +2620,7 @@
                     "ok",
                     "theme_id",
                     "themes",
+                    "themes_builtins",
                     "themes_custom"
                   ],
                   "type": "object"
@@ -4907,6 +4921,10 @@
               "application/json": {
                 "schema": {
                   "properties": {
+                    "builtins": {
+                      "description": "Which built-in themes that list has seen (see builtins on POST /api/account/themes).",
+                      "type": "integer"
+                    },
                     "themes": {
                       "description": "null while the built-in themes apply.",
                       "oneOf": [
@@ -4923,6 +4941,7 @@
                     }
                   },
                   "required": [
+                    "builtins",
                     "themes"
                   ],
                   "type": "object"
@@ -4970,6 +4989,10 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "builtins": {
+                    "description": "Which built-in themes this list has seen: the highest since in Theme.builtIn (static/js/theme.js) when it was saved. Built-in themes added after that join the list the browser shows. Left out: 0, the first ones.",
+                    "type": "integer"
+                  },
                   "csrf_token": {
                     "description": "From GET /api/me. Browser sessions only.",
                     "type": "string"
@@ -5001,6 +5024,10 @@
               "application/json": {
                 "schema": {
                   "properties": {
+                    "builtins": {
+                      "description": "Which built-in themes that list has seen (see builtins on POST /api/account/themes).",
+                      "type": "integer"
+                    },
                     "ok": {
                       "type": "boolean"
                     },
@@ -5019,6 +5046,7 @@
                     }
                   },
                   "required": [
+                    "builtins",
                     "ok",
                     "themes"
                   ],

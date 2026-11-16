@@ -60,8 +60,10 @@ type User struct {
 	// >>> feature:appearance
 	// Themes is this person's own list on the Appearance screen; nil follows
 	// the app's defaults. ThemeID is the one they use. See themes.go.
-	Themes  []Theme `json:"themes,omitempty"`
-	ThemeID string  `json:"theme_id,omitempty"`
+	// ThemesBuiltIns is which built-in themes that list has seen (themes.go).
+	Themes         []Theme `json:"themes,omitempty"`
+	ThemesBuiltIns int     `json:"themes_builtins,omitempty"`
+	ThemeID        string  `json:"theme_id,omitempty"`
 	// <<< feature:appearance
 }
 

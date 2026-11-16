@@ -24,6 +24,12 @@ import (
 // (text, links, borders, tints) at readable contrast. Overrides replace any of
 // those worked-out colors by name; dropping one puts the safe color back.
 //
+// A saved list also keeps which built-in themes it has seen: the highest
+// "since" in theme.js's built-in list when it was saved ("builtins"). The
+// browser adds any built-in theme newer than that to the list it shows, so a
+// theme added to the app later reaches people with a list of their own, while
+// one they deleted stays deleted.
+//
 // The server checks the shape only. It does not know the list of built-in
 // themes, and it does not judge contrast -- an unreadable color is the
 // person's own choice, and the screen warns them.
@@ -31,6 +37,9 @@ const (
 	MaxThemes         = 40
 	MaxThemeNameRunes = 60
 	metaThemeDefaultsKey = "theme_defaults"
+	metaThemeDefaultsBuiltInsKey = "theme_defaults_builtins"
+	// MaxThemeBuiltIns bounds "builtins": far above any real count of built-in themes.
+	MaxThemeBuiltIns = 1000
 )
 
 // Theme is one of them, as stored and as the API carries it (the Theme schema
@@ -43,7 +52,7 @@ type Theme struct {
 	Second     string            `json:"second" jsonschema_description:"Says where you are: active nav item, headings, info."`
 	Background string            `json:"background,omitempty" jsonschema_description:"The page. Left out: the mode's own."`
 	Surface    string            `json:"surface,omitempty" jsonschema_description:"Cards. Left out: the mode's own."`
-	Overrides  map[string]string `json:"overrides,omitempty" jsonschema_description:"Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."`
+	Overrides  map[string]string `json:"overrides,omitempty" jsonschema_description:"Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."`
 	Button     *ThemeButton      `json:"button,omitempty" jsonschema_description:"How the theme's buttons look. A choice left out is the default (rounded, normal, raised, normal)."`
 	// The colors kept for the mode not in use (Theme.setMode in theme.js): a
 	// light theme's Dark, a dark theme's Light. Switching mode swaps them in.
@@ -62,7 +71,7 @@ type ThemeColors struct {
 	Second     string            `json:"second" jsonschema_description:"Says where you are: active nav item, headings, info."`
 	Background string            `json:"background,omitempty" jsonschema_description:"The page. Left out: the mode's own."`
 	Surface    string            `json:"surface,omitempty" jsonschema_description:"Cards. Left out: the mode's own."`
-	Overrides  map[string]string `json:"overrides,omitempty" jsonschema_description:"Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."`
+	Overrides  map[string]string `json:"overrides,omitempty" jsonschema_description:"Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."`
 }
 
 // ThemeButton is how a theme's buttons look; each choice is one of
@@ -79,7 +88,7 @@ var (
 	themeColor = regexp.MustCompile( `^#[0-9a-f]{6}$` )
 	// The fields of Theme.colors() in theme.js that an override may replace.
 	ThemeOverrideFields = map[string]bool{
-		"text": true , "accent": true , "accentFg": true , "second": true , "secondFg": true ,
+		"text": true , "accent": true , "accentFg": true , "accentText": true , "second": true , "secondFg": true ,
 		"secondText": true , "link": true , "navLink": true , "background": true , "surface": true ,
 		"nested": true , "chrome": true , "info": true , "infoBorder": true , "border": true ,
 	}
@@ -204,34 +213,53 @@ func CleanThemes( themes []Theme ) ( result []Theme , err error ) {
 	return
 }
 
+// CleanThemeBuiltIns checks a list's "builtins": 0 to MaxThemeBuiltIns.
+func CleanThemeBuiltIns( builtins int ) ( err error ) {
+	if builtins < 0 || builtins > MaxThemeBuiltIns {
+		err = fmt.Errorf( "builtins is 0 to %d" , MaxThemeBuiltIns )
+	}
+	return
+}
+
 // ThemeDefaults is the admin's list, or nil when none has been saved and the
-// built-in themes apply.
-func ThemeDefaults( store *db.Store ) ( themes []Theme , err error ) {
+// built-in themes apply; and which built-in themes it has seen.
+func ThemeDefaults( store *db.Store ) ( themes []Theme , builtins int , err error ) {
 	err = store.Get( db.BucketMeta , []byte( metaThemeDefaultsKey ) , &themes )
 	if errors.Is( err , db.ErrNotFound ) {
 		themes = nil
 		err = nil
+		return
 	}
+	if err != nil { return }
+	// A list saved before builtins existed has none: 0, the first built-ins.
+	err = store.Get( db.BucketMeta , []byte( metaThemeDefaultsBuiltInsKey ) , &builtins )
+	if errors.Is( err , db.ErrNotFound ) { err = nil }
 	return
 }
 
-// SetThemeDefaults replaces the admin's list. nil goes back to the built-in
-// themes.
-func SetThemeDefaults( store *db.Store , themes []Theme ) ( err error ) {
+// SetThemeDefaults replaces the admin's list and which built-in themes it has
+// seen. nil goes back to the built-in themes.
+func SetThemeDefaults( store *db.Store , themes []Theme , builtins int ) ( err error ) {
 	if themes == nil {
-		err = store.Delete( db.BucketMeta , []byte( metaThemeDefaultsKey ) )
+		if err = store.Delete( db.BucketMeta , []byte( metaThemeDefaultsKey ) ); err != nil { return }
+		err = store.Delete( db.BucketMeta , []byte( metaThemeDefaultsBuiltInsKey ) )
 		return
 	}
 	if themes , err = CleanThemes( themes ); err != nil { return }
-	err = store.Put( db.BucketMeta , []byte( metaThemeDefaultsKey ) , themes )
+	if err = CleanThemeBuiltIns( builtins ); err != nil { return }
+	if err = store.Put( db.BucketMeta , []byte( metaThemeDefaultsKey ) , themes ); err != nil { return }
+	err = store.Put( db.BucketMeta , []byte( metaThemeDefaultsBuiltInsKey ) , builtins )
 	return
 }
 
-// SetUserThemes replaces someone's own list and pick. nil themes go back to
-// following the defaults.
-func SetUserThemes( store *db.Store , user_id uint64 , themes []Theme , theme_id string ) ( err error ) {
+// SetUserThemes replaces someone's own list, which built-in themes it has
+// seen, and their pick. nil themes go back to following the defaults.
+func SetUserThemes( store *db.Store , user_id uint64 , themes []Theme , builtins int , theme_id string ) ( err error ) {
 	if themes != nil {
 		if themes , err = CleanThemes( themes ); err != nil { return }
+		if err = CleanThemeBuiltIns( builtins ); err != nil { return }
+	} else {
+		builtins = 0
 	}
 	if theme_id != "" && ValidThemeID( theme_id ) == false {
 		err = errors.New( "not a theme id" )
@@ -242,6 +270,7 @@ func SetUserThemes( store *db.Store , user_id uint64 , themes []Theme , theme_id
 		func( item any ) ( mutate_err error ) {
 			user := item.( *User )
 			user.Themes = themes
+			user.ThemesBuiltIns = builtins
 			user.ThemeID = theme_id
 			return
 		} )

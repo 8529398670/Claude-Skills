@@ -19,12 +19,14 @@ type setMyThemesRequest struct {
 	// nil (or left out) means "follow the defaults".
 	Themes  []models.Theme `json:"themes,omitempty" jsonschema:"nullable" jsonschema_description:"Your whole list, 1 to 40 themes. null goes back to following the app's defaults."`
 	ThemeID string         `json:"theme_id,omitempty" jsonschema_description:"The theme you use."`
+	BuiltIns int           `json:"builtins,omitempty" jsonschema_description:"Which built-in themes this list has seen: the highest since in Theme.builtIn (static/js/theme.js) when it was saved. Built-in themes added after that join the list the browser shows. Left out: 0, the first ones."`
 }
 
 type setMyThemesReply struct {
 	Ok           bool           `json:"ok"`
 	Themes       []models.Theme `json:"themes" jsonschema:"nullable" jsonschema_description:"What you now see; null while the built-in themes apply."`
 	ThemesCustom bool           `json:"themes_custom"`
+	ThemesBuiltIns int          `json:"themes_builtins" jsonschema_description:"Which built-in themes that list has seen (see builtins on POST /api/account/themes)."`
 	ThemeID      string         `json:"theme_id"`
 }
 
@@ -39,27 +41,32 @@ type setMyThemeReply struct {
 
 type themeDefaultsReply struct {
 	Themes []models.Theme `json:"themes" jsonschema:"nullable" jsonschema_description:"null while the built-in themes apply."`
+	BuiltIns int          `json:"builtins" jsonschema_description:"Which built-in themes that list has seen (see builtins on POST /api/account/themes)."`
 }
 
 type setThemeDefaultsRequest struct {
 	// nil (or left out) means "the built-in themes".
 	Themes []models.Theme `json:"themes,omitempty" jsonschema:"nullable" jsonschema_description:"1 to 40 themes. null goes back to the built-in ones."`
+	BuiltIns int          `json:"builtins,omitempty" jsonschema_description:"Which built-in themes this list has seen: the highest since in Theme.builtIn (static/js/theme.js) when it was saved. Built-in themes added after that join the list the browser shows. Left out: 0, the first ones."`
 }
 
 type setThemeDefaultsReply struct {
 	Ok     bool           `json:"ok"`
 	Themes []models.Theme `json:"themes" jsonschema:"nullable"`
+	BuiltIns int          `json:"builtins" jsonschema_description:"Which built-in themes that list has seen (see builtins on POST /api/account/themes)."`
 }
 
 // myThemes is what /api/me says about themes. themes is null when neither the
 // person nor an admin has saved a list: the browser has the built-in ones.
-func ( handlers *Handlers ) myThemes( user *models.User ) ( themes []models.Theme , custom bool , err error ) {
+// builtins is which built-in themes that list has seen.
+func ( handlers *Handlers ) myThemes( user *models.User ) ( themes []models.Theme , custom bool , builtins int , err error ) {
 	if user.Themes != nil {
 		themes = user.Themes
 		custom = true
+		builtins = user.ThemesBuiltIns
 		return
 	}
-	themes , err = models.ThemeDefaults( handlers.Store )
+	themes , builtins , err = models.ThemeDefaults( handlers.Store )
 	return
 }
 
@@ -76,16 +83,16 @@ func ( handlers *Handlers ) myThemes( user *models.User ) ( themes []models.Them
 // )
 func ( handlers *Handlers ) setMyThemes( c fiber.Ctx , in *setMyThemesRequest ) ( reply *setMyThemesReply , err error ) {
 	user := security.UserFrom( c )
-	if set_err := models.SetUserThemes( handlers.Store , user.ID , in.Themes , in.ThemeID ); set_err != nil {
+	if set_err := models.SetUserThemes( handlers.Store , user.ID , in.Themes , in.BuiltIns , in.ThemeID ); set_err != nil {
 		err = refuse( fiber.StatusBadRequest , set_err.Error() )
 		return
 	}
 	user , err = models.GetUser( handlers.Store , user.ID )
 	if err != nil { return }
-	themes , custom , err := handlers.myThemes( user )
+	themes , custom , builtins , err := handlers.myThemes( user )
 	if err != nil { return }
 	handlers.audit( c , logs.KindAuth , "changed own themes" , fiber.Map{ "count": len( in.Themes ) , "custom": custom } )
-	reply = &setMyThemesReply{ Ok: true , Themes: themes , ThemesCustom: custom , ThemeID: user.ThemeID }
+	reply = &setMyThemesReply{ Ok: true , Themes: themes , ThemesCustom: custom , ThemesBuiltIns: builtins , ThemeID: user.ThemeID }
 	return
 }
 
@@ -114,9 +121,9 @@ func ( handlers *Handlers ) setMyTheme( c fiber.Ctx , in *setMyThemeRequest ) ( 
 //     mcp="admin_get_theme_defaults", read_only=True,  // feature:mcp
 // )
 func ( handlers *Handlers ) getThemeDefaults( c fiber.Ctx , in *apidoc.None ) ( reply *themeDefaultsReply , err error ) {
-	themes , err := models.ThemeDefaults( handlers.Store )
+	themes , builtins , err := models.ThemeDefaults( handlers.Store )
 	if err != nil { return }
-	reply = &themeDefaultsReply{ Themes: themes }
+	reply = &themeDefaultsReply{ Themes: themes , BuiltIns: builtins }
 	return
 }
 
@@ -129,13 +136,13 @@ func ( handlers *Handlers ) getThemeDefaults( c fiber.Ctx , in *apidoc.None ) ( 
 //     mcp="admin_set_theme_defaults",  // feature:mcp
 // )
 func ( handlers *Handlers ) setThemeDefaults( c fiber.Ctx , in *setThemeDefaultsRequest ) ( reply *setThemeDefaultsReply , err error ) {
-	if set_err := models.SetThemeDefaults( handlers.Store , in.Themes ); set_err != nil {
+	if set_err := models.SetThemeDefaults( handlers.Store , in.Themes , in.BuiltIns ); set_err != nil {
 		err = refuse( fiber.StatusBadRequest , set_err.Error() )
 		return
 	}
-	themes , err := models.ThemeDefaults( handlers.Store )
+	themes , builtins , err := models.ThemeDefaults( handlers.Store )
 	if err != nil { return }
 	handlers.audit( c , logs.KindAdmin , "changed the default themes" , fiber.Map{ "count": len( themes ) , "built_in": themes == nil } )
-	reply = &setThemeDefaultsReply{ Ok: true , Themes: themes }
+	reply = &setThemeDefaultsReply{ Ok: true , Themes: themes , BuiltIns: builtins }
 	return
 }

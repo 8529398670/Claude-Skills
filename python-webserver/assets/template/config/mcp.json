@@ -1129,6 +1129,10 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "builtins": {
+            "description": "Which built-in themes this list has seen: the highest since in Theme.builtIn (static/js/theme.js) when it was saved. Built-in themes added after that join the list the browser shows. Left out: 0, the first ones.",
+            "type": "integer"
+          },
           "themes": {
             "description": "1 to 40 themes. null goes back to the built-in ones.",
             "oneOf": [
@@ -1206,7 +1210,7 @@
                               "additionalProperties": {
                                 "type": "string"
                               },
-                              "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                              "description": "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
                               "type": "object"
                             },
                             "second": {
@@ -1250,7 +1254,7 @@
                               "additionalProperties": {
                                 "type": "string"
                               },
-                              "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                              "description": "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
                               "type": "object"
                             },
                             "second": {
@@ -1288,7 +1292,7 @@
                       "additionalProperties": {
                         "type": "string"
                       },
-                      "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                      "description": "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
                       "type": "object"
                     },
                     "second": {
@@ -2311,6 +2315,10 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "builtins": {
+            "description": "Which built-in themes this list has seen: the highest since in Theme.builtIn (static/js/theme.js) when it was saved. Built-in themes added after that join the list the browser shows. Left out: 0, the first ones.",
+            "type": "integer"
+          },
           "theme_id": {
             "description": "The theme you use.",
             "type": "string"
@@ -2392,7 +2400,7 @@
                               "additionalProperties": {
                                 "type": "string"
                               },
-                              "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                              "description": "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
                               "type": "object"
                             },
                             "second": {
@@ -2436,7 +2444,7 @@
                               "additionalProperties": {
                                 "type": "string"
                               },
-                              "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                              "description": "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
                               "type": "object"
                             },
                             "second": {
@@ -2474,7 +2482,7 @@
                       "additionalProperties": {
                         "type": "string"
                       },
-                      "description": "Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                      "description": "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
                       "type": "object"
                     },
                     "second": {

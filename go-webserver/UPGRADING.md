@@ -3,6 +3,81 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 3073105
+
+**Fix: outline primary buttons stay readable in every theme (`accentText`).**
+Marks: `accentText`, `--app-accent-text`, `outline_primary`
+Files: `static/js/theme.js`, `static/css/style.css`, `static/js/themes_editor.js`, `config/language.yaml`, `server/models/themes.go`, `config/api.json`, `config/mcp.json`, `config/api.md`, `config/mcp.md`
+
+`.btn-outline-primary` drew its label and border in the raw accent, so a
+deep accent on a dark card was unreadable (OSU dark: scarlet on gray, about
+2:1). Now it uses `accentText`: the accent made readable on the card, like
+every other variant's outline label.
+
+- `static/js/theme.js`: `accentText` in `derived()` (`asText( accent , card )`),
+  `Theme.vars.accentText` (`--app-accent-text`), and the pair
+  `outline_primary: [ "accentText" , "surface" ]`. OSU dark overrides it to
+  Gray Light 40. Of the built-ins only WSU dark changes, a shade lighter.
+- `static/css/style.css`: `--app-accent-text` in both `:root` blocks, and
+  `.btn-outline-primary` reads it for its color and border.
+- `static/js/themes_editor.js`: `accentText` in `fineFields` and `labelKeys`.
+- `config/language.yaml`: `theme.color_accent_text`, `theme.check_outline_primary`.
+- Server: `accentText` is an override name `server/models/themes.go` (`ThemeOverrideFields`, and the two override descriptions).
+  Then refresh the API docs.
+
+Check: on Appearance, OSU switched to Dark: the Use buttons read in gray.
+
+**Upgrade `theme-builtins-seen`: new built-in themes reach saved theme lists.**
+Marks: `builtins`, `themes_builtins`, `withNewBuiltIns`, `builtInsSeen`
+Files: `server/models/themes.go`, `server/models/user.go`, `server/routes/themes.go`, `server/routes/account.go`, `server/routes/themes_test.go`, `static/js/theme.js`, `static/js/api.js`, `static/js/themes_editor.js`, `config/api.json`, `config/mcp.json`, `config/api.md`, `config/mcp.md`
+
+Before this, a built-in theme added to `Theme.builtIn` (OSU, say) never showed
+for anyone whose account, or whose admin defaults, had saved a list: the saved
+list was a copy of the built-ins at the time. Now each saved list keeps which
+built-in themes it has seen, and the browser adds newer ones.
+
+- Server: `builtins` (0 to 1000) on `POST /api/account/themes` and `POST
+  /api/admin/theme-defaults`; `themes_builtins` in `/api/me` and the account
+  themes reply, `builtins` in both defaults replies. Stored as
+  `themes_builtins` on the user and, for the defaults, meta key `theme_defaults_builtins`; going
+  back to the defaults or the built-ins drops it. Test:
+  `TestThemeListsKeepTheBuiltInsTheyHaveSeen`.
+- `static/js/theme.js`: `since` on built-ins added after the first ones (`osu`
+  is `since: 1`), `builtInsSeen()`, `withNewBuiltIns( list , seen )`, used by
+  `load( me )`; `store()` sends `builtInsSeen()`; `named()` drops `since`.
+- `static/js/api.js`: `setThemes( themes , id , builtins )`,
+  `setThemeDefaults( themes , builtins )`.
+- `static/js/themes_editor.js`: `ThemeEditor.savedDefaults( reply )`; the
+  defaults save sends `Theme.builtInsSeen()`.
+- An app that added its own built-in themes gives each a `since` above the
+  template's highest. Then refresh the API docs (`scripts/api_docs.sh`).
+
+Check: with a saved list from before, reload Appearance: OSU is in My themes
+(after WSU) and in Defaults for everyone. Delete it, reload: it stays gone.
+
+**Upgrade `osu-theme`: a built-in OSU theme in Ohio State scarlet and gray.**
+Marks: `ThemePalettes.osu`, `preset_osu`
+Files: `static/js/theme.js`, `config/language.yaml`
+
+- `static/js/theme.js`: `ThemePalettes.osu` (the brand's scarlet, gray, white,
+  scarlet shades and gray tints and shades, by name), and an `osu` entry in
+  `Theme.builtIn` after `wsu`; `cerise` moves up to sit above `pink` (and
+  `preset_cerise` with it in language.yaml). Light: Scarlet accent, Gray Dark 40 second, Gray
+  Light 90 page, white cards, Gray Dark 80 text. Dark: Scarlet on Gray Dark 80
+  with Gray Dark 60 cards, Gray Light 60 text, and links pinned to Gray Light 40
+  so nothing becomes a scarlet tint (the brand allows none).
+- `config/language.yaml`: `theme.preset_osu: "OSU"`.
+- `node scripts/check_themes.js` passes it in both modes. Accounts and admin
+  defaults that already saved a list keep it; OSU shows up for those following
+  the built-ins, and anyone else can add it from a new theme by hand.
+
+**Fix: the Appearance screen's Use and Light/Dark now follow each other.**
+Pressing Use on a theme in My themes opens that theme in the editor, and the
+editor's Light/Dark switch puts the theme being edited to use as well as
+switching its mode (one save, one undo step). The admin's "Defaults for
+everyone" editor is unchanged. Take `static/js/themes_editor.js` (`listItem`'s Use button and
+`actions.mode`).
+
 ## After bbf7241
 
 **Upgrade `bulk-routes`: `bulk=True` gives a route a bulk version, `POST /api/bulk/...`, and its MCP tool `<tool>_bulk`.**

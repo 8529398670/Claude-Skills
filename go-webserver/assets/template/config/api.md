@@ -377,6 +377,7 @@ Replace your whole list of color themes (1 to 40) and pick the one you use. them
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
+| `builtins` | integer | no |  | Which built-in themes this list has seen: the highest since in Theme.builtIn (static/js/theme.js) when it was saved. Built-in themes added after that join the list the browser shows. Left out: 0, the first ones. |
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
 | `theme_id` | string | no |  | The theme you use. |
 | `themes` | array of [`Theme`](#theme) or null | no |  | Your whole list, 1 to 40 themes. null goes back to following the app's defaults. |
@@ -388,6 +389,7 @@ Replace your whole list of color themes (1 to 40) and pick the one you use. them
 | `ok` | boolean | yes |  |  |
 | `theme_id` | string | yes |  |  |
 | `themes` | array of [`Theme`](#theme) or null | yes |  | What you now see; null while the built-in themes apply. |
+| `themes_builtins` | integer | yes |  | Which built-in themes that list has seen (see builtins on POST /api/account/themes). |
 | `themes_custom` | boolean | yes |  |  |
 
 ### POST /api/account/two-factor/confirm
@@ -1653,6 +1655,7 @@ The theme list everyone without their own list sees. themes is null while the bu
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
+| `builtins` | integer | yes |  | Which built-in themes that list has seen (see builtins on POST /api/account/themes). |
 | `themes` | array of [`Theme`](#theme) or null | yes |  | null while the built-in themes apply. |
 
 ### POST /api/admin/theme-defaults
@@ -1671,6 +1674,7 @@ Replace the theme list everyone without their own list sees, 1 to 40 themes in t
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
+| `builtins` | integer | no |  | Which built-in themes this list has seen: the highest since in Theme.builtIn (static/js/theme.js) when it was saved. Built-in themes added after that join the list the browser shows. Left out: 0, the first ones. |
 | `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
 | `themes` | array of [`Theme`](#theme) or null | no |  | 1 to 40 themes. null goes back to the built-in ones. |
 
@@ -1678,6 +1682,7 @@ Replace the theme list everyone without their own list sees, 1 to 40 themes in t
 
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
+| `builtins` | integer | yes |  | Which built-in themes that list has seen (see builtins on POST /api/account/themes). |
 | `ok` | boolean | yes |  |  |
 | `themes` | array of [`Theme`](#theme) or null | yes |  |  |
 
@@ -3662,6 +3667,7 @@ One of these:
 | `show_about` | boolean | yes |  | app.show_about: whether the menu has About. |
 | `theme_id` | string | yes |  | The theme you use. Empty: the first. |
 | `themes` | array of [`Theme`](#theme) or null | yes |  | Your themes (see the Theme schema): your own list, else the app's defaults, else null for the built-in ones. |
+| `themes_builtins` | integer | yes |  | Which built-in themes that list has seen (see builtins on POST /api/account/themes). |
 | `themes_custom` | boolean | yes |  | Whether you have your own list rather than following the defaults. |
 | `two_factor` | boolean | yes |  |  |
 | `two_factor_enabled` | boolean | yes |  |  |
@@ -3802,19 +3808,19 @@ One of these:
 | `dark` | object or null | no |  | A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped. |
 | `dark.accent` | string | yes |  | The main color: what you can press. |
 | `dark.background` | string | no |  | The page. Left out: the mode's own. |
-| `dark.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `dark.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `dark.second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `dark.surface` | string | no |  | Cards. Left out: the mode's own. |
 | `id` | string | yes |  | Lower-case letters, digits, - and _, up to 32. |
 | `light` | object or null | no |  | A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in. |
 | `light.accent` | string | yes |  | The main color: what you can press. |
 | `light.background` | string | no |  | The page. Left out: the mode's own. |
-| `light.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `light.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `light.second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `light.surface` | string | no |  | Cards. Left out: the mode's own. |
 | `mode` | string | yes | one of `light`, `dark` |  |
 | `name` | string | yes |  | 1 to 60 characters. |
-| `overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `surface` | string | no |  | Cards. Left out: the mode's own. |
 

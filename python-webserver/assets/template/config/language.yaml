@@ -199,6 +199,7 @@ theme:
   color_link: "Links"
   color_nav_link: "Sidebar links"
   color_accent_fg: "Button text"
+  color_accent_text: "Outline button"
   color_second_text: "Headings"
   color_second_fg: "Current sidebar item text"
   color_info: "Info box"
@@ -240,6 +241,7 @@ theme:
   check_text_info: "Text in an info box"
   check_link: "Links"
   check_button: "Button text"
+  check_outline_primary: "Outline button on a card"
   check_heading: "Headings"
   check_active_nav: "The current sidebar item"
   check_sidebar_link: "Sidebar links"
@@ -256,11 +258,12 @@ theme:
   preset_forest: "Forest"
   preset_sepia: "Sepia"
   preset_grape: "Grape"
+  preset_cerise: "Cerise"
   preset_pink: "Pink"
   preset_wsu: "WSU"
+  preset_osu: "OSU"
   preset_midnight: "Midnight"
   preset_slate: "Slate"
-  preset_cerise: "Cerise"
 
 # <<< feature:appearance
 signed_out:

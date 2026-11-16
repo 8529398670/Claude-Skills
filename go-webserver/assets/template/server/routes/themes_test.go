@@ -77,6 +77,47 @@ func TestThemesFollowTheDefaultsUntilChanged( t *testing.T ) {
 	if themes , _ , _ := meThemes( t , alice ); themes != nil { t.Fatalf( "%v" , themes ) }
 }
 
+// A saved list keeps which built-in themes it has seen, so theme.js can add
+// the newer ones; going back to the defaults (or the built-ins) drops it.
+func TestThemeListsKeepTheBuiltInsTheyHaveSeen( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	seen := func( client *browser , path string , key string ) ( result float64 ) {
+		t.Helper()
+		_ , reply := client.do( t , http.MethodGet , path , nil )
+		result , _ = reply[ key ].( float64 )
+		return
+	}
+
+	// A list saved before builtins existed, or without it: 0.
+	send( t , alice , "/api/account/themes" , fiber.Map{ "themes": themeList( "mine" ) } )
+	if got := seen( alice , "/api/me" , "themes_builtins" ); got != 0 { t.Fatalf( "%v" , got ) }
+	if status , reply := send( t , alice , "/api/account/themes" , fiber.Map{ "themes": themeList( "mine" ) , "builtins": 3 } ); status != fiber.StatusOK || reply[ "themes_builtins" ] != float64( 3 ) {
+		t.Fatalf( "%d %v" , status , reply )
+	}
+	if got := seen( alice , "/api/me" , "themes_builtins" ); got != 3 { t.Fatalf( "%v" , got ) }
+
+	// The admin's defaults keep their own, which those following them see.
+	if status , reply := send( t , owner , "/api/admin/theme-defaults" , fiber.Map{ "themes": themeList( "one" ) , "builtins": 2 } ); status != fiber.StatusOK || reply[ "builtins" ] != float64( 2 ) {
+		t.Fatalf( "%d %v" , status , reply )
+	}
+	if got := seen( owner , "/api/admin/theme-defaults" , "builtins" ); got != 2 { t.Fatalf( "%v" , got ) }
+	send( t , alice , "/api/account/themes" , fiber.Map{ "themes": nil } )
+	if got := seen( alice , "/api/me" , "themes_builtins" ); got != 2 { t.Fatalf( "following the defaults: %v" , got ) }
+
+	// Back to the built-in themes: nothing seen.
+	send( t , owner , "/api/admin/theme-defaults" , fiber.Map{ "themes": nil } )
+	if got := seen( owner , "/api/admin/theme-defaults" , "builtins" ); got != 0 { t.Fatalf( "%v" , got ) }
+
+	// Out of range is refused.
+	for _ , bad := range []int{ -1 , 1001 } {
+		if status , _ := send( t , alice , "/api/account/themes" , fiber.Map{ "themes": themeList( "mine" ) , "builtins": bad } ); status != fiber.StatusBadRequest {
+			t.Fatalf( "builtins %d: %d" , bad , status )
+		}
+	}
+}
+
 func TestThemeDefaultsAreForAdmins( t *testing.T ) {
 	fixture := newAuthFixture( t )
 	alice := fixture.signIn( t , fixture.alice.ID )

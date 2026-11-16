@@ -571,15 +571,17 @@ appears without a refresh. Its text is the `settings:` block in
 `static/js/theme.js` is loaded in `<head>`, before the stylesheet paints, and
 applies the kept theme at once, so a dark choice never flashes light.
 `Theme.builtIn` lists Default (first, and light: what a new browser shows) and
-nine ready-made themes -- ocean, forest, sepia, grape, pink, WSU (Wright State
-University green and gold), midnight, slate, cerise. Each has colors for both
+ten ready-made themes -- ocean, forest, sepia, grape, cerise, pink, WSU (Wright
+State University green and gold), OSU (Ohio State scarlet and gray), midnight,
+slate. Each has colors for both
 light and dark. A theme is `{ id , name , mode , accent , second , background? ,
 surface? , overrides? , light? , dark? }`: a mode, an `accent` for what you can
 press, a `second` for where you are, optional page and card colors. `light` or
 `dark` keeps the theme's colors for the mode not in use (`{ accent , second ,
 background? , surface? , overrides? }`), and `Theme.setMode( theme , mode )`
 swaps them in, so the Appearance screen's Light/Dark switch turns WSU gold on
-black and back again. A theme with nothing kept for the other mode keeps its
+black and back again. In My themes that switch also puts the theme being edited
+to use, and Use opens the theme it picks in the editor. A theme with nothing kept for the other mode keeps its
 colors, and from then on remembers them for the mode it left.
 `scripts/check_themes.js` holds every built-in to 4.5 in both modes.
 `Theme.derived( theme )` works out everything else: the page, card, nested card
@@ -619,7 +621,18 @@ in use (`POST /api/account/theme`); `Theme.store( list , id )` replaces their
 list (`POST /api/account/themes`, null for "back to the defaults"). Admins use
 `GET`/`POST /api/admin/theme-defaults`. The server checks shape only (ids,
 names, `#rrggbb`, known override names, known button choices, 1-40 themes); contrast is the screen's
-to warn about. The theme in use is also kept whole in `localStorage`, so the
+to warn about.
+
+A saved list (someone's own, or the admin's defaults) also keeps which built-in
+themes it has seen: `builtins` on both saves, answered as `themes_builtins` by
+`/api/me` and `builtins` by the defaults routes (0 for a list saved before it
+existed). A built-in theme added after the first ones carries `since`, one more
+than the highest so far; `Theme.withNewBuiltIns( list , seen )` adds every
+built-in newer than `seen` to the list it shows, just after the built-in before
+it, and the next save sends `Theme.builtInsSeen()`. So a new built-in theme
+reaches people who already made their own list, and one they delete stays
+deleted. Never reuse or lower a `since`. Moving a built-in theme in
+`Theme.builtIn` does not move it in lists already saved. The theme in use is also kept whole in `localStorage`, so the
 first paint and the signed-out pages are already in it; `/api/me` corrects it.
 
 The Appearance screen is `themes_editor.js` (`ThemeEditor.init( me )`): a list

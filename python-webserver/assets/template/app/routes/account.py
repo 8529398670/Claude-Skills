@@ -51,6 +51,7 @@ class Me(Reply, kw_only=True):
     shortcuts: Annotated[dict[str, str], Meta(description="The keyboard shortcuts you changed, by action. Mod is Cmd on a Mac and Ctrl elsewhere.")]  # feature:shortcuts
     themes: Annotated[list[Theme] | None, Meta(description="Your themes (see the Theme schema): your own list, else the app's defaults, else null for the built-in ones.")]  # feature:appearance
     themes_custom: Annotated[bool, Meta(description="Whether you have your own list rather than following the defaults.")]  # feature:appearance
+    themes_builtins: Annotated[int, Meta(description="Which built-in themes that list has seen (see builtins on POST /api/account/themes).")]  # feature:appearance
     theme_id: Annotated[str, Meta(description="The theme you use. Empty: the first.")]  # feature:appearance
     has_pin: bool  # feature:invite_links
     username: str  # feature:passwords
@@ -96,7 +97,7 @@ def me(request: Request) -> Me:
     # is_owner tells the UI which account-management buttons to offer; the
     # server checks ownership again on every request that depends on it.
     owner_id = users.get_owner_id(store)
-    my_themes, themes_custom = themes.mine(store, actor.user.themes)  # feature:appearance
+    my_themes, themes_custom, themes_builtins = themes.mine(store, actor.user.themes, actor.user.themes_builtins)  # feature:appearance
     link = login_tokens.live_login_link(store, actor.user.id)
     reply = Me(
         authenticated=True,
@@ -117,6 +118,7 @@ def me(request: Request) -> Me:
         shortcuts=actor.user.shortcuts,  # feature:shortcuts
         themes=theme_list(my_themes),  # feature:appearance
         themes_custom=themes_custom,  # feature:appearance
+        themes_builtins=themes_builtins,  # feature:appearance
         theme_id=actor.user.theme_id,  # feature:appearance
         has_pin=pins.has_pin(actor.user),  # feature:invite_links
         username=actor.user.username,  # feature:passwords

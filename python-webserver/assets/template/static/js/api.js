@@ -133,13 +133,13 @@ const Api = {
   // The whole set of changed keys; {} puts them all back. See shortcuts.js. // feature:shortcuts
   setShortcuts( shortcuts )    { return this.post( "/api/account/shortcuts" , { shortcuts: shortcuts } ); }, // feature:shortcuts
   // >>> feature:appearance
-  // Your whole list of themes (null: back to the defaults) and the one you
-  // use; or only the one you use. See theme.js.
-  setThemes( themes , id )     { return this.post( "/api/account/themes" , { themes: themes , theme_id: id } ); },
+  // Your whole list of themes (null: back to the defaults), the built-in
+  // themes it has seen and the one you use; or only the one you use. See theme.js.
+  setThemes( themes , id , builtins ) { return this.post( "/api/account/themes" , { themes: themes , theme_id: id , builtins: builtins || 0 } ); },
   setTheme( id )               { return this.post( "/api/account/theme" , { theme_id: id } ); },
   // The themes everyone without their own list sees; null is the built-in ones.
   themeDefaults()              { return this.request( "/api/admin/theme-defaults" ); },
-  setThemeDefaults( themes )   { return this.post( "/api/admin/theme-defaults" , { themes: themes } ); },
+  setThemeDefaults( themes , builtins ) { return this.post( "/api/admin/theme-defaults" , { themes: themes , builtins: builtins || 0 } ); },
   // <<< feature:appearance
   // >>> feature:passwords
   // digest is what password.js derived; the password itself is never sent.
