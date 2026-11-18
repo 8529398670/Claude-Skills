@@ -312,7 +312,7 @@ three cases above end.
 
 ## S22 (low): revoke-access and delete-user leave key-made work alive
 
-**Found by the round-3 session, not fixed.** `RevokeAllCredentials`
+**Done 2026-11-18** (both templates, `UPGRADING.md` "After 145e4d4"). Found by the round-3 session. `RevokeAllCredentials`
 (revoke-access) and delete-user stop a user's keys but do not void the login
 links and sessions those keys made in other accounts. Same class as S20: run
 `voidWhatKeysMadeTx` / `void_what_keys_made_tx` there too, in both templates,

@@ -548,3 +548,13 @@ class EveryCommit(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Export(unittest.TestCase):
+    def test_go_render_brings_the_borrowed_renderer(self):
+        """go-webserver's prune.py renders api.md with python-webserver's
+        markdown.py; a render at HEAD fails without it."""
+        with tempfile.TemporaryDirectory() as scratch:
+            upgrade.export_commit("HEAD", "go-webserver", Path(scratch))
+            for borrowed in upgrade.BORROWED["go-webserver"]:
+                self.assertTrue((Path(scratch) / borrowed).is_file(), borrowed)

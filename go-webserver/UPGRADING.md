@@ -3,6 +3,22 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 145e4d4
+
+**Fix (S22): revoke-access and delete-user end the login links and sessions the account's API keys made.**
+Marks: `TestRevokingOrDeletingEndsWhatTheKeysMade`
+Files: `server/models/credentials.go`, `server/routes/ways_in_test.go`
+
+Revoking a user's access, or deleting the user, stopped their API keys but
+left what those keys had made in other accounts: unused login links still
+signed in, and browsers those links had signed in stayed signed in. Disabling
+and demoting already ended them (S20). Now these two do the same.
+
+- `revokeAllCredentials` and `DeleteUser` call `voidWhatKeysMadeTx( tx , user_id )` inside the same transaction (feature `api_keys` only).
+- `DeleteUser` calls it before the `DeleteWhere` on `BucketAPIKeys`, because it finds the keys by account.
+- The new test covers both routes: the links stop redeeming, the browsers they
+  signed in are signed out, and a session no key made stays.
+
 ## After 70b6415
 
 **Upgrade `fresh-assets`: text assets revalidate by ETag, open pages pick up frontend changes (`server.live_reload`), and move onto a new build by themselves.**

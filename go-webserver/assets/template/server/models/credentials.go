@@ -23,7 +23,9 @@ func ( Revoked ) APIName() ( name string ) { name = "Revoked"; return }
 // every session is deleted, the live login link is deleted, the password
 // is removed, and every live API key is revoked, in one transaction.
 // Afterwards nothing issued before this moment can act as the account; the way
-// back in is a new login link from an admin.
+// back in is a new login link from an admin. The login links those keys made
+// for other accounts, and the browsers those signed in, end too
+// (voidWhatKeysMadeTx).
 //
 // 2FA stays. It is not something that can be used to get in, and a person
 // whose password leaked should not lose it; if it is what went wrong (they
@@ -87,6 +89,9 @@ func revokeAllCredentials( store *db.Store , user_id uint64 , allow_owner bool ,
 			if tx_err = tx.Put( db.BucketAPIKeys , []byte( key.ID ) , key ); tx_err != nil { return }
 		}
 		revoked.APIKeys = len( live )
+		// What those keys made in other accounts -- links not yet used, and
+		// the browsers those signed in -- ends with them (S22).
+		tx_err = voidWhatKeysMadeTx( tx , user_id )
 		// <<< feature:api_keys
 		return
 	} )
@@ -97,7 +102,9 @@ func revokeAllCredentials( store *db.Store , user_id uint64 , allow_owner bool ,
 // DeleteUser removes an account and everything it could sign in with -- every
 // session, every login link (used or not), every API key row -- in one
 // transaction. Unlike disabling, it cannot be undone: the id is never reused
-// (see CreateUser), so the account cannot come back even by accident.
+// (see CreateUser), so the account cannot come back even by accident. The
+// login links its API keys made for other accounts, and the browsers those
+// signed in, end too (voidWhatKeysMadeTx).
 //
 // actor_id is who is asking. Zero means the operator, through the CLI or the
 // control socket, who may delete any account but the owner. Anyone else is
@@ -131,6 +138,9 @@ func DeleteUser( store *db.Store , user_id uint64 , actor_id uint64 ) ( removed 
 		if tx_err = deleteChallengesForUser( tx , user_id ); tx_err != nil { return } // feature:two_factor
 		if target.HasPassword() { removed.Passwords = 1 } // feature:passwords
 		// >>> feature:api_keys
+		// Before the key rows go: voidWhatKeysMadeTx finds the keys by
+		// account, and what they made in other accounts ends with them (S22).
+		if tx_err = voidWhatKeysMadeTx( tx , user_id ); tx_err != nil { return }
 		removed.APIKeys , tx_err = tx.DeleteWhere( db.BucketAPIKeys ,
 			func() any { return &APIKey{} } ,
 			func( key []byte , item any ) bool {

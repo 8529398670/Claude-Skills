@@ -371,13 +371,19 @@ def identify(app: Path, features: list[str] | None = None) -> Identity:
 # ---------------------------------------------------------------- rendering
 
 
+# Files a skill's scripts read from another skill. go-webserver's prune.py
+# renders api.md and mcp.md with the python-webserver template's renderer.
+BORROWED = {"go-webserver": ("python-webserver/assets/template/app/apidocs/markdown.py",)}
+
+
 def export_commit(commit: str, skill: str, into: Path) -> Path:
     """Write the skill at this commit into a directory, byte for byte.
 
     Raw blobs rather than `git archive`, which applies .gitattributes and turns
     run.bat into CRLF on one side of the comparison only.
     """
-    listing = git(SKILLS_REPO, "ls-tree", "-r", "-z", commit, "--", f"{skill}/scripts", f"{skill}/assets/template")
+    paths = [f"{skill}/scripts", f"{skill}/assets/template", *BORROWED.get(skill, ())]
+    listing = git(SKILLS_REPO, "ls-tree", "-r", "-z", commit, "--", *paths)
     entries = []
     for record in listing.split(b"\0"):
         if record:
