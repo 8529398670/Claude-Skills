@@ -5,6 +5,14 @@ Read by the `webserver-upgrade` skill. Add an entry whenever
 
 ## After 145e4d4
 
+**Fix: the config test's trust_proxy case matches the new proxy defaults.**
+Files: `server/config/live_test.go`
+
+Since 145e4d4 the defaults ship `trusted_proxies` filled in, so turning
+`server.trust_proxy` on alone is valid and the save-refuses-invalid-values
+test failed in every app with the `settings` part. The case `{ "server.trust_proxy": true }` is now
+`{ "server.trust_proxy": true , "server.trusted_proxies": []any{} }`, which is still refused.
+
 **Fix (S22): revoke-access and delete-user end the login links and sessions the account's API keys made.**
 Marks: `TestRevokingOrDeletingEndsWhatTheKeysMade`
 Files: `server/models/credentials.go`, `server/routes/ways_in_test.go`

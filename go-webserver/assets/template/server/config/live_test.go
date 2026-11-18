@@ -91,7 +91,7 @@ func TestSaveRefusesInvalidValues( t *testing.T ) {
 	for _ , changes := range []map[string]any{
 		{ "server.port": json.Number( "0" ) },
 		{ "server.port": "eighty" },
-		{ "server.trust_proxy": true },
+		{ "server.trust_proxy": true , "server.trusted_proxies": []any{} },
 		{ "files.max_file_bytes": json.Number( "0" ) }, // feature:files
 		{ "server.rate_limit_upload_max": json.Number( "0" ) }, // feature:files
 	} {
