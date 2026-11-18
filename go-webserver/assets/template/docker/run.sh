@@ -280,36 +280,9 @@ docker run -d \
   --cpus "$docker_cpus" \
   "${docker_image}:latest"
 
-# Running is not the same as working. Wait for the image's own HEALTHCHECK
-# (/app/server health) to pass, and if the container dies or turns unhealthy,
-# show why instead of announcing success.
-echo "Waiting for it to answer (up to 30 seconds)..."
-STATUS="starting"
-for _ in $( seq 1 60 ); do
-  sleep 0.5
-  STATE="$( docker inspect -f '{{.State.Status}}' "$docker_container" 2>/dev/null || echo "gone" )"
-  if [ "$STATE" != "running" ]; then
-    STATUS="$STATE"
-    break
-  fi
-  if docker exec "$docker_container" /app/server health >/dev/null 2>&1; then
-    STATUS="healthy"
-    break
-  fi
-done
-
-if [ "$STATUS" != "healthy" ]; then
-  echo "" >&2
-  if [ "$STATUS" = "starting" ]; then
-    echo "ERROR: ${docker_container} is running but not answering after 30 seconds." >&2
-  else
-    echo "ERROR: ${docker_container} stopped (status: ${STATUS}, exit code $( docker inspect -f '{{.State.ExitCode}}' "$docker_container" 2>/dev/null || echo "?" ))." >&2
-  fi
-  echo "       Its last log lines:" >&2
-  echo "" >&2
-  docker logs --tail 40 "$docker_container" 2>&1 | sed 's/^/         /' >&2
-  exit 1
-fi
+# Running is not the same as working: wait for the image's own healthcheck
+# (wait_healthy in docker/lib.sh), and show why if it never passes.
+wait_healthy
 
 mkdir -p .run
 printf '%s\n' "$DOCKER_SETTINGS" > "$DOCKER_LAST"

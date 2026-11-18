@@ -3,6 +3,28 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After bf1644d
+
+**Add `docker/restart.sh`, `docker/logs.sh`, `docker/update.sh`.**
+Marks: `load_last_deployment`, `wait_healthy`
+Files: `docker/restart.sh` (new), `docker/logs.sh` (new), `docker/update.sh` (new), `docker/lib.sh`, `docker/run.sh`
+
+Restarting, following the log and redeploying after a pull meant typing the
+container name and the steps by hand.
+
+- `docker/lib.sh`: `load_last_deployment` evals `.run/docker.last` (the
+  host-side copy `run.sh` writes after a healthy start) and checks the
+  container exists; `wait_healthy` is the 30-second healthcheck wait and
+  failure report, moved out of `run.sh`. Header comment: shared by all
+  `docker/*.sh`.
+- `docker/run.sh`: the inline wait loop is replaced by `wait_healthy`. An app
+  whose `run.sh` changed that loop keeps its own version inside `wait_healthy`.
+- New scripts copied as they are (mode 0755): `restart.sh` (`docker restart`,
+  `wait_healthy`, prints the URL), `logs.sh` (`docker logs -f`, `--tail 200`
+  when given no flags), `update.sh` (master/main only, `git pull --ff-only
+  origin <branch>`, then `exec docker/run.sh "$@"`).
+- Docs: the Docker command block in the app's README/CLAUDE.md, if it has one.
+
 ## After 145e4d4
 
 **Fix: the config test's trust_proxy case matches the new proxy defaults.**

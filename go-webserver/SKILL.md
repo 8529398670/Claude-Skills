@@ -877,6 +877,9 @@ cd <target-dir>
 docker/run.sh                  # build, run, wait until healthy, print the URL
 docker/restore.sh <file> [key] # put a backup back
 docker/rotate-key.sh --yes     # move to a new secret key
+docker/restart.sh              # restart it, no rebuild, wait until healthy
+docker/logs.sh                 # follow its log (any docker logs flags)
+docker/update.sh               # git pull (master/main, fast-forward), then docker/run.sh
 scripts/login.sh --docker      # a fresh owner login link from the container
 ```
 

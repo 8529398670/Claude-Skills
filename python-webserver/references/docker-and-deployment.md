@@ -337,6 +337,26 @@ longer (see `architecture.md`, Reusable login links).
 
 ## Operating the container
 
+Three scripts cover the routine moves, all from the project root:
+
+```bash
+docker/restart.sh                     # docker restart, then wait for the healthcheck
+docker/logs.sh                        # docker logs -f --tail 200
+docker/logs.sh --since 1h             # any docker logs flags instead
+docker/update.sh                      # git pull --ff-only origin master|main, then docker/run.sh
+```
+
+`restart.sh` and `logs.sh` do not build. They take the container name from
+`.run/docker.last`, which `docker/run.sh` writes on the host after every
+healthy start (`load_last_deployment` in `docker/lib.sh`), not from
+config.yaml, which the container can write. With no deployment yet they say to
+run `docker/run.sh` first. `restart.sh` shares `wait_healthy` with `run.sh`, so
+a container that will not come back shows its last log lines instead of
+"Ready". `update.sh` refuses any branch but master or main and any pull that is
+not a fast-forward, before anything is rebuilt; arguments go on to
+`docker/run.sh` (`--accept-docker-changes`). It always rebuilds, even when the
+pull brought nothing.
+
 `docker exec ... manage` works against the running container: SQLite's WAL
 mode lets the CLI open the database alongside the live server, and it goes
 through the same model code, so a change made this way is identical to one
