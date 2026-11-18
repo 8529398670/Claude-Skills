@@ -194,8 +194,12 @@ theme:
   color_background: "Page, tinted"
   color_surface: "Card, tinted"
   color_nested: "Card inside a card"
-  color_chrome: "Navbar and sidebar"
+  color_chrome: "Sidebar"
+  color_bar: "Bar across the top"
+  color_bar_text: "Bar text"
   color_border: "Borders"
+  color_row_odd: "Table rows"
+  color_row_even: "Table rows, every other one"
   color_link: "Links"
   color_nav_link: "Sidebar links"
   color_accent_fg: "Button text"
@@ -245,6 +249,10 @@ theme:
   check_heading: "Headings"
   check_active_nav: "The current sidebar item"
   check_sidebar_link: "Sidebar links"
+  check_top_bar: "Text on the bar across the top"
+  check_row_odd: "Text in a table row"
+  check_row_even: "Text in every other table row"
+  check_link_row: "Links in every other table row"
   preview_nav: "Here"
   preview_nav_other: "Elsewhere"
   preview_card: "A card"
@@ -252,6 +260,8 @@ theme:
   preview_text: "Some text and"
   preview_link: "a link"
   preview_info: "An info box"
+  # {n} counts the rows.
+  preview_row: "Table row {n}"
   preview_button: "Button"
   preset_default: "Default"
   preset_ocean: "Ocean"
@@ -530,8 +540,8 @@ api_keys:
   # app.repo, or this server's own copy.
   spec_text: "What a key can call:"
   spec_link: "API reference (api.json)"
-  # Beside it when app.repo is set: the same reference as tables, config/api.md,
-  # which the repository's site shows as a readable page.
+  # Beside it: the same reference as tables, config/api.md, on the repository's
+  # site when app.repo is set, else on this server's /docs/api page.
   doc_link: "readable version (api.md)"
   # <<< feature:openapi
   days_label: "Expires in (days)"
@@ -576,6 +586,18 @@ api_keys:
   created: "Created"
 
 # <<< feature:api_keys
+# >>> feature:openapi|mcp
+# The readable API and MCP references (static/docs.html, static/js/docs.js):
+# /docs/api and /docs/mcp, linked from the API keys and MCP cards when
+# app.repo is not set.
+docs:
+  api_title: "API reference"
+  mcp_title: "MCP tools"
+  back: "Back to Account"
+  loading: "Loading..."
+  failed: "The reference could not be loaded. Sign in, then try again."
+
+# <<< feature:openapi|mcp
 # >>> feature:mcp
 # The MCP card on Account (static/js/mcp.js): an API key set up for an agent.
 mcp:
@@ -585,8 +607,8 @@ mcp:
   # in app.repo, or this server's own copy.
   spec_text: "What an agent can call:"
   spec_link: "MCP reference (mcp.json)"
-  # Beside it when app.repo is set: the same reference as tables, config/mcp.md,
-  # which the repository's site shows as a readable page.
+  # Beside it: the same reference as tables, config/mcp.md, on the repository's
+  # site when app.repo is set, else on this server's /docs/mcp page.
   doc_link: "readable version (mcp.md)"
   endpoint_label: "Endpoint"
   client_label: "Set up for"

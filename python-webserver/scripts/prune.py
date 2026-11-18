@@ -29,11 +29,18 @@ the API docs' generator writes from the route's Feature (Go) or feature (Python)
 
     "x-feature": "webhooks"
 
+A field of a reply or request carries the same key, from its own tag, so a
+schema loses the fields of a removed feature (Go, then Python):
+
+    Passwords int `json:"passwords" jsonschema_extras:"x-feature=passwords"` // feature:passwords
+    passwords: Annotated[int, Meta(extra_json_schema={"x-feature": "passwords"})]  # feature:passwords
+
 config/mcp.json is written from the registered tools, so it names no features:
 each tool and http_only entry goes with the api.json path its route is on.
-config/api.md and config/mcp.md are left as they are. All of them are written from the code by the
-project's scripts/api_docs.sh, so a project that lost parts runs that once to
-bring them in line with what is left.
+config/api.md and config/mcp.md are rendered again from those two, with the
+python-webserver template's app/apidocs/markdown.py, which writes the same bytes
+as Go's server/apidoc/markdown.go. So a fresh project's docs match what its
+scripts/api_docs.sh would write, without running anything.
 
 Only the standard library is used, because this has to run wherever the skills do.
 """
@@ -42,6 +49,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import types
 from pathlib import Path
 
 # What prune_tree reads. Anything else is left alone.
@@ -131,6 +139,7 @@ def prune_spec(text: str, removed: set[str]) -> str:
         expression = paths[name].get("x-feature")
         if expression is not None and not keeps(expression, removed):
             del paths[name]
+    prune_fields(spec, removed)
     schemas = spec.get("components", {}).get("schemas", {})
     while True:
         rest = {key: value for key, value in spec.items() if key != "components"}
@@ -145,6 +154,31 @@ def prune_spec(text: str, removed: set[str]) -> str:
     if "tags" in spec:
         spec["tags"] = [tag for tag in spec["tags"] if tag["name"] in used_tags]
     return json.dumps(spec, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def prune_fields(node: object, removed: set[str]) -> None:
+    """Take the properties whose x-feature is removed out of every schema in
+    node, and out of its required list. A list or properties this empties goes, as
+    the generators leave them out."""
+    if isinstance(node, list):
+        for item in node:
+            prune_fields(item, removed)
+        return
+    if not isinstance(node, dict):
+        return
+    properties = node.get("properties")
+    if isinstance(properties, dict):
+        gone = {name for name, value in properties.items() if isinstance(value, dict) and isinstance(value.get("x-feature"), str) and not keeps(value["x-feature"], removed)}
+        for name in gone:
+            del properties[name]
+        if gone and isinstance(node.get("required"), list):
+            node["required"] = [name for name in node["required"] if name not in gone]
+            if not node["required"]:
+                del node["required"]
+        if gone and not properties:
+            del node["properties"]
+    for value in node.values():
+        prune_fields(value, removed)
 
 
 def route_features(spec_text: str) -> dict[str, str]:
@@ -174,6 +208,45 @@ def prune_mcp(text: str, removed: set[str], features: dict[str, str]) -> str:
     return json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
 
 
+# What renders api.md and mcp.md. A Python project has its own; a Go project
+# borrows the python-webserver template's, which writes the same bytes.
+OWN_RENDERER = "app/apidocs/markdown.py"
+SHARED_RENDERER = Path(__file__).resolve().parent.parent.parent / "python-webserver" / "assets" / "template" / OWN_RENDERER
+
+
+def renderer(root: Path, removed: set[str]) -> types.ModuleType:
+    """The markdown module, loaded from its file rather than imported, so
+    nothing of the project runs. It needs only the standard library."""
+    path = root / OWN_RENDERER
+    if not path.is_file():
+        path = SHARED_RENDERER
+    if not path.is_file():
+        raise MarkerError(f"{SHARED_RENDERER} is missing: it renders config/api.md and config/mcp.md")
+    module = types.ModuleType("apidoc_markdown")
+    module.__file__ = str(path)
+    exec(compile(prune_text(path.read_text(encoding="utf-8"), removed, str(path)), str(path), "exec"), module.__dict__)
+    return module
+
+
+def render_docs(root: Path, removed: set[str], spec_text: str) -> None:
+    """Write config/api.md and config/mcp.md from the pruned api.json and
+    mcp.json, where the project has them. spec_text is api.json as it was
+    copied: a project without openapi has no api.json, but api.md still
+    describes its routes."""
+    mcp_path = root / MCP_JSON
+    manifest = json.loads(mcp_path.read_text(encoding="utf-8")) if mcp_path.is_file() else None
+    api_md = (root / API_MD).is_file()
+    mcp_md = manifest is not None and (root / MCP_MD).is_file()
+    if not api_md and not mcp_md:
+        return
+    spec = json.loads(prune_spec(spec_text, removed))
+    markdown = renderer(root, removed)
+    if api_md:
+        (root / API_MD).write_text(markdown.render(spec, manifest), encoding="utf-8", newline="")
+    if mcp_md:
+        (root / MCP_MD).write_text(markdown.render_mcp(spec, manifest), encoding="utf-8", newline="")
+
+
 def markers_in(text: str) -> set[str]:
     """Every feature this text names in a marker."""
     found: set[str] = set()
@@ -192,13 +265,15 @@ def prunable(path: Path) -> bool:
 def prune_tree(root: Path, removed: set[str], data_files: dict[str, tuple[str, ...]] | None = None) -> None:
     """Cut removed features out of the project at root, in place. It runs with an
     empty set too: a project with everything still loses the markers. data_files
-    are the files that cannot carry a marker, by feature."""
+    are the files that cannot carry a marker, by feature expression (`a|b` goes
+    only when both do)."""
     # Read before anything is cut: mcp.json's tools go by the x-feature of
     # their route, which pruning takes out of api.json.
     spec_path = root / OPENAPI
-    features = route_features(spec_path.read_text(encoding="utf-8")) if spec_path.is_file() else {}
-    for name, paths in (data_files or {}).items():
-        if name in removed:
+    spec_text = spec_path.read_text(encoding="utf-8") if spec_path.is_file() else None
+    features = route_features(spec_text) if spec_text is not None else {}
+    for expression, paths in (data_files or {}).items():
+        if not keeps(expression, removed):
             for relative in paths:
                 (root / relative).unlink(missing_ok=True)
     for path in sorted(root.rglob("*")):
@@ -226,6 +301,8 @@ def prune_tree(root: Path, removed: set[str], data_files: dict[str, tuple[str, .
         pruned = prune_text(text, removed, relative)
         if pruned != text:
             path.write_bytes(pruned.encode("utf-8"))
+    if spec_text is not None:
+        render_docs(root, removed, spec_text)
     # A package or folder that was all one feature goes with it.
     for path in sorted(root.rglob("*"), reverse=True):
         if path.is_dir() and not any(path.iterdir()):

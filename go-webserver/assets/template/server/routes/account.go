@@ -20,37 +20,39 @@ type meReply struct {
 	Role               string                `json:"role" jsonschema_description:"The effective role: never higher than an API key's own."`
 	AccountRole        string                `json:"account_role"`
 	IsOwner            bool                  `json:"is_owner"`
-	Maintenance        string                `json:"maintenance" jsonschema:"enum=none,enum=read_only,enum=full"` // feature:maintenance
-	HasPIN             bool                  `json:"has_pin"` // feature:invite_links
-	Username           string                `json:"username"` // feature:passwords
-	HasPassword        bool                  `json:"has_password"` // feature:passwords
-	PasswordBlocked    bool                  `json:"password_blocked"` // feature:passwords
-	TwoFactor          bool                  `json:"two_factor"` // feature:two_factor
-	PasswordsEnabled   bool                  `json:"passwords_enabled"` // feature:passwords
-	TwoFactorEnabled   bool                  `json:"two_factor_enabled"` // feature:two_factor
+	Maintenance        string                `json:"maintenance" jsonschema:"enum=none,enum=read_only,enum=full" jsonschema_extras:"x-feature=maintenance"` // feature:maintenance
+	HasPIN             bool                  `json:"has_pin" jsonschema_extras:"x-feature=invite_links"` // feature:invite_links
+	Username           string                `json:"username" jsonschema_extras:"x-feature=passwords"` // feature:passwords
+	HasPassword        bool                  `json:"has_password" jsonschema_extras:"x-feature=passwords"` // feature:passwords
+	PasswordBlocked    bool                  `json:"password_blocked" jsonschema_extras:"x-feature=passwords"` // feature:passwords
+	TwoFactor          bool                  `json:"two_factor" jsonschema_extras:"x-feature=two_factor"` // feature:two_factor
+	PasswordsEnabled   bool                  `json:"passwords_enabled" jsonschema_extras:"x-feature=passwords"` // feature:passwords
+	TwoFactorEnabled   bool                  `json:"two_factor_enabled" jsonschema_extras:"x-feature=two_factor"` // feature:two_factor
 	Auth               string                `json:"auth"`
-	APIKeysEnabled     bool                  `json:"api_keys_enabled"` // feature:api_keys
-	MCPEnabled         bool                  `json:"mcp_enabled" jsonschema_description:"server.mcp: whether POST /mcp answers."` // feature:mcp
-	FilesEnabled       bool                  `json:"files_enabled" jsonschema_description:"files.enabled: whether the Files screen and routes are on."` // feature:files
-	InviteLinksEnabled bool                  `json:"invite_links_enabled" jsonschema_description:"Whether invite links are on."` // feature:invite_links
-	WebhooksEnabled    bool                  `json:"webhooks_enabled" jsonschema_description:"webhooks.enabled: whether webhooks are sent."` // feature:webhooks
-	LogsEnabled        bool                  `json:"logs_enabled"` // feature:logs
-	LogsUIClicks       bool                  `json:"logs_ui_clicks"` // feature:logs
+	APIKeysEnabled     bool                  `json:"api_keys_enabled" jsonschema_extras:"x-feature=api_keys"` // feature:api_keys
+	MCPEnabled         bool                  `json:"mcp_enabled" jsonschema_description:"server.mcp: whether POST /mcp answers." jsonschema_extras:"x-feature=mcp"` // feature:mcp
+	FilesEnabled       bool                  `json:"files_enabled" jsonschema_description:"files.enabled: whether the Files screen and routes are on." jsonschema_extras:"x-feature=files"` // feature:files
+	InviteLinksEnabled bool                  `json:"invite_links_enabled" jsonschema_description:"Whether invite links are on." jsonschema_extras:"x-feature=invite_links"` // feature:invite_links
+	WebhooksEnabled    bool                  `json:"webhooks_enabled" jsonschema_description:"webhooks.enabled: whether webhooks are sent." jsonschema_extras:"x-feature=webhooks"` // feature:webhooks
+	LogsEnabled        bool                  `json:"logs_enabled" jsonschema_extras:"x-feature=logs"` // feature:logs
+	LogsUIClicks       bool                  `json:"logs_ui_clicks" jsonschema_extras:"x-feature=logs"` // feature:logs
 	CSRFToken          string                `json:"csrf_token,omitempty" jsonschema_description:"Browser sessions only."`
-	APIKeyID           string                `json:"api_key_id,omitempty" jsonschema_description:"API keys only."` // feature:api_keys
-	APIKeyName         string                `json:"api_key_name,omitempty" jsonschema_description:"API keys only."` // feature:api_keys
+	APIKeyID           string                `json:"api_key_id,omitempty" jsonschema_description:"API keys only." jsonschema_extras:"x-feature=api_keys"` // feature:api_keys
+	APIKeyName         string                `json:"api_key_name,omitempty" jsonschema_description:"API keys only." jsonschema_extras:"x-feature=api_keys"` // feature:api_keys
 	Version            string                `json:"version" jsonschema_description:"The running build. dev when none was stamped."`
 	Announcement       string                `json:"announcement" jsonschema_description:"server.announcement. Empty when there is none."`
 	Repo               string                `json:"repo" jsonschema_description:"app.repo without a trailing / or .git: where the source lives. Empty when it is not set."`
 	Description        string                `json:"description" jsonschema_description:"app.description. Empty when there is none."`
-	ShowAbout          bool                  `json:"show_about" jsonschema_description:"app.show_about: whether the menu has About."` // feature:about
-	OpenapiURL         string                `json:"openapi_url" jsonschema_description:"Where to read this API's reference: config/api.json in app.repo, or /api/api.json when there is no repo."` // feature:openapi
-	MCPURL             string                `json:"mcp_url" jsonschema_description:"Where to read the MCP reference: config/mcp.json in app.repo, or /api/mcp.json when there is no repo. Only with server.mcp on."` // feature:mcp
-	Shortcuts          map[string]string     `json:"shortcuts" jsonschema_description:"The keyboard shortcuts you changed, by action. Mod is Cmd on a Mac and Ctrl elsewhere."` // feature:shortcuts
-	Themes             []models.Theme        `json:"themes" jsonschema:"nullable" jsonschema_description:"Your themes (see the Theme schema): your own list, else the app's defaults, else null for the built-in ones."` // feature:appearance
-	ThemesCustom       bool                  `json:"themes_custom" jsonschema_description:"Whether you have your own list rather than following the defaults."` // feature:appearance
-	ThemesBuiltIns     int                   `json:"themes_builtins" jsonschema_description:"Which built-in themes that list has seen (see builtins on POST /api/account/themes)."` // feature:appearance
-	ThemeID            string                `json:"theme_id" jsonschema_description:"The theme you use. Empty: the first."` // feature:appearance
+	ShowAbout          bool                  `json:"show_about" jsonschema_description:"app.show_about: whether the menu has About." jsonschema_extras:"x-feature=about"` // feature:about
+	OpenapiURL         string                `json:"openapi_url" jsonschema_description:"Where to read this API's reference: config/api.json in app.repo, or /api/api.json when there is no repo." jsonschema_extras:"x-feature=openapi"` // feature:openapi
+	MCPURL             string                `json:"mcp_url" jsonschema_description:"Where to read the MCP reference: config/mcp.json in app.repo, or /api/mcp.json when there is no repo. Only with server.mcp on." jsonschema_extras:"x-feature=mcp"` // feature:mcp
+	APIDocURL          string                `json:"api_doc_url" jsonschema_description:"Where to read the API reference as a page for people: config/api.md in app.repo, or /docs/api when there is no repo." jsonschema_extras:"x-feature=openapi"` // feature:openapi
+	MCPDocURL          string                `json:"mcp_doc_url" jsonschema_description:"Where to read the MCP tools as a page for people: config/mcp.md in app.repo, or /docs/mcp when there is no repo." jsonschema_extras:"x-feature=mcp"` // feature:mcp
+	Shortcuts          map[string]string     `json:"shortcuts" jsonschema_description:"The keyboard shortcuts you changed, by action. Mod is Cmd on a Mac and Ctrl elsewhere." jsonschema_extras:"x-feature=shortcuts"` // feature:shortcuts
+	Themes             []models.Theme        `json:"themes" jsonschema:"nullable" jsonschema_description:"Your themes (see the Theme schema): your own list, else the app's defaults, else null for the built-in ones." jsonschema_extras:"x-feature=appearance"` // feature:appearance
+	ThemesCustom       bool                  `json:"themes_custom" jsonschema_description:"Whether you have your own list rather than following the defaults." jsonschema_extras:"x-feature=appearance"` // feature:appearance
+	ThemesBuiltIns     int                   `json:"themes_builtins" jsonschema_description:"Which built-in themes that list has seen (see builtins on POST /api/account/themes)." jsonschema_extras:"x-feature=appearance"` // feature:appearance
+	ThemeID            string                `json:"theme_id" jsonschema_description:"The theme you use. Empty: the first." jsonschema_extras:"x-feature=appearance"` // feature:appearance
 	LoginLink          *models.LoginLinkInfo `json:"login_link" jsonschema_description:"Your own live login link, or null."`
 }
 
@@ -106,6 +108,8 @@ func ( handlers *Handlers ) getMe( c fiber.Ctx , in *apidoc.None ) ( reply *meRe
 		ShowAbout:          cfg.ShowAbout, // feature:about
 		OpenapiURL:         handlers.openAPIURL(), // feature:openapi
 		MCPURL:             handlers.mcpURL(), // feature:mcp
+		APIDocURL:          handlers.apiDocURL(), // feature:openapi
+		MCPDocURL:          handlers.mcpDocURL(), // feature:mcp
 		Shortcuts:          myShortcuts( user ), // feature:shortcuts
 		Themes:             themes, // feature:appearance
 		ThemesCustom:       themes_custom, // feature:appearance

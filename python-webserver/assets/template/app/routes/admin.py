@@ -69,8 +69,8 @@ class Revoked(Reply):
     api_name: ClassVar[str] = "Revoked"
     sessions: int
     login_links: int
-    api_keys: int  # feature:api_keys
-    passwords: int  # feature:passwords
+    api_keys: Annotated[int, Meta(extra_json_schema={"x-feature": "api_keys"})]  # feature:api_keys
+    passwords: Annotated[int, Meta(extra_json_schema={"x-feature": "passwords"})]  # feature:passwords
 
 
 class UserRow(Reply):
@@ -81,14 +81,14 @@ class UserRow(Reply):
     api_name: ClassVar[str] = "User"
     id: int
     display_name: str
-    username: Annotated[str, Meta(description="Empty until a password is set.")]  # feature:passwords
+    username: Annotated[str, Meta(description="Empty until a password is set.", extra_json_schema={"x-feature": "passwords"})]  # feature:passwords
     role: Literal["admin", "user"]
     created_at: DateTime
     disabled: bool
     owner: bool
-    has_password: bool  # feature:passwords
-    password_blocked: bool  # feature:passwords
-    two_factor: bool  # feature:two_factor
+    has_password: Annotated[bool, Meta(extra_json_schema={"x-feature": "passwords"})]  # feature:passwords
+    password_blocked: Annotated[bool, Meta(extra_json_schema={"x-feature": "passwords"})]  # feature:passwords
+    two_factor: Annotated[bool, Meta(extra_json_schema={"x-feature": "two_factor"})]  # feature:two_factor
     login_link: Annotated[LoginLink | None, Meta(description="The account's live login link, or null.")]
 
 

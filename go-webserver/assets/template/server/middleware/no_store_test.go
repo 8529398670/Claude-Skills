@@ -12,8 +12,8 @@ import (
 )
 
 // S11: NoStore runs before the static file server, which keeps its own rule:
-// images are still cached hard, text is still never stored, and a 404 for a
-// missing file is not stored either.
+// images are still cached hard, text is kept only by the browser and
+// re-checked every load, and a 404 for a missing file is not stored at all.
 func TestNoStoreLeavesTheStaticRuleAlone( t *testing.T ) {
 	server , _ := static.New( fstest.MapFS{
 		"index.html":  { Data: []byte( "index" ) },
@@ -22,7 +22,7 @@ func TestNoStoreLeavesTheStaticRuleAlone( t *testing.T ) {
 	app := fiber.New()
 	app.Use( NoStore() )
 	app.Get( "/*" , server.Handler )
-	for path , want := range map[ string ]string{ "/img/logo.png": "max-age=" , "/index.html": "no-store" , "/nope.png": "no-store" } {
+	for path , want := range map[ string ]string{ "/img/logo.png": "max-age=" , "/index.html": "private, no-cache" , "/nope.png": "no-store" } {
 		request , _ := http.NewRequest( http.MethodGet , path , nil )
 		response , err := app.Test( request )
 		if err != nil { t.Fatal( err ) }

@@ -1560,10 +1560,13 @@ prevent a monolith; adding to the wrong file is how you get one anyway.
 `server/static/static.go` implements one rule:
 
 - **Text assets** (`.html`, `.css`, `.js`, `.json`, `.svg`, ...) are read off
-  disk and gzipped on every request with `Cache-Control: no-store`. A deploy
-  is live on the next refresh -- no content hashing, no `?v=123`, no
-  cache-busting build step to keep in sync. Gzip is what makes that
-  affordable: the bytes on the wire are a fraction of the file.
+  disk on every request and sent with `Cache-Control: private, no-cache` and
+  a weak ETag (a hash of the bytes). The browser keeps its copy but re-checks
+  it every load: unchanged is a `304` with no body, decided before gzipping;
+  changed is the new file, gzipped. A deploy is live on the next load -- no
+  content hashing, no `?v=123`, no cache-busting build step to keep in sync --
+  and a repeat load downloads only what changed. `private` keeps every proxy
+  and CDN from storing it (see the no-store rule for API replies).
 - **Images and binaries** get `max-age` of a week and no gzip. Gzip does
   nothing for already-compressed formats, and nobody wants a photo
   re-downloaded on every view.
@@ -1708,8 +1711,8 @@ The rule is *disk wins* rather than a flag or a build tag, because the two
 situations it distinguishes are never ambiguous in practice:
 
 - A source checkout has `./static` next to the binary, and someone is editing
-  it. Reading from disk is what makes the no-store serving policy useful --
-  edit, refresh, done.
+  it. Reading from disk is what makes the always-revalidate serving policy useful --
+  edit, refresh, done (and `server/livereload` shows the save without the refresh).
 - A binary copied somewhere on its own has no `./static`, so it uses what is
   inside it. This is what `build.sh` produces.
 

@@ -122,6 +122,7 @@ func sampleValue( key KeySchema ) ( value any ) {
 		"server.trusted_proxies": []string{ "10.0.0.0/8" },
 		"server.proxy_header":    "X-Real-IP",
 		"server.maintenance":     "read_only", // feature:maintenance
+		"server.live_reload":     "always",
 		"server.host":            "0.0.0.0",
 		"server.port":            9999,
 		"logs.max_file_mb":       10,

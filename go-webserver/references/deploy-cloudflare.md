@@ -14,34 +14,42 @@ Cloudflare dashboard.
 
 ## Tunnel (recommended)
 
-`cloudflared` runs next to the app and dials out to Cloudflare, so the origin
+`cloudflared` runs on the host and dials out to Cloudflare, so the origin
 has no open port at all. Only `cloudflared` can reach the app, which is what
-makes the visitor's address in `CF-Connecting-IP` safe to believe.
+makes the visitor's address in `CF-Connecting-IP` safe to believe: Cloudflare
+sets it at its edge, overwriting whatever the visitor sent.
 
-In `config.yaml`:
+The template's `config.yaml` is set up for this out of the box, with the app
+in Docker published on `127.0.0.1`:
 
 ```yaml
 server:
   trust_proxy: true
-  trusted_proxies: [127.0.0.1, "::1"]  # cloudflared on the same host
+  trusted_proxies: [172.17.0.1, 127.0.0.1, "::1"]
   proxy_header: CF-Connecting-IP
   secure_cookies: true
   public_url: https://app.example.com
 ```
 
-- With the app in Docker and `cloudflared` on the host, list the exact bridge
-  gateway instead (`[172.17.0.1]` on the default bridge; find it with
-  `docker network inspect bridge`). Do not list `172.16.0.0/12`: it trusts
-  every container on every bridge network. A range wider than /8 (IPv4) or
-  /16 (IPv6) is refused anyway.
+- `172.17.0.1` is the gateway of Docker's default bridge: `cloudflared` on the
+  host reaches the published port, and the container sees it come from there.
+  Loopback covers `cloudflared` in front of the app run without Docker
+  (`scripts/run.sh`).
+- On another Docker network, list that network's gateway exactly (`docker
+  network inspect <network>`). Do not list `172.16.0.0/12`: it trusts every
+  container on every bridge network. A range wider than /8 (IPv4) or /16
+  (IPv6) is refused anyway.
 - With `cloudflared` in its own container on a user-defined network, list
   that container's fixed address.
-- Then check on the Logs screen that real visitor addresses show up, not
-  `127.0.0.1` or the gateway. Until `trust_proxy` is right, every visitor
-  shares the proxy's address and one rate-limit budget: a burst of sign-in
-  attempts from anyone locks everyone out. The server says so once in its log
-  (`[rate-limit] requests carry CF-Connecting-IP but server.trust_proxy is
-  off ...`) when it sees the header with `trust_proxy` off.
+- Keep `docker.bind_address` on `127.0.0.1`. The trust holds only while
+  nothing but `cloudflared` can reach the app from those addresses.
+- Check on the Logs screen that real visitor addresses show up, not
+  `127.0.0.1` or the gateway. If they do not, `trusted_proxies` does not
+  match where `cloudflared` connects from, and every visitor shares one
+  address and one rate-limit budget: a burst of sign-in attempts from anyone
+  locks everyone out. With `trust_proxy` off, the server also says so once in
+  its log (`[rate-limit] requests carry CF-Connecting-IP but
+  server.trust_proxy is off ...`).
 
 ## Proxied DNS
 

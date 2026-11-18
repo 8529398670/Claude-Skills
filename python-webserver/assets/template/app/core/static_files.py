@@ -1,11 +1,13 @@
 """This project's one opinionated serving rule: markup and code are never
-cached, images are cached hard.
+stale, images are cached hard.
 
-Text assets (.html/.css/.js/...) are read and gzipped on every request with
-Cache-Control: no-store. A deploy is therefore live on the next refresh, with
-no content hashing, no ?v=123 query strings, and no cache-busting build step
-to keep in sync. Gzip is what makes that affordable -- the bytes on the wire
-are a fraction of the file.
+Text assets (.html/.css/.js/...) are read on every request and sent with
+Cache-Control: private, no-cache and an ETag. The browser keeps its copy but
+asks again on every load; an unchanged file is answered 304 with no body, a
+changed one with the new bytes, gzipped. A deploy is therefore live on the
+next load, with no content hashing, no ?v=123 query strings, and no
+cache-busting build step to keep in sync -- and a repeat load downloads only
+what changed.
 
 Images and other binaries get the opposite treatment. Gzip does nothing for
 already-compressed formats, and nobody wants a photo re-downloaded on every
@@ -17,6 +19,7 @@ StaticFiles.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import mimetypes
 import posixpath
 from pathlib import Path
@@ -70,6 +73,24 @@ def has_dot_file(cleaned: str) -> bool:
     return any(segment.startswith(".") for segment in segments)
 
 
+def etag(body: bytes) -> str:
+    """The validator for a text asset: a hash of its bytes, so it changes
+    exactly when the file does. Weak, because the gzipped and plain replies
+    carry the same tag."""
+    return 'W/"' + hashlib.blake2b(body, digest_size=8).hexdigest() + '"'
+
+
+def etag_matches(header: str, tag: str) -> bool:
+    """If-None-Match's weak comparison: any listed tag equal to ours once the
+    W/ prefixes are set aside, or "*"."""
+    want = tag.removeprefix("W/")
+    for candidate in header.split(","):
+        candidate = candidate.strip()
+        if candidate == "*" or candidate.removeprefix("W/") == want:
+            return True
+    return False
+
+
 def content_type(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
@@ -108,13 +129,19 @@ class StaticServer:
             return None
         return candidate
 
-    def _read_text_asset(self, path: Path, accepts_gzip: bool) -> tuple[bytes, bool]:
+    def _read_text_asset(self, path: Path, accepts_gzip: bool, if_none_match: str) -> tuple[bytes | None, str, bool]:
+        """The body to send (None for a 304), its tag, and whether it is gzipped.
+        The tag is compared before gzipping: an unchanged file costs neither
+        the bytes nor the CPU."""
         body = path.read_bytes()
+        tag = etag(body)
+        if if_none_match and etag_matches(if_none_match, tag):
+            return None, tag, False
         if not accepts_gzip:
-            return body, False
+            return body, tag, False
         # Fastest level: this runs on every request, and most of the saving
         # comes from the first pass anyway.
-        return gzip.compress(body, compresslevel=1), True
+        return gzip.compress(body, compresslevel=1), tag, True
 
     async def endpoint(self, request: Request) -> Response:
         """The catch-all. Registered last: it matches everything, so any route
@@ -145,6 +172,23 @@ class StaticServer:
         return await self.serve_login_page(request)
 
     # <<< feature:invite_links
+    # >>> feature:openapi|mcp
+    async def serve_docs_page(self, request: Request) -> Response:
+        """/docs/api and /docs/mcp: docs.html, which reads its own path to
+        pick the file and shows an error for any other /docs/ path. The page
+        itself is public, like index.html; the Markdown it fetches needs a
+        sign-in."""
+        path = self.resolve("docs.html")
+        if path is None or not path.is_file():
+            return _not_found(request)
+        # no-store, like every route in the table rather than the files
+        # behind the catch-all.
+        response = await self._send(request, path, keep=False)
+        response.headers["referrer-policy"] = "no-referrer"
+        response.headers["x-robots-tag"] = "noindex"
+        return response
+
+    # <<< feature:openapi|mcp
     async def serve_login_page(self, request: Request) -> Response:
         """A login link (or an invite link) opens the ordinary app page,
         which sees the /login/ (or /join/) path and asks the person to confirm
@@ -153,15 +197,18 @@ class StaticServer:
         path = self.resolve(self.index_file)
         if path is None or not path.is_file():
             return _not_found(request)
-        response = await self._send(request, path)
+        # The credential is in this page's URL: not even the browser keeps a
+        # copy filed under it.
+        response = await self._send(request, path, keep=False)
         # The credential is in this page's URL; make sure no request the page
         # makes carries it onward in a Referer header.
         response.headers["referrer-policy"] = "no-referrer"
         return response
 
-    async def _send(self, request: Request, path: Path) -> Response:
+    async def _send(self, request: Request, path: Path, keep: bool = True) -> Response:
         """Serve a file resolve() has already approved, by the caching rule at
-        the top of this module."""
+        the top of this module. keep=False is for the pages routes serve (one
+        whose URL holds a credential, the docs page): no-store, no tag."""
         if path.suffix.lower() not in ALWAYS_FRESH_EXTENSIONS:
             return FileResponse(
                 path,
@@ -169,11 +216,18 @@ class StaticServer:
             )
 
         accepts_gzip = "gzip" in request.headers.get("accept-encoding", "")
+        if_none_match = request.headers.get("if-none-match", "") if keep else ""
         try:
-            body, compressed = await run_in_threadpool(self._read_text_asset, path, accepts_gzip)
+            body, tag, compressed = await run_in_threadpool(self._read_text_asset, path, accepts_gzip, if_none_match)
         except OSError:
             return _not_found(request)
-        headers = {"cache-control": "no-store, no-cache, must-revalidate", "vary": "Accept-Encoding"}
+        # private: the browser keeps it, a proxy or CDN never does (see the
+        # no-store middleware). no-cache: the browser asks again every load.
+        headers = {"cache-control": "private, no-cache", "vary": "Accept-Encoding", "etag": tag}
+        if not keep:
+            headers = {"cache-control": "no-store, private", "vary": "Accept-Encoding"}
+        if body is None:
+            return Response(status_code=304, headers=headers)
         if compressed:
             headers["content-encoding"] = "gzip"
         return Response(body, media_type=content_type(path), headers=headers)

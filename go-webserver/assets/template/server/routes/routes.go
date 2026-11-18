@@ -18,6 +18,7 @@ import (
 	apidoc "{{MODULE_PATH}}/server/apidoc"
 	config "{{MODULE_PATH}}/server/config"
 	db "{{MODULE_PATH}}/server/db"
+	livereload "{{MODULE_PATH}}/server/livereload"
 	errorpage "{{MODULE_PATH}}/server/errorpage" // feature:maintenance
 	jobs "{{MODULE_PATH}}/server/jobs" // feature:jobs|metrics
 	language "{{MODULE_PATH}}/server/language"
@@ -56,8 +57,12 @@ type Handlers struct {
 	PasswordNames     *models.AttemptGuard[ string ]
 	PasswordAddresses *models.AttemptGuard[ string ]
 	// <<< feature:passwords
-	// Version is reported to MCP clients as serverInfo.version.
+	// Version is reported to MCP clients as serverInfo.version, and to the
+	// page on every API reply (X-App-Version) so it can notice an upgrade.
 	Version string
+	// LiveReload is set by main.go when server.live_reload says open pages
+	// hear about frontend changes. Nil, the route does not exist.
+	LiveReload *livereload.Watcher
 	// >>> feature:logs
 	// Logs is the activity log (server/logs), set by main.go after New. Nil
 	// or switched off, nothing is logged and its routes answer 404
@@ -89,10 +94,14 @@ type Handlers struct {
 	// >>> feature:openapi
 	// OpenAPI is config/api.json, set by main.go.
 	OpenAPI []byte
+	// APIDoc is config/api.md, set by main.go: the /docs/api page reads it.
+	APIDoc []byte
 	// <<< feature:openapi
 	// >>> feature:mcp
 	// MCPManifest is config/mcp.json, set by main.go.
 	MCPManifest []byte
+	// MCPDoc is config/mcp.md, set by main.go: the /docs/mcp page reads it.
+	MCPDoc []byte
 	// MCP is the /mcp server, with every tool registered, set by Register.
 	MCP *mcp.Server
 	// <<< feature:mcp
@@ -150,6 +159,14 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	apidoc.CheckCSRF = handlers.Guard.CheckCSRF
 	apidoc.LogFailure = bulkFailure
 
+	// Every API reply says which build answered it, so a page left open
+	// across a deploy finds out on its next call (static/js/fresh.js).
+	app.Use( "/api" , func( c fiber.Ctx ) ( err error ) {
+		c.Set( "X-App-Version" , handlers.Version )
+		err = c.Next()
+		return
+	} )
+
 	// >>> feature:maintenance
 	// Next, because it needs to know who is asking and has to come before
 	// every route below. See maintenance.go.
@@ -161,6 +178,9 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// confirms. See auth.go and join.go.
 	app.Get( "/login/*" , handlers.ShowLoginPage )
 	app.Get( "/join/*" , handlers.ShowJoinPage ) // feature:invite_links
+	// The readable API and MCP references, for an app with no app.repo to
+	// link to (api_docs_md.go).
+	app.Get( "/docs/*" , handlers.ShowDocsPage ) // feature:openapi|mcp
 
 	// >>> feature:mcp
 	// MCP: agents calling the app with an API key (see server/mcp and
@@ -172,6 +192,13 @@ func ( handlers *Handlers ) Register( app *fiber.App ) {
 	// <<< feature:mcp
 
 	handlers.mountDeclared( app )
+
+	// Open pages wait here to hear about a change to the frontend
+	// (server.live_reload; server/livereload, static/js/live.js). Not part of
+	// the API.
+	if handlers.LiveReload != nil {
+		app.Get( "/api/live" , handlers.LiveReload.Handler )
+	}
 
 	// Any other /api/ path is a JSON 404, not a static page.
 	app.Get( "/api/*" , func( c fiber.Ctx ) ( err error ) {

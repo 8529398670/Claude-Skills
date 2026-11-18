@@ -88,6 +88,26 @@ class SpecTest(unittest.TestCase):
         self.assertEqual(gone["tags"], [{"name": "B"}])
         self.assertTrue(prune.prune_spec(spec_text, set()).endswith("}\n"))
 
+    def test_fields_go_with_their_feature(self) -> None:
+        spec_text = json.dumps({"components": {"schemas": {
+            "Me": {"type": "object", "required": ["id", "username"], "properties": {
+                "id": {"type": "integer"},
+                "username": {"type": "string", "x-feature": "a"},
+                "themes": {"oneOf": [{"type": "array", "items": {"$ref": "#/components/schemas/Theme"}}, {"type": "null"}], "x-feature": "b"},
+            }},
+            "Empty": {"type": "object", "properties": {}},
+            "Theme": {"type": "object"},
+        }}, "paths": {"/me": {"get": {"responses": {"200": {"$ref": "#/components/schemas/Me"}, "201": {"$ref": "#/components/schemas/Empty"}}}}}})
+        kept = json.loads(prune.prune_spec(spec_text, set()))
+        self.assertEqual(sorted(kept["components"]["schemas"]["Me"]["properties"]), ["id", "themes", "username"])
+        gone = json.loads(prune.prune_spec(spec_text, {"a", "b"}))
+        schemas = gone["components"]["schemas"]
+        self.assertEqual(list(schemas["Me"]["properties"]), ["id"])
+        self.assertEqual(schemas["Me"]["required"], ["id"])
+        # A schema only a removed field used goes; an empty one the generator wrote stays as it was.
+        self.assertNotIn("Theme", schemas)
+        self.assertEqual(schemas["Empty"]["properties"], {})
+
 
 class TreeTest(unittest.TestCase):
     def test_a_tree(self) -> None:
@@ -121,6 +141,28 @@ class TreeTest(unittest.TestCase):
             self.assertEqual([tool["name"] for tool in pruned["tools"]], ["whoami"])
             self.assertEqual([entry["route"] for entry in pruned["http_only"]], ["GET /api/me"])
             self.assertTrue((root / "config" / "mcp.json").read_text().endswith("}\n"))
+
+    def test_the_markdown_is_rendered_from_what_is_left(self) -> None:
+        """api.md and mcp.md are written again from the pruned api.json and
+        mcp.json, by the renderer the generators use."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config").mkdir()
+            spec = {"info": {"title": "T API"}, "tags": [{"name": "A"}], "paths": {
+                "/api/me": {"get": {"tags": ["A"], "summary": "Who", "responses": {}}},
+                "/api/files": {"x-feature": "a", "get": {"tags": ["A"], "summary": "Files", "responses": {}}},
+            }}
+            (root / "config" / "api.json").write_text(json.dumps(spec))
+            (root / "config" / "mcp.json").write_text(json.dumps({"tools": [{"name": "files_list", "route": "GET /api/files"}], "http_only": []}))
+            (root / "config" / "api.md").write_text("stale\n")
+            (root / "config" / "mcp.md").write_text("stale\n")
+            prune.prune_tree(root, {"a"})
+            api_md = (root / "config" / "api.md").read_text()
+            self.assertIn("/api/me", api_md)
+            self.assertNotIn("/api/files", api_md)
+            mcp_md = (root / "config" / "mcp.md").read_text()
+            self.assertTrue(mcp_md.startswith("# T MCP tools"))
+            self.assertNotIn("files_list", mcp_md)
 
     def test_nothing_removed_still_clears_the_markers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

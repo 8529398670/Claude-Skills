@@ -36,7 +36,7 @@ class Session(Reply, kw_only=True):
     ip: str | UnsetType = UNSET
     user_agent: str | UnsetType = UNSET
     label: Annotated[str, Meta(description="The name you gave this device.")] | UnsetType = UNSET
-    ip_name: Annotated[str, Meta(description="What the owner calls this address on the Logs screen. The owner's own list only.")] | UnsetType = UNSET  # feature:logs
+    ip_name: Annotated[str, Meta(description="What the owner calls this address on the Logs screen. The owner's own list only.", extra_json_schema={"x-feature": "logs"})] | UnsetType = UNSET  # feature:logs
 
 
 class SessionIDPath(RequestType):

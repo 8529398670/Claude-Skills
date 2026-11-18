@@ -31,6 +31,7 @@ var updateAPIDocs = flag.Bool( "update" , false , "rewrite config/api.json, conf
 var notDocumented = map[string]bool{
 	"GET /login/*": true,
 	"GET /join/*":  true,
+	"GET /docs/*":  true,
 	"GET /api/*":   true,
 	"GET /*":       true,
 }

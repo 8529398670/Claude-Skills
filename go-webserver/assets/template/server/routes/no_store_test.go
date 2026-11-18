@@ -64,7 +64,9 @@ func TestEveryRouteSaysNoStore( t *testing.T ) {
 		checked++
 	}
 	if checked < 20 { t.Fatalf( "only %d routes checked" , checked ) }
-	if cache := ask( http.MethodGet , "/" , "" ).Header.Get( fiber.HeaderCacheControl ); strings.Contains( cache , "no-store" ) == false {
+	// index.html is revalidated, not refused: the browser may keep it, a
+	// shared cache may not.
+	if cache := ask( http.MethodGet , "/" , "" ).Header.Get( fiber.HeaderCacheControl ); strings.Contains( cache , "private" ) == false || strings.Contains( cache , "no-cache" ) == false {
 		t.Errorf( "index.html: %q" , cache )
 	}
 }

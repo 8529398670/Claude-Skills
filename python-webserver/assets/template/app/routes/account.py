@@ -22,6 +22,8 @@ from app.models import passwords  # feature:passwords
 from app.models import pins  # feature:invite_links
 from app.models import themes  # feature:appearance
 from app.models import two_factor  # feature:two_factor
+from app.routes.api_docs_md import api_doc_url  # feature:openapi
+from app.routes.api_docs_md import mcp_doc_url  # feature:mcp
 from app.routes.admin import CancelLoginLinkReply, DisplayName, ExpiresInMinutes, LoginLink, LoginLinkReply, MaxUses, OkReply, RenameUserReply, link_options, link_reply
 from app.routes.helpers import Refused, get_config, get_store, run
 from app.routes.logs import audit
@@ -40,37 +42,39 @@ class Me(Reply, kw_only=True):
     account_role: str
     is_owner: bool
     login_link: Annotated[LoginLink | None, Meta(description="Your own live login link, or null.")]
-    maintenance: Literal["none", "read_only", "full"]  # feature:maintenance
+    maintenance: Annotated[Literal["none", "read_only", "full"], Meta(extra_json_schema={"x-feature": "maintenance"})]  # feature:maintenance
     version: Annotated[str, Meta(description="The running build. dev when none was stamped.")]
     announcement: Annotated[str, Meta(description="server.announcement. Empty when there is none.")]
     repo: Annotated[str, Meta(description="app.repo without a trailing / or .git: where the source lives. Empty when it is not set.")]
     description: Annotated[str, Meta(description="app.description. Empty when there is none.")]
-    show_about: Annotated[bool, Meta(description="app.show_about: whether the menu has About.")]  # feature:about
-    openapi_url: Annotated[str, Meta(description="Where to read this API's reference: config/api.json in app.repo, or /api/api.json when there is no repo.")]  # feature:openapi
-    mcp_url: Annotated[str, Meta(description="Where to read the MCP reference: config/mcp.json in app.repo, or /api/mcp.json when there is no repo. Only with server.mcp on.")]  # feature:mcp
-    shortcuts: Annotated[dict[str, str], Meta(description="The keyboard shortcuts you changed, by action. Mod is Cmd on a Mac and Ctrl elsewhere.")]  # feature:shortcuts
-    themes: Annotated[list[Theme] | None, Meta(description="Your themes (see the Theme schema): your own list, else the app's defaults, else null for the built-in ones.")]  # feature:appearance
-    themes_custom: Annotated[bool, Meta(description="Whether you have your own list rather than following the defaults.")]  # feature:appearance
-    themes_builtins: Annotated[int, Meta(description="Which built-in themes that list has seen (see builtins on POST /api/account/themes).")]  # feature:appearance
-    theme_id: Annotated[str, Meta(description="The theme you use. Empty: the first.")]  # feature:appearance
-    has_pin: bool  # feature:invite_links
-    username: str  # feature:passwords
-    has_password: bool  # feature:passwords
-    password_blocked: bool  # feature:passwords
-    two_factor: bool  # feature:two_factor
-    passwords_enabled: bool  # feature:passwords
-    two_factor_enabled: bool  # feature:two_factor
+    show_about: Annotated[bool, Meta(description="app.show_about: whether the menu has About.", extra_json_schema={"x-feature": "about"})]  # feature:about
+    openapi_url: Annotated[str, Meta(description="Where to read this API's reference: config/api.json in app.repo, or /api/api.json when there is no repo.", extra_json_schema={"x-feature": "openapi"})]  # feature:openapi
+    mcp_url: Annotated[str, Meta(description="Where to read the MCP reference: config/mcp.json in app.repo, or /api/mcp.json when there is no repo. Only with server.mcp on.", extra_json_schema={"x-feature": "mcp"})]  # feature:mcp
+    api_doc_url: Annotated[str, Meta(description="Where to read the API reference as a page for people: config/api.md in app.repo, or /docs/api when there is no repo.", extra_json_schema={"x-feature": "openapi"})]  # feature:openapi
+    mcp_doc_url: Annotated[str, Meta(description="Where to read the MCP tools as a page for people: config/mcp.md in app.repo, or /docs/mcp when there is no repo.", extra_json_schema={"x-feature": "mcp"})]  # feature:mcp
+    shortcuts: Annotated[dict[str, str], Meta(description="The keyboard shortcuts you changed, by action. Mod is Cmd on a Mac and Ctrl elsewhere.", extra_json_schema={"x-feature": "shortcuts"})]  # feature:shortcuts
+    themes: Annotated[list[Theme] | None, Meta(description="Your themes (see the Theme schema): your own list, else the app's defaults, else null for the built-in ones.", extra_json_schema={"x-feature": "appearance"})]  # feature:appearance
+    themes_custom: Annotated[bool, Meta(description="Whether you have your own list rather than following the defaults.", extra_json_schema={"x-feature": "appearance"})]  # feature:appearance
+    themes_builtins: Annotated[int, Meta(description="Which built-in themes that list has seen (see builtins on POST /api/account/themes).", extra_json_schema={"x-feature": "appearance"})]  # feature:appearance
+    theme_id: Annotated[str, Meta(description="The theme you use. Empty: the first.", extra_json_schema={"x-feature": "appearance"})]  # feature:appearance
+    has_pin: Annotated[bool, Meta(extra_json_schema={"x-feature": "invite_links"})]  # feature:invite_links
+    username: Annotated[str, Meta(extra_json_schema={"x-feature": "passwords"})]  # feature:passwords
+    has_password: Annotated[bool, Meta(extra_json_schema={"x-feature": "passwords"})]  # feature:passwords
+    password_blocked: Annotated[bool, Meta(extra_json_schema={"x-feature": "passwords"})]  # feature:passwords
+    two_factor: Annotated[bool, Meta(extra_json_schema={"x-feature": "two_factor"})]  # feature:two_factor
+    passwords_enabled: Annotated[bool, Meta(extra_json_schema={"x-feature": "passwords"})]  # feature:passwords
+    two_factor_enabled: Annotated[bool, Meta(extra_json_schema={"x-feature": "two_factor"})]  # feature:two_factor
     auth: str
-    api_keys_enabled: bool  # feature:api_keys
-    mcp_enabled: Annotated[bool, Meta(description="server.mcp: whether POST /mcp answers.")]  # feature:mcp
-    files_enabled: Annotated[bool, Meta(description="files.enabled: whether the Files screen and routes are on.")]  # feature:files
-    invite_links_enabled: Annotated[bool, Meta(description="Whether invite links are on.")]  # feature:invite_links
-    webhooks_enabled: Annotated[bool, Meta(description="webhooks.enabled: whether webhooks are sent.")]  # feature:webhooks
-    logs_enabled: bool  # feature:logs
-    logs_ui_clicks: bool  # feature:logs
+    api_keys_enabled: Annotated[bool, Meta(extra_json_schema={"x-feature": "api_keys"})]  # feature:api_keys
+    mcp_enabled: Annotated[bool, Meta(description="server.mcp: whether POST /mcp answers.", extra_json_schema={"x-feature": "mcp"})]  # feature:mcp
+    files_enabled: Annotated[bool, Meta(description="files.enabled: whether the Files screen and routes are on.", extra_json_schema={"x-feature": "files"})]  # feature:files
+    invite_links_enabled: Annotated[bool, Meta(description="Whether invite links are on.", extra_json_schema={"x-feature": "invite_links"})]  # feature:invite_links
+    webhooks_enabled: Annotated[bool, Meta(description="webhooks.enabled: whether webhooks are sent.", extra_json_schema={"x-feature": "webhooks"})]  # feature:webhooks
+    logs_enabled: Annotated[bool, Meta(extra_json_schema={"x-feature": "logs"})]  # feature:logs
+    logs_ui_clicks: Annotated[bool, Meta(extra_json_schema={"x-feature": "logs"})]  # feature:logs
     csrf_token: Annotated[str, Meta(description="Browser sessions only.")] | UnsetType = UNSET
-    api_key_id: Annotated[str, Meta(description="API keys only.")] | UnsetType = UNSET  # feature:api_keys
-    api_key_name: Annotated[str, Meta(description="API keys only.")] | UnsetType = UNSET  # feature:api_keys
+    api_key_id: Annotated[str, Meta(description="API keys only.", extra_json_schema={"x-feature": "api_keys"})] | UnsetType = UNSET  # feature:api_keys
+    api_key_name: Annotated[str, Meta(description="API keys only.", extra_json_schema={"x-feature": "api_keys"})] | UnsetType = UNSET  # feature:api_keys
 
 
 @route(
@@ -115,6 +119,8 @@ def me(request: Request) -> Me:
         show_about=cfg.show_about,  # feature:about
         openapi_url=open_api_url(cfg),  # feature:openapi
         mcp_url=mcp_url(cfg),  # feature:mcp
+        api_doc_url=api_doc_url(cfg),  # feature:openapi
+        mcp_doc_url=mcp_doc_url(cfg),  # feature:mcp
         shortcuts=actor.user.shortcuts,  # feature:shortcuts
         themes=theme_list(my_themes),  # feature:appearance
         themes_custom=themes_custom,  # feature:appearance

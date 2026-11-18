@@ -32,12 +32,13 @@ const ThemeEditor = {
 
   // The base colors, then the worked-out ones. Labels: theme.color_<key>.
   baseFields: [ "accent" , "second" , "background" , "surface" ],
-  fineFields: [ "text" , "background" , "surface" , "nested" , "chrome" , "border" , "link" , "navLink" ,
-    "accentFg" , "accentText" , "secondText" , "secondFg" , "info" , "infoBorder" ],
+  fineFields: [ "text" , "background" , "surface" , "nested" , "chrome" , "bar" , "barText" , "border" , "link" , "navLink" ,
+    "rowOdd" , "rowEven" , "accentFg" , "accentText" , "secondText" , "secondFg" , "info" , "infoBorder" ],
   labelKeys: {
     accent: "accent" , second: "second" , background: "background" , surface: "surface" , text: "text" ,
-    nested: "nested" , chrome: "chrome" , border: "border" , link: "link" , navLink: "nav_link" ,
+    nested: "nested" , chrome: "chrome" , bar: "bar" , barText: "bar_text" , border: "border" , link: "link" , navLink: "nav_link" ,
     accentFg: "accent_fg" , accentText: "accent_text" , secondText: "second_text" , secondFg: "second_fg" , info: "info" , infoBorder: "info_border" ,
+    rowOdd: "row_odd" , rowEven: "row_even" ,
   },
 
   // A label for a color of theme.js: its own key, or for a button variant's
@@ -500,7 +501,7 @@ const ThemeEditor = {
   },
 
   // The page in miniature, in this theme's colors: sidebar, card, nested card,
-  // heading, link, info box and every kind of button.
+  // heading, link, table rows, info box and every kind of button.
   preview( theme ) {
     const c = Theme.colors( theme );
     const paint = ( element , styles ) => {
@@ -520,6 +521,10 @@ const ThemeEditor = {
     ] } ) , { background: c.nested , borderColor: c.border } );
     const info = paint( Dom.el( "div" , { class: "theme-preview-info" , text: I18n.get( "theme.preview_info" ) } ) ,
       { background: c.info , borderColor: c.infoBorder } );
+    // Three table rows, alternating.
+    const rows = paint( Dom.el( "div" , { class: "theme-preview-rows" , children: [ 1 , 2 , 3 ].map( ( n ) =>
+      span( I18n.get( "theme.preview_row" ).replace( "{n}" , String( n ) ) , { background: n % 2 ? c.rowOdd : c.rowEven } ) ) } ) ,
+      { borderColor: c.border } );
     // Real Bootstrap buttons, solid then outline: the preview carries the
     // theme's own custom properties, so style.css draws them as the page will.
     const buttons = ( outline ) => Dom.el( "div" , { class: "theme-preview-buttons" , children:
@@ -531,6 +536,7 @@ const ThemeEditor = {
     const card = paint( Dom.el( "div" , { class: "theme-preview-card" , children: [
       span( I18n.get( "theme.preview_card" ) ),
       nested,
+      rows,
       info,
       buttons( false ),
       buttons( true ),

@@ -6,7 +6,7 @@ import (
 
 // NoStore marks every response as private and never to be stored, before
 // any handler runs. The static file server overrides it for the files it
-// serves (images get a long max-age, text its own no-store); everything else,
+// serves (images get a long max-age, text private no-cache with an ETag); everything else,
 // every API reply, error page and stream, keeps it.
 //
 // Without it, a proxy or CDN in front of the app is free to cache an API

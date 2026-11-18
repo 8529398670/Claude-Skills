@@ -31,7 +31,7 @@ type sessionRow struct {
 	IP         string    `json:"ip,omitempty"`
 	UserAgent  string    `json:"user_agent,omitempty"`
 	Label      string    `json:"label,omitempty" jsonschema_description:"The name you gave this device."`
-	IPName     string    `json:"ip_name,omitempty" jsonschema_description:"What the owner calls this address on the Logs screen. The owner's own list only."` // feature:logs
+	IPName     string    `json:"ip_name,omitempty" jsonschema_description:"What the owner calls this address on the Logs screen. The owner's own list only." jsonschema_extras:"x-feature=logs"` // feature:logs
 }
 
 func ( sessionRow ) APIName() ( name string ) { name = "Session"; return }

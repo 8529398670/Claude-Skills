@@ -50,8 +50,8 @@ config.yaml configures the server, the container, and the portable build.
 Review it before the first start, in particular:
 
   server.secure_cookies   true behind HTTPS; false only for plain http://localhost
-  server.trust_proxy      true once a reverse proxy you control is in front,
-  server.trusted_proxies  with the address it connects from (see config.yaml)
+  server.trusted_proxies  where cloudflared reaches the app from: the Docker
+                          bridge gateway, 172.17.0.1 by default (see config.yaml)
   docker.bind_address     127.0.0.1 keeps it reachable only from this host
   docker.host_port        the port published there
 

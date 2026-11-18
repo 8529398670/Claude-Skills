@@ -220,11 +220,14 @@ PIECES: dict[str, tuple[str, ...]] = {
     "openapi": (),
     "about": (),
 }
-# Files that cannot carry a marker, by what they belong to.
+# Files that cannot carry a marker, by what they belong to: a feature, or
+# `a|b` for files that go only when both do.
 DATA_FILES: dict[str, tuple[str, ...]] = {
     "webhooks": ("server/webhooks/webhook_cases.json",),
     "openapi": ("config/api.json",),
     "mcp": ("config/mcp.json", "config/mcp.md"),
+    # What the /docs pages render api.md and mcp.md with (static/docs.html).
+    "openapi|mcp": ("static/vendor/marked/marked.min.js", "static/vendor/dompurify/purify.min.js"),
 }
 TOP_LEVEL_KEY = re.compile(r"^[a-z_]+:")
 SWITCH_VALUE = re.compile(r"\b(true|false)\b( *)")

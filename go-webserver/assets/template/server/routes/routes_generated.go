@@ -434,6 +434,18 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 		Errors: []int{ 401 , 404 },
 	} , handlers.getOpenAPI , handlers.Guard.RequireLogin )
 	// <<< feature:openapi
+	// >>> feature:openapi|mcp
+	// >>> feature:openapi
+	apidoc.MountStream( app , "GET" , "/api/api.md" , apidoc.Op{
+		Summary: "The API reference as Markdown tables for people",
+		Tag: "Monitoring",
+		Feature: "openapi",
+		MCPHTTP: "The API reference itself, for people; GET /api/api.json is the same as JSON.",
+		ReplyType: "text/markdown",
+		Errors: []int{ 401 , 404 },
+	} , handlers.getAPIDoc , handlers.Guard.RequireLogin )
+	// <<< feature:openapi
+	// <<< feature:openapi|mcp
 	// >>> feature:sessions
 	apidoc.MountBulk( app , "/api/bulk/account/sessions/revoke" , "POST /api/account/sessions/{session_id}/revoke" , apidoc.Op{
 		Summary: "Sign out one of your devices, for many at once",
@@ -787,6 +799,18 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 		Errors: []int{ 401 , 404 },
 	} , handlers.getMCPManifest , handlers.featureGuards()[ "mcp" ] , handlers.Guard.RequireLogin )
 	// <<< feature:mcp
+	// >>> feature:openapi|mcp
+	// >>> feature:mcp
+	apidoc.MountStream( app , "GET" , "/api/mcp.md" , apidoc.Op{
+		Summary: "The MCP tools as Markdown tables for people",
+		Tag: "Monitoring",
+		Feature: "mcp",
+		MCPHTTP: "The MCP reference itself, for people; tools/list gives the same list.",
+		ReplyType: "text/markdown",
+		Errors: []int{ 401 , 404 },
+	} , handlers.getMCPDoc , handlers.featureGuards()[ "mcp" ] , handlers.Guard.RequireLogin )
+	// <<< feature:mcp
+	// <<< feature:openapi|mcp
 	apidoc.Mount( app , "GET" , "/api/me" , apidoc.Op{
 		Summary: "Who am I",
 		Description: "The account this API key belongs to, the role it acts with (role -- never higher than the key's own scope), and the account's own role.",

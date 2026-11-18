@@ -194,6 +194,7 @@ const App = {
     Password.init( me ); // feature:passwords
     TwoFactor.init( me ); // feature:two_factor
     Fresh.init( me );
+    Live.init( me );
     // Side by side: the wait is the slowest screen, not all of them added up.
     const loading = [];
     loading.push( Keys.init( me ) ); // feature:api_keys

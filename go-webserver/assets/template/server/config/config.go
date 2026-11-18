@@ -153,6 +153,7 @@ type ServerSection struct {
 	MCP                    bool   `yaml:"mcp"` // feature:mcp
 	Maintenance            string `yaml:"maintenance"` // feature:maintenance
 	Announcement           string `yaml:"announcement"`
+	LiveReload             string `yaml:"live_reload"`
 }
 
 type AuthSection struct {
@@ -394,6 +395,10 @@ type Config struct {
 	// <<< feature:maintenance
 	// Announcement is server.announcement: shown on every signed-in page.
 	Announcement string
+	// LiveReload is server.live_reload: auto, always or never. main.go
+	// decides with it whether open pages are told about frontend changes;
+	// see server/livereload.
+	LiveReload string
 	// Repo is app.repo with any trailing / or .git cut: where the source
 	// lives. Empty when it is not set. See RepoFile.
 	Repo string
@@ -686,6 +691,30 @@ var (
 	originPattern    = regexp.MustCompile( `^(?i:https?)://([A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?/?$` )
 )
 
+// The values of server.live_reload. Not on and off: YAML 1.1 readers take
+// those as true and false.
+const (
+	LiveReloadAuto   = "auto"
+	LiveReloadAlways = "always"
+	LiveReloadNever  = "never"
+)
+
+// LiveReloads answers whether open pages are told about frontend changes,
+// for a build stamped version serving static files from static_dir ("" when
+// they are embedded). auto means a build being worked on: unstamped, from
+// disk.
+func ( cfg *Config ) LiveReloads( version string , static_dir string ) ( result bool ) {
+	switch cfg.LiveReload {
+	case LiveReloadAlways:
+		result = true
+	case LiveReloadNever:
+		result = false
+	default:
+		result = version == "dev" && static_dir != ""
+	}
+	return
+}
+
 // Validate rejects values that would fail later in a confusing way -- a port
 // out of range, a Docker size the daemon would refuse, a build target go
 // cannot parse. The docker and build values also end up in shell commands,
@@ -749,6 +778,8 @@ func ( file *File ) Validate() ( err error ) {
 	check( server.Maintenance == MaintenanceNone || server.Maintenance == MaintenanceReadOnly || server.Maintenance == MaintenanceFull ,
 		"server.maintenance must be none, read_only or full" )
 	// <<< feature:maintenance
+	check( server.LiveReload == LiveReloadAuto || server.LiveReload == LiveReloadAlways || server.LiveReload == LiveReloadNever ,
+		"server.live_reload must be auto, always or never" )
 	check( len( server.Announcement ) <= 500 , "server.announcement must be 500 characters or fewer" )
 
 	auth := file.Auth
@@ -1146,6 +1177,7 @@ func build( file *File , path string , paths Paths , secret_key string ) ( cfg *
 		MCPEnabled:     file.Server.MCP, // feature:mcp
 		Maintenance:    file.Server.Maintenance, // feature:maintenance
 		Announcement:   file.Server.Announcement,
+		LiveReload:     file.Server.LiveReload,
 		Repo:           cleanRepo( file.App.Repo ),
 		Description:    file.App.Description,
 		ShowAbout:      file.App.ShowAbout, // feature:about

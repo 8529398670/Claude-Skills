@@ -26,6 +26,7 @@ const Files = {
     window.addEventListener( "beforeunload" , ( event ) => {
       if ( this.uploading ) event.preventDefault();
     } );
+    Fresh.holdWhile( () => this.uploading );
     if ( me.role === "admin" ) {
       Dom.show( Dom.get( "files-everyone-field" ) , true );
       Dom.get( "files-everyone" ).addEventListener( "change" , this.onEveryone.bind( this ) );

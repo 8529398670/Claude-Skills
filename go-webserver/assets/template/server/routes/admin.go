@@ -24,14 +24,14 @@ type userIDPath struct {
 type userRow struct {
 	ID              uint64                `json:"id"`
 	DisplayName     string                `json:"display_name"`
-	Username        string                `json:"username" jsonschema_description:"Empty until a password is set."` // feature:passwords
+	Username        string                `json:"username" jsonschema_description:"Empty until a password is set." jsonschema_extras:"x-feature=passwords"` // feature:passwords
 	Role            string                `json:"role" jsonschema:"enum=admin,enum=user"`
 	CreatedAt       time.Time             `json:"created_at"`
 	Disabled        bool                  `json:"disabled"`
 	Owner           bool                  `json:"owner"`
-	HasPassword     bool                  `json:"has_password"` // feature:passwords
-	PasswordBlocked bool                  `json:"password_blocked"` // feature:passwords
-	TwoFactor       bool                  `json:"two_factor"` // feature:two_factor
+	HasPassword     bool                  `json:"has_password" jsonschema_extras:"x-feature=passwords"` // feature:passwords
+	PasswordBlocked bool                  `json:"password_blocked" jsonschema_extras:"x-feature=passwords"` // feature:passwords
+	TwoFactor       bool                  `json:"two_factor" jsonschema_extras:"x-feature=two_factor"` // feature:two_factor
 	LoginLink       *models.LoginLinkInfo `json:"login_link" jsonschema_description:"The account's live login link, or null."`
 }
 

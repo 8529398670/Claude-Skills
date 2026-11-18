@@ -1676,10 +1676,13 @@ prevent a monolith; adding to the wrong file is how you get one anyway.
 `app/core/static_files.py` implements one rule:
 
 - **Text assets** (`.html`, `.css`, `.js`, `.json`, `.svg`, ...) are read off
-  disk and gzipped on every request with `Cache-Control: no-store`. A deploy
-  is live on the next refresh -- no content hashing, no `?v=123`, no
-  cache-busting build step to keep in sync. Gzip is what makes that
-  affordable: the bytes on the wire are a fraction of the file.
+  disk on every request and sent with `Cache-Control: private, no-cache` and
+  a weak ETag (a hash of the bytes). The browser keeps its copy but re-checks
+  it every load: unchanged is a `304` with no body, decided before gzipping;
+  changed is the new file, gzipped. A deploy is live on the next load -- no
+  content hashing, no `?v=123`, no cache-busting build step to keep in sync --
+  and a repeat load downloads only what changed. `private` keeps every proxy
+  and CDN from storing it (see the no-store rule for API replies).
 - **Images and binaries** get `max-age` of a week and no gzip. Gzip does
   nothing for already-compressed formats, and nobody wants a photo
   re-downloaded on every view.
@@ -1820,7 +1823,8 @@ debugging, which is why it is printed on every start.
 The rule: `server.static_dir` (default `./static` in the project directory -- the folder holding `config/`) wins
 when it exists; otherwise the `static/` that ships beside the `app/` package
 is used. In a source checkout those are the same directory, so editing a file
-and refreshing just works -- the whole point of the no-store policy. The
+and refreshing just works -- the whole point of the revalidate-every-load
+policy (and `app/core/live_reload.py` shows the save without the refresh). The
 language file is decided independently: `server.language_file` if set, else a
 `language.yaml` in the app directory, else one beside `config.yaml`
 (`config/language.yaml`), else the bundled copy.

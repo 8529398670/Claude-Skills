@@ -3,6 +3,189 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 70b6415
+
+**Upgrade `fresh-assets`: text assets revalidate by ETag, open pages pick up frontend changes (`server.live_reload`), and move onto a new build by themselves.**
+Marks: `ETagMatches`, `livereload`, `live_reload`, `Fresh.notice`, `X-App-Version`, `Fresh.swap`, `Live.init`
+Files: `server/static/static.go`, `server/static/static_test.go`, `server/livereload/livereload.go` (new), `server/assets/assets.go`, `server/config/config.go`, `server/config/yamledit_test.go`, `config/defaults.yaml`, `config/config.example.yaml`, `server/routes/routes.go`, `server/routes/no_store_test.go`, `server/middleware/no_store.go`, `main.go`, `static/js/live.js` (new), `static/js/fresh.js`, `static/js/api.js`, `static/js/nav.js`, `static/js/app.js`, `static/js/files.js`, `static/js/settings.js`, `static/index.html`
+
+`no-store` made the browser download every script and stylesheet again on every
+load (about 125 KB gzipped, plus Bootstrap), and nothing told an open page that
+anything had changed.
+
+- `server/static/static.go`: `sendText` sends `Cache-Control: private,
+  no-cache` and `ETag( body )` (weak, FNV-64 of the bytes), and answers `304`
+  before gzipping when `ETagMatches( If-None-Match , tag )`. `sendText` takes
+  a `keep` flag: `ServeIndex` (the login and join pages, whose URLs hold a
+  credential) and `ServeFile` (the docs page) pass false and stay `no-store,
+  private`. Package comment updated. Images keep their week.
+- `server/livereload` (new, core): `New( dir )` polls mtimes and sizes every
+  300 ms (`dir` "" watches nothing, only restarts show); `Handler` is a
+  long-poll (`?boot=&since=`, held up to 25 s) answering `{ boot , stamp ,
+  changed }`; `Close` releases waiters.
+- `config/defaults.yaml` (and `config.example.yaml`): `server.live_reload:
+  auto` after `announcement`, `[restart]`, with its comment. `config.go`:
+  `FileServer.LiveReload`, `Config.LiveReload`, the `LiveReloadAuto/Always/Never`
+  constants, `Validate` refuses anything else, `Config.LiveReloads( version ,
+  static_dir )` (auto: `version == "dev"` and served from disk).
+  `yamledit_test.go`'s `sampleValue` gets `"server.live_reload": "always"`.
+  Values are not on/off: YAML 1.1 reads those as booleans.
+- `server/assets`: `Bundle.StaticDir`, the absolute disk path or "".
+- `main.go`: `handlers.LiveReload = livereload.New( bundle.StaticDir )` when
+  `cfg.LiveReloads( version , bundle.StaticDir )`, closed on shutdown before
+  `drain()`.
+- `server/routes/routes.go`: `Handlers.LiveReload`; `app.Use( "/api" , ... )`
+  sets `X-App-Version`; `GET /api/live` after `mountDeclared` only when
+  `LiveReload` is set (never in tests, never in the API docs).
+- `routes/no_store_test.go`: index.html must say `private` and `no-cache`;
+  `middleware/no_store_test.go` wants `private, no-cache` for `/index.html`;
+  `static/static_test.go` gains `TestTextAssetsRevalidate`.
+- `static/js/live.js` (new, after `fresh.js` in index.html), `Live.init( me )`
+  after `Fresh.init( me )` in `app.js`. It asks `/api/live` once and stops at
+  a 404; waits while the tab is hidden; on a dev build reloads at once, on a
+  stamped one calls `Fresh.notice( "live" )`.
+- `static/js/fresh.js`: `heard`, `notice`, `holdWhile`, `safe`, `swap`, `offer`
+  (replaces `noticeVersion`); `api.js` calls `Fresh.heard( X-App-Version )`
+  on every reply; `nav.js`'s `hashchange` runs `Fresh.swap()` before
+  `render()`; `files.js` and `settings.js` register their `beforeunload`
+  tests with `Fresh.holdWhile`. App screens with their own `beforeunload`
+  should do the same.
+
+Check: `curl -I` a `.js` twice with the ETag: `200` then `304`. Run from
+source, open the app, save `style.css`: the style changes with no reload; save
+a `.js`: the page reloads onto the same screen. A stamped build answers 404 on
+`/api/live` unless `server.live_reload: always`, and then a saved `.js` waits
+for the next screen change; deploying a new version under an open page makes
+the next screen change a full load.
+
+**Upgrade `theme-top-bar`: the navbar has its own colors, and OSU and WSU put their brand on it.**
+Marks: `barText`, `--app-bar`, `--app-bar-muted`, `top_bar`, `muted(`
+Files: `static/js/theme.js`, `static/css/style.css`, `static/js/themes_editor.js`, `config/language.yaml`, `server/models/themes.go`, `config/api.json`, `config/mcp.json`, `config/api.md`, `config/mcp.md`
+
+The navbar and the sidebar shared `chrome`, so a theme could not color the
+bar across the top without painting the whole sidebar too. Ported from Rook's
+game bar.
+
+- `static/js/theme.js`: `bar` and `barText` in `derived()` (`chrome` and the
+  mode's text) and `Theme.vars` (`--app-bar`, `--app-bar-text`); `colors()`
+  keeps them following an edited `chrome` and `text` unless they are
+  overridden; the pair `top_bar: [ "barText" , "bar" ]`; `Theme.muted( text ,
+  ground )`, and `apply()` sets `--app-bar-muted` from it. OSU's overrides
+  get `bar` Scarlet and `barText` White in both modes; WSU's get Green and
+  White in light, Gold and Black in dark.
+- `static/css/style.css`: the three tokens in both `:root` blocks (and the
+  header comment); `.app-navbar` reads `--app-bar`, sets Bootstrap's navbar
+  and nav-link colors to `--app-bar-text`, `.navbar-text` to
+  `--app-bar-muted`; its `.app-icon-button`s stay in the bar's words and
+  hover with a faint ground (the accent can be the bar itself).
+- `static/js/themes_editor.js`: `bar`, `barText` in `fineFields` and `labelKeys`.
+- `config/language.yaml`: `theme.color_bar`, `theme.color_bar_text`,
+  `theme.check_top_bar`; `theme.color_chrome` is now "Sidebar".
+- Server: `"bar"` and `"barText"` in `ThemeOverrideFields` and both override descriptions (`server/models/themes.go`). Then refresh the API docs.
+- An app that restyled its navbar keeps its own rules; point its background
+  and text at the new tokens.
+
+Check: Default looks as before. On Appearance, OSU has a scarlet bar with
+white words in light and dark; WSU green in light, gold in dark.
+
+**Upgrade `theme-builtin-changes`: changed built-in colors reach saved lists.**
+Marks: `builtInChanges`, `applyBuiltInChanges`, `keptSeen`
+Files: `static/js/theme.js`
+
+A saved list (someone's own, or the admin's defaults) holds copies of the
+built-ins, so changing a built-in's colors reached nobody who had saved. Now
+`Theme.builtInChanges` lists each changed override as `{ since , id , mode ,
+field , was , now }`; `applyBuiltInChanges( theme , seen )` makes the ones a
+list has not seen, only while the field is still `was` (a color someone set
+themselves stays). `withNewBuiltIns` runs it on every saved theme,
+`builtInsSeen()` counts its `since`s, and `restore()` runs it on the theme
+kept in this browser (`keep()` stores `<storageKey>.builtins`, read by
+`keptSeen()`). Generalized from Rook's `withGame` / `withoutOldBar`.
+
+- The first entries, `since: 2`, give saved OSU and WSU themes the brand bar
+  above.
+- An app with its own built-ins or changes gives each a `since` above the
+  template's highest (now 2).
+
+Check: an account that saved its list before this (builtins 1) sees OSU's
+scarlet bar after a reload; set OSU's bar to another color, save, reload: it
+stays.
+
+**Fix: visitors' real addresses behind Docker + Cloudflare Tunnel (proxy trust on by default).**
+Marks: `trusted_proxies: [172.17.0.1, 127.0.0.1, "::1"]`, `proxy_header: CF-Connecting-IP`
+Files: `config/defaults.yaml`, `config/config.example.yaml`, `docker/run.sh`
+
+With `cloudflared` on the host and the app in Docker, every visitor was logged
+(and rate-limited) as the bridge gateway, 172.17.0.1, because
+`server.trust_proxy` shipped off. The template now ships set up for that
+deployment: `trust_proxy: true`, `trusted_proxies: [172.17.0.1, 127.0.0.1,
+"::1"]`, `proxy_header: CF-Connecting-IP`. Cloudflare overwrites that header
+with the visitor's address, and it is believed only from those addresses.
+
+- `config/defaults.yaml`, `config/config.example.yaml`: the new values and the
+  rewritten comment above them.
+- `docker/run.sh`: the first-run note names `server.trusted_proxies` (the
+  gateway cloudflared connects from) instead of asking to turn trust on.
+- An existing app keeps its own `config/config.yaml`: set the same three keys
+  there by hand. Use that host's actual bridge gateway, and keep
+  `docker.bind_address` on loopback.
+
+Check: behind the tunnel, the Logs screen shows each visitor's own address,
+not 172.17.0.1.
+
+**Fix: the readable API and MCP links show without `app.repo` (`/docs/api`, `/docs/mcp`).**
+Marks: `api_doc_url`, `mcp_doc_url`, `/docs/`, `docs.js`
+Files: `static/docs.html`, `static/js/docs.js`, `static/css/docs.css`, `static/vendor/marked/marked.min.js`, `static/vendor/dompurify/purify.min.js`, `static/vendor/README.md`, `static/js/keys.js`, `static/js/mcp.js`, `config/language.yaml`, `server/routes/api_docs_md.go`, `server/routes/api_docs_md_test.go`, `server/routes/routes.go`, `server/routes/routes_generated.go`, `server/routes/account.go`, `server/routes/api_docs_test.go`, `server/static/static.go`, `main.go`, `config/api.json`, `config/mcp.json`, `config/api.md`, `config/mcp.md`
+
+The "readable version (api.md)" and "(mcp.md)" links on the API keys and MCP
+cards only showed when `app.repo` was set, because they pointed at the
+repository's rendering and the server kept no copy. An app with no repo
+showed only the JSON links. Now `/api/me` says where each readable reference
+is (`api_doc_url`, `mcp_doc_url`): the repository's file when `app.repo` is
+set, else this server's `/docs/api` or `/docs/mcp` page, which fetches the
+Markdown (signed in) and renders it with marked and DOMPurify, Bootstrap
+tables included. TodoBoard has had this since its commit 49.
+
+- Server: `server/routes/api_docs_md.go` (new: `GET /api/api.md`, `GET /api/mcp.md`, `ShowDocsPage`, `apiDocURL`, `mcpDocURL`), `server/routes/routes.go` (`APIDoc`, `MCPDoc`, `app.Get( "/docs/*" , ... )` after `/join/*`), `main.go` (embeds `config/api.md` and `config/mcp.md`), `server/static/static.go` (`ServeFile`), `server/routes/account.go` (`api_doc_url`, `mcp_doc_url` in `/api/me`), `server/routes/api_docs_test.go` (`"GET /docs/*"` in `notDocumented`), `server/routes/api_docs_md_test.go` (new). Then refresh the API docs.
+- `static/js/keys.js` and `static/js/mcp.js`: show the link when
+  `me.api_doc_url` / `me.mcp_doc_url` is set, with that as its href, in place
+  of building it from `me.repo`.
+- `static/docs.html`, `static/js/docs.js`, `static/css/docs.css`: new, whole
+  file `feature:openapi|mcp`. The page is always light and links back to
+  `/#account`.
+- Vendor `marked` 15.0.12 and `DOMPurify` 3.2.6 (`misc/vendor.sh`, lines in
+  `static/vendor/README.md`). An app that already has them, as TodoBoard
+  does, keeps its own.
+- `config/language.yaml`: a new `docs:` section (`api_title`, `mcp_title`,
+  `back`, `loading`, `failed`), and the comments on `api_keys.doc_link` and
+  `mcp.doc_link`.
+- Skill only: `scripts/prune.py` takes a feature expression as a `DATA_FILES`
+  key, and `scripts/scaffold.py` lists the two vendor files under
+  `openapi|mcp`.
+
+Check: with `app.repo: ""`, Account shows "readable version (api.md)" on
+the API keys card, and it opens `/docs/api` with the routes as tables; the
+MCP card's link opens `/docs/mcp`, and its route links jump into `/docs/api`.
+
+**Fix: a fresh scaffold's API docs match its code (fields carry `x-feature`).**
+Marks: `jsonschema_extras:"x-feature=`, `key == "x-feature"`
+Files: `server/routes/account.go`, `server/routes/admin.go`, `server/routes/sessions.go`, `server/routes/passwords.go`, `server/models/credentials.go`, `server/apidoc/reflect.go`, `config/api.json`, `config/api.md`, `config/mcp.json`, `config/mcp.md`
+
+The scaffold cut a left-out feature's routes from `config/api.json` but kept
+its fields (`has_password`, `username`, ...) and left `api.md` and `mcp.md`
+whole, so `TestAPIDocsAreCurrent` failed in a new app with `--tests`.
+
+- Every API struct field with a `// feature:X` marker also has
+  `jsonschema_extras:"x-feature=X"` in its tag (`meReply`, `userRow`,
+  `models.Revoked`, the session's `ip_name`, `/api/login/options`' `two_factor`).
+  A new feature-only field in an app's own reply wants the same tag.
+- `server/apidoc/reflect.go`: `nullable` keeps `x-feature` outside the `oneOf`,
+  beside the description.
+- `config/api.json` (and the other three, regenerated): the fields gain
+  `"x-feature"`. An app runs `scripts/api_docs.sh` after taking the tags.
+- Skill only: `scripts/prune.py` drops those fields from `api.json` and renders
+  `api.md` and `mcp.md` again from what is left.
+
 ## After 3073105
 
 **Fix: outline primary buttons stay readable in every theme (`accentText`).**

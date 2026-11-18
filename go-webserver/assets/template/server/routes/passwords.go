@@ -53,7 +53,7 @@ type passwordAccessReply struct {
 
 type loginOptionsReply struct {
 	Passwords bool   `json:"passwords"`
-	TwoFactor bool   `json:"two_factor"` // feature:two_factor
+	TwoFactor bool   `json:"two_factor" jsonschema_extras:"x-feature=two_factor"` // feature:two_factor
 	Salt      string `json:"salt,omitempty"`
 }
 

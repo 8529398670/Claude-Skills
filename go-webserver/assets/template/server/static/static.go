@@ -1,11 +1,13 @@
 // Package static implements this project's one opinionated serving rule:
-// markup and code are never cached, images are cached hard.
+// markup and code are never stale, images are cached hard.
 //
-// Text assets (.html/.css/.js/...) are read and gzipped on every request with
-// Cache-Control: no-store. A deploy is therefore live on the next refresh,
-// with no content hashing, no ?v=123 query strings, and no cache-busting
-// build step to keep in sync. Gzip is what makes that affordable -- the bytes
-// on the wire are a fraction of the file.
+// Text assets (.html/.css/.js/...) are read on every request and sent with
+// Cache-Control: private, no-cache and an ETag. The browser keeps its copy but asks
+// again on every load; an unchanged file is answered 304 with no body, a
+// changed one with the new bytes, gzipped. A deploy is therefore live on the
+// next load, with no content hashing, no ?v=123 query strings, and no
+// cache-busting build step to keep in sync -- and a repeat load downloads
+// only what changed.
 //
 // Images and other binaries get the opposite treatment. Gzip does nothing for
 // already-compressed formats, and nobody wants a photo re-downloaded on every
@@ -19,6 +21,8 @@ package static
 import (
 	bytes "bytes"
 	gzip "compress/gzip"
+	hex "encoding/hex"
+	fnv "hash/fnv"
 	fs "io/fs"
 	mime "mime"
 	path "path"
@@ -151,34 +155,67 @@ func ( server *Server ) Handler( c fiber.Ctx ) ( err error ) {
 		return
 	}
 
-	err = server.sendText( c , name )
+	err = server.sendText( c , name , true )
 	return
 }
 
 // ServeIndex answers with index.html whatever the path, for routes the
-// browser app handles itself (the login link's confirmation page).
+// browser app handles itself (the login link's confirmation page). Those
+// URLs carry a credential, so the page is no-store: not even the browser
+// keeps a copy filed under it.
 func ( server *Server ) ServeIndex( c fiber.Ctx ) ( err error ) {
 	if server.isFile( server.indexFile ) == false {
 		err = server.NotFound( c )
 		return
 	}
-	err = server.sendText( c , server.indexFile )
+	err = server.sendText( c , server.indexFile , false )
 	return
 }
 
+// >>> feature:openapi|mcp
+// ServeFile answers with one named page whatever the path, for a route
+// whose page reads its own URL (/docs/api, /docs/mcp). no-store, like every
+// route in the table rather than the files behind the catch-all.
+func ( server *Server ) ServeFile( c fiber.Ctx , name string ) ( err error ) {
+	if server.isFile( name ) == false {
+		err = server.NotFound( c )
+		return
+	}
+	err = server.sendText( c , name , false )
+	return
+}
+// <<< feature:openapi|mcp
+
 // sendText is the always-fresh half of the serving rule: read on every
-// request, never cached, gzipped when the client accepts it.
-func ( server *Server ) sendText( c fiber.Ctx , name string ) ( err error ) {
+// request, re-checked on every load, gzipped when the client accepts it.
+// keep false is for the pages routes serve (one whose URL holds a credential,
+// the docs page): no-store, no tag.
+func ( server *Server ) sendText( c fiber.Ctx , name string , keep bool ) ( err error ) {
 	body , read_err := fs.ReadFile( server.fsys , name )
 	if read_err != nil {
 		err = server.NotFound( c )
 		return
 	}
 
-	c.Set( fiber.HeaderContentType , contentType( name ) )
-	c.Set( fiber.HeaderCacheControl , "no-store, no-cache, must-revalidate" )
 	c.Set( fiber.HeaderVary , "Accept-Encoding" )
+	if keep == false {
+		c.Set( fiber.HeaderCacheControl , "no-store, private" )
+	} else {
+		// Weak, because the gzipped and plain replies carry the same tag.
+		tag := ETag( body )
+		// private: the browser keeps it, a proxy or CDN never does (see
+		// middleware.NoStore). no-cache: the browser asks again every load.
+		c.Set( fiber.HeaderCacheControl , "private, no-cache" )
+		c.Set( fiber.HeaderETag , tag )
 
+		// Before gzipping: an unchanged file costs neither the bytes nor the CPU.
+		if ETagMatches( c.Get( fiber.HeaderIfNoneMatch ) , tag ) {
+			err = c.SendStatus( fiber.StatusNotModified )
+			return
+		}
+	}
+
+	c.Set( fiber.HeaderContentType , contentType( name ) )
 	if strings.Contains( c.Get( fiber.HeaderAcceptEncoding ) , "gzip" ) == false {
 		err = c.Send( body )
 		return
@@ -198,5 +235,28 @@ func ( server *Server ) sendText( c fiber.Ctx , name string ) ( err error ) {
 
 	c.Set( fiber.HeaderContentEncoding , "gzip" )
 	err = c.Send( compressed.Bytes() )
+	return
+}
+
+// ETag is the validator for a text asset: a hash of its bytes, so it changes
+// exactly when the file does, whichever copy (disk or embedded) served it.
+func ETag( body []byte ) ( result string ) {
+	hasher := fnv.New64a()
+	hasher.Write( body )
+	result = `W/"` + hex.EncodeToString( hasher.Sum( nil ) ) + `"`
+	return
+}
+
+// ETagMatches is If-None-Match's weak comparison: any listed tag equal to
+// ours once the W/ prefixes are set aside, or "*".
+func ETagMatches( header string , tag string ) ( result bool ) {
+	want := strings.TrimPrefix( tag , "W/" )
+	for _ , candidate := range strings.Split( header , "," ) {
+		candidate = strings.TrimSpace( candidate )
+		if candidate == "*" || strings.TrimPrefix( candidate , "W/" ) == want {
+			result = true
+			return
+		}
+	}
 	return
 }

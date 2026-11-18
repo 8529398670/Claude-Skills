@@ -28,6 +28,10 @@ type Bundle struct {
 	// would be ./static -- so "css/style.css", not "static/css/style.css".
 	Static fs.FS
 
+	// StaticDir is the absolute path served from disk, or "" for the
+	// embedded copy.
+	StaticDir string
+
 	// LanguageYAML is the raw language.yaml, already read.
 	LanguageYAML []byte
 
@@ -76,6 +80,7 @@ func Resolve( static_dir string , language_file string , embedded_static fs.FS ,
 			return
 		}
 		bundle.Static = root.FS()
+		bundle.StaticDir = absolute
 		static_source = "disk " + absolute
 	}
 

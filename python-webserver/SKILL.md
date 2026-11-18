@@ -179,7 +179,7 @@ project.
   `config/mcp.md` (the routes and the tools as tables) from those and the registered MCP tools. Nobody edits them by hand: a
   test fails while one is out of date, or a route has no docs, and every reply
   the route tests see is checked against its docs. `GET /api/api.json`
-  hands the spec to anyone signed in.
+  hands the spec to anyone signed in. The API keys and MCP cards link to the tables too: the repository's copy when `app.repo` is set, else the server's own `/docs/api` and `/docs/mcp` pages, which render them.
 - **Live updates are server-sent events, by hand.** A hub with a client cap, a
   small dropping queue per client, a heartbeat and an auth re-check every 15
   seconds. The Logs screen's live tail runs on it, and a stop ends open streams
@@ -390,7 +390,8 @@ ports they ran on. Do not reset either to a shared value.
       webhooks.py             # the outbox's sender, signing, and the address guard
       error_page.py           # the page a browser gets when a page load fails
       graceful.py             # starting uvicorn, and stopping in the right order
-      static_files.py         # gzip-always-fresh text, long-cached images
+      static_files.py         # gzip'd text revalidated by ETag every load, long-cached images
+      live_reload.py          # server.live_reload: tells open pages about a change to static/
       assets.py               # configured static dir/language file, or bundled
       language.py             # loads language.yaml, serves it as JSON
       bootstrap.py            # first-run admin + printing links as full URLs
@@ -421,7 +422,8 @@ ports they ran on. Do not reset either to a shared value.
     js/logs.js                # the owner's Logs screen
     js/jobs.js                # the owner's Jobs screen
     js/sessions.js            # the Account screen's list of sessions
-    js/fresh.js               # asks the server again on coming back to a tab
+    js/fresh.js               # asks again on coming back to a tab; moves the page onto a new build
+    js/live.js                # server.live_reload: a stylesheet swaps in, any other change reloads
     js/qr.js                  # QR codes for 2FA and for login and invite links
     js/login_links.js         # how often and how long a login link works
     js/mcp.js                 # the MCP card: a key and setup for Claude and others
@@ -885,8 +887,8 @@ the previous version goes to `<data_dir>/config.yaml.bak`), with
 database prints the owner's first login link straight from the log. On a fresh
 clone there is no `config/config.yaml` (it is gitignored), so the first
 `docker/run.sh` writes it and a new `secret.key`, and
-stops, asking for a review of `server.secure_cookies`, `server.trust_proxy`
-(with `server.trusted_proxies`), and the published port before anything
+stops, asking for a review of `server.secure_cookies`,
+`server.trusted_proxies` (the Docker bridge gateway cloudflared connects from), and the published port before anything
 starts.
 
 This is where the real hardening lives: read-only root filesystem, all

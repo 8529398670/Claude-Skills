@@ -125,7 +125,7 @@ and the dependencies before a release -- and scan the built image too, which
   is gitignored), so the first `docker/run.sh` writes one from the image's
   defaults, and `config/secret.key` with a new key, and exits, naming the settings that depend on what
   sits in front of this. Starting on unreviewed defaults would mean guessing
-  at `secure_cookies` and `trust_proxy`.
+  at `secure_cookies` and `trusted_proxies`.
 - **Moves the key out of an older `config.yaml`** before anything else
   (`config migrate`, run through the image with `config/` mounted, as you).
   It is silent unless there was a `server.secret_key` to move. A missing
@@ -164,7 +164,7 @@ and the dependencies before a release -- and scan the built image too, which
   cookie is silently dropped over plain http, so the sign-in appears to
   succeed and the session never sticks.
 - **`server.trust_proxy: true` plus `server.trusted_proxies`** make Fiber
-  believe `X-Forwarded-For`, so the rate limiter sees real client IPs rather
+  believe `server.proxy_header`, so the rate limiter sees real client IPs rather
   than the proxy's. The header is believed only on connections from an
   address in `trusted_proxies`, read right to left skipping trusted hops, and
   only once it parses as an IP. Both are required: Fiber with `TrustProxy` on
@@ -175,10 +175,13 @@ and the dependencies before a release -- and scan the built image too, which
   (`[172.17.0.1]` on the default bridge -- confirm with `docker network
   inspect bridge`), not `172.16.0.0/12`, which trusts every container on every
   bridge network. A range wider than /8 (IPv4) or /16 (IPv6) is refused.
-  Behind Cloudflare, see [deploy-cloudflare.md](deploy-cloudflare.md). It
-  defaults to off because it is only correct when a proxy you control really
-  is in front and clients cannot reach the backend any other way.
-  `docker/run.sh` reminds you while it is off.
+  The template ships set up for Cloudflare Tunnel with `cloudflared` on the
+  host: `trust_proxy: true`, `trusted_proxies: [172.17.0.1, 127.0.0.1,
+  "::1"]`, `proxy_header: CF-Connecting-IP` -- see
+  [deploy-cloudflare.md](deploy-cloudflare.md). It is only correct while
+  clients cannot reach the backend except through that proxy, so keep
+  `docker.bind_address` on loopback. `docker/run.sh` reminds you if it is
+  turned off.
 - **`config.yaml` is mounted writable and `secret.key` read-only, both
   separately from the data directory,** so the key is never inside
   `docker.data_dir`. The script gives the container's group read-write on

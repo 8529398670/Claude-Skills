@@ -48,7 +48,10 @@ const Nav = {
     // Moving between screens is not an undo step: Back and Forward already
     // are that, and an undo that only changed the screen would get in the way
     // of undoing what was done on it.
-    window.addEventListener( "hashchange" , () => this.render() );
+    // With a newer build waiting, the switch is a page load instead (fresh.js).
+    window.addEventListener( "hashchange" , () => {
+      if ( !Fresh.swap() ) this.render();
+    } );
     this.render();
   },
 

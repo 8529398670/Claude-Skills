@@ -12,8 +12,8 @@ import (
 type Revoked struct {
 	Sessions   int `json:"sessions"`
 	LoginLinks int `json:"login_links"`
-	APIKeys    int `json:"api_keys"` // feature:api_keys
-	Passwords  int `json:"passwords"` // feature:passwords
+	APIKeys    int `json:"api_keys" jsonschema_extras:"x-feature=api_keys"` // feature:api_keys
+	Passwords  int `json:"passwords" jsonschema_extras:"x-feature=passwords"` // feature:passwords
 }
 
 // APIName names it in the API docs (see server/apidoc).

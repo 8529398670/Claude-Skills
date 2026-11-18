@@ -66,6 +66,7 @@ def sample_value(key: Any) -> Any:
         "server.trusted_proxies": ["10.0.0.0/8"],
         "server.proxy_header": "X-Real-IP",
         "server.maintenance": "read_only",  # feature:maintenance
+        "server.live_reload": "always",
         "server.host": "0.0.0.0",
         "server.port": 9999,
         "logs.max_file_mb": 10,  # feature:logs

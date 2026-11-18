@@ -40,7 +40,8 @@ _COLOR = re.compile(r"#[0-9a-f]{6}")
 # The fields of Theme.colors() in theme.js that an override may replace.
 OVERRIDE_FIELDS = frozenset({
     "text", "accent", "accentFg", "accentText", "second", "secondFg", "secondText", "link", "navLink",
-    "background", "surface", "nested", "chrome", "info", "infoBorder", "border",
+    "background", "surface", "nested", "chrome", "bar", "barText", "info", "infoBorder", "border",
+    "rowOdd", "rowEven",
 }) | frozenset(
     # Theme.variants: each button variant's fill, label and outline.
     f"btn{variant}{part}"

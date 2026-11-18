@@ -1,6 +1,6 @@
 # {{PROJECT_NAME}} API
 
-Every route this server answers, apart from the pages at /login/* and /join/*. Generated from the code by scripts/api_docs.sh: an app's own routes get their docs the same way, and a test fails until they do.
+Every route this server answers, apart from the pages at /login/*, /join/* and /docs/*. Generated from the code by scripts/api_docs.sh: an app's own routes get their docs the same way, and a test fails until they do.
 
 This file is generated: do not edit it. Change the docs next to the handlers and run `scripts/api_docs.sh`.
 
@@ -3356,8 +3356,10 @@ Send a test event
 | Method | Path | Summary | Who may call |
 |---|---|---|---|
 | GET | [`/api/api.json`](#get-apiapijson) | This document | browser session or API key, anyone signed in |
+| GET | [`/api/api.md`](#get-apiapimd) | The API reference as Markdown tables for people | browser session or API key, anyone signed in |
 | GET | [`/api/health`](#get-apihealth) | Is the process up | anyone |
 | GET | [`/api/mcp.json`](#get-apimcpjson) | The MCP tools: every tool /mcp has, its arguments, and the route it stands for | browser session or API key, anyone signed in |
+| GET | [`/api/mcp.md`](#get-apimcpmd) | The MCP tools as Markdown tables for people | browser session or API key, anyone signed in |
 | GET | [`/api/ready`](#get-apiready) | Can the server do real work | anyone |
 | GET | [`/mcp`](#get-mcp) | Refused: this server has no stream | anyone |
 | POST | [`/mcp`](#post-mcp) | Model Context Protocol, at the key's role | API key only, anyone signed in |
@@ -3377,6 +3379,20 @@ This document
 **Reply 200**: Success
 
 An empty object.
+
+### GET /api/api.md
+
+The API reference as Markdown tables for people
+
+|  |  |
+|---|---|
+| Who may call | browser session or API key, anyone signed in |
+| MCP tool | None, HTTP only: The API reference itself, for people; GET /api/api.json is the same as JSON. |
+| Errors | 401, 404, 429, 503 |
+
+**Reply 200**: Success
+
+Text, as `text/markdown`.
 
 ### GET /api/health
 
@@ -3406,6 +3422,20 @@ The MCP tools: every tool /mcp has, its arguments, and the route it stands for
 **Reply 200**: Success
 
 An empty object.
+
+### GET /api/mcp.md
+
+The MCP tools as Markdown tables for people
+
+|  |  |
+|---|---|
+| Who may call | browser session or API key, anyone signed in |
+| MCP tool | None, HTTP only: The MCP reference itself, for people; tools/list gives the same list. |
+| Errors | 401, 404, 429, 503 |
+
+**Reply 200**: Success
+
+Text, as `text/markdown`.
 
 ### GET /api/ready
 
@@ -3638,6 +3668,7 @@ One of these:
 |---|---|---|---|---|
 | `account_role` | string | yes |  |  |
 | `announcement` | string | yes |  | server.announcement. Empty when there is none. |
+| `api_doc_url` | string | yes |  | Where to read the API reference as a page for people: config/api.md in app.repo, or /docs/api when there is no repo. |
 | `api_key_id` | string | no |  | API keys only. |
 | `api_key_name` | string | no |  | API keys only. |
 | `api_keys_enabled` | boolean | yes |  |  |
@@ -3656,6 +3687,7 @@ One of these:
 | `logs_enabled` | boolean | yes |  |  |
 | `logs_ui_clicks` | boolean | yes |  |  |
 | `maintenance` | string | yes | one of `none`, `read_only`, `full` |  |
+| `mcp_doc_url` | string | yes |  | Where to read the MCP tools as a page for people: config/mcp.md in app.repo, or /docs/mcp when there is no repo. |
 | `mcp_enabled` | boolean | yes |  | server.mcp: whether POST /mcp answers. |
 | `mcp_url` | string | yes |  | Where to read the MCP reference: config/mcp.json in app.repo, or /api/mcp.json when there is no repo. Only with server.mcp on. |
 | `openapi_url` | string | yes |  | Where to read this API's reference: config/api.json in app.repo, or /api/api.json when there is no repo. |
@@ -3808,19 +3840,19 @@ One of these:
 | `dark` | object or null | no |  | A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped. |
 | `dark.accent` | string | yes |  | The main color: what you can press. |
 | `dark.background` | string | no |  | The page. Left out: the mode's own. |
-| `dark.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `dark.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, bar (the bar across the top), barText, info, infoBorder, border, rowOdd and rowEven (alternating table rows), and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `dark.second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `dark.surface` | string | no |  | Cards. Left out: the mode's own. |
 | `id` | string | yes |  | Lower-case letters, digits, - and _, up to 32. |
 | `light` | object or null | no |  | A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in. |
 | `light.accent` | string | yes |  | The main color: what you can press. |
 | `light.background` | string | no |  | The page. Left out: the mode's own. |
-| `light.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `light.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, bar (the bar across the top), barText, info, infoBorder, border, rowOdd and rowEven (alternating table rows), and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `light.second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `light.surface` | string | no |  | Cards. Left out: the mode's own. |
 | `mode` | string | yes | one of `light`, `dark` |  |
 | `name` | string | yes |  | 1 to 60 characters. |
-| `overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, bar (the bar across the top), barText, info, infoBorder, border, rowOdd and rowEven (alternating table rows), and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
 | `second` | string | yes |  | Says where you are: active nav item, headings, info. |
 | `surface` | string | no |  | Cards. Left out: the mode's own. |
 

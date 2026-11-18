@@ -30,6 +30,9 @@ screen that breaks one is not done.
    side (`row g-3`, each `col-12 col-xl-6`). A form, a filter or a thin tool is
    never that reason; it goes above the table. On a phone every table is the
    full width.
+   Rows alternate in the theme's two row colors (`--app-row-odd`,
+   `--app-row-even`, set per theme in `theme.js`) on every `.table`; never
+   add `.table-striped` or color rows by hand.
 4. **Icons are Bootstrap Icons by default:**
    `<i class="bi bi-<name>" aria-hidden="true"></i>`. Another icon (another
    set, an inline SVG) only when Bootstrap Icons has nothing that fits, with a
@@ -50,8 +53,11 @@ This is not nostalgia. It means:
 - What you debug in the browser is what is on disk -- no source maps, no
   "works in dev, breaks in prod" from a differing build.
 - A deploy is a file copy. `server/static` serves text assets with
-  `no-store` and gzips them per request, so an edit is live on the next
-  refresh with no cache-busting machinery.
+  `private, no-cache` and an ETag, gzipped per request: the browser re-checks
+  every load and downloads only what changed, so an edit is live on the next
+  load with no cache-busting machinery. While the app is being worked on
+  (or wherever `server.live_reload` says), `live.js` shows a change without
+  even a refresh.
 - There is no dependency tree to audit, no lockfile to keep current, and no
   build that can break independently of the app.
 
@@ -158,7 +164,8 @@ Plain scripts, loaded in dependency order, each adding one global:
 | `jobs.js` | The owner's Jobs screen. |
 | `webhooks.js` | The owner's Webhooks screen. |
 | `settings.js` | The owner's Settings screen: config.yaml as a form, with a filter, jump links and Use default. |
-| `fresh.js` | Asks the server again when someone comes back to the tab. |
+| `fresh.js` | Asks the server again when someone comes back to the tab; moves an open page onto a newer build. |
+| `live.js` | Where `server.live_reload` is on: swaps a changed stylesheet in place; any other change reloads (dev) or waits for the next screen (stamped). |
 | `app.js` | The account + admin screen. Last, because it starts everything. |
 
 **Give each new screen its own file with its own `init()`**, included from
@@ -588,7 +595,11 @@ colors, and from then on remembers them for the mode it left.
 (`.app-nested`) and navbar shades, labels that read on each fill, and text
 colors pushed until they reach 4.5. `Theme.colors( theme )` is that with the
 theme's `overrides` on top -- any derived color replaced by name (`text`,
-`link`, `navLink`, `border`, `info`, ...). They are set inline on `<html>` as
+`link`, `navLink`, `border`, `info`, ...). `chrome` is the sidebar; `bar` and
+`barText` are the navbar across the top, which follow `chrome` and `text`
+unless a theme sets them (OSU's scarlet, WSU's green or gold), with
+`--app-bar-muted` from `Theme.muted( text , ground )` for the tagline:
+quieter words that still read. They are set inline on `<html>` as
 the `--app-*` tokens (`--app-text` feeds `--bs-body-color`). `Theme.check( theme )`
 lists the pairs in `Theme.pairs` that fall under 4.5; `scripts/check_themes.js`
 holds every built-in theme to none, and the tests run it. `ThemePalettes` keeps
@@ -631,7 +642,14 @@ than the highest so far; `Theme.withNewBuiltIns( list , seen )` adds every
 built-in newer than `seen` to the list it shows, just after the built-in before
 it, and the next save sends `Theme.builtInsSeen()`. So a new built-in theme
 reaches people who already made their own list, and one they delete stays
-deleted. Never reuse or lower a `since`. Moving a built-in theme in
+deleted. Never reuse or lower a `since`. Changing a built-in theme's colors
+does not reach saved copies by itself: add each changed override to
+`Theme.builtInChanges` (`{ since , id , mode , field , was , now }`, `was:
+null` for one that was not set, `now: null` to drop it), with a `since` one
+above the highest in `builtIn` and `builtInChanges`. `withNewBuiltIns` (and
+`restore()`, for the theme kept in this browser) applies each one a list has
+not seen, only where the field is still `was`, so a color someone set
+themselves stays. Moving a built-in theme in
 `Theme.builtIn` does not move it in lists already saved. The theme in use is also kept whole in `localStorage`, so the
 first paint and the signed-out pages are already in it; `/api/me` corrects it.
 
@@ -761,9 +779,24 @@ them rather than by writing them again.
   and announcement banners, and a new `version`. Only then, and never on a timer:
   a tab nobody is looking at must not count as use, or it would keep its session
   alive.
+- **A new build.** Every API reply carries `X-App-Version`; `Api.request`
+  passes it to `Fresh.heard`. Once it differs from the page's own version, the
+  next screen change is a real page load onto that screen (`Fresh.swap`, from
+  `nav.js`), so people move to the new code without noticing. If they stay
+  put, the `fresh.new_version` toast offers it after a minute. Nothing reloads
+  while a dialog is open or a screen's `Fresh.holdWhile` test says there is
+  work to lose. `dev` on either side means nothing: that case is `live.js`.
+- **Editing the frontend.** `server.live_reload` (auto: on for an unstamped
+  `dev` build serving `static/` from disk; always / never for any build) adds
+  `/api/live`, which `live.js` long-polls. A changed `.css` is swapped in
+  place. Any other change reloads at once onto the same screen on a dev build,
+  and so does a server restart; on a stamped build it goes through
+  `Fresh.notice` instead, like a new build: the next screen change, or the
+  toast. Without the route `live.js` stops after one 404. A hidden tab asks
+  nothing until it is shown again.
 - **Leaving.** Files and Settings each add a `beforeunload` while an upload is
-  running or there are unsaved changes. A new screen with work to lose does the
-  same.
+  running or there are unsaved changes, and the same test to `Fresh.holdWhile`.
+  A new screen with work to lose does both.
 - **Password fields.** `App.init` gives every `input[type=password]` a show/hide
   button through `Dom.revealable`. It goes back to dots when its form is sent.
 - **Moving between screens.** `Nav.announce` puts the screen's `h2` in the tab's

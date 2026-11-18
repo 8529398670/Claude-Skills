@@ -276,7 +276,7 @@ func isNull( raw any ) ( result bool ) {
 }
 
 // nullable lets a schema be null too: a scalar's type becomes [type, "null"],
-// anything else is oneOf it or null. A description stays outside.
+// anything else is oneOf it or null. A description and an x-feature stay outside.
 func nullable( schema map[string]any ) ( result map[string]any ) {
 	if typed , ok := schema[ "type" ].( string ); ok && scalarTypes[ typed ] {
 		result = schema
@@ -292,12 +292,15 @@ func nullable( schema map[string]any ) ( result map[string]any ) {
 		return
 	}
 	inner := map[string]any{}
-	description , described := schema[ "description" ]
+	result = map[string]any{}
 	for key , value := range schema {
-		if key != "description" { inner[ key ] = value }
+		if key == "description" || key == "x-feature" {
+			result[ key ] = value
+		} else {
+			inner[ key ] = value
+		}
 	}
-	result = map[string]any{ "oneOf": []any{ inner , map[string]any{ "type": "null" } } }
-	if described { result[ "description" ] = description }
+	result[ "oneOf" ] = []any{ inner , map[string]any{ "type": "null" } }
 	return
 }
 

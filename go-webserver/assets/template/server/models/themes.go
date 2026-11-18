@@ -52,7 +52,7 @@ type Theme struct {
 	Second     string            `json:"second" jsonschema_description:"Says where you are: active nav item, headings, info."`
 	Background string            `json:"background,omitempty" jsonschema_description:"The page. Left out: the mode's own."`
 	Surface    string            `json:"surface,omitempty" jsonschema_description:"Cards. Left out: the mode's own."`
-	Overrides  map[string]string `json:"overrides,omitempty" jsonschema_description:"Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."`
+	Overrides  map[string]string `json:"overrides,omitempty" jsonschema_description:"Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, bar (the bar across the top), barText, info, infoBorder, border, rowOdd and rowEven (alternating table rows), and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."`
 	Button     *ThemeButton      `json:"button,omitempty" jsonschema_description:"How the theme's buttons look. A choice left out is the default (rounded, normal, raised, normal)."`
 	// The colors kept for the mode not in use (Theme.setMode in theme.js): a
 	// light theme's Dark, a dark theme's Light. Switching mode swaps them in.
@@ -71,7 +71,7 @@ type ThemeColors struct {
 	Second     string            `json:"second" jsonschema_description:"Says where you are: active nav item, headings, info."`
 	Background string            `json:"background,omitempty" jsonschema_description:"The page. Left out: the mode's own."`
 	Surface    string            `json:"surface,omitempty" jsonschema_description:"Cards. Left out: the mode's own."`
-	Overrides  map[string]string `json:"overrides,omitempty" jsonschema_description:"Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, info, infoBorder, border, and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."`
+	Overrides  map[string]string `json:"overrides,omitempty" jsonschema_description:"Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, bar (the bar across the top), barText, info, infoBorder, border, rowOdd and rowEven (alternating table rows), and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."`
 }
 
 // ThemeButton is how a theme's buttons look; each choice is one of
@@ -90,7 +90,8 @@ var (
 	ThemeOverrideFields = map[string]bool{
 		"text": true , "accent": true , "accentFg": true , "accentText": true , "second": true , "secondFg": true ,
 		"secondText": true , "link": true , "navLink": true , "background": true , "surface": true ,
-		"nested": true , "chrome": true , "info": true , "infoBorder": true , "border": true ,
+		"nested": true , "chrome": true , "bar": true , "barText": true , "info": true , "infoBorder": true , "border": true ,
+		"rowOdd": true , "rowEven": true ,
 	}
 	// Theme.buttonChoices in theme.js.
 	ThemeButtonChoices = map[string]map[string]bool{

@@ -39,7 +39,7 @@ ADDRESSES = AttemptGuard(max_failures=30)
 
 class LoginOptions(Reply, kw_only=True):
     passwords: bool
-    two_factor: bool  # feature:two_factor
+    two_factor: Annotated[bool, Meta(extra_json_schema={"x-feature": "two_factor"})]  # feature:two_factor
     salt: str | UnsetType = UNSET
 
 

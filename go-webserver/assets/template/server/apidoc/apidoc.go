@@ -29,7 +29,7 @@ const Title = "{{PROJECT_NAME}} API"
 const Version = "1.0.0"
 
 // About is the opening paragraph of both files.
-const About = "Every route this server answers, apart from the pages at /login/* and /join/*. Generated from the code by scripts/api_docs.sh: an app's own routes get their docs the same way, and a test fails until they do."
+const About = "Every route this server answers, apart from the pages at /login/*, /join/* and /docs/*. Generated from the code by scripts/api_docs.sh: an app's own routes get their docs the same way, and a test fails until they do."
 
 // Access says who may call a route. The zero value is anyone signed in, by a
 // browser session or an API key.

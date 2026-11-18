@@ -114,7 +114,7 @@ reproducible and does not silently resolve to newer versions.
   is gitignored), so the first `docker/run.sh` writes one from the image's
   defaults, and `config/secret.key` with a new key, and exits, naming the settings that depend on what
   sits in front of this. Starting on unreviewed defaults would mean guessing
-  at `secure_cookies` and `trust_proxy`.
+  at `secure_cookies` and `trusted_proxies`.
 - **Names whatever holds the host port.** With its own old container
   removed, anything still listening on `docker.host_port` is something else,
   and `docker run` would fail with a bind error after creating the
@@ -151,7 +151,7 @@ reproducible and does not silently resolve to newer versions.
   succeed and the session never sticks.
 - **`server.trust_proxy: true` plus `server.trusted_proxies`** make the rate
   limiter count requests by the address in `server.proxy_header` (default
-  `X-Forwarded-For`) rather than the socket's peer -- but only when that peer
+  `CF-Connecting-IP`) rather than the socket's peer -- but only when that peer
   is in `trusted_proxies`. The header is read right to left, skipping
   addresses that are themselves trusted proxies, and the first one that is not
   is the client; anything further left came from the client and can say
@@ -163,10 +163,14 @@ reproducible and does not silently resolve to newer versions.
   (`[172.17.0.1]` on the default bridge -- confirm with `docker network
   inspect bridge`), not `172.16.0.0/12`, which trusts every container on every
   bridge network. A range wider than /8 (IPv4) or /16 (IPv6) is refused.
-  Behind Cloudflare, see [deploy-cloudflare.md](deploy-cloudflare.md). With a
-  single-value header from a CDN (`CF-Connecting-IP`, say), make sure it
-  overwrites what the client sent. `docker/run.sh`
-  reminds you while it is off.
+  The template ships set up for Cloudflare Tunnel with `cloudflared` on the
+  host: `trust_proxy: true`, `trusted_proxies: [172.17.0.1, 127.0.0.1,
+  "::1"]`, `proxy_header: CF-Connecting-IP` -- see
+  [deploy-cloudflare.md](deploy-cloudflare.md). Cloudflare overwrites that
+  header with the visitor's address; behind nginx or Caddy, use
+  `X-Forwarded-For` instead. It is only correct while clients cannot reach
+  the backend except through that proxy, so keep `docker.bind_address` on
+  loopback. `docker/run.sh` reminds you if it is turned off.
 - **`config.yaml` is mounted writable and `secret.key` read-only, both
   separately from the data directory,** so the key is never inside
   `docker.data_dir`. The script gives the container's group read-write on
