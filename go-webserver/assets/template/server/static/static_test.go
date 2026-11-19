@@ -75,3 +75,30 @@ func TestTextAssetsRevalidate( t *testing.T ) {
 	changed , _ := get( tag )
 	if changed.StatusCode != http.StatusOK || changed.Header.Get( "ETag" ) == tag { t.Errorf( "changed: %d %q" , changed.StatusCode , changed.Header.Get( "ETag" ) ) }
 }
+
+// Each path index.html declares with data-path, and each signed-out reason, is
+// answered with index.html; any other path is still a 404. Adding a screen to
+// index.html is enough, with no restart.
+func TestScreenPathsGetThePage( t *testing.T ) {
+	files := fstest.MapFS{ "index.html": { Data: []byte(
+		`<section class="view" data-view="users" data-path="/admin/users">` +
+		`<section class="card" id="x" data-path="/account/two-factor">` ) } }
+	server , _ := New( files )
+	app := fiber.New()
+	app.Get( "/*" , server.Handler )
+	status := func( path string ) ( result int ) {
+		response , err := app.Test( httptestRequest( path ) )
+		if err != nil { t.Fatal( err ) }
+		result = response.StatusCode
+		return
+	}
+	for _ , path := range []string{ "/admin/users" , "/admin/users/" , "/account/two-factor" , "/signed-out/ended" } {
+		if got := status( path ); got != http.StatusOK { t.Errorf( "%s: %d, want 200" , path , got ) }
+	}
+	for _ , path := range []string{ "/admin" , "/admin/users/x" , "/nope" , "/signed-out/other" , "/users" } {
+		if got := status( path ); got != http.StatusNotFound { t.Errorf( "%s: %d, want 404" , path , got ) }
+	}
+	files[ "index.html" ] = &fstest.MapFile{ Data: []byte( `<section class="view" data-view="logs" data-path="/admin/logs">` ) }
+	if got := status( "/admin/logs" ); got != http.StatusOK { t.Errorf( "/admin/logs after edit: %d" , got ) }
+	if got := status( "/admin/users" ); got != http.StatusNotFound { t.Errorf( "/admin/users after edit: %d" , got ) }
+}

@@ -3,6 +3,43 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After c1e33cb
+
+**URLs are paths: screens move from `#hash` to `/area/name`.**
+Marks: `data-path`, `signedOutReason`, `IsScreen`
+Files: `static/index.html`, `static/docs.html`, `static/js/{nav,app,api,dom,jobs,sessions,logs,two_factor,settings,live,track}.js`, `server/static/static.go`, `server/static/static_test.go`, `server/static/frontend_rules_test.go`
+
+Screens were `#hash` routes (`#users`, `#two-factor`) and the signed-out
+page read `?login=…`. Every screen and card a person can link to is now a
+nested path, and a new hard rule in `references/frontend.md` (5, "URLs are
+paths") with a test keeps it so.
+
+- `static/index.html`: each `<section class="view">` gets `data-path`
+  (`/account`, `/appearance`, `/shortcuts`, `/files`, `/about`,
+  `/admin/users`, `/admin/invite-links`, `/admin/api-keys` for `all-keys`,
+  `/admin/logs`, `/admin/jobs`, `/admin/webhooks`, `/admin/settings`); the
+  Account cards `password-panel`, `pin-panel`, `two-factor-panel`,
+  `api-keys-panel` get `/account/<name>`. Sidebar `href`s and
+  `shortcuts-list-change` point at those paths; `docs.html`'s back link is
+  `/account`. An app's own screens get a path the same way (its own area,
+  e.g. `/boards/...`), and its own `href="#screen"` links become paths.
+- `static/js/nav.js`: routes by `location.pathname` against `data-path`
+  (`find`, `clean`, `pathOf`, `go`, `follow` for link clicks, `popstate`),
+  rewrites `/` and unknown paths to `/account` with `replaceState`,
+  `adoptHash` turns an old `#name` link into its path, and `render` sends a
+  `nav` event on `window`. Copy it whole, keeping the app's own lines.
+- `jobs.js`, `sessions.js`, `logs.js` and any app script listening for
+  `hashchange`: listen for `nav` instead. `dom.js` scroll memory keys on
+  `pathname`. `track.js` keeps only hrefs that are screen paths.
+- `api.js`, `app.js`, `two_factor.js`: go to `/signed-out/ended|invalid|expired`;
+  `App.signedOutReason` reads it. `settings.js`, `live.js`, `app.js` comments.
+- `server/static/static.go`: `screenPath`, `signedOutPaths`,
+  `Server.IsScreen` (reads index.html from the fs each time a path has no
+  file); `Handler` serves index.html for those paths and still 404s the rest.
+- Tests: `TestURLsArePaths` in `frontend_rules_test.go`,
+  `TestScreenPathsGetThePage` in `static_test.go`.
+- Docs: the app's README/CLAUDE.md wherever it names a `#screen` link.
+
 ## After bf1644d
 
 **Add `docker/restart.sh`, `docker/logs.sh`, `docker/update.sh`.**

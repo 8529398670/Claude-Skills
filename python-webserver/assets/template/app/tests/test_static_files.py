@@ -61,6 +61,37 @@ class RevalidateTest(unittest.TestCase):
             self.assertNotEqual(changed.headers["etag"], tag)
 
 
+class ScreenPathTest(unittest.TestCase):
+    def test_screen_paths_get_the_page(self) -> None:
+        """Each path index.html declares with data-path, and each signed-out
+        reason, is answered with index.html; any other path is still a 404.
+        Adding a screen to index.html is enough, with no restart."""
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+        from starlette.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "index.html").write_text(
+                '<section class="view" data-view="users" data-path="/admin/users">'
+                '<section class="card" id="x" data-path="/account/two-factor">'
+            )
+            server = StaticServer(root)
+            client = TestClient(Starlette(routes=[Route("/{path:path}", server.endpoint)]))
+            for path in ("/admin/users", "/admin/users/", "/account/two-factor", "/signed-out/ended"):
+                with self.subTest(path=path):
+                    response = client.get(path)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertIn("data-view", response.text)
+            for path in ("/admin", "/admin/users/x", "/nope", "/signed-out/other", "/users"):
+                with self.subTest(path=path):
+                    self.assertEqual(client.get(path).status_code, 404)
+
+            (root / "index.html").write_text('<section class="view" data-view="logs" data-path="/admin/logs">')
+            self.assertEqual(client.get("/admin/logs").status_code, 200)
+            self.assertEqual(client.get("/admin/users").status_code, 404)
+
+
 class StaticDirTest(unittest.TestCase):
     def test_static_dir_may_not_serve_secrets(self) -> None:
         """S2: everything in static_dir is served without signing in, so the

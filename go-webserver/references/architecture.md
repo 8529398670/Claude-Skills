@@ -724,7 +724,8 @@ half of anything, and anything typed. `logs.Redact` turns `/login/<cred>` and
 `credential`, `csrf_token`, `pin`, `password`, `password_digest`, `challenge`
 and `recovery_code` query values; the referer
 goes through the same. `track.js` sends a form's field *names*, a control's
-`data-i18n` key or id, and only `#hash` hrefs. A part of the page marked
+`data-i18n` key or id, and only hrefs to a
+screen's path. A part of the page marked
 `data-no-track` (the Logs screen itself) is skipped.
 
 **Where it lives.** Files, not bolt: `<app dir>/logs/YYYY-MM-DD.jsonl`, with
@@ -1008,10 +1009,13 @@ limiter exempts: it is light unless this browser saved a dark choice. A 5xx show
 the request id as a reference, and never the cause. It is never cached, since the
 same address may work next time.
 
-**There is no `index.html` fallback.** The app navigates by hash, and the only
-paths it reads are `/login/...` and `/join/...`, which have routes of their own.
-Anything else is a real 404. An app that adds a page with a path of its own must
-register it with `handlers.Static.ServeIndex`, before the catch-all.
+**There is no blanket `index.html` fallback.** Each screen is a path
+(`/admin/users`, `/account/two-factor`) that `index.html` declares with
+`data-path`; the static server reads those paths from the file and serves
+`index.html` for exactly them, plus `/signed-out/invalid|expired|ended`.
+`/login/...` and `/join/...` have routes of their own. Anything else is a real
+404. A new screen needs only its `data-path`; a page with a path of its own
+outside `index.html` gets a route before the catch-all, as `ServeIndex` does.
 
 ## Maintenance mode
 

@@ -6,7 +6,7 @@
 //
 // A stylesheet is swapped in place, so the page keeps its scroll and whatever
 // is open. Any other file needs a reload. On a dev build that happens at once
-// and lands back on the same screen, because screens are the URL's hash; a
+// and lands back on the same screen, because each screen is its own path; a
 // restart of the server (a change to the Go or Python side) reloads too. On a
 // stamped build -- a live site with live_reload: always -- nobody is waiting
 // for their own save, so it is left to Fresh: the page reloads at the next

@@ -130,7 +130,7 @@ const Dom = {
     const view = anchor.closest( ".view" );
     return {
       chain,
-      hash: window.location.hash,
+      path: window.location.pathname,
       view: view && view.classList.contains( "view-active" ) ? view : null,
       scrolled: Dom.scrollIntent,
     };
@@ -138,7 +138,7 @@ const Dom = {
 
   settle( spot ) {
     this.shrinkRunway();
-    if ( !spot || spot.scrolled !== Dom.scrollIntent || spot.hash !== window.location.hash ) return;
+    if ( !spot || spot.scrolled !== Dom.scrollIntent || spot.path !== window.location.pathname ) return;
     if ( spot.view && !spot.view.classList.contains( "view-active" ) ) return;
     const showing = ( node ) => Boolean( node ) && node.isConnected && node.getClientRects().length > 0;
     let target = null;

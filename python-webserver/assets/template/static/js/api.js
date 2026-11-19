@@ -55,7 +55,7 @@ const Api = {
   // nothing on this page can work. Say so, rather than leaving every button to
   // fail one at a time.
   sessionEnded() {
-    window.location.replace( "/?login=ended" );
+    window.location.replace( "/signed-out/ended" );
   },
 
   // A failure on the server's side comes with a reference, which is the one

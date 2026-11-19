@@ -37,10 +37,22 @@ screen that breaks one is not done.
    `<i class="bi bi-<name>" aria-hidden="true"></i>`. Another icon (another
    set, an inline SVG) only when Bootstrap Icons has nothing that fits, with a
    one-line comment saying so. Never emoji as icons.
+5. **URLs are paths.** Every screen, card and page a person can link to is
+   a nested path: `/account`, `/account/two-factor`, `/admin/users`,
+   `/signed-out/ended`. Never route by `#hash` (no `href="#screen"`, no
+   `hashchange`, no setting `location.hash`) and never put `?key=value` on a
+   page's URL to say what it shows. A new screen gets a `data-path` on its
+   `<section class="view">` (a card it can open to gets one too) and its
+   sidebar link points there; the server reads those paths from `index.html`
+   and serves the page for them, so nothing else is registered. `?` belongs
+   only to `/api/` calls (`?limit=&offset=`, `?q=`, `?sort=&dir=`), where it
+   filters what an API answers; `#` only to the skip link and an in-page
+   anchor to a heading (the `/docs/` pages).
 
 `server/static/frontend_rules_test.go` fails on a `max-width` query without `phone-only`, a
 `grid-template-columns` outside the components above, and a table not right
-inside a `.table-responsive`. How much room a table gets and which icons are
+inside a `.table-responsive`, a screen without a `data-path`, and a `#hash`
+route or a `?query` on a page URL. How much room a table gets and which icons are
 used are judgement calls, so those are checked by eye.
 
 ## No build step, ever
@@ -149,7 +161,7 @@ Plain scripts, loaded in dependency order, each adding one global:
 | `shortcuts.js` | Every keyboard shortcut, and the Shortcuts screen where each person changes theirs (saved to their account, shown for their OS). `Shortcuts.register` adds an app's own. |
 | `api.js` | Every call to the server. Attaches cookies and the CSRF token. |
 | `track.js` | Sends the screens and clicks the activity log records. |
-| `nav.js` | The sidebar: which screen the URL hash shows. |
+| `nav.js` | The sidebar: which screen the URL's path shows. |
 | `pager.js` | Fills a table from a paged route, with Load more and an empty row. |
 | `keys.js` | Your API keys card on Account, and the admin's All API keys screen. An example of the rule below. |
 | `mcp.js` | The MCP card on Account: an API key and the setup to paste for Claude Code, Claude Desktop or another client. |
@@ -245,14 +257,18 @@ To upgrade, delete the old files from `static/vendor/` and re-run
   `<summary class="card-header">` holding the `<h3>`, closed by default,
   and fetched only when opened (see `sessions.js`).
   Something about your own account is a card on Account, not a new screen.
-  A hash can name a card (`#two-factor-panel`) and `Nav` opens its screen
-  and scrolls to it; `Nav.moved` keeps the hashes of screens that became
-  cards working.
-  `nav.js` shows the one the URL hash names, so back/forward, reload and a
-  pasted link all work with no router. The screen's own JS decides whether it
+  A card can have a path of its own (`data-path="/account/two-factor"`) and
+  `Nav` opens its screen and scrolls to it; old `#hash` links (`#users`,
+  `#two-factor`) are swapped for their path on load (`Nav.adoptHash`,
+  `Nav.moved`).
+  `nav.js` shows the screen whose `data-path` is the URL's path and moves
+  between screens with `history.pushState`, so back/forward, reload and a
+  pasted link all work. It sends a `nav` event on `window` after each change;
+  a screen that refreshes when opened listens for that. The screen's own JS decides whether it
   exists for this user by un-hiding its section; `Nav.init()` (called last in
   `App.renderSignedIn`) offers only the sections that were un-hidden, and a
-  hash for one that wasn't falls back to `#account`. Admin-only links go
+  path for one that wasn't (or `/`) shows Account and the address bar says
+  `/account`. Admin-only links go
   inside `#sidebar-admin`, whose heading disappears when it has nothing left.
 - **Your account lives in the sidebar, not a header icon.** The first
   sidebar entry is Account, and its second line (`#sidebar-user`) says who is
@@ -453,8 +469,8 @@ screen:
   from `Api.request` (no answer, or a 5xx).
 - `click` on any button, link, `summary`, checkbox or radio (when
   `me.logs_ui_clicks`), named by its `data-i18n` key, else `#id`, else
-  `aria-label`, else the first words of its label. Only `#hash` hrefs are
-  kept: any other href could be a login link.
+  `aria-label`, else the first words of its label. Only hrefs to a screen's
+  path are kept: any other href could be a login link.
 - `submit` with the form's id and its field **names**.
 - `error` from `window.onerror` and unhandled promise rejections.
 
@@ -769,7 +785,7 @@ them rather than by writing them again.
   (`login_links.js`), and is shown only when it is made.
 - **`Dom.download( name , text )`** saves text as a file.
 - **A session that ends.** A 401 from any call but `/api/me`, while someone is
-  signed in, goes to `/?login=ended`, which says why. 401 only ever means "no
+  signed in, goes to `/signed-out/ended`, which says why. 401 only ever means "no
   session": a wrong password is a 400 and a wrong code a 403. A new route must
   keep it that way, or a mistyped code would sign someone out.
 - **The network.** A call that never reached the server fails with

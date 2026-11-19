@@ -157,7 +157,7 @@ const Settings = {
     this.applyFilter();
   },
 
-  // By script rather than a #link, because the hash says which screen this is.
+  // By script rather than a #link: a fragment would put a step in Back.
   // Measured, because the tools above stay on screen and can wrap.
   jumpTo( block ) {
     const tools = document.querySelector( ".settings-tools" );

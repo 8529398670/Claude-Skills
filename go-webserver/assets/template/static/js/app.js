@@ -29,7 +29,7 @@ const App = {
 
     Theme.watchToggle( Dom.get( "theme-toggle" ) ); // feature:!appearance
     Dom.all( "input[type=password]" ).forEach( ( input ) => Dom.revealable( input ) );
-    // Not a plain #main link: the hash is which screen is showing.
+    // Not a plain #main link: a fragment would put a step in Back.
     Dom.get( "skip-link" ).addEventListener( "click" , ( event ) => {
       event.preventDefault();
       Dom.get( "main" ).focus();
@@ -64,17 +64,18 @@ const App = {
 
   renderSignedOut() {
     Dom.show( Dom.get( "signed-out" ) , true );
-    // A failed login lands here with ?login=invalid rather than explaining
-    // what was wrong with the link -- see routes/auth.go.
-    const params = new URLSearchParams( window.location.search );
-    if ( params.get( "login" ) === "invalid" ) {
+    // A failed login lands here on /signed-out/invalid rather than explaining
+    // what was wrong with the link -- see routes/auth.go. A sign-in that took
+    // too long is /signed-out/expired, a session that ended /signed-out/ended.
+    const reason = this.signedOutReason();
+    if ( reason === "invalid" ) {
       const banner = Dom.get( "invalid-link" );
       if ( I18n.get( "signed_out.invalid_link" ) !== "" ) Dom.show( banner , true );
     }
-    if ( params.get( "login" ) === "expired" ) {
+    if ( reason === "expired" ) {
       Dom.show( Dom.get( "sign-in-expired" ) , I18n.get( "signed_out.sign_in_expired" ) !== "" );
     }
-    if ( params.get( "login" ) === "ended" ) {
+    if ( reason === "ended" ) {
       Dom.show( Dom.get( "session-ended" ) , I18n.get( "signed_out.session_ended" ) !== "" );
     }
     Password.initLogin(); // feature:passwords
@@ -91,6 +92,12 @@ const App = {
     } catch ( error ) {
       return "";
     }
+  },
+
+  // "ended" on /signed-out/ended, "" anywhere else.
+  signedOutReason() {
+    const match = /^\/signed-out\/([a-z]+)\/?$/.exec( window.location.pathname );
+    return match ? match[ 1 ] : "";
   },
 
   // Opening a login link only shows this. The link is spent by the POST the
@@ -123,7 +130,7 @@ const App = {
         window.location.replace( "/" );
       } catch ( error ) {
         if ( error.status === 400 ) {
-          window.location.replace( "/?login=invalid" );
+          window.location.replace( "/signed-out/invalid" );
           return;
         }
         // Anything else (rate limited, network) leaves the link unspent,

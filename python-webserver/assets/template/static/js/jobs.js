@@ -15,7 +15,7 @@ const Jobs = {
   async init( me ) {
     if ( !me.is_owner ) return;
     Dom.show( Dom.get( "jobs-panel" ) , true );
-    window.addEventListener( "hashchange" , () => {
+    window.addEventListener( "nav" , () => {
       if ( Nav.current() === "jobs" ) this.refresh();
     } );
     await this.refresh();

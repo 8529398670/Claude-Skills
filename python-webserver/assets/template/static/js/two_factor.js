@@ -33,7 +33,7 @@ const TwoFactor = {
       window.location.replace( "/" );
     } catch ( error ) {
       if ( error.message === "challenge_invalid" ) {
-        window.location.replace( "/?login=expired" );
+        window.location.replace( "/signed-out/expired" );
         return;
       }
       input.value = "";

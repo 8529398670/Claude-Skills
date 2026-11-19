@@ -313,7 +313,7 @@ def build_routes(static_server: StaticServer, live_reload: Watcher | None = None
     if live_reload is not None:
         routes.append(Route("/api/live", live_reload.endpoint))
     return routes + [
-        # Any other /api/ path is a JSON 404, not the index.html fallback.
+        # Any other /api/ path is a JSON 404, never the app page.
         Route("/api/{rest:path}", meta.unknown_api),
         # Catch-all static serving. Must stay last -- it matches every
         # remaining path, so anything added after this line never runs.

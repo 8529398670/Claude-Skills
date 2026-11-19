@@ -8,6 +8,8 @@ the parts a test can see:
   components Bootstrap has no class for.
 - Every table scrolls in its own .table-responsive box, so a wide one never
   makes the page scroll sideways on a phone.
+- URLs are paths: every screen has a data-path, nothing routes by #hash, and
+  no page URL carries a ?query (those belong to /api/ calls).
 
 How much room a table gets and which icons are used are judgement calls with
 good-reason exceptions, so they are written rules and not tested here."""
@@ -90,6 +92,38 @@ class FrontendRulesTest(unittest.TestCase):
                     text,
                     f"{name} builds a table without a .table-responsive box around it (frontend.md, Hard rules)",
                 )
+
+    def test_urls_are_paths(self) -> None:
+        html = read("index.html")
+        sections = re.findall(r'<section\b[^>]*\bdata-view="[^"]*"[^>]*>', html)
+        self.assertTrue(sections)
+        for tag in sections:
+            self.assertRegex(
+                tag,
+                r'data-path="/[a-z0-9-]+(/[a-z0-9-]+)*"',
+                f"index.html: {tag} has no data-path. Every screen is a nested path like /admin/users "
+                "(frontend.md, Hard rules)",
+            )
+        paths = re.findall(r'data-path="([^"]*)"', html)
+        self.assertEqual(len(paths), len(set(paths)), "index.html: two screens or cards share a data-path")
+
+        sources = scripts()
+        for page in sorted(STATIC.glob("*.html")):
+            sources[page.name] = page.read_text(encoding="utf-8")
+        for name, text in sources.items():
+            for found in re.findall(r'href="#([^"]*)"', text):
+                self.assertEqual(
+                    found, "main",
+                    f'{name}: href="#{found}" routes by hash. Link to the screen\'s path instead '
+                    "(frontend.md, Hard rules)",
+                )
+            self.assertNotIn("hashchange", text, f"{name} listens for hashchange. Screens are paths; listen for Nav's \"nav\" event")
+            self.assertNotRegex(text, r"location\.hash\s*=[^=]", f"{name} sets location.hash. Screens are paths (Nav.show)")
+            for url in re.findall(r'(?:location\.(?:replace|assign)\(\s*|location\.href\s*=\s*|href=)"([^"]*)"', text):
+                if url.startswith("/api/") or "?" not in url:
+                    continue
+                self.fail(f"{name}: {url} puts a query on a page URL. Say it with a path, like /signed-out/ended "
+                          "(frontend.md, Hard rules)")
 
 
 if __name__ == "__main__":

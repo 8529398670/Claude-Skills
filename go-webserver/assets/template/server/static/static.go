@@ -26,6 +26,7 @@ import (
 	fs "io/fs"
 	mime "mime"
 	path "path"
+	regexp "regexp"
 	strings "strings"
 
 	fiber "github.com/gofiber/fiber/v3"
@@ -39,6 +40,16 @@ var alwaysFreshExtensions = map[string]bool{
 }
 
 const binaryCacheSeconds = 60 * 60 * 24 * 7 // 7 days
+
+// The paths of the app's screens and cards, as index.html declares them
+// (<section class="view" data-view="users" data-path="/admin/users">).
+var screenPath = regexp.MustCompile( `data-path="/([a-z0-9-]+(?:/[a-z0-9-]+)*)"` )
+
+// The signed-out page says why someone is there by its path: a login link that
+// did not work, a sign-in that took too long, a session that ended.
+var signedOutPaths = map[string]bool{
+	"signed-out/invalid": true, "signed-out/expired": true, "signed-out/ended": true,
+}
 
 // Go's built-in MIME table has no web fonts, and the OS one it consults (if
 // any) varies by machine. The vendored icon font needs these.
@@ -131,15 +142,19 @@ func contentType( name string ) ( result string ) {
 // everything, so any route declared after it is unreachable.
 func ( server *Server ) Handler( c fiber.Ctx ) ( err error ) {
 	request_path := c.Params( "*" )
+	page := strings.Trim( request_path , "/" )
 	if request_path == "" || strings.HasSuffix( request_path , "/" ) {
 		request_path = path.Join( request_path , server.indexFile )
 	}
 
-	// No fallback to index.html. The app navigates by hash, and the two paths
-	// it does read have their own routes (/login/*, /join/*), so anything else
-	// is a real 404. An app that adds a path-routed page registers it with
-	// ServeIndex, before this handler.
+	// No blanket fallback to index.html. Each screen is a path (/admin/users)
+	// that index.html declares; those, and the signed-out reasons, get
+	// index.html, and anything else is a real 404. The pages with a
+	// credential in the path have their own routes (/login/*, /join/*).
 	name , ok := resolve( request_path )
+	if ( ok == false || server.isFile( name ) == false ) && ( signedOutPaths[ page ] || server.IsScreen( page ) ) {
+		name , ok = server.indexFile , true
+	}
 	if ok == false || server.isFile( name ) == false {
 		err = server.NotFound( c )
 		return
@@ -156,6 +171,23 @@ func ( server *Server ) Handler( c fiber.Ctx ) ( err error ) {
 	}
 
 	err = server.sendText( c , name , true )
+	return
+}
+
+// IsScreen reports whether index.html declares page (no leading slash) as a
+// screen's or card's data-path. index.html is read each time, so a pruned
+// feature or a new screen needs nothing registered here, and only a path with
+// no file behind it ever asks.
+func ( server *Server ) IsScreen( page string ) ( result bool ) {
+	if page == "" { return }
+	body , read_err := fs.ReadFile( server.fsys , server.indexFile )
+	if read_err != nil { return }
+	for _ , match := range screenPath.FindAllSubmatch( body , -1 ) {
+		if string( match[ 1 ] ) == page {
+			result = true
+			return
+		}
+	}
 	return
 }
 

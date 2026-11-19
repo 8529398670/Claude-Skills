@@ -95,8 +95,9 @@ project.
   kept by a test: Bootstrap's grid (`.row` / `.col-*`), utilities and
   components for everything they cover; mobile first (the phone is the base,
   wider screens only add); a table takes the most room on its screen unless
-  there is a good reason; Bootstrap Icons unless none fits. See "Hard rules"
-  in `references/frontend.md`.
+  there is a good reason; Bootstrap Icons unless none fits; URLs are nested
+  paths (`/admin/users`), never `#screen` or `?key=` on a page. See "Hard
+  rules" in `references/frontend.md`.
 - **Docker, never compose.** One hardened Alpine image, one `docker/run.sh`.
 - **`scripts/run.sh` just makes it run** outside Docker, from the checkout:
   it stops the copy it started last and starts a fresh one in the foreground
@@ -420,7 +421,7 @@ ports they ran on. Do not reset either to a shared value.
     css/style.css             # overrides on top of Bootstrap: color tokens, shell
     js/theme.js               # themes and their worked-out colors, applied before first paint
     js/themes_editor.js       # Appearance screen: own themes, admin defaults, color pickers
-    js/nav.js                 # sidebar: shows the screen the URL hash names
+    js/nav.js                 # sidebar: shows the screen the URL's path names
     js/undo.js                # Ctrl+Z / Ctrl+Y history every screen records into
     js/shortcuts.js           # every shortcut; the per-user Shortcuts screen
     js/track.js               # sends what people do on the page to the log
@@ -461,9 +462,9 @@ but stay consistent with the patterns already there:
   project. Switch it on (Settings, or `scripts/run.sh config set files.enabled
   true`). Never rebuild something the template has, and never scaffold again to
   get it. Switching one off again keeps its data.
-- **New screens** are a `<section class="view" data-view="name">` in
-  `index.html` holding a heading and one card per job, plus a sidebar link to
-  `#name` (see `references/frontend.md`). A form and the list it fills are two
+- **New screens** are a `<section class="view" data-view="name"
+  data-path="/area/name">` in `index.html` holding a heading and one card per
+  job, plus a sidebar link to that path (see `references/frontend.md`). A form and the list it fills are two
   cards. Never divide a card with `<hr>`. Settings for your own account are a
   new card on Account, not a new screen.
   Give each its own file in `static/js/` with its own `init()`, included

@@ -18,6 +18,8 @@ import (
 //     few components Bootstrap has no class for.
 //   - Every table scrolls in its own .table-responsive box, so a wide one never
 //     makes the page scroll sideways on a phone.
+//   - URLs are paths: every screen has a data-path, nothing routes by #hash,
+//     and no page URL carries a ?query (those belong to /api/ calls).
 //
 // How much room a table gets and which icons are used are judgement calls with
 // good-reason exceptions, so they are written rules and not tested here.
@@ -109,6 +111,52 @@ func TestEveryTableScrollsInItsOwnBox( t *testing.T ) {
 	for name , text := range frontendScripts( t ) {
 		if strings.Contains( text , `Dom.el( "table"` ) && !strings.Contains( text , `"table-responsive"` ) {
 			t.Errorf( "%s builds a table without a .table-responsive box around it (frontend.md, Hard rules)" , name )
+		}
+	}
+}
+
+func TestURLsArePaths( t *testing.T ) {
+	html := readFrontend( t , "index.html" )
+	sections := regexp.MustCompile( `<section\b[^>]*\bdata-view="[^"]*"[^>]*>` ).FindAllString( html , -1 )
+	if len( sections ) == 0 { t.Fatal( "index.html: no screens found" ) }
+	hasPath := regexp.MustCompile( `data-path="/[a-z0-9-]+(/[a-z0-9-]+)*"` )
+	for _ , tag := range sections {
+		if !hasPath.MatchString( tag ) {
+			t.Errorf( "index.html: %s has no data-path. Every screen is a nested path like /admin/users (frontend.md, Hard rules)" , tag )
+		}
+	}
+	seen := map[ string ]bool{}
+	for _ , match := range regexp.MustCompile( `data-path="([^"]*)"` ).FindAllStringSubmatch( html , -1 ) {
+		if seen[ match[ 1 ] ] { t.Errorf( "index.html: two screens or cards share data-path %q" , match[ 1 ] ) }
+		seen[ match[ 1 ] ] = true
+	}
+
+	sources := frontendScripts( t )
+	pages , err := filepath.Glob( filepath.Join( frontendRoot , "*.html" ) )
+	if err != nil { t.Fatal( err ) }
+	for _ , page := range pages {
+		data , err := os.ReadFile( page )
+		if err != nil { t.Fatal( err ) }
+		sources[ filepath.Base( page ) ] = string( data )
+	}
+	hashHref := regexp.MustCompile( `href="#([^"]*)"` )
+	setHash := regexp.MustCompile( `location\.hash\s*=[^=]` )
+	pageURL := regexp.MustCompile( `(?:location\.(?:replace|assign)\(\s*|location\.href\s*=\s*|href=)"([^"]*)"` )
+	for name , text := range sources {
+		for _ , match := range hashHref.FindAllStringSubmatch( text , -1 ) {
+			if match[ 1 ] != "main" {
+				t.Errorf( "%s: href=\"#%s\" routes by hash. Link to the screen's path instead (frontend.md, Hard rules)" , name , match[ 1 ] )
+			}
+		}
+		if strings.Contains( text , "hashchange" ) {
+			t.Errorf( "%s listens for hashchange. Screens are paths; listen for Nav's \"nav\" event" , name )
+		}
+		if setHash.MatchString( text ) {
+			t.Errorf( "%s sets location.hash. Screens are paths (Nav.show)" , name )
+		}
+		for _ , match := range pageURL.FindAllStringSubmatch( text , -1 ) {
+			if strings.HasPrefix( match[ 1 ] , "/api/" ) || !strings.Contains( match[ 1 ] , "?" ) { continue }
+			t.Errorf( "%s: %s puts a query on a page URL. Say it with a path, like /signed-out/ended (frontend.md, Hard rules)" , name , match[ 1 ] )
 		}
 	}
 }

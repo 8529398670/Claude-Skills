@@ -22,6 +22,7 @@ import gzip
 import hashlib
 import mimetypes
 import posixpath
+import re
 from pathlib import Path
 
 from starlette.concurrency import run_in_threadpool
@@ -37,6 +38,14 @@ ALWAYS_FRESH_EXTENSIONS = {
 }
 
 BINARY_CACHE_SECONDS = 60 * 60 * 24 * 7  # 7 days
+
+# The paths of the app's screens and cards, as index.html declares them
+# (<section class="view" data-view="users" data-path="/admin/users">).
+SCREEN_PATH = re.compile(r'data-path="/([a-z0-9-]+(?:/[a-z0-9-]+)*)"')
+
+# The signed-out page says why someone is there by its path: a login link that
+# did not work, a sign-in that took too long, a session that ended.
+SIGNED_OUT_PATHS = frozenset({"signed-out/invalid", "signed-out/expired", "signed-out/ended"})
 
 # The platform's MIME table varies; these are the ones the frontend relies on.
 mimetypes.add_type("text/javascript", ".js")
@@ -54,7 +63,7 @@ def has_dot_dot(request_path: str) -> bool:
 
     The resolved-path check in resolve() is the real guarantee -- nothing can
     escape the root without it. This exists so such a request answers 404
-    directly instead of falling through to the index.html fallback, which is
+    directly instead of being looked up as a screen path, which is
     clearer to whoever reads the access log, and so the intent is stated
     rather than left implicit."""
     return ".." in request_path.replace("\\", "/").split("/")
@@ -107,14 +116,16 @@ class StaticServer:
     def __init__(self, root: Path, index_file: str = "index.html") -> None:
         self.root = root.resolve()
         self.index_file = index_file
+        # index.html's paths, kept until the file changes.
+        self._screens: tuple[int, frozenset[str]] = (-1, frozenset())
 
     def resolve(self, request_path: str) -> Path | None:
         """Turn a request path into a file path under the root, or None. The
         final check verifies where the path actually landed (after symlinks)
         rather than trying to blocklist how it got there.
 
-        Every file this server sends comes through here, the index.html
-        fallback included -- a path built by hand and served without this
+        Every file this server sends comes through here, index.html for a
+        screen path included -- a path built by hand and served without this
         check is how a symlinked static/index.html pointing at ../config/config.yaml
         would reach a visitor. Static content should still be writable only by
         whoever deploys the app: the check runs before the read, so a writer
@@ -128,6 +139,20 @@ class StaticServer:
         if not candidate.is_relative_to(self.root):
             return None
         return candidate
+
+    def screen_paths(self) -> frozenset[str]:
+        """The paths index.html declares with data-path, without the leading
+        slash. Read again whenever the file changes, so a pruned feature or a
+        new screen needs nothing registered here."""
+        path = self.resolve(self.index_file)
+        try:
+            stamp = path.stat().st_mtime_ns if path is not None else -1
+            if stamp != self._screens[0]:
+                found = frozenset(SCREEN_PATH.findall(path.read_text(encoding="utf-8")))
+                self._screens = (stamp, found)
+        except OSError:
+            return frozenset()
+        return self._screens[1]
 
     def _read_text_asset(self, path: Path, accepts_gzip: bool, if_none_match: str) -> tuple[bytes | None, str, bool]:
         """The body to send (None for a 304), its tag, and whether it is gzipped.
@@ -147,14 +172,18 @@ class StaticServer:
         """The catch-all. Registered last: it matches everything, so any route
         declared after it is unreachable."""
         request_path = request.path_params.get("path", "")
+        page = request_path.strip("/")
         if request_path == "" or request_path.endswith("/"):
             request_path = posixpath.join(request_path, self.index_file)
 
-        # No fallback to index.html. The app navigates by hash, and the two
-        # paths it does read have their own routes (/login/..., /join/...), so
-        # anything else is a real 404. An app that adds a path-routed page
-        # gives it a route before this one, as serve_login_page does.
+        # No blanket fallback to index.html. Each screen is a path
+        # (/admin/users) that index.html declares; those, and the signed-out
+        # reasons, get index.html, and anything else is a real 404. The pages
+        # with a credential in the path have their own routes (/login/...,
+        # /join/...).
         path = self.resolve(request_path)
+        if (path is None or not path.is_file()) and (page in SIGNED_OUT_PATHS or page in await run_in_threadpool(self.screen_paths)):
+            path = self.resolve(self.index_file)
         if path is None or not path.is_file():
             return _not_found(request)
 

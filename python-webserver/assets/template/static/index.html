@@ -67,21 +67,21 @@
       <div class="offcanvas-body">
         <nav id="sidebar-nav" class="nav nav-pills flex-column w-100 gap-1" data-i18n-attr="aria-label:nav.sidebar_label">
           <!-- Account, first: its second line names who is signed in (App.labelAccount). -->
-          <a class="nav-link" href="#account" data-nav="account"><i class="bi bi-person-circle" aria-hidden="true"></i><span class="nav-link-text"><span data-i18n="nav.account"></span><span id="sidebar-user" class="nav-link-sub"></span></span></a>
-          <a class="nav-link" href="#appearance" data-nav="appearance"><i class="bi bi-palette" aria-hidden="true"></i><span data-i18n="nav.appearance"></span></a> <!-- feature:appearance -->
-          <a class="nav-link" href="#shortcuts" data-nav="shortcuts"><i class="bi bi-keyboard" aria-hidden="true"></i><span data-i18n="nav.shortcuts"></span></a> <!-- feature:shortcuts -->
-          <a class="nav-link" href="#files" data-nav="files"><i class="bi bi-folder" aria-hidden="true"></i><span data-i18n="nav.files"></span></a> <!-- feature:files -->
-          <a class="nav-link" href="#about" data-nav="about"><i class="bi bi-info-circle" aria-hidden="true"></i><span data-i18n="nav.about"></span></a> <!-- feature:about -->
+          <a class="nav-link" href="/account" data-nav="account"><i class="bi bi-person-circle" aria-hidden="true"></i><span class="nav-link-text"><span data-i18n="nav.account"></span><span id="sidebar-user" class="nav-link-sub"></span></span></a>
+          <a class="nav-link" href="/appearance" data-nav="appearance"><i class="bi bi-palette" aria-hidden="true"></i><span data-i18n="nav.appearance"></span></a> <!-- feature:appearance -->
+          <a class="nav-link" href="/shortcuts" data-nav="shortcuts"><i class="bi bi-keyboard" aria-hidden="true"></i><span data-i18n="nav.shortcuts"></span></a> <!-- feature:shortcuts -->
+          <a class="nav-link" href="/files" data-nav="files"><i class="bi bi-folder" aria-hidden="true"></i><span data-i18n="nav.files"></span></a> <!-- feature:files -->
+          <a class="nav-link" href="/about" data-nav="about"><i class="bi bi-info-circle" aria-hidden="true"></i><span data-i18n="nav.about"></span></a> <!-- feature:about -->
 
           <div id="sidebar-admin" class="sidebar-group" hidden>
             <h3 class="sidebar-heading" data-i18n="nav.admin_heading"></h3>
-            <a class="nav-link" href="#users" data-nav="users"><i class="bi bi-people" aria-hidden="true"></i><span data-i18n="nav.users"></span></a>
-            <a class="nav-link" href="#invite-links" data-nav="invite-links"><i class="bi bi-link-45deg" aria-hidden="true"></i><span data-i18n="nav.invite_links"></span></a> <!-- feature:invite_links -->
-            <a class="nav-link" href="#all-keys" data-nav="all-keys"><i class="bi bi-shield-lock" aria-hidden="true"></i><span data-i18n="nav.all_keys"></span></a> <!-- feature:api_keys -->
-            <a class="nav-link" href="#logs" data-nav="logs"><i class="bi bi-journal-text" aria-hidden="true"></i><span data-i18n="nav.logs"></span></a> <!-- feature:logs -->
-            <a class="nav-link" href="#jobs" data-nav="jobs"><i class="bi bi-clock-history" aria-hidden="true"></i><span data-i18n="nav.jobs"></span></a> <!-- feature:jobs -->
-            <a class="nav-link" href="#webhooks" data-nav="webhooks"><i class="bi bi-broadcast" aria-hidden="true"></i><span data-i18n="nav.webhooks"></span></a> <!-- feature:webhooks -->
-            <a class="nav-link" href="#settings" data-nav="settings"><i class="bi bi-sliders" aria-hidden="true"></i><span data-i18n="nav.settings"></span></a> <!-- feature:settings -->
+            <a class="nav-link" href="/admin/users" data-nav="users"><i class="bi bi-people" aria-hidden="true"></i><span data-i18n="nav.users"></span></a>
+            <a class="nav-link" href="/admin/invite-links" data-nav="invite-links"><i class="bi bi-link-45deg" aria-hidden="true"></i><span data-i18n="nav.invite_links"></span></a> <!-- feature:invite_links -->
+            <a class="nav-link" href="/admin/api-keys" data-nav="all-keys"><i class="bi bi-shield-lock" aria-hidden="true"></i><span data-i18n="nav.all_keys"></span></a> <!-- feature:api_keys -->
+            <a class="nav-link" href="/admin/logs" data-nav="logs"><i class="bi bi-journal-text" aria-hidden="true"></i><span data-i18n="nav.logs"></span></a> <!-- feature:logs -->
+            <a class="nav-link" href="/admin/jobs" data-nav="jobs"><i class="bi bi-clock-history" aria-hidden="true"></i><span data-i18n="nav.jobs"></span></a> <!-- feature:jobs -->
+            <a class="nav-link" href="/admin/webhooks" data-nav="webhooks"><i class="bi bi-broadcast" aria-hidden="true"></i><span data-i18n="nav.webhooks"></span></a> <!-- feature:webhooks -->
+            <a class="nav-link" href="/admin/settings" data-nav="settings"><i class="bi bi-sliders" aria-hidden="true"></i><span data-i18n="nav.settings"></span></a> <!-- feature:settings -->
           </div>
           <p id="sidebar-version" class="sidebar-version" hidden></p>
         </nav>
@@ -223,7 +223,7 @@
       <section id="signed-in" hidden>
         <!-- Everything about you: who you are, how you sign in, and what can
              act as you. A feature's card stays hidden until its own JS shows it. -->
-        <section class="view" data-view="account" id="account-panel">
+        <section class="view" data-view="account" data-path="/account" id="account-panel">
           <h2 class="view-title" data-i18n="account.heading"></h2>
 
 
@@ -270,7 +270,7 @@
 
           <!-- >>> feature:passwords -->
           <!-- Only while the owner has auth.passwords on; see password.js. -->
-          <section class="card" id="password-panel" hidden>
+          <section class="card" id="password-panel" data-path="/account/password" hidden>
             <div class="card-body">
               <h3 class="card-title" data-i18n="password.heading"></h3>
               <p class="text-body-secondary" data-i18n="password.description"></p>
@@ -308,7 +308,7 @@
           <!-- <<< feature:passwords -->
           <!-- >>> feature:invite_links -->
           <!-- Only for non-admin accounts; see pin.js. -->
-          <section class="card" id="pin-panel" hidden>
+          <section class="card" id="pin-panel" data-path="/account/pin" hidden>
             <div class="card-body">
               <h3 class="card-title" data-i18n="pin.heading"></h3>
               <p class="text-body-secondary" data-i18n="pin.description"></p>
@@ -330,7 +330,7 @@
           <!-- <<< feature:invite_links -->
           <!-- >>> feature:two_factor -->
           <!-- Only while the owner has auth.two_factor on; see two_factor.js. -->
-          <section class="card" id="two-factor-panel" hidden>
+          <section class="card" id="two-factor-panel" data-path="/account/two-factor" hidden>
             <div class="card-body">
               <h3 class="card-title" data-i18n="two_factor.heading"></h3>
               <p class="text-body-secondary" data-i18n="two_factor.description"></p>
@@ -381,7 +381,7 @@
             select is revealed only for an admin (see keys.js) because a key can
             never carry more permission than the account that owns it.
           -->
-          <section class="card" id="api-keys-panel" hidden>
+          <section class="card" id="api-keys-panel" data-path="/account/api-keys" hidden>
             <div class="card-body">
               <h3 class="card-title" data-i18n="api_keys.heading"></h3>
               <p class="text-body-secondary" data-i18n="api_keys.description"></p>
@@ -569,7 +569,7 @@
         <!-- >>> feature:appearance -->
         <!-- Your themes, and for admins the defaults everyone starts from.
              Drawn by themes_editor.js; see theme.js for where they are kept. -->
-        <section class="view view-full" data-view="appearance" id="appearance">
+        <section class="view view-full" data-view="appearance" data-path="/appearance" id="appearance">
           <h2 class="view-title" data-i18n="theme.heading"></h2>
           <ul class="nav nav-tabs mb-3" id="theme-tabs" role="tablist" hidden>
             <li class="nav-item" role="presentation">
@@ -596,7 +596,7 @@
         <!-- <<< feature:appearance -->
         <!-- >>> feature:shortcuts -->
         <!-- Each person's own keys, saved to their account. See shortcuts.js. -->
-        <section class="view" data-view="shortcuts" id="shortcuts">
+        <section class="view" data-view="shortcuts" data-path="/shortcuts" id="shortcuts">
           <h2 class="view-title" data-i18n="shortcuts.heading"></h2>
           <section class="card">
             <div class="card-body">
@@ -622,7 +622,7 @@
 
         <!-- <<< feature:shortcuts -->
         <!-- >>> feature:files -->
-        <section class="view view-wide" data-view="files" id="files-panel" hidden>
+        <section class="view view-wide" data-view="files" data-path="/files" id="files-panel" hidden>
           <h2 class="view-title" data-i18n="files.heading"></h2>
           <p class="view-description" data-i18n="files.description"></p>
 
@@ -693,7 +693,7 @@
         <!-- What this app is and where it comes from: app.description, the
              version, app.repo and the API reference. Shown only when
              app.show_about is on. See about.js. -->
-        <section class="view" data-view="about" id="about-panel" hidden>
+        <section class="view" data-view="about" data-path="/about" id="about-panel" hidden>
           <h2 class="view-title" data-i18n="about.heading"></h2>
           <section class="card">
             <div class="card-body">
@@ -713,7 +713,7 @@
         </section>
 
         <!-- <<< feature:about -->
-        <section class="view" data-view="users" id="admin-panel" hidden>
+        <section class="view" data-view="users" data-path="/admin/users" id="admin-panel" hidden>
           <h2 class="view-title" data-i18n="admin.heading"></h2>
           <p class="view-description" data-i18n="admin.description"></p>
 
@@ -817,7 +817,7 @@
 
         <!-- >>> feature:invite_links -->
         <!-- One link a whole group can join through; see invites.js. -->
-        <section class="view" data-view="invite-links" id="invite-links-panel" hidden>
+        <section class="view" data-view="invite-links" data-path="/admin/invite-links" id="invite-links-panel" hidden>
           <h2 class="view-title" data-i18n="invite_links.heading"></h2>
           <p class="view-description" data-i18n="invite_links.description"></p>
 
@@ -887,7 +887,7 @@
         <!-- >>> feature:api_keys -->
         <!-- Every key in the app, whoever owns it: the admin answer to "what
              has standing access", and where a lost laptop's key gets killed. -->
-        <section class="view" data-view="all-keys" id="admin-keys-panel" hidden>
+        <section class="view" data-view="all-keys" data-path="/admin/api-keys" id="admin-keys-panel" hidden>
           <h2 class="view-title" data-i18n="admin_keys.heading"></h2>
           <p class="view-description" data-i18n="admin_keys.description"></p>
 
@@ -972,7 +972,7 @@
         <!-- >>> feature:logs -->
         <!-- The activity log, owner only; see logs.js. data-no-track keeps
              reading the log from writing to it (track.js). -->
-        <section class="view view-full" data-view="logs" id="logs-panel" data-no-track hidden>
+        <section class="view view-full" data-view="logs" data-path="/admin/logs" id="logs-panel" data-no-track hidden>
           <h2 class="view-title" data-i18n="logs.heading"></h2>
           <p class="view-description" data-i18n="logs.description"></p>
 
@@ -1059,7 +1059,7 @@
         <!-- <<< feature:logs -->
         <!-- >>> feature:webhooks -->
         <!-- Telling other systems what happens here, owner only; see webhooks.js. -->
-        <section class="view" data-view="webhooks" id="webhooks-panel" hidden>
+        <section class="view" data-view="webhooks" data-path="/admin/webhooks" id="webhooks-panel" hidden>
           <h2 class="view-title" data-i18n="webhooks.heading"></h2>
           <p class="view-description" data-i18n="webhooks.description"></p>
 
@@ -1155,7 +1155,7 @@
         <!-- <<< feature:webhooks -->
         <!-- >>> feature:jobs -->
         <!-- Background jobs, owner only; see jobs.js. -->
-        <section class="view" data-view="jobs" id="jobs-panel" hidden>
+        <section class="view" data-view="jobs" data-path="/admin/jobs" id="jobs-panel" hidden>
           <h2 class="view-title" data-i18n="jobs.heading"></h2>
           <p class="view-description" data-i18n="jobs.description"></p>
           <section class="card">
@@ -1182,7 +1182,7 @@
         <!-- <<< feature:jobs -->
         <!-- >>> feature:settings -->
         <!-- Owner only: config.yaml, one field per setting. See js/settings.js. -->
-        <section class="view" data-view="settings" id="settings-panel" hidden>
+        <section class="view" data-view="settings" data-path="/admin/settings" id="settings-panel" hidden>
           <h2 class="view-title" data-i18n="settings.heading"></h2>
           <p class="view-description" data-i18n="settings.description"></p>
           <section class="card">
@@ -1262,7 +1262,7 @@
           <dl id="shortcut-list" class="shortcut-list mb-0"></dl>
         </div>
         <div class="modal-footer">
-          <a id="shortcuts-list-change" href="#shortcuts" class="btn btn-link" data-i18n="shortcuts.list_change" hidden></a>
+          <a id="shortcuts-list-change" href="/shortcuts" class="btn btn-link" data-i18n="shortcuts.list_change" hidden></a>
         </div>
       </div>
     </div>

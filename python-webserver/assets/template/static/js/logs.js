@@ -48,7 +48,7 @@ const Logs = {
     Dom.get( "logs-live" ).addEventListener( "click" , () => this.toggleLive() );
     Dom.onPress( Dom.get( "logs-prune" ) , () => this.onPrune() );
     Dom.onPress( Dom.get( "ip-names-add" ) , () => this.onNameIp( "" , "" ) );
-    window.addEventListener( "hashchange" , () => this.followScreen() );
+    window.addEventListener( "nav" , () => this.followScreen() );
     // The calendar's popup keeps 16px from the window's edges, so on a phone
     // it does not run into the side of the screen. Clicks inside it (the month
     // arrows) leave it open; a picked day closes it (pick).
