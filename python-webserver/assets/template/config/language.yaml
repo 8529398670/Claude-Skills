@@ -31,6 +31,9 @@ nav:
   # Foot of the sidebar, for admins.
   version: "Version {version}"
   account: "Account"
+  # Under the account's name in the sidebar, for a viewer: it can look at
+  # everything and change nothing, and the controls that would are hidden.
+  view_only: "View only"
   appearance: "Appearance" # feature:appearance
   shortcuts: "Shortcuts" # feature:shortcuts
   files: "Files" # feature:files
@@ -458,6 +461,7 @@ admin:
   new_name_placeholder: "Their name"
   new_role_label: "Role"
   role_user: "user"
+  role_viewer: "viewer (can only look)"
   role_admin: "admin"
   create_button: "Create login link"
   link_notice: "{summary}. Send it now: it is shown once and cannot be recovered, and any earlier link for this person has stopped working."
@@ -469,6 +473,12 @@ admin:
   table_actions: "Actions"
   status_active: "active"
   status_disabled: "disabled"
+  status_expired: "expired"
+  # Under the status of an account that has an expiry. {when} is the date.
+  expires_line: "expires {when}"
+  # The role picker on each row, and what it asks before changing it.
+  role_select_label: "Role of {name}"
+  role_confirm: "Make {name} {role}? It applies at once. Becoming an admin signs them out everywhere."
   two_factor_badge: "2FA" # feature:two_factor
   reissue_button: "New link"
   # The New link dialog: its heading, and the line under the choices.
@@ -489,8 +499,6 @@ admin:
   # {name} is replaced with the account's display name.
   reset_two_factor_confirm: "Turn off two-factor sign-in for {name}? Do this only if you are sure it is them asking."
   # <<< feature:two_factor
-  make_admin_button: "Make admin"
-  make_user_button: "Make user"
   make_admin_confirm: "Make {name} an admin? They can then manage accounts. This signs them out everywhere and stops their login link, so send them a new link. They can no longer sign in through an invite link." # feature:invite_links
   make_admin_confirm: "Make {name} an admin? They can then manage accounts. This signs them out everywhere and stops their login link, so send them a new link." # feature:!invite_links
   # >>> feature:api_keys
@@ -534,6 +542,7 @@ api_keys:
   name_placeholder: "Bot-1"
   role_label: "Permission"
   role_user: "user"
+  role_viewer: "viewer (can only look)"
   role_admin: "admin (can manage accounts)"
   # >>> feature:openapi
   # Under the description, with a link to the API reference: api.json in
@@ -576,6 +585,15 @@ api_keys:
   sign_in_confirm: "Let this key make sign-in links for your account? Whoever holds the key could then open a browser signed in as you, with everything you can do there. Each link works once, for 15 minutes. You can turn this off again at any time."
   sign_in_turned_on: "This key can now make sign-in links."
   sign_in_turned_off: "This key can no longer make sign-in links. Any unused link it made has stopped working."
+  # The owner's switch for letting one of the owner's admin keys mint keys
+  # for other accounts, as an outside admin tool needs.
+  mint_off_button: "Key minting: off"
+  mint_on_button: "Key minting: on"
+  status_mint: "mints keys"
+  minted_by: "minted by key {key}"
+  mint_confirm: "Let this key mint and revoke API keys for every other account? Whoever holds it can then act as anyone but you, through the keys it makes. Every key it mints is revoked when you revoke this one."
+  mint_turned_on: "This key can now mint keys."
+  mint_turned_off: "This key can no longer mint keys. The keys it already minted keep working until you revoke this one."
   revoke_button: "Revoke"
   # Empty this string to stop asking for confirmation before revoking.
   revoke_confirm: "Revoke this key? Anything using it stops working immediately."
@@ -705,6 +723,9 @@ invite_links:
   label_placeholder: "Group-1"
   uses_label: "Places"
   days_label: "Works for (days)"
+  role_label: "Joins as"
+  role_user: "user"
+  role_viewer: "viewer (can only look)"
   create_button: "Create invite link"
   link_notice: "Share this link with the group. It is shown once and cannot be recovered. Anyone holding it can join, so switch it off below if it goes somewhere it should not."
   copy_button: "Copy"

@@ -11,10 +11,11 @@ change it guards.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime
 
 from app.core.db import BUCKET_USERS, Store, Transaction
 from app.core.db import BUCKET_API_KEYS  # feature:api_keys
-from app.models import to_iso, utc_now
+from app.models import from_iso, to_iso, utc_now
 from app.models.api_keys import APIKey, void_what_keys_made_tx  # feature:api_keys
 from app.models.login_tokens import delete_login_tokens_for_user, delete_pending_login_tokens
 from app.models.sessions import destroy_sessions_for_user
@@ -206,27 +207,35 @@ def revoke_all_credentials(store: Store, user_id: int, allow_owner: bool = False
         if not allow_owner:
             _refuse_owner(tx, user_id)
         may_act_on_tx(tx, actor_id, record)
-        revoked = Revoked(
-            sessions=destroy_sessions_for_user(tx, user_id),
-            login_links=delete_pending_login_tokens(tx, user_id),
-            passwords=1 if record.get("password_hash", "") != "" else 0,  # feature:passwords
-        )
-        delete_challenges_for_user(tx, user_id)  # feature:two_factor
-        # >>> feature:passwords
-        record["password_hash"] = ""
-        tx.put(BUCKET_USERS, user_id, record)
-        # <<< feature:passwords
-        # >>> feature:api_keys
-        now = to_iso(utc_now())
-        for key_id, record in tx.all(BUCKET_API_KEYS):
-            if record["user_id"] == user_id and APIKey.from_record(record).live:
-                record["revoked_at"] = now
-                tx.put(BUCKET_API_KEYS, key_id, record)
-                revoked.api_keys += 1
-        # What those keys made in other accounts -- links not yet used, and
-        # the browsers those signed in -- ends with them (S22).
-        void_what_keys_made_tx(tx, user_id)
-        # <<< feature:api_keys
+        return _revoke_all_tx(tx, user_id, record)
+
+
+def _revoke_all_tx(tx: Transaction, user_id: int, record: dict) -> Revoked:
+    """revoke_all_credentials' work, inside the caller's transaction, for it
+    and for an account expiring (expire_due_accounts). record is the
+    account's row, written back when the password goes."""
+    revoked = Revoked(
+        sessions=destroy_sessions_for_user(tx, user_id),
+        login_links=delete_pending_login_tokens(tx, user_id),
+        passwords=1 if record.get("password_hash", "") != "" else 0,  # feature:passwords
+    )
+    delete_challenges_for_user(tx, user_id)  # feature:two_factor
+    # >>> feature:passwords
+    record["password_hash"] = ""
+    tx.put(BUCKET_USERS, user_id, record)
+    # <<< feature:passwords
+    # >>> feature:api_keys
+    now = to_iso(utc_now())
+    for key_id, key_record in tx.all(BUCKET_API_KEYS):
+        if key_record["user_id"] == user_id and APIKey.from_record(key_record).live:
+            key_record["revoked_at"] = now
+            tx.put(BUCKET_API_KEYS, key_id, key_record)
+            revoked.api_keys += 1
+    # What those keys made in other accounts -- links not yet used, the
+    # browsers those signed in, and the keys they minted, all the way
+    # down -- ends with them (S22).
+    void_what_keys_made_tx(tx, user_id)
+    # <<< feature:api_keys
     return revoked
 
 
@@ -273,6 +282,73 @@ def delete_user(store: Store, user_id: int, actor_id: int | None) -> Revoked | N
         delete_challenges_for_user(tx, user_id)  # feature:two_factor
         tx.delete(BUCKET_USERS, user_id)
     return removed
+
+
+class ExpiryPastError(Exception):
+    """An expiry that is not in the future."""
+
+    def __init__(self) -> None:
+        super().__init__("expires_at must be in the future")
+
+
+class OwnerExpiryError(Exception):
+    """The owner is always an enabled admin, so it never expires."""
+
+    def __init__(self) -> None:
+        super().__init__("the owner's account cannot expire")
+
+
+def set_user_expiry(store: Store, user_id: int, actor_id: int | None, expires_at: datetime | None) -> bool:
+    """Set when an account stops working, or None for never; False if there
+    is no such account. The owner never expires (OwnerExpiryError), and
+    otherwise the ladder is may_act_on_tx's: only the owner sets an admin's.
+    A time not in the future is ExpiryPastError: switching an account off now
+    is what disabling is for.
+
+    Clearing or moving the expiry of an account housekeeping already
+    disabled for expiring does not switch it back on: that is the separate,
+    deliberate POST /api/admin/users/{id}/disabled."""
+    if expires_at is not None and expires_at <= utc_now():
+        raise ExpiryPastError()
+    with store.transaction() as tx:
+        record = tx.get(BUCKET_USERS, user_id)
+        if record is None:
+            return False
+        if owner_id_tx(tx) == user_id:
+            raise OwnerExpiryError()
+        may_act_on_tx(tx, actor_id, record)
+        record["expires_at"] = to_iso(expires_at)
+        tx.put(BUCKET_USERS, user_id, record)
+    return True
+
+
+def expire_due_accounts(store: Store) -> int:
+    """Housekeeping for account expiry: every account past its expiry that is
+    not disabled yet is disabled and has its access revoked, as
+    revoke_all_credentials does, each in its own transaction. Such an
+    account was already refused everywhere (User.disabled reads the expiry);
+    this makes it final, so the record no longer depends on the clock and
+    nothing it held lingers. The owner is skipped: it never expires (see
+    users.transfer_owner). Returns how many accounts it disabled."""
+    now = utc_now()
+    due = [
+        user.id for user in (User.from_record(record) for _, record in store.all(BUCKET_USERS))
+        if user.disabled_at is None and user.expires_at is not None and user.expires_at <= now
+    ]
+    expired = 0
+    for user_id in due:
+        with store.transaction() as tx:
+            record = tx.get(BUCKET_USERS, user_id)
+            if record is None or record.get("disabled_at") is not None or owner_id_tx(tx) == user_id:
+                continue
+            ends = from_iso(record.get("expires_at"))
+            if ends is None or ends > utc_now():
+                continue
+            record["disabled_at"] = to_iso(utc_now())
+            tx.put(BUCKET_USERS, user_id, record)
+            _revoke_all_tx(tx, user_id, record)
+            expired += 1
+    return expired
 
 
 # >>> feature:two_factor

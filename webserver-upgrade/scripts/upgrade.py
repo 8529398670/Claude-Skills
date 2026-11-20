@@ -789,6 +789,28 @@ def files_of(items: list[Item], names) -> set[str]:
     return {path for item in items if item.name in names for path in item.files}
 
 
+# Where an app says which version of ProjectPortal's contract it speaks
+# (CROSS_PROJECT.md, "Portal contract v2"): a constant beside /api/me.
+CONTRACT_FILES = ("server/routes/account.go", "app/routes/account.py")
+CONTRACT_LINE = re.compile(r"\b(?:portalContract|PORTAL_CONTRACT)\b\s*(?::\s*\w+\s*)?=\s*(\d+)")
+
+
+def contract_version(app: Path) -> str:
+    """The portal contract the app speaks, as status shows it: "v2" from its
+    constant, "v1" for an app with no constant (the contract before
+    versions), or "-" when it has neither file."""
+    found = False
+    for name in CONTRACT_FILES:
+        path = app / name
+        if not path.is_file():
+            continue
+        found = True
+        match = CONTRACT_LINE.search(path.read_text(encoding="utf-8", errors="replace"))
+        if match:
+            return f"v{match.group(1)}"
+    return "v1" if found else "-"
+
+
 def looks_scaffolded(path: Path) -> bool:
     return (path / "scripts" / "login.sh").exists() or (path / "config" / "language.yaml").exists() or (path / "language.yaml").exists()
 
@@ -804,8 +826,9 @@ def command_status(arguments: argparse.Namespace) -> None:
         origin = read_origin(path)
         if origin is None:
             if looks_scaffolded(path):
-                unmanaged.append(path.name)
+                unmanaged.append(f"{path.name} (contract {contract_version(path)})")
             continue
+        contract = f"contract {contract_version(path)}"
         identity = identify(path)
         target = resolve_commit("HEAD")
         count = behind_count(origin["commit"], target, identity.skill)
@@ -813,7 +836,7 @@ def command_status(arguments: argparse.Namespace) -> None:
         if earlier:
             skipped_notes.append(f"{path.name}: {', '.join(earlier)}")
         if count == 0:
-            rows.append((path.name, identity.skill, short(origin["commit"]), "up to date", ""))
+            rows.append((path.name, identity.skill, short(origin["commit"]), contract, "up to date", ""))
             continue
         base, new, table = render_pair(identity, origin["commit"], target)
         items = upgrade_items(target, identity.skill)
@@ -825,11 +848,11 @@ def command_status(arguments: argparse.Namespace) -> None:
             detail += f"; {len(ignored)} new file(s) git would ignore"
         if offers.ask:
             detail += f"; {len(offers.ask)} upgrade(s) to choose from"
-        rows.append((path.name, identity.skill, short(origin["commit"]), f"{count} commit(s) behind", detail))
+        rows.append((path.name, identity.skill, short(origin["commit"]), contract, f"{count} commit(s) behind", detail))
     if rows:
         width = max(len(row[0]) for row in rows)
         for row in rows:
-            print(f"{row[0]:<{width}}  {row[1]:<16}  {row[2]}  {row[3]}" + (f"  ({row[4]})" if row[4] else ""))
+            print(f"{row[0]:<{width}}  {row[1]:<16}  {row[2]}  {row[3]:<11}  {row[4]}" + (f"  ({row[5]})" if row[5] else ""))
     else:
         print("No stamped apps found.")
     if skipped_notes:

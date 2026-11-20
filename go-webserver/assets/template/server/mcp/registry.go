@@ -4,10 +4,12 @@ package mcp
 import (
 	json "encoding/json"
 	fmt "fmt"
+	strings "strings"
 
 	fiber "github.com/gofiber/fiber/v3"
 
 	apidoc "{{MODULE_PATH}}/server/apidoc"
+	models "{{MODULE_PATH}}/server/models"
 	security "{{MODULE_PATH}}/server/security"
 )
 
@@ -105,6 +107,13 @@ func ( server *Server ) Register( tool *Tool ) {
 func ( tool *Tool ) visibleTo( actor *security.Actor ) ( result bool ) {
 	if tool.Enabled != nil && tool.Enabled() == false { return }
 	result = tool.AdminOnly == false || ( actor != nil && actor.IsAdmin() )
+	// A viewer key sees only the tools whose route a viewer may call
+	// (security.ViewOnly), the reads and its own sign-outs: a tool it may
+	// not call is one it is never told about.
+	if result && actor != nil && actor.Role == models.RoleViewer {
+		method , path , _ := strings.Cut( tool.RouteName() , " " )
+		result = security.ViewerMayCall( method , path )
+	}
 	return
 }
 

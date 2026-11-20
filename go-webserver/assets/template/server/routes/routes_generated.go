@@ -190,7 +190,7 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 	} , handlers.listInviteLinks , handlers.featureGuards()[ "invite_links" ] , handlers.Guard.RequireAdmin )
 	apidoc.Mount( app , "POST" , "/api/admin/invite-links" , apidoc.Op{
 		Summary: "Create an invite link",
-		Description: "One link for a group: each person who opens it joins as a new user, up to max_uses people, for days days.",
+		Description: "One link for a group: each person who opens it joins as a new account with role (user, the default, or viewer), up to max_uses people, for days days.",
 		Tag: "Invite links",
 		Role: apidoc.Admin,
 		Feature: "invite_links",
@@ -298,12 +298,13 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 	} , handlers.restoreAnyAPIKey , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireAdmin , handlers.Guard.RequireSession )
 	apidoc.Mount( app , "POST" , "/api/admin/keys/{key_id}/revoke" , apidoc.Op{
 		Summary: "Revoke anyone's key",
+		Description: "Stops the key at once, and every key it made, down the chain. Needs a browser session or a key with may_mint_keys (any other key gets 403 key_minting_off), which may not revoke the owner's keys.",
 		Tag: "API keys",
-		Access: apidoc.SessionOnly,
 		Role: apidoc.Admin,
 		Feature: "api_keys",
+		MCPHTTP: "Manages API keys, which no MCP tool does.",
 		Errors: []int{ 400 , 401 , 403 , 404 },
-	} , handlers.revokeAnyAPIKey , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireAdmin , handlers.Guard.RequireSession )
+	} , handlers.revokeAnyAPIKey , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireAdmin )
 	// <<< feature:api_keys
 	// >>> feature:files
 	apidoc.Mount( app , "GET" , "/api/admin/storage" , apidoc.Op{
@@ -342,7 +343,7 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 	} , handlers.listUsers , handlers.Guard.RequireAdmin )
 	apidoc.Mount( app , "POST" , "/api/admin/users" , apidoc.Op{
 		Summary: "Create an account",
-		Description: "Make a new account and its first login link, to hand to the person. role is admin or user. Answers with user_id and the link.",
+		Description: "Make a new account and its first login link, to hand to the person. role is admin, user or viewer (reads only). account_expires_at, when given, is when the account stops working. Answers with user_id and the link.",
 		Tag: "Admin",
 		Role: apidoc.Admin,
 		Status: 201,
@@ -369,6 +370,34 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 		Role: apidoc.Admin,
 		Errors: []int{ 400 , 401 , 403 , 404 },
 	} , handlers.setUserDisabled , handlers.Guard.RequireAdmin )
+	apidoc.Mount( app , "POST" , "/api/admin/users/{user_id}/expiry" , apidoc.Op{
+		Summary: "Set when an account expires",
+		Description: "expires_at is when the account stops working (RFC 3339), or null for never. Once it passes the account counts as disabled: sign-in, its sessions and its keys stop, and housekeeping disables it and revokes its access. A later expiry does not re-enable an account housekeeping already disabled. It must be in the future. The owner's account never expires; only the owner sets an admin's.",
+		Tag: "Admin",
+		Role: apidoc.Admin,
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.setUserExpiry , handlers.Guard.RequireAdmin )
+	// >>> feature:api_keys
+	apidoc.Mount( app , "GET" , "/api/admin/users/{user_id}/keys" , apidoc.Op{
+		Summary: "An account's keys",
+		Description: "One account's keys, revoked and expired ones included, newest first. Each row says which key minted it (minted_by_key, empty when a person made it). Needs a browser session or a key with may_mint_keys; any other key gets 403 key_minting_off.",
+		Tag: "API keys",
+		Role: apidoc.Admin,
+		Feature: "api_keys",
+		MCPHTTP: "Manages API keys, which no MCP tool does.",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.listUserAPIKeys , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireAdmin )
+	apidoc.Mount( app , "POST" , "/api/admin/users/{user_id}/keys" , apidoc.Op{
+		Summary: "Make a key for an account",
+		Description: "Needs a browser session or a key the owner allowed to make keys (may_mint_keys); any other key gets 403 key_minting_off. The role is capped at the account's own; expires_in_days is required (1-365). Never for the owner. The new key records the key that made it, can never make keys or sign-in links itself, and is revoked when that key is revoked or deleted. Answers with the key and its credential, shown only now.",
+		Tag: "API keys",
+		Role: apidoc.Admin,
+		Feature: "api_keys",
+		MCPHTTP: "Makes an API key, which no MCP tool does.",
+		Status: 201,
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.mintKeyForUser , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireAdmin )
+	// <<< feature:api_keys
 	apidoc.Mount( app , "POST" , "/api/admin/users/{user_id}/reissue-login" , apidoc.Op{
 		Summary: "A new login link for an account",
 		Description: "For someone who lost their device or their link: a fresh login link for their account.",
@@ -402,7 +431,7 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 	} , handlers.revokeAccess , handlers.Guard.RequireAdmin )
 	apidoc.Mount( app , "POST" , "/api/admin/users/{user_id}/role" , apidoc.Op{
 		Summary: "Change an account's role",
-		Description: "Make an account an admin or an ordinary user. Only the owner takes an admin's rights away; the owner is always an admin, and nobody changes their own role. Becoming an admin ends the account's sessions and live login link.",
+		Description: "Make an account an admin, an ordinary user, or a viewer, who may read but change nothing. Only the owner takes an admin's rights away; the owner is always an admin, and nobody changes their own role. Becoming an admin ends the account's sessions and live login link.",
 		Tag: "Admin",
 		Role: apidoc.Admin,
 		Errors: []int{ 400 , 401 , 403 , 404 },
@@ -708,6 +737,14 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 		Feature: "api_keys",
 		Errors: []int{ 400 , 401 , 403 , 404 },
 	} , handlers.setMyAPIKeyExpiry , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireLogin , handlers.Guard.RequireSession )
+	apidoc.Mount( app , "POST" , "/api/keys/{key_id}/mint-keys" , apidoc.Op{
+		Summary: "Let one of your keys make keys",
+		Description: "Owner only, on one of your own admin-role keys. When on, the key may make keys for other accounts (never the owner's) through POST /api/admin/users/{user_id}/keys, list them, and revoke them. Each key it makes records it, and revoking or deleting this key revokes them all.",
+		Tag: "API keys",
+		Access: apidoc.SessionOnly,
+		Feature: "api_keys",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.setMyAPIKeyMinting , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireLogin , handlers.Guard.RequireSession )
 	apidoc.Mount( app , "POST" , "/api/keys/{key_id}/rename" , apidoc.Op{
 		Summary: "Rename one of your keys",
 		Tag: "API keys",
@@ -1117,7 +1154,7 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 	server.Register( mcp.ForRoute( "POST /api/admin/invite-links" , handlers.createInviteLink , mcp.Tool{
 		Name: "admin_create_invite_link",
 		Title: "Create an invite link (admin)",
-		Description: "One link for a group: each person who opens it joins as a new user, up to max_uses people, for days days. Answers with join_url (shown only now) and the link's details. Revoking or deleting this API key switches the link off.",
+		Description: "One link for a group: each person who opens it joins as a new account with role (user, the default, or viewer), up to max_uses people, for days days. Answers with join_url (shown only now) and the link's details. Revoking or deleting this API key switches the link off.",
 		AdminOnly: true,
 		Enabled: handlers.inviteLinksOn,
 	} , withJoinURL ) )
@@ -1125,7 +1162,7 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 	server.Register( mcp.ForRoute( "POST /api/admin/users" , handlers.createUser , mcp.Tool{
 		Name: "admin_create_user",
 		Title: "Create an account (admin)",
-		Description: "Make a new account and its first login link, to hand to the person. role is admin or user. Answers with user_id and the link. Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), expires_at and max_uses. Any older link the account could still use stops working; its signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs out every device it signed in.",
+		Description: "Make a new account and its first login link, to hand to the person. role is admin, user or viewer (reads only). account_expires_at, when given, is when the account stops working. Answers with user_id and the link. Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), expires_at and max_uses. Any older link the account could still use stops working; its signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is unused, and signs out every device it signed in.",
 		AdminOnly: true,
 	} , withLoginLinkURL ) )
 	// >>> feature:invite_links
@@ -1337,10 +1374,16 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		Description: "Runs admin_set_user_disabled once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
 		AdminOnly: true,
 	} ) )
+	server.Register( mcp.ForRoute( "POST /api/admin/users/{user_id}/expiry" , handlers.setUserExpiry , mcp.Tool{
+		Name: "admin_set_user_expiry",
+		Title: "Set when an account expires (admin)",
+		Description: "expires_at is when the account stops working (RFC 3339), or null for never. Once it passes the account counts as disabled: sign-in, its sessions and its keys stop, and housekeeping disables it and revokes its access. A later expiry does not re-enable an account housekeeping already disabled. It must be in the future. The owner's account never expires; only the owner sets an admin's.",
+		AdminOnly: true,
+	} , nil ) )
 	server.Register( mcp.ForRoute( "POST /api/admin/users/{user_id}/role" , handlers.setUserRole , mcp.Tool{
 		Name: "admin_set_user_role",
 		Title: "Change an account's role (admin)",
-		Description: "Make an account an admin or an ordinary user. Only the owner takes an admin's rights away; the owner is always an admin, and nobody changes their own role. Becoming an admin ends the account's sessions and live login link.",
+		Description: "Make an account an admin, an ordinary user, or a viewer, who may read but change nothing. Only the owner takes an admin's rights away; the owner is always an admin, and nobody changes their own role. Becoming an admin ends the account's sessions and live login link.",
 		AdminOnly: true,
 	} , nil ) )
 	server.Register( mcp.ForBulk( "POST /api/bulk/admin/users/role" , "POST /api/admin/users/{user_id}/role" , handlers.setUserRole , mcp.Tool{

@@ -15,6 +15,9 @@
 app:
   title: "{{PROJECT_NAME}}"
   tagline: "Sign in with a login link."
+  # Shown to an account with the viewer role, above every screen.
+  view_only_badge: "View only"
+  view_only_body: "You can look at everything here, but not change anything."
 
 # The sidebar, one entry per signed-in screen. menu labels the header's
 # button that opens/collapses it.
@@ -458,6 +461,7 @@ admin:
   new_name_placeholder: "Their name"
   new_role_label: "Role"
   role_user: "user"
+  role_viewer: "viewer"
   role_admin: "admin"
   create_button: "Create login link"
   link_notice: "{summary}. Send it now: it is shown once and cannot be recovered, and any earlier link for this person has stopped working."
@@ -469,6 +473,9 @@ admin:
   table_actions: "Actions"
   status_active: "active"
   status_disabled: "disabled"
+  status_expired: "expired"
+  # {date} is when the account stops working.
+  expires_note: "Account expires {date}"
   two_factor_badge: "2FA" # feature:two_factor
   reissue_button: "New link"
   # The New link dialog: its heading, and the line under the choices.
@@ -489,8 +496,6 @@ admin:
   # {name} is replaced with the account's display name.
   reset_two_factor_confirm: "Turn off two-factor sign-in for {name}? Do this only if you are sure it is them asking."
   # <<< feature:two_factor
-  make_admin_button: "Make admin"
-  make_user_button: "Make user"
   make_admin_confirm: "Make {name} an admin? They can then manage accounts. This signs them out everywhere and stops their login link, so send them a new link. They can no longer sign in through an invite link." # feature:invite_links
   make_admin_confirm: "Make {name} an admin? They can then manage accounts. This signs them out everywhere and stops their login link, so send them a new link." # feature:!invite_links
   # >>> feature:api_keys
@@ -502,6 +507,9 @@ admin:
   make_user_confirm: "Take admin rights from {name}? It applies at once." # feature:!invite_links
   # <<< feature:!api_keys
   role_changed_toast: "{name} is now: {role}"
+  # The Role column's picker, and the question before a change.
+  role_picker_label: "Role of {name}"
+  make_viewer_confirm: "Make {name} a viewer? They can then look at everything they could before, but change nothing. It applies at once."
   disable_button: "Disable"
   # {name} is replaced with the account's display name. Empty this string to
   # stop asking for confirmation before disabling.
@@ -534,6 +542,7 @@ api_keys:
   name_placeholder: "Bot-1"
   role_label: "Permission"
   role_user: "user"
+  role_viewer: "viewer (reads only)"
   role_admin: "admin (can manage accounts)"
   # >>> feature:openapi
   # Under the description, with a link to the API reference: api.json in
@@ -705,6 +714,9 @@ invite_links:
   label_placeholder: "Group-1"
   uses_label: "Places"
   days_label: "Works for (days)"
+  role_label: "Joins as"
+  # On a link's row when its people join as viewers.
+  viewer_note: "joins as viewer"
   create_button: "Create invite link"
   link_notice: "Share this link with the group. It is shown once and cannot be recovered. Anyone holding it can join, so switch it off below if it goes somewhere it should not."
   copy_button: "Copy"

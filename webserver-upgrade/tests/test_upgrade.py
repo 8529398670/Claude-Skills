@@ -119,6 +119,27 @@ class FileRules(unittest.TestCase):
         self.assertIn("schema version", actions[0].note)
 
 
+class ContractVersion(unittest.TestCase):
+    """status shows which portal contract each app speaks."""
+
+    def write(self, root: Path, name: str, text: str) -> None:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_go_python_old_and_none(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.write(root / "go", "server/routes/account.go", "package routes\n\nconst portalContract = 2\n")
+            self.write(root / "py", "app/routes/account.py", "PORTAL_CONTRACT: int = 3\n")
+            self.write(root / "old", "server/routes/account.go", "package routes\n")
+            (root / "none").mkdir()
+            self.assertEqual(upgrade.contract_version(root / "go"), "v2")
+            self.assertEqual(upgrade.contract_version(root / "py"), "v3")
+            self.assertEqual(upgrade.contract_version(root / "old"), "v1")
+            self.assertEqual(upgrade.contract_version(root / "none"), "-")
+
+
 class Normalise(unittest.TestCase):
     DEFAULTS = b"server:\n  port: 8080\ndocker:\n  host_port: 8080\nauth:\n  api_keys: false       # a comment\nwebhooks:\n  enabled: true\n"
 

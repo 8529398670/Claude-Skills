@@ -361,6 +361,8 @@ KEEP_WITHOUT_TESTS = {
     "app/tests/test_scripts.py",
     "app/tests/test_no_store.py",
     "app/tests/test_sealing.py",
+    "app/tests/test_portal_contract.py",
+    "app/tests/test_key_minting.py",
 }
 PYTHON_TESTS = "app/tests"
 SKILLS_CONFIG = Path(__file__).resolve().parent.parent.parent / "config.yaml"

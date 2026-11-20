@@ -208,6 +208,8 @@ const Files = {
   // upload's, so what it answers is what the row shows. It is someone's own
   // text, and Dom.editable builds with textContent.
   nameCell( file , link ) {
+    // A viewer may not rename: the plain name.
+    if ( document.documentElement.hasAttribute( "data-view-only" ) ) return Dom.el( "span" , { text: file.name } );
     const mine = !this.everyone;
     const rename = ( name , expect ) => mine ? Api.renameFile( file.id , name , expect ) : Api.renameAnyFile( file.id , name , expect );
     return Dom.editable( file.name , {
@@ -247,6 +249,7 @@ const Files = {
         download,
         Dom.el( "button" , {
           class: "btn btn-sm btn-outline-danger",
+          attrs: { "data-write": "" },
           text: I18n.get( "files.delete_button" ),
           on: { click: () => this.remove( file ) },
         } ),

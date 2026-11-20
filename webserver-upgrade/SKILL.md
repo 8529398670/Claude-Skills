@@ -40,6 +40,11 @@ python3 <skill_dir>/scripts/upgrade.py status
 ```
 
 This is read-only. Report the table and stop unless the user asked for an update.
+Each row shows the app's portal contract (`contract v2`): the version of
+ProjectPortal's contract it speaks, read from `portalContract` (Go) or
+`PORTAL_CONTRACT` (Python) beside `/api/me`. `v1` is an app from before
+versions. The contract v2 parts (`viewer-role`, `account-expiry`,
+`invite-link-roles`, `key-minting`) are offered as separate upgrades.
 
 ## Stamp an older app (once per app)
 

@@ -56,6 +56,7 @@ type inviteLinkRow struct {
 	Revoked       bool      `json:"revoked"`
 	CreatedBy     uint64    `json:"created_by"`
 	CreatedByName string    `json:"created_by_name,omitempty"`
+	Role          string    `json:"role" jsonschema:"enum=user,enum=viewer" jsonschema_description:"The role each person who joins gets."`
 }
 
 func ( inviteLinkRow ) APIName() ( name string ) { name = "InviteLink"; return }
@@ -71,6 +72,7 @@ func ( handlers *Handlers ) inviteLinkRow( link *models.InviteLink ) ( row invit
 		ExpiresAt: link.ExpiresAt,
 		Revoked:   link.RevokedAt != nil,
 		CreatedBy: link.CreatedBy,
+		Role:      link.JoinRole(),
 	}
 	// A link outlives its maker's admin rights only on paper: it stops
 	// working the moment they lose them (see models.LoadInviteLink).
@@ -123,6 +125,7 @@ type inviteLinkRequest struct {
 	Label   string `json:"label" jsonschema:"minLength=1,maxLength=80" error:"label must be 1-80 characters, uses 1-1000, days 1-365"`
 	MaxUses int    `json:"max_uses" jsonschema:"minimum=1,maximum=1000" error:"label must be 1-80 characters, uses 1-1000, days 1-365"`
 	Days    int    `json:"days" jsonschema:"minimum=1,maximum=365" error:"label must be 1-80 characters, uses 1-1000, days 1-365"`
+	Role    string `json:"role,omitempty" jsonschema:"enum=user,enum=viewer,default=user" jsonschema_description:"The role each person who joins gets: user, or viewer (reads only)." error:"role must be user or viewer"`
 }
 
 type createdInviteLinkReply struct {
@@ -135,8 +138,8 @@ type createdInviteLinkReply struct {
 //
 // @route("POST /api/admin/invite-links", summary="Create an invite link",
 //     tag="Invite links", role=ADMIN, feature="invite_links", status=201,
-//     description="One link for a group: each person who opens it joins as a new user, up to max_uses "
-//         "people, for days days.",
+//     description="One link for a group: each person who opens it joins as a new account with role (user, "
+//         "the default, or viewer), up to max_uses people, for days days.",
 //     mcp_note="Answers with join_url (shown only now) and the link's details. Revoking or deleting this "  // feature:mcp
 //         "API key switches the link off.",  // feature:mcp
 //     mcp="admin_create_invite_link", enabled=handlers.inviteLinksOn, call=withJoinURL,  // feature:mcp
@@ -148,10 +151,16 @@ func ( handlers *Handlers ) createInviteLink( c fiber.Ctx , in *inviteLinkReques
 	}
 	ttl := time.Duration( in.Days ) * 24 * time.Hour
 	actor := security.ActorFrom( c )
-	credential , link , err := models.IssueInviteLink( handlers.Store , in.Label , in.MaxUses , ttl , actor.User.ID , actor.KeyID() )
+	role := in.Role
+	if role == "" { role = models.RoleUser }
+	if models.ValidInviteRole( role ) == false {
+		err = refuse( fiber.StatusBadRequest , "role must be user or viewer" )
+		return
+	}
+	credential , link , err := models.IssueInviteLinkRole( handlers.Store , in.Label , in.MaxUses , ttl , actor.User.ID , actor.KeyID() , role )
 	if err != nil { return }
 	reply = &createdInviteLinkReply{ inviteLinkRow: handlers.inviteLinkRow( link ) , JoinPath: "/join/" + credential }
-	handlers.audit( c , logs.KindAdmin , "invite link created" , fiber.Map{ "link_id": link.ID , "label": link.Label , "max_uses": link.MaxUses } )
+	handlers.audit( c , logs.KindAdmin , "invite link created" , fiber.Map{ "link_id": link.ID , "label": link.Label , "max_uses": link.MaxUses , "role": link.JoinRole() } )
 	handlers.Webhooks.Emit( models.EventInviteLinkCreated , map[string]any{ "link_id": link.ID , "label": link.Label } ) // feature:webhooks
 	return
 }

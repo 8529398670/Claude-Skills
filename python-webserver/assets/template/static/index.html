@@ -67,7 +67,7 @@
       <div class="offcanvas-body">
         <nav id="sidebar-nav" class="nav nav-pills flex-column w-100 gap-1" data-i18n-attr="aria-label:nav.sidebar_label">
           <!-- Account, first: its second line names who is signed in (App.labelAccount). -->
-          <a class="nav-link" href="/account" data-nav="account"><i class="bi bi-person-circle" aria-hidden="true"></i><span class="nav-link-text"><span data-i18n="nav.account"></span><span id="sidebar-user" class="nav-link-sub"></span></span></a>
+          <a class="nav-link" href="/account" data-nav="account"><i class="bi bi-person-circle" aria-hidden="true"></i><span class="nav-link-text"><span data-i18n="nav.account"></span><span id="sidebar-user" class="nav-link-sub"></span><span id="view-only-badge" class="badge text-bg-secondary align-self-start mt-1" data-i18n="nav.view_only" hidden></span></span></a>
           <a class="nav-link" href="/appearance" data-nav="appearance"><i class="bi bi-palette" aria-hidden="true"></i><span data-i18n="nav.appearance"></span></a> <!-- feature:appearance -->
           <a class="nav-link" href="/shortcuts" data-nav="shortcuts"><i class="bi bi-keyboard" aria-hidden="true"></i><span data-i18n="nav.shortcuts"></span></a> <!-- feature:shortcuts -->
           <a class="nav-link" href="/files" data-nav="files"><i class="bi bi-folder" aria-hidden="true"></i><span data-i18n="nav.files"></span></a> <!-- feature:files -->
@@ -227,7 +227,7 @@
           <h2 class="view-title" data-i18n="account.heading"></h2>
 
 
-          <section class="card">
+          <section class="card" data-write>
             <div class="card-body">
               <h3 class="card-title" data-i18n="account.profile_heading"></h3>
               <form id="rename-form" class="row g-3 align-items-end" autocomplete="off">
@@ -245,7 +245,7 @@
 
           <!-- A login link for your own account, to sign in on another device.
                Any signed-in user may mint one; see Api.createMyLoginLink. -->
-          <section class="card">
+          <section class="card" data-write>
             <div class="card-body">
               <h3 class="card-title" data-i18n="account.device_heading"></h3>
               <p class="text-body-secondary" data-i18n="account.device_description"></p>
@@ -270,7 +270,7 @@
 
           <!-- >>> feature:passwords -->
           <!-- Only while the owner has auth.passwords on; see password.js. -->
-          <section class="card" id="password-panel" data-path="/account/password" hidden>
+          <section class="card" data-write id="password-panel" data-path="/account/password" hidden>
             <div class="card-body">
               <h3 class="card-title" data-i18n="password.heading"></h3>
               <p class="text-body-secondary" data-i18n="password.description"></p>
@@ -308,7 +308,7 @@
           <!-- <<< feature:passwords -->
           <!-- >>> feature:invite_links -->
           <!-- Only for non-admin accounts; see pin.js. -->
-          <section class="card" id="pin-panel" data-path="/account/pin" hidden>
+          <section class="card" data-write id="pin-panel" data-path="/account/pin" hidden>
             <div class="card-body">
               <h3 class="card-title" data-i18n="pin.heading"></h3>
               <p class="text-body-secondary" data-i18n="pin.description"></p>
@@ -330,7 +330,7 @@
           <!-- <<< feature:invite_links -->
           <!-- >>> feature:two_factor -->
           <!-- Only while the owner has auth.two_factor on; see two_factor.js. -->
-          <section class="card" id="two-factor-panel" data-path="/account/two-factor" hidden>
+          <section class="card" data-write id="two-factor-panel" data-path="/account/two-factor" hidden>
             <div class="card-body">
               <h3 class="card-title" data-i18n="two_factor.heading"></h3>
               <p class="text-body-secondary" data-i18n="two_factor.description"></p>
@@ -395,7 +395,7 @@
               </p>
               <!-- <<< feature:openapi -->
 
-              <form id="create-key-form" class="row g-3 align-items-end" autocomplete="off">
+              <form id="create-key-form" data-write class="row g-3 align-items-end" autocomplete="off">
                 <div class="col-md">
                   <label for="key-name" class="form-label" data-i18n="api_keys.name_label"></label>
                   <input id="key-name" class="form-control" name="name" maxlength="80" required
@@ -405,6 +405,7 @@
                   <label for="key-role" class="form-label" data-i18n="api_keys.role_label"></label>
                   <select id="key-role" class="form-select" name="role">
                     <option value="user" data-i18n="api_keys.role_user"></option>
+                    <option value="viewer" data-i18n="api_keys.role_viewer"></option>
                     <option value="admin" data-i18n="api_keys.role_admin"></option>
                   </select>
                 </div>
@@ -493,7 +494,7 @@
                 </div>
               </fieldset>
 
-              <form id="mcp-key-form" class="row g-3 align-items-end" autocomplete="off">
+              <form id="mcp-key-form" data-write class="row g-3 align-items-end" autocomplete="off">
                 <div class="col-md">
                   <label for="mcp-key-name" class="form-label" data-i18n="mcp.name_label"></label>
                   <input id="mcp-key-name" class="form-control" name="name" maxlength="80" required />
@@ -502,6 +503,7 @@
                   <label for="mcp-key-role" class="form-label" data-i18n="api_keys.role_label"></label>
                   <select id="mcp-key-role" class="form-select" name="role">
                     <option value="user" data-i18n="api_keys.role_user"></option>
+                    <option value="viewer" data-i18n="api_keys.role_viewer"></option>
                     <option value="admin" data-i18n="api_keys.role_admin"></option>
                   </select>
                 </div>
@@ -629,7 +631,7 @@
           <!-- Upload above, the list it adds to below at the full width, as on
                Users: a table takes the most room (see "Hard rules" in
                references/frontend.md). -->
-          <section class="card">
+          <section class="card" data-write>
             <div class="card-body">
               <h3 class="card-title" data-i18n="files.upload_heading"></h3>
               <!-- One picker and its progress: a column, not the card's width. -->
@@ -730,6 +732,7 @@
                   <label for="new-role" class="form-label" data-i18n="admin.new_role_label"></label>
                   <select id="new-role" class="form-select" name="role">
                     <option value="user" data-i18n="admin.role_user"></option>
+                    <option value="viewer" data-i18n="admin.role_viewer"></option>
                     <option value="admin" data-i18n="admin.role_admin"></option>
                   </select>
                 </div>
@@ -838,6 +841,13 @@
                   <label for="invite-days" class="form-label" data-i18n="invite_links.days_label"></label>
                   <input id="invite-days" class="form-control" name="days" type="number" min="1" max="365" value="30" required inputmode="numeric" />
                 </div>
+                <div class="col-md">
+                  <label for="invite-role" class="form-label" data-i18n="invite_links.role_label"></label>
+                  <select id="invite-role" class="form-select" name="role">
+                    <option value="user" data-i18n="invite_links.role_user"></option>
+                    <option value="viewer" data-i18n="invite_links.role_viewer"></option>
+                  </select>
+                </div>
                 <div class="col-md-auto">
                   <button type="submit" class="btn btn-primary" data-i18n="invite_links.create_button"></button>
                 </div>
@@ -911,6 +921,7 @@
                   <label for="user-key-role" class="form-label" data-i18n="api_keys.role_label"></label>
                   <select id="user-key-role" class="form-select" name="role">
                     <option value="user" data-i18n="api_keys.role_user"></option>
+                    <option value="viewer" data-i18n="api_keys.role_viewer"></option>
                     <option value="admin" data-i18n="api_keys.role_admin"></option>
                   </select>
                 </div>

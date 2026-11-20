@@ -46,10 +46,13 @@ project.
   one an admin key made dies with that key. `auth.invite_links`
   switches them and PINs.
 - **Every account can mint API keys, at its own permission level.** A key
-  carries the same admin/user role a person does -- one permission model, not
+  carries the same admin/user/viewer role a person does -- one permission model, not
   two -- sent as `Authorization: Bearer <key>`. A key can never outrank the
-  account that owns it. It cannot mint keys, but an admin key can create
-  accounts and hand out login and invite links. A key makes a login link for
+  account that owns it. It cannot mint keys unless the owner switched that on
+  for one of the owner's own admin keys (for an outside admin hub such as
+  ProjectPortal); such a key makes keys for other accounts that record it and
+  die with it. An admin key can create accounts, set when they expire, and
+  hand out login and invite links. A key makes a login link for
   its own account only once that account switched it on for that key, from a
   browser session ("Sign-in links" on the API keys card); its links work once,
   for 15 minutes. Off, the default, a key never turns itself into a session.
@@ -71,6 +74,14 @@ project.
 - **Failures look right.** A browser gets a styled error page, and scripts keep their
   JSON. Every list in the API is paged, and nothing here is meant for search engines:
   `robots.txt` and an `X-Robots-Tag` header on every response say so.
+- **Viewers read and change nothing.** Roles are viewer < user < admin. One
+  guard in front of every route answers 403 `view_only` to anything a viewer's
+  session or key sends besides reads, signing out and ending its own sessions,
+  so an app's own routes are covered too; the page shows a View only badge and
+  hides every `[data-write]` control. Accounts can also be given an expiry,
+  after which they count as disabled. Both are part of ProjectPortal's
+  "portal contract v2", which `GET /api/me` reports as `contract` and
+  `capabilities`.
 - **The first admin is the owner.** Any admin can permanently delete an
   ordinary user; only the owner can delete, disable, sign out, or hand a
   login link or key for another admin, and nobody can do any of that to the

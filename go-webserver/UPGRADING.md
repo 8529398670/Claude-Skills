@@ -3,6 +3,123 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 60335af
+
+**Portal contract v2: what ProjectPortal's Manage project screen calls.** The
+binding wire format is "Portal contract v2" in ProjectPortal's
+`CROSS_PROJECT.md`. Each part is its own upgrade, and an app that is behind
+keeps working with the portal on contract v1. Every item below needs
+`portal-contract`. After taking any of them run `go generate ./server/routes`
+and `scripts/api_docs.sh`. Fixed in the same change: an existing test now
+expects "role must be admin, user or viewer" (`typed_routes_test.go`).
+
+**Plumbing `portal-contract`: `/api/me` says which contract it speaks and what of it is on.**
+Marks: `portalContract`
+
+- `server/routes/account.go`: `meReply` gains `contract` and `capabilities`
+  (and `may_mint_keys`, with `key-minting`); `const portalContract = 2` and
+  `handlers.capabilities()`, one `append` line per capability. When an
+  upgrade below is left out, delete its line there: `viewer_role`,
+  `account_expiry`, `key_minting`, `invite_links`. `key_sign_in` stays: it is
+  `POST /api/account/login-link` taking a key with `may_sign_in` (the
+  "After 2ad0dbf" entry); an app without `APIKey.MaySignIn` takes that entry
+  first, or deletes the line too.
+- The webserver-upgrade `status` reads `portalContract` to show each app's
+  contract version.
+
+**Plumbing `role-ranks`: roles are ranked viewer < user < admin.**
+Marks: `RoleRank`, `LowerRole`
+
+- `server/models/user.go`: `RoleViewer`, `RoleRank`, `LowerRole`;
+  `ValidRole` takes viewer. `models.NarrowRole` (api_key.go) is `LowerRole`.
+  `issueAPIKey` refuses a role ranked above the account's.
+
+**Upgrade `viewer-role`: a viewer role that reads everything and changes nothing.**
+Needs: `portal-contract`, `role-ranks`.
+Marks: `ViewerMayCall`, `view_only`, `data-view-only`, `"viewer_role"`
+
+- `server/security/security.go`: `ViewerMayCall`, `signingIn`,
+  `Guard.ViewOnly` (403 `{"error":"view_only"}` for a viewer's session or key
+  on anything but GET/HEAD/OPTIONS, logout, its own session revokes and
+  cancelling its own login link; sign-in routes and `/mcp` pass).
+  `server/routes/routes.go` mounts it right after the maintenance middleware.
+  An app with its own write routes needs nothing more: the guard covers them.
+- `server/mcp/registry.go`: `visibleTo` hides from a viewer key every tool
+  `ViewerMayCall` refuses.
+- Role enums take `viewer`: `createUserRequest`, `setUserRoleRequest`,
+  `userRow`, `createAPIKeyRequest`, `apiKeyRow`, `meReply.role`; the error is
+  "role must be admin, user or viewer".
+- Frontend: `#view-only-banner` in `static/index.html` and
+  `App.showViewOnly` (app.js) set `<html data-view-only>`; style.css hides
+  `[data-view-only] [data-write]`. `data-write` goes on every control that
+  writes (rename form, whose place `#display-name-text` takes for a viewer;
+  the Sign in on another device card; password, PIN, two-factor, API keys,
+  MCP and upload cards, the Appearance and Shortcuts menu entries, file
+  delete), and an app adds it to its own. `files.js` `nameCell` is not
+  editable for a viewer. The Users table's Role column is a picker
+  (user/viewer/admin) in place of the Make admin/Make user button;
+  `admin.make_admin_button`/`make_user_button` are gone, and
+  `admin.role_viewer`, `role_picker_label`, `make_viewer_confirm`,
+  `api_keys.role_viewer`, `app.view_only_badge`, `app.view_only_body` are new.
+  Viewer options in `#new-role`, `#key-role`, `#mcp-key-role`,
+  `#user-key-role`; `keys.js` `onTargetChange` offers roles up to the
+  account's.
+- Test: `TestAViewerReadsButChangesNothing` (`server/routes/contract_test.go`).
+
+**Upgrade `account-expiry`: accounts that stop working at a set time.**
+Needs: `portal-contract`.
+Marks: `ExpireAccounts`, `account_expires_at`, `"account_expiry"`
+Files: `server/models/expiry.go`
+
+- `User.ExpiresAt`, `User.Expired`; `User.Disabled` is also true once it has
+  passed, so every sign-in, session and key check refuses it at once
+  (`server/models/user.go`). `TransferOwner` clears the new owner's expiry
+  (owner.go).
+- `server/models/expiry.go`: `CreateUserExpiring`, `SetUserExpiry`
+  (`ErrExpiryPast`; never the owner; `mayActOnTx`), `ExpireAccounts`.
+- `POST /api/admin/users` takes `account_expires_at`;
+  `POST /api/admin/users/{user_id}/expiry` (`setUserExpiry`, MCP
+  `admin_set_user_expiry`); `userRow` gains `expires_at` and `expired`
+  (`server/routes/admin.go`).
+- `server/jobs/housekeeping.go`: the `purge` job's first step is
+  `models.ExpireAccounts` (disable, then revoke access).
+- Frontend: Users status shows `admin.status_expired` or
+  `admin.expires_note`; `Api.setUserExpiry`.
+- Test: `TestAnAccountExpires`.
+
+**Upgrade `invite-link-roles`: an invite link can make viewers.**
+Needs: `invite_links`, `viewer-role`.
+Marks: `JoinRole`, `IssueInviteLinkRole`, `invite_links.viewer_note`
+
+- `InviteLink.Role`, `JoinRole`, `ValidInviteRole`, `IssueInviteLinkRole`;
+  `JoinInviteLink` creates the account with `link.JoinRole()`
+  (`server/models/invite_link.go`).
+- `inviteLinkRequest.role` (user or viewer) and `inviteLinkRow.role`
+  (`server/routes/invite_links.go`).
+- `#invite-role` in `static/index.html`, `Api.createInvite( ..., role )`,
+  the row's `invite_links.viewer_note`; `invite_links.role_label`.
+- Test: `TestAnInviteLinkCanMakeViewers`.
+
+**Upgrade `key-minting`: a key the owner allows may make keys, with lineage.**
+Needs: `api_keys`, `portal-contract`, `role-ranks`.
+Marks: `MayMintKeys`, `key_minting_off`, `revokeKeysMintedByTx`, `"key_minting"`
+
+- `APIKey.MayMintKeys`, `APIKey.MintedByKey`, `MintAPIKey` (role capped at
+  the account's, never the owner), `SetAPIKeyMinting` (owner only, own
+  admin-role key a person made), `revokeKeysMintedByTx`;
+  `SetAPIKeySignIn` refuses a minted key (`ErrAPIKeyMinted`)
+  (`server/models/api_key.go`). `VoidLinksMintedByKeyTx` (login_token.go)
+  calls `revokeKeysMintedByTx`, so revoking, deleting, revoke-access,
+  disabling, demoting and deleting the account all revoke the chain.
+- Routes (`server/routes/api_keys.go`): `POST /api/keys/{key_id}/mint-keys`
+  (session only), `POST`/`GET /api/admin/users/{user_id}/keys`
+  (`mintKeyForUser`, `listUserAPIKeys`), and `POST /api/admin/keys/{key_id}/revoke`
+  is no longer `SESSION_ONLY`: a key needs `may_mint_keys` (`keyMintingOff`)
+  and may not revoke the owner's keys. All three are `mcp_http`, no tool.
+  `apiKeyRow` gains `may_mint_keys` and `minted_by_key`.
+- The rewritten `RequireSession` comment in `server/security/security.go`.
+- Tests: `TestAKeyMintsKeysWithLineage`, `TestOnlyTheOwnerLetsAKeyMint`.
+
 ## After c1e33cb
 
 **URLs are paths: screens move from `#hash` to `/area/name`.**

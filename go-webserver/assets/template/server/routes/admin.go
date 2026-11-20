@@ -25,9 +25,11 @@ type userRow struct {
 	ID              uint64                `json:"id"`
 	DisplayName     string                `json:"display_name"`
 	Username        string                `json:"username" jsonschema_description:"Empty until a password is set." jsonschema_extras:"x-feature=passwords"` // feature:passwords
-	Role            string                `json:"role" jsonschema:"enum=admin,enum=user"`
+	Role            string                `json:"role" jsonschema:"enum=admin,enum=user,enum=viewer"`
 	CreatedAt       time.Time             `json:"created_at"`
-	Disabled        bool                  `json:"disabled"`
+	Disabled        bool                  `json:"disabled" jsonschema_description:"Switched off, or its expiry has passed."`
+	ExpiresAt       *time.Time            `json:"expires_at" jsonschema_description:"When the account stops working, or null for never."`
+	Expired         bool                  `json:"expired" jsonschema_description:"Whether expires_at has passed."`
 	Owner           bool                  `json:"owner"`
 	HasPassword     bool                  `json:"has_password" jsonschema_extras:"x-feature=passwords"` // feature:passwords
 	PasswordBlocked bool                  `json:"password_blocked" jsonschema_extras:"x-feature=passwords"` // feature:passwords
@@ -89,6 +91,8 @@ func ( handlers *Handlers ) userRowsMatching( query string ) ( rows []userRow , 
 			Role:            user.Role,
 			CreatedAt:       user.CreatedAt,
 			Disabled:        user.Disabled(),
+			ExpiresAt:       user.ExpiresAt,
+			Expired:         user.Expired(),
 			Owner:           user.ID == owner_id,
 			HasPassword:     user.HasPassword(), // feature:passwords
 			PasswordBlocked: user.PasswordBlocked, // feature:passwords
@@ -145,7 +149,10 @@ type loginLinkRequest struct {
 
 type createUserRequest struct {
 	DisplayName string `json:"display_name" jsonschema:"minLength=1,maxLength=80" error:"display name must be 1-80 characters"`
-	Role        string `json:"role" jsonschema:"enum=admin,enum=user" error:"role must be admin or user"`
+	Role        string `json:"role" jsonschema:"enum=admin,enum=user,enum=viewer" error:"role must be admin, user or viewer"`
+	// AccountExpiresAt is when the account stops working. expires_in_minutes
+	// is the login link's expiry, not the account's.
+	AccountExpiresAt *time.Time `json:"account_expires_at,omitempty" jsonschema_description:"When the account stops working (RFC 3339). Left out: never. expires_in_minutes is the login link's expiry, not this." error:"account_expires_at must be an RFC 3339 time"`
 	models.LoginLinkRequest
 }
 
@@ -163,8 +170,9 @@ type createUserReply struct {
 //
 // @route("POST /api/admin/users", summary="Create an account",
 //     tag="Admin", role=ADMIN, status=201,
-//     description="Make a new account and its first login link, to hand to the person. role is admin or "
-//         "user. Answers with user_id and the link.",
+//     description="Make a new account and its first login link, to hand to the person. role is admin, "
+//         "user or viewer (reads only). account_expires_at, when given, is when the account stops working. "
+//         "Answers with user_id and the link.",
 //     mcp_note="Answers with login_url (open it to sign in; it works once unless max_uses says otherwise), "  // feature:mcp
 //         "expires_at and max_uses. Any older link the account could still use stops working; its "  // feature:mcp
 //         "signed-in devices stay signed in. Revoking or deleting this API key voids the link while it is "  // feature:mcp
@@ -181,11 +189,18 @@ func ( handlers *Handlers ) createUser( c fiber.Ctx , in *createUserRequest ) ( 
 		err = refused
 		return
 	}
-	user , err := models.CreateUser( handlers.Store , in.DisplayName , in.Role )
-	if err != nil { return }
+	user , create_err := models.CreateUserExpiring( handlers.Store , in.DisplayName , in.Role , in.AccountExpiresAt )
+	if errors.Is( create_err , models.ErrExpiryPast ) {
+		err = refuse( fiber.StatusBadRequest , "account_expires_at must be in the future" )
+		return
+	}
+	if create_err != nil {
+		err = create_err
+		return
+	}
 	credential , info , err := models.IssueLoginLink( handlers.Store , user.ID , options )
 	if err != nil { return }
-	handlers.audit( c , logs.KindAdmin , "user created" , fiber.Map{ "user_id": user.ID , "name": user.DisplayName , "role": user.Role } )
+	handlers.audit( c , logs.KindAdmin , "user created" , fiber.Map{ "user_id": user.ID , "name": user.DisplayName , "role": user.Role , "expires_at": user.ExpiresAt } )
 	handlers.Webhooks.Emit( models.EventUserCreated , map[string]any{ "user_id": user.ID , "display_name": user.DisplayName , "role": user.Role } ) // feature:webhooks
 	reply = &createUserReply{ UserID: user.ID , loginLinkReply: newLoginLinkReply( credential , info ) }
 	return
@@ -316,7 +331,7 @@ func ( handlers *Handlers ) renameUser( c fiber.Ctx , in *renameUserRequest ) ( 
 
 type setUserRoleRequest struct {
 	userIDPath
-	Role string `json:"role" jsonschema:"enum=admin,enum=user" error:"role must be admin or user"`
+	Role string `json:"role" jsonschema:"enum=admin,enum=user,enum=viewer" error:"role must be admin, user or viewer"`
 }
 
 type setUserRoleReply struct {
@@ -324,15 +339,15 @@ type setUserRoleReply struct {
 	Role string `json:"role"`
 }
 
-// setUserRole makes an account an admin or an ordinary user. Who may do what
-// lives in models.SetUserRole.
+// setUserRole makes an account an admin, an ordinary user or a viewer. Who may
+// do what lives in models.SetUserRole.
 //
 // @route("POST /api/admin/users/{user_id}/role", summary="Change an account's role",
 //     bulk=True,
 //     tag="Admin", role=ADMIN, errors=(404,),
-//     description="Make an account an admin or an ordinary user. Only the owner takes an admin's rights "
-//         "away; the owner is always an admin, and nobody changes their own role. Becoming an admin ends "
-//         "the account's sessions and live login link.",
+//     description="Make an account an admin, an ordinary user, or a viewer, who may read but change "
+//         "nothing. Only the owner takes an admin's rights away; the owner is always an admin, and nobody "
+//         "changes their own role. Becoming an admin ends the account's sessions and live login link.",
 //     mcp="admin_set_user_role",  // feature:mcp
 // )
 func ( handlers *Handlers ) setUserRole( c fiber.Ctx , in *setUserRoleRequest ) ( reply *setUserRoleReply , err error ) {
@@ -364,6 +379,46 @@ func ( handlers *Handlers ) setUserRole( c fiber.Ctx , in *setUserRoleRequest ) 
 type setUserDisabledRequest struct {
 	userIDPath
 	Disabled bool `json:"disabled" error:"disabled must be true or false"`
+}
+
+type setUserExpiryRequest struct {
+	userIDPath
+	ExpiresAt *time.Time `json:"expires_at" jsonschema_description:"When the account stops working (RFC 3339), or null for never." error:"expires_at must be an RFC 3339 time or null"`
+}
+
+type setUserExpiryReply struct {
+	Ok        bool       `json:"ok"`
+	ExpiresAt *time.Time `json:"expires_at" jsonschema_description:"null when it never expires."`
+}
+
+// setUserExpiry sets when an account stops working. Who may do it lives in
+// models.SetUserExpiry.
+//
+// @route("POST /api/admin/users/{user_id}/expiry", summary="Set when an account expires",
+//     tag="Admin", role=ADMIN, errors=(404,),
+//     description="expires_at is when the account stops working (RFC 3339), or null for never. Once it "
+//         "passes the account counts as disabled: sign-in, its sessions and its keys stop, and housekeeping "
+//         "disables it and revokes its access. A later expiry does not re-enable an account housekeeping "
+//         "already disabled. It must be in the future. The owner's account never expires; only the owner "
+//         "sets an admin's.",
+//     mcp="admin_set_user_expiry",  // feature:mcp
+// )
+func ( handlers *Handlers ) setUserExpiry( c fiber.Ctx , in *setUserExpiryRequest ) ( reply *setUserExpiryReply , err error ) {
+	user , set_err := models.SetUserExpiry( handlers.Store , in.UserID , security.UserFrom( c ).ID , in.ExpiresAt )
+	switch {
+	case errors.Is( set_err , models.ErrExpiryPast ):
+		err = refuse( fiber.StatusBadRequest , set_err.Error() )
+		return
+	case errors.Is( set_err , models.ErrOwnerProtected ):
+		err = refuse( fiber.StatusForbidden , "the owner's account cannot expire" )
+		return
+	case set_err != nil:
+		err = actOnRefusal( set_err , "set the expiry of" )
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "user expiry set" , fiber.Map{ "user_id": in.UserID , "expires_at": user.ExpiresAt } )
+	reply = &setUserExpiryReply{ Ok: true , ExpiresAt: user.ExpiresAt }
+	return
 }
 
 // okReply is the answer of a route that has nothing to say but yes.

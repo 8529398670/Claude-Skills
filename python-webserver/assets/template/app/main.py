@@ -28,7 +28,7 @@ from app.core.maintenance import Maintenance  # feature:maintenance
 from app.core.middleware import EXCEPTION_HANDLERS, AppVersion, NoStore, RateLimit, SecurityHeaders
 from app.core.request_id import RequestID
 from app.core.request_log import RequestLog  # feature:logs
-from app.core.security import LoadActor
+from app.core.security import LoadActor, ViewOnly
 from app.core.static_files import StaticServer
 from app.models import webhooks as webhook_models  # feature:webhooks
 from app.routes import build_routes
@@ -141,6 +141,7 @@ def build_app(
             Middleware(RateLimit, settings=settings, logger=logger),
             Middleware(LoadActor, store=store, settings=settings),
             Middleware(RequestLog, settings=settings, logger=logger),  # feature:logs
+            Middleware(ViewOnly),
             Middleware(Maintenance, store=store, settings=settings),  # feature:maintenance
         ],
         exception_handlers=EXCEPTION_HANDLERS,

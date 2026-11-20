@@ -128,13 +128,15 @@ const Keys = {
     this.onTargetChange();
   },
 
-  // An admin role is only a real choice for an admin account.
+  // A key never outranks its account (viewer < user < admin), so only the
+  // roles up to the account's own are offered.
   onTargetChange() {
     const target = this.targets.get( Dom.get( "user-key-user" ).value );
     const role = Dom.get( "user-key-role" );
-    const admin = target !== undefined && target.role === "admin";
-    role.querySelector( "option[value=admin]" ).disabled = !admin;
-    if ( !admin ) role.value = "user";
+    const rank = { viewer: 1 , user: 2 , admin: 3 };
+    const ceiling = target === undefined ? 2 : rank[ target.role ] || 1;
+    role.querySelectorAll( "option" ).forEach( ( option ) => { option.disabled = rank[ option.value ] > ceiling; } );
+    if ( rank[ role.value ] > ceiling ) role.value = ceiling >= 2 ? "user" : "viewer";
   },
 
   async onCreateFor( event ) {

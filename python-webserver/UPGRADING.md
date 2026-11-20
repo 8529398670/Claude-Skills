@@ -3,6 +3,56 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 60335af
+
+**Portal contract v2: the viewer role, account expiry, invite-link roles and key minting with lineage.**
+Marks: `PORTAL_CONTRACT`, `ViewOnly`, `RequireKeyMinting`, `revoke_minted_tx`, `expire_due_accounts`, `data-write`
+Files: `app/models/{users,api_keys,credentials,invite_links}.py`, `app/core/{security,housekeeping}.py`, `app/main.py`, `app/mcp/registry.py`, `app/manage.py`, `app/routes/{admin,account,api_keys,invite_links}.py`, `config/{api.json,api.md,mcp.json,mcp.md,language.yaml}`, `static/index.html`, `static/css/style.css`, `static/js/{app,api,keys,invites}.js`, `app/tests/{test_portal_contract,test_key_minting}.py`, `scripts/prune.py`
+
+ProjectPortal's Manage screen runs an app from outside through the wire format in
+its `CROSS_PROJECT.md` ("Portal contract v2"). It turns each part on only when
+`/api/me` lists the capability, so an app without this keeps working with v1.
+
+- **Discovery** (`app/routes/account.py`): `PORTAL_CONTRACT = 2`, and `Me` gains
+  `contract` and `capabilities` (`viewer_role`, `account_expiry`, then
+  `key_minting`, `invite_links`, `key_sign_in` while their switches are on).
+- **Viewer role**: `users.ROLE_VIEWER`, `ROLE_RANK`, `role_rank`, `lower_role`;
+  `valid_role` takes it. `api_keys.narrow_role` is now the lower of the two roles,
+  and `issue_api_key` compares ranks. Every `role` Literal in the routes adds
+  `"viewer"` ("role must be admin, user or viewer"). `security.ViewOnly` middleware,
+  added in `main.py` right after `RequestLog` (inside `LoadActor`), answers 403
+  `{"error":"view_only"}` to a viewer's non-GET request except `VIEW_ONLY_ALLOWED`
+  (logout, own session revokes, cancelling its own login link, `/mcp`, the public
+  sign-in routes). `Tool.visible_to` hides non-GET tools from a viewer. An app's own
+  routes are covered without changes; an app write a viewer should still be able to
+  make goes into `VIEW_ONLY_ALLOWED`.
+  Page: `html[data-view-only] [data-write]` hides marked controls (`style.css`);
+  `App.init` sets the attribute and shows `#view-only-badge`. Mark an app's own
+  write controls with `data-write`. The Users table's role toggle button became a
+  role `<select>` (admin, user, viewer); `admin.make_*_button` strings are gone.
+- **Account expiry**: `User.expires_at`; `User.disabled` is true past it, so every
+  existing disabled check refuses an expired account. `create_user(..., expires_at)`;
+  `credentials.set_user_expiry` and `expire_due_accounts` (a new first step of the
+  hourly purge); `transfer_owner` clears the new owner's expiry. Routes:
+  `POST /api/admin/users` takes `account_expires_at`, new
+  `POST /api/admin/users/{user_id}/expiry` (MCP `admin_set_user_expiry`), user rows
+  add `expires_at` and `expired`. `credentials.revoke_all_credentials` now runs
+  `_revoke_all_tx`, shared with expiry.
+- **Invite links**: `InviteLink.role` (`INVITE_ROLES` user/viewer), create takes
+  `role`, rows add it, joining uses it. A role picker on the create form.
+- **Key minting**: `APIKey.may_mint_keys` and `minted_by_key` (on every key row);
+  `set_api_key_mint_keys` (owner only, own live admin key, not itself minted) at
+  `POST /api/keys/{key_id}/mint-keys`; `mint_api_key` at
+  `POST /api/admin/users/{user_id}/keys` and `GET` the same path, behind
+  `security.RequireKeyMinting` (403 `key_minting_off` for a key without the right);
+  `POST /api/admin/keys/{key_id}/revoke` is no longer session-only and refuses the
+  owner's keys through a key. A minted key can never get `may_mint_keys` or
+  `may_sign_in` (`APIKeyMintedError`). `revoke_minted_tx` revokes the whole chain
+  below a key and runs from revoke, delete, revoke-access, delete-user and expiry.
+  `RequireSession`'s docstring says why. Page: a "Key minting" switch on the
+  owner's own admin keys, and "mints keys" / "minted by key" on key rows.
+- Regenerate `config/api.*` and `config/mcp.*` (`scripts/api_docs.sh`).
+
 ## After c1e33cb
 
 **URLs are paths: screens move from `#hash` to `/area/name`.**

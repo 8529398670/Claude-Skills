@@ -178,6 +178,7 @@ const App = {
     this.showAnnouncement( me );
     Dom.get( "announcement-dismiss" ).addEventListener( "click" , () => this.onDismissAnnouncement() );
     Dom.show( Dom.get( "app-nav" ) , true );
+    this.showViewOnly( me );
     this.labelAccount();
     ThemeEditor.init( me ); // feature:appearance
     Shortcuts.signedIn( me ); // feature:shortcuts
@@ -384,10 +385,21 @@ const App = {
     if ( App.currentUser.invite_links_enabled !== false ) await Invites.refresh(); // feature:invite_links
   },
 
+  // A viewer may read and change nothing (the server answers 403 view_only).
+  // Every control that writes carries data-write, and style.css hides them
+  // all under <html data-view-only>.
+  showViewOnly( me ) {
+    const viewOnly = me.role === "viewer";
+    document.documentElement.toggleAttribute( "data-view-only" , viewOnly );
+    Dom.show( Dom.get( "view-only-banner" ) , viewOnly );
+    Dom.text( Dom.get( "display-name-text" ) , me.display_name );
+    Dom.show( Dom.get( "display-name-text" ) , viewOnly );
+  },
+
   async refreshUsers() {
     const body = Dom.get( "users-table" ).querySelector( "tbody" );
     await Pager.load( "users-table" , "users" , ( offset ) => Api.listUsers( offset , Pager.params( "users-table" ) ) , function ( user ) {
-      const statusKey = user.disabled ? "admin.status_disabled" : "admin.status_active";
+      const statusKey = user.expired ? "admin.status_expired" : user.disabled ? "admin.status_disabled" : "admin.status_active";
       const statusTone = user.disabled ? "secondary" : "success";
 
       const reissueButton = Dom.el( "button" , {
@@ -468,23 +480,35 @@ const App = {
       } );
 
       // Who may change what follows the delete rules, but any admin may make
-      // another. Both ask first and neither can undo: becoming an admin ends
-      // their sessions, which nothing brings back.
+      // another. The Role column is a picker: admin, user or viewer. Making
+      // or unmaking an admin, or a viewer, asks first; none of it can be
+      // undone from here, since becoming an admin ends their sessions.
       const mayManage = user.role !== "admin" || App.currentUser.is_owner;
-      const newRole = user.role === "admin" ? "user" : "admin";
-      const roleButton = isProtected || !mayManage ? null : Dom.el( "button" , {
-        class: "btn btn-sm btn-outline-secondary",
-        text: I18n.get( "admin.make_" + newRole + "_button" ),
-        on: { click: async function () {
-          const question = I18n.get( "admin.make_" + newRole + "_confirm" ).replace( "{name}" , () => user.display_name );
-          if ( !( await Dom.confirm( question ) ) ) return;
+      const ownerLabel = I18n.get( "admin.owner_label" );
+      const roleLabel = ( role ) => I18n.get( "admin.role_" + role ) || role;
+      const roleText = user.owner && ownerLabel !== "" ? roleLabel( user.role ) + " (" + ownerLabel + ")" : roleLabel( user.role );
+      const roleCell = isProtected || !mayManage ? Dom.el( "span" , { text: roleText } ) : Dom.el( "select" , {
+        class: "form-select form-select-sm w-auto",
+        attrs: { "aria-label": I18n.get( "admin.role_picker_label" ).replace( "{name}" , () => user.display_name ) },
+        children: [ "user" , "viewer" , "admin" ].map( ( role ) => Dom.el( "option" , { attrs: { value: role } , text: roleLabel( role ) } ) ),
+        on: { change: async function ( event ) {
+          const picked = event.target.value;
+          const confirmKey = picked === "admin" ? "admin.make_admin_confirm" : user.role === "admin" ? "admin.make_user_confirm" : picked === "viewer" ? "admin.make_viewer_confirm" : "";
+          if ( confirmKey !== "" && !( await Dom.confirm( I18n.get( confirmKey ).replace( "{name}" , () => user.display_name ) ) ) ) {
+            event.target.value = user.role;
+            return;
+          }
           try {
-            await Api.setUserRole( user.id , newRole );
+            await Api.setUserRole( user.id , picked );
             await App.refreshAfterUserChange();
-            Dom.toast( I18n.get( "admin.role_changed_toast" ).replace( "{name}" , () => user.display_name ).replace( "{role}" , newRole ) , "ok" );
-          } catch ( error ) { App.showError( error.message ); }
+            Dom.toast( I18n.get( "admin.role_changed_toast" ).replace( "{name}" , () => user.display_name ).replace( "{role}" , roleLabel( picked ) ) , "ok" );
+          } catch ( error ) {
+            event.target.value = user.role;
+            App.showError( error.message );
+          }
         } },
       } );
+      if ( roleCell.tagName === "SELECT" ) roleCell.value = user.role;
 
       // Your own name is on the Account screen. It edits in place, and is
       // built with textContent: a display name is user-controlled input.
@@ -566,8 +590,6 @@ const App = {
       } );
 
       // <<< feature:passwords
-      const ownerLabel = I18n.get( "admin.owner_label" );
-      const roleText = user.owner && ownerLabel !== "" ? user.role + " (" + ownerLabel + ")" : user.role;
 
       // Built with createElement + textContent, never an HTML string: a
       // display name is user-controlled input.
@@ -578,12 +600,13 @@ const App = {
       // <<< feature:passwords
       const status = [ Dom.badge( I18n.get( statusKey ) , statusTone ) ];
       if ( user.two_factor ) status.push( Dom.el( "span" , { class: "ms-1" , children: [ Dom.badge( I18n.get( "admin.two_factor_badge" ) , "secondary" ) ] } ) ); // feature:two_factor
+      if ( user.expires_at && !user.expired ) status.push( Dom.el( "div" , { class: "small text-body-secondary" , text: I18n.get( "admin.expires_note" ).replace( "{date}" , () => new Date( user.expires_at ).toLocaleString() ) } ) );
       if ( user.login_link ) status.push( Dom.el( "div" , { class: "small text-body-secondary" , text: LoginLinks.live( user.login_link , "live" ) } ) );
 
       body.appendChild( Dom.el( "tr" , { children: [
         Dom.el( "td" , { children: [ nameCell , username ].filter( Boolean ) } ), // feature:passwords
         Dom.el( "td" , { children: [ nameCell ] } ), // feature:!passwords
-        Dom.el( "td" , { text: roleText } ),
+        Dom.el( "td" , { children: [ roleCell ] } ),
         Dom.el( "td" , { children: status } ),
         Dom.el( "td" , { class: "text-nowrap" , children: [ Dom.when( user.created_at ) ] } ),
         Dom.el( "td" , { children: [
@@ -592,7 +615,6 @@ const App = {
             cancelLinkButton,
             sessionsButton, // feature:sessions
             passwordButton, // feature:passwords
-            roleButton,
             resetButton, // feature:two_factor
             revokeButton,
             toggleButton,

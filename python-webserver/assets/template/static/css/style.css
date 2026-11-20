@@ -376,6 +376,10 @@ progress { accent-color: var(--app-second); }
 .nav-link-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
 .nav-link-sub { font-size: 0.8rem; opacity: 0.75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-link-sub:empty { display: none; }
+/* A viewer changes nothing (the server's ViewOnly guard refuses it with 403
+   view_only), so the controls that would, marked data-write, are not shown.
+   App.init sets data-view-only on <html> for a viewer. */
+html[data-view-only] [data-write] { display: none !important; }
 .sidebar-heading {
   margin: 1rem 0 0.25rem;
   padding: 0 var(--bs-nav-link-padding-x);

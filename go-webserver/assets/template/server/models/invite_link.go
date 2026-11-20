@@ -31,7 +31,7 @@ const (
 
 // InviteLink is one link for a whole group -- posted in a group chat, say.
 // Each person who opens it types their name. A new name becomes a new
-// account (always role user), up to MaxUses of them. A name close to one
+// account with the link's Role (user, or viewer), up to MaxUses of them. A name close to one
 // that already joined through this link is offered back ("did you
 // mean...?"), which is how the same person signs in on their next device.
 //
@@ -61,8 +61,25 @@ type InviteLink struct {
 	// did. Revoking or deleting that key switches the link off (see
 	// VoidLinksMintedByKeyTx).
 	MintedByKey string `json:"minted_by_key,omitempty"`
+	// Role is what each account that joins through the link gets: user or
+	// viewer, never admin. Empty, from before the field, reads as user
+	// (JoinRole).
+	Role string `json:"role,omitempty"`
 	// Set by DeleteInviteLink; restorable for RestoreWindow, like a key.
 	SoftDelete
+}
+
+// JoinRole is the role an account joining through the link gets.
+func ( link *InviteLink ) JoinRole() ( result string ) {
+	result = RoleUser
+	if link.Role == RoleViewer { result = RoleViewer }
+	return
+}
+
+// ValidInviteRole is a role an invite link may hand out: user or viewer.
+func ValidInviteRole( role string ) ( result bool ) {
+	result = role == RoleUser || role == RoleViewer
+	return
 }
 
 func ( link *InviteLink ) Remaining() ( result int ) {
@@ -113,6 +130,14 @@ func ValidInviteLimits( max_uses int , days *int ) ( result bool ) {
 // link: only its hash is stored. minted_by_key is the id of the API key
 // asking, or empty.
 func IssueInviteLink( store *db.Store , label string , max_uses int , ttl time.Duration , created_by uint64 , minted_by_key string ) ( credential string , link *InviteLink , err error ) {
+	credential , link , err = IssueInviteLinkRole( store , label , max_uses , ttl , created_by , minted_by_key , RoleUser )
+	return
+}
+
+// IssueInviteLinkRole is IssueInviteLink for a link whose people join as
+// role: user or viewer (anything else is user).
+func IssueInviteLinkRole( store *db.Store , label string , max_uses int , ttl time.Duration , created_by uint64 , minted_by_key string , role string ) ( credential string , link *InviteLink , err error ) {
+	if ValidInviteRole( role ) == false { role = RoleUser }
 	id := encryption.GenerateURLToken( 12 )
 	secret := encryption.GenerateURLToken( 24 )
 	now := time.Now().UTC()
@@ -126,6 +151,7 @@ func IssueInviteLink( store *db.Store , label string , max_uses int , ttl time.D
 		CreatedAt:  now,
 		ExpiresAt:  now.Add( ttl ),
 		MintedByKey: minted_by_key,
+		Role:       role,
 	}
 	if err = store.Put( db.BucketInviteLinks , []byte( id ) , link ); err != nil {
 		link = nil
@@ -211,7 +237,7 @@ func JoinInviteLink( store *db.Store , credential string , display_name string ,
 			tx_err = ErrInviteLinkFull
 			return
 		}
-		if user , tx_err = createUserTx( tx , display_name , RoleUser ); tx_err != nil { return }
+		if user , tx_err = createUserTx( tx , display_name , link.JoinRole() ); tx_err != nil { return }
 		link.Accounts = append( link.Accounts , user.ID )
 		if tx_err = tx.Put( db.BucketInviteLinks , []byte( link.ID ) , link ); tx_err != nil { return }
 		session_id , new_credential , session := newSession( user.ID , session_ttl )

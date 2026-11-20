@@ -210,6 +210,12 @@ const App = {
     loading.push( Files.init( me ) ); // feature:files
     About.init( me ); // feature:about
 
+    // A viewer looks and changes nothing: the server refuses every write with
+    // 403 view_only, so the controls that would write (data-write) are hidden
+    // and a badge says why.
+    document.documentElement.toggleAttribute( "data-view-only" , me.role === "viewer" );
+    Dom.show( Dom.get( "view-only-badge" ) , me.role === "viewer" );
+
     if ( me.role === "admin" ) {
       Dom.show( Dom.get( "admin-panel" ) , true );
       LoginLinks.fill( Dom.get( "new-uses" ) , Dom.get( "new-expires" ) );
@@ -387,8 +393,8 @@ const App = {
   async refreshUsers() {
     const body = Dom.get( "users-table" ).querySelector( "tbody" );
     await Pager.load( "users-table" , "users" , ( offset ) => Api.listUsers( offset , Pager.params( "users-table" ) ) , function ( user ) {
-      const statusKey = user.disabled ? "admin.status_disabled" : "admin.status_active";
-      const statusTone = user.disabled ? "secondary" : "success";
+      const statusKey = user.expired ? "admin.status_expired" : user.disabled ? "admin.status_disabled" : "admin.status_active";
+      const statusTone = user.expired ? "warning" : user.disabled ? "secondary" : "success";
 
       const reissueButton = Dom.el( "button" , {
         class: "btn btn-sm btn-outline-secondary",
@@ -471,18 +477,34 @@ const App = {
       // another. Both ask first and neither can undo: becoming an admin ends
       // their sessions, which nothing brings back.
       const mayManage = user.role !== "admin" || App.currentUser.is_owner;
-      const newRole = user.role === "admin" ? "user" : "admin";
-      const roleButton = isProtected || !mayManage ? null : Dom.el( "button" , {
-        class: "btn btn-sm btn-outline-secondary",
-        text: I18n.get( "admin.make_" + newRole + "_button" ),
-        on: { click: async function () {
-          const question = I18n.get( "admin.make_" + newRole + "_confirm" ).replace( "{name}" , () => user.display_name );
-          if ( !( await Dom.confirm( question ) ) ) return;
+      // The role picker: admin, user or viewer. Becoming an admin and losing
+      // admin rights each ask with their own words; user and viewer swap with
+      // the plain question.
+      const rolePicker = isProtected || !mayManage ? null : Dom.el( "select" , {
+        class: "form-select form-select-sm w-auto",
+        attrs: { "aria-label": I18n.get( "admin.role_select_label" ).replace( "{name}" , () => user.display_name ) },
+        children: [ "admin" , "user" , "viewer" ].map( ( role ) => {
+          const option = Dom.el( "option" , { text: I18n.get( "admin.role_" + role ) , attrs: { value: role } } );
+          option.selected = role === user.role;
+          return option;
+        } ),
+        on: { change: async function ( event ) {
+          const picker = event.target;
+          const newRole = picker.value;
+          const words = newRole === "admin" ? "admin.make_admin_confirm" : user.role === "admin" ? "admin.make_user_confirm" : "admin.role_confirm";
+          const question = I18n.get( words ).replace( "{name}" , () => user.display_name ).replace( "{role}" , () => newRole );
+          if ( !( await Dom.confirm( question ) ) ) {
+            picker.value = user.role;
+            return;
+          }
           try {
             await Api.setUserRole( user.id , newRole );
             await App.refreshAfterUserChange();
             Dom.toast( I18n.get( "admin.role_changed_toast" ).replace( "{name}" , () => user.display_name ).replace( "{role}" , newRole ) , "ok" );
-          } catch ( error ) { App.showError( error.message ); }
+          } catch ( error ) {
+            picker.value = user.role;
+            App.showError( error.message );
+          }
         } },
       } );
 
@@ -578,12 +600,13 @@ const App = {
       // <<< feature:passwords
       const status = [ Dom.badge( I18n.get( statusKey ) , statusTone ) ];
       if ( user.two_factor ) status.push( Dom.el( "span" , { class: "ms-1" , children: [ Dom.badge( I18n.get( "admin.two_factor_badge" ) , "secondary" ) ] } ) ); // feature:two_factor
+      if ( user.expires_at && !user.expired ) status.push( Dom.el( "div" , { class: "small text-body-secondary" , children: [ document.createTextNode( I18n.get( "admin.expires_line" ).split( "{when}" )[ 0 ] ) , Dom.when( user.expires_at ) ] } ) );
       if ( user.login_link ) status.push( Dom.el( "div" , { class: "small text-body-secondary" , text: LoginLinks.live( user.login_link , "live" ) } ) );
 
       body.appendChild( Dom.el( "tr" , { children: [
         Dom.el( "td" , { children: [ nameCell , username ].filter( Boolean ) } ), // feature:passwords
         Dom.el( "td" , { children: [ nameCell ] } ), // feature:!passwords
-        Dom.el( "td" , { text: roleText } ),
+        Dom.el( "td" , rolePicker ? { children: [ rolePicker ] } : { text: roleText } ),
         Dom.el( "td" , { children: status } ),
         Dom.el( "td" , { class: "text-nowrap" , children: [ Dom.when( user.created_at ) ] } ),
         Dom.el( "td" , { children: [
@@ -592,7 +615,6 @@ const App = {
             cancelLinkButton,
             sessionsButton, // feature:sessions
             passwordButton, // feature:passwords
-            roleButton,
             resetButton, // feature:two_factor
             revokeButton,
             toggleButton,

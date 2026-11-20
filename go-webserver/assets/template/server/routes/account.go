@@ -17,8 +17,11 @@ type meReply struct {
 	Authenticated      bool                  `json:"authenticated"`
 	ID                 uint64                `json:"id"`
 	DisplayName        string                `json:"display_name"`
-	Role               string                `json:"role" jsonschema_description:"The effective role: never higher than an API key's own."`
-	AccountRole        string                `json:"account_role"`
+	Role               string                `json:"role" jsonschema:"enum=admin,enum=user,enum=viewer" jsonschema_description:"The effective role: never higher than an API key's own. A viewer may read, and change nothing."`
+	AccountRole        string                `json:"account_role" jsonschema:"enum=admin,enum=user,enum=viewer"`
+	Contract           int                   `json:"contract" jsonschema_description:"Which version of the portal contract this app speaks (ProjectPortal's CROSS_PROJECT.md)."`
+	Capabilities       []string              `json:"capabilities" jsonschema_description:"The optional parts of that contract this app has on now: viewer_role, account_expiry, key_minting, invite_links, key_sign_in."`
+	MayMintKeys        bool                  `json:"may_mint_keys,omitempty" jsonschema_description:"API keys only: whether this key may make keys for other accounts." jsonschema_extras:"x-feature=api_keys"` // feature:api_keys
 	IsOwner            bool                  `json:"is_owner"`
 	Maintenance        string                `json:"maintenance" jsonschema:"enum=none,enum=read_only,enum=full" jsonschema_extras:"x-feature=maintenance"` // feature:maintenance
 	HasPIN             bool                  `json:"has_pin" jsonschema_extras:"x-feature=invite_links"` // feature:invite_links
@@ -98,6 +101,8 @@ func ( handlers *Handlers ) getMe( c fiber.Ctx , in *apidoc.None ) ( reply *meRe
 		DisplayName:        user.DisplayName,
 		Role:               actor.Role,
 		AccountRole:        user.Role,
+		Contract:           portalContract,
+		Capabilities:       handlers.capabilities(),
 		IsOwner:            user.ID == owner_id,
 		LoginLink:          login_link,
 		Maintenance:        cfg.MaintenanceMode(), // feature:maintenance
@@ -142,8 +147,30 @@ func ( handlers *Handlers ) getMe( c fiber.Ctx , in *apidoc.None ) ( reply *meRe
 	if actor.APIKey != nil {
 		reply.APIKeyID = actor.APIKey.ID
 		reply.APIKeyName = actor.APIKey.Name
+		reply.MayMintKeys = actor.APIKey.MayMintKeys
 	}
 	// <<< feature:api_keys
+	return
+}
+
+// portalContract is the version of ProjectPortal's contract this app
+// speaks: what it may call from outside, field for field (its CROSS_PROJECT.md,
+// "Portal contract v2"). The webserver-upgrade skill's status reads it.
+const portalContract = 2
+
+// capabilities are the optional parts of that contract this app has on right
+// now. The portal turns each one on only when it is listed here.
+func ( handlers *Handlers ) capabilities() ( result []string ) {
+	// One line per capability, in the contract's order, so an app that left
+	// one of them out drops its line and nothing else.
+	result = []string{}
+	keys := false
+	keys = handlers.cfg().APIKeysEnabled // feature:api_keys
+	result = append( result , "viewer_role" )
+	result = append( result , "account_expiry" )
+	if keys { result = append( result , "key_minting" ) }
+	if handlers.inviteLinksOn() { result = append( result , "invite_links" ) } // feature:invite_links
+	if keys { result = append( result , "key_sign_in" ) }
 	return
 }
 
