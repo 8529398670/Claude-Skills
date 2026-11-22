@@ -247,7 +247,7 @@ func ( handlers *Handlers ) joinCreate( c fiber.Ctx , in *joinRequest ) ( reply 
 		return
 	}
 	handlers.auditAs( c , handlers.logUser( user.ID , security.MethodSession ) , logs.KindAuth , logs.LevelInfo , "joined through an invite link" , fiber.Map{ "link_id": link.ID } )
-	handlers.Webhooks.Emit( models.EventUserCreated , map[string]any{ "user_id": user.ID , "display_name": user.DisplayName , "role": user.Role , "invite_link_id": link.ID } ) // feature:webhooks
+	handlers.Webhooks.EmitAs( webhookActor( c ) , models.EventUserCreated , map[string]any{ "user_id": user.ID , "display_name": user.DisplayName , "role": user.Role , "invite_link_id": link.ID } ) // feature:webhooks
 	signed := &models.SignIn{ UserID: user.ID , SessionCredential: session_credential }
 	challenge , err := handlers.signIn( c , signed )
 	if err != nil { return }

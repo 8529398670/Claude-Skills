@@ -88,6 +88,8 @@ class MCPParity(RoutesTestCase):
                 continue
             path = re.sub(r"\{\w+\}", "999", operation["path"])
             status, reply = self.call(operation["method"], path, key=self.admin_key, body={})
+            if status == 200 and isinstance(reply, dict) and operation["path"] == "/api/keys/self/rotate":  # feature:api_keys
+                self.admin_key = reply["credential"]  # feature:api_keys
             message = reply.get("error", "") if isinstance(reply, dict) else ""
             refused = (status == 403 and SESSION_ONLY in message) or (status == 404 and message == "not_found")
             if operation["key_ok"] and refused:

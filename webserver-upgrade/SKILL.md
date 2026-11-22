@@ -40,11 +40,17 @@ python3 <skill_dir>/scripts/upgrade.py status
 ```
 
 This is read-only. Report the table and stop unless the user asked for an update.
-Each row shows the app's portal contract (`contract v2`): the version of
-ProjectPortal's contract it speaks, read from `portalContract` (Go) or
-`PORTAL_CONTRACT` (Python) beside `/api/me`. `v1` is an app from before
-versions. The contract v2 parts (`viewer-role`, `account-expiry`,
-`invite-link-roles`, `key-minting`) are offered as separate upgrades.
+Each row shows the app's portal contract (`contract v3`): the version of
+ProjectPortal's contract it speaks (SKILL.md's "Portal contract" in either
+webserver skill), read from `portalContract` (Go) or `PORTAL_CONTRACT`
+(Python) beside `/api/me`. `v1` is an app from before versions. The contract
+v2 parts (`viewer-role`, `account-expiry`, `invite-link-roles`,
+`key-minting`) are offered as separate upgrades. In v3, the fixes (account
+routes by the ladder, key grants on `/api/me`, refusal codes, the
+conformance test, `skill_commit`) come with any update. `portal-account`,
+`key-rotation` and `actor-audit` are upgrades. After an app takes
+`portal-account`, Connect on its owner's API keys screen, paste the key into
+the portal, and run `scripts/contract_check.sh <url>` with the key on stdin.
 
 ## Stamp an older app (once per app)
 

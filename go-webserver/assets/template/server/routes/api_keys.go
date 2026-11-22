@@ -8,6 +8,7 @@ import (
 
 	fiber "github.com/gofiber/fiber/v3"
 
+	apidoc "{{MODULE_PATH}}/server/apidoc"
 	db "{{MODULE_PATH}}/server/db"
 	logs "{{MODULE_PATH}}/server/logs"
 	models "{{MODULE_PATH}}/server/models"
@@ -311,7 +312,7 @@ func ( handlers *Handlers ) createMyAPIKey( c fiber.Ctx , in *createAPIKeyReques
 	// The credential appears here and nowhere else, ever.
 	reply = &newAPIKeyReply{ apiKeyRow: newAPIKeyRow( key , "" ) , Credential: credential }
 	handlers.audit( c , logs.KindAdmin , "api key created" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role } )
-	handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role } ) // feature:webhooks
+	handlers.Webhooks.EmitAs( webhookActor( c ) , models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role } ) // feature:webhooks
 	return
 }
 
@@ -347,10 +348,10 @@ func ( handlers *Handlers ) createAPIKeyForUser( c fiber.Ctx , in *createUserAPI
 		err = refuse( fiber.StatusNotFound , "no such user" )
 		return
 	case errors.Is( issue_err , models.ErrOwnerProtected ):
-		err = refuse( fiber.StatusForbidden , "a key for the owner can only be made by the owner, or from a shell" )
+		err = refuse( fiber.StatusForbidden , "a key for the owner can only be made by the owner, or from a shell" ).coded( apidoc.CodeOwnerProtected )
 		return
 	case errors.Is( issue_err , models.ErrOwnerRequired ):
-		err = refuse( fiber.StatusForbidden , "only the owner can create a key for an admin" )
+		err = refuse( fiber.StatusForbidden , "only the owner can create a key for an admin" ).coded( apidoc.CodeOwnerRequired )
 		return
 	case errors.Is( issue_err , models.ErrAPIKeyRole ):
 		err = refuse( fiber.StatusForbidden , "a key cannot have more permission than the account it belongs to" )
@@ -369,7 +370,7 @@ func ( handlers *Handlers ) createAPIKeyForUser( c fiber.Ctx , in *createUserAPI
 	// The credential appears here and nowhere else, ever.
 	reply = &newAPIKeyReply{ apiKeyRow: newAPIKeyRow( key , "" ) , Credential: credential }
 	handlers.audit( c , logs.KindAdmin , "api key created" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role , "user_id": key.UserID , "created_by": actor.ID } )
-	handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role , "created_by": actor.ID } ) // feature:webhooks
+	handlers.Webhooks.EmitAs( webhookActor( c ) , models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role , "created_by": actor.ID } ) // feature:webhooks
 	return
 }
 
@@ -417,10 +418,10 @@ func ( handlers *Handlers ) renameKey( c fiber.Ctx , in *renameAPIKeyRequest , o
 		err = refuse( fiber.StatusNotFound , "no such api key" )
 		return
 	case errors.Is( rename_err , models.ErrOwnerProtected ):
-		err = refuse( fiber.StatusForbidden , "only the owner can rename the owner's keys" )
+		err = refuse( fiber.StatusForbidden , "only the owner can rename the owner's keys" ).coded( apidoc.CodeOwnerProtected )
 		return
 	case errors.Is( rename_err , models.ErrOwnerRequired ):
-		err = refuse( fiber.StatusForbidden , "only the owner can rename an admin's keys" )
+		err = refuse( fiber.StatusForbidden , "only the owner can rename an admin's keys" ).coded( apidoc.CodeOwnerRequired )
 		return
 	case rename_err != nil:
 		err = rename_err
@@ -475,10 +476,10 @@ func ( handlers *Handlers ) setKeyExpiry( c fiber.Ctx , in *apiKeyExpiryRequest 
 		err = refuse( fiber.StatusBadRequest , "only a live key can have its expiry changed -- create a new one instead" )
 		return
 	case errors.Is( set_err , models.ErrOwnerProtected ):
-		err = refuse( fiber.StatusForbidden , "only the owner can change when the owner's keys expire" )
+		err = refuse( fiber.StatusForbidden , "only the owner can change when the owner's keys expire" ).coded( apidoc.CodeOwnerProtected )
 		return
 	case errors.Is( set_err , models.ErrOwnerRequired ):
-		err = refuse( fiber.StatusForbidden , "only the owner can change when an admin's keys expire" )
+		err = refuse( fiber.StatusForbidden , "only the owner can change when an admin's keys expire" ).coded( apidoc.CodeOwnerRequired )
 		return
 	case set_err != nil:
 		err = set_err
@@ -542,7 +543,7 @@ func ( handlers *Handlers ) setMyAPIKeyMinting( c fiber.Ctx , in *apiKeyMintingR
 		err = refuse( fiber.StatusNotFound , "no such api key" )
 		return
 	case errors.Is( set_err , models.ErrOwnerRequired ):
-		err = refuse( fiber.StatusForbidden , "only the owner can let a key mint keys" )
+		err = refuse( fiber.StatusForbidden , "only the owner can let a key mint keys" ).coded( apidoc.CodeOwnerRequired )
 		return
 	case errors.Is( set_err , models.ErrAPIKeyNotAdmin ) , errors.Is( set_err , models.ErrAPIKeyMintsNot ) , errors.Is( set_err , models.ErrAPIKeyDead ):
 		err = refuse( fiber.StatusBadRequest , set_err.Error() )
@@ -562,7 +563,7 @@ func ( handlers *Handlers ) setMyAPIKeyMinting( c fiber.Ctx , in *apiKeyMintingR
 func keyMintingOff( c fiber.Ctx ) ( refused *refusal ) {
 	actor := security.ActorFrom( c )
 	if actor.ViaAPIKey() && actor.APIKey.MayMintKeys == false {
-		refused = refuse( fiber.StatusForbidden , "key_minting_off" )
+		refused = refuse( fiber.StatusForbidden , "key_minting_off" ).coded( apidoc.CodeKeyMintingOff )
 	}
 	return
 }
@@ -604,10 +605,10 @@ func ( handlers *Handlers ) mintKeyForUser( c fiber.Ctx , in *mintKeyRequest ) (
 		err = refuse( fiber.StatusNotFound , "no such user" )
 		return
 	case errors.Is( issue_err , models.ErrOwnerProtected ):
-		err = refuse( fiber.StatusForbidden , "the owner's keys cannot be minted or revoked this way" )
+		err = refuse( fiber.StatusForbidden , "the owner's keys cannot be minted or revoked this way" ).coded( apidoc.CodeOwnerProtected )
 		return
 	case errors.Is( issue_err , models.ErrOwnerRequired ):
-		err = refuse( fiber.StatusForbidden , "only the owner can make a key for an admin" )
+		err = refuse( fiber.StatusForbidden , "only the owner can make a key for an admin" ).coded( apidoc.CodeOwnerRequired )
 		return
 	case errors.Is( issue_err , models.ErrAPIKeyLimit ):
 		err = refuse( fiber.StatusBadRequest , "that account already has the maximum number of live API keys" )
@@ -621,7 +622,7 @@ func ( handlers *Handlers ) mintKeyForUser( c fiber.Ctx , in *mintKeyRequest ) (
 	}
 	reply = &newAPIKeyReply{ apiKeyRow: newAPIKeyRow( key , "" ) , Credential: credential }
 	handlers.audit( c , logs.KindAdmin , "api key minted" , fiber.Map{ "key_id": key.ID , "name": key.Name , "role": key.Role , "user_id": key.UserID , "minted_by_key": key.MintedByKey } )
-	handlers.Webhooks.Emit( models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role , "created_by": actor.User.ID } ) // feature:webhooks
+	handlers.Webhooks.EmitAs( webhookActor( c ) , models.EventAPIKeyCreated , map[string]any{ "key_id": key.ID , "user_id": key.UserID , "name": key.Name , "role": key.Role , "created_by": actor.User.ID } ) // feature:webhooks
 	return
 }
 
@@ -631,11 +632,17 @@ func ( handlers *Handlers ) mintKeyForUser( c fiber.Ctx , in *mintKeyRequest ) (
 //     tag="API keys", role=ADMIN, feature="api_keys", errors=(404,),
 //     description="One account's keys, revoked and expired ones included, newest first. Each row says "
 //         "which key minted it (minted_by_key, empty when a person made it). Needs a browser session or a "
-//         "key with may_mint_keys; any other key gets 403 key_minting_off.",
+//         "key with may_mint_keys; any other key gets 403 key_minting_off. Follows the owner ladder: "
+//         "nobody lists the owner's keys this way, and only the owner lists another admin's.",
 //     mcp_http="Manages API keys, which no MCP tool does.",
 // )
 func ( handlers *Handlers ) listUserAPIKeys( c fiber.Ctx , in *userIDPath ) ( reply *userAPIKeysReply , err error ) {
 	if refused := keyMintingOff( c ); refused != nil {
+		err = refused
+		return
+	}
+	actor := security.ActorFrom( c )
+	if refused := actOnRefusal( models.MayActOn( handlers.Store , actor.User.ID , in.UserID ) , "list the keys of" ); refused != nil {
 		err = refused
 		return
 	}
@@ -670,7 +677,7 @@ func ( handlers *Handlers ) revokeMyAPIKey( c fiber.Ctx , in *keyIDPath ) ( repl
 	}
 	if err = models.RevokeAPIKey( handlers.Store , key.ID ); err != nil { return }
 	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": in.KeyID } )
-	handlers.Webhooks.Emit( models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } ) // feature:webhooks
+	handlers.Webhooks.EmitAs( webhookActor( c ) , models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } ) // feature:webhooks
 	reply = &okReply{ Ok: true }
 	return
 }
@@ -748,9 +755,9 @@ func deleteKeyRefusal( delete_err error ) ( err error ) {
 	case errors.Is( delete_err , db.ErrNotFound ):
 		err = refuse( fiber.StatusNotFound , "no such api key" )
 	case errors.Is( delete_err , models.ErrOwnerProtected ):
-		err = refuse( fiber.StatusForbidden , "only the owner can change the owner's keys" )
+		err = refuse( fiber.StatusForbidden , "only the owner can change the owner's keys" ).coded( apidoc.CodeOwnerProtected )
 	case errors.Is( delete_err , models.ErrOwnerRequired ):
-		err = refuse( fiber.StatusForbidden , "only the owner can change an admin's keys" )
+		err = refuse( fiber.StatusForbidden , "only the owner can change an admin's keys" ).coded( apidoc.CodeOwnerRequired )
 	default:
 		err = delete_err
 	}
@@ -808,7 +815,7 @@ func ( handlers *Handlers ) revokeAnyAPIKey( c fiber.Ctx , in *keyIDPath ) ( rep
 	}
 	if security.ActorFrom( c ).ViaAPIKey() {
 		if owner_id , owner_err := models.OwnerID( handlers.Store ); owner_err != nil || owner_id == key.UserID {
-			err = refuse( fiber.StatusForbidden , "the owner's keys cannot be minted or revoked this way" )
+			err = refuse( fiber.StatusForbidden , "the owner's keys cannot be minted or revoked this way" ).coded( apidoc.CodeOwnerProtected )
 			return
 		}
 	}
@@ -817,7 +824,7 @@ func ( handlers *Handlers ) revokeAnyAPIKey( c fiber.Ctx , in *keyIDPath ) ( rep
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "api key revoked" , fiber.Map{ "key_id": in.KeyID } )
-	handlers.Webhooks.Emit( models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } ) // feature:webhooks
+	handlers.Webhooks.EmitAs( webhookActor( c ) , models.EventAPIKeyRevoked , map[string]any{ "key_id": key.ID , "user_id": key.UserID } ) // feature:webhooks
 	reply = &okReply{ Ok: true }
 	return
 }
@@ -836,5 +843,62 @@ func ( handlers *Handlers ) deleteAnyAPIKey( c fiber.Ctx , in *keyIDPath ) ( rep
 	}
 	handlers.audit( c , logs.KindAdmin , "api key deleted" , fiber.Map{ "key_id": in.KeyID } )
 	reply = &okReply{ Ok: true }
+	return
+}
+
+type rotatedKeyReply struct {
+	Credential string `json:"credential" jsonschema_description:"The key's new credential, shown in this response only. The old one stopped working."`
+}
+
+func ( rotatedKeyReply ) APIName() ( name string ) { name = "RotatedKey"; return }
+
+// rotateSelf is a key giving itself a new secret (portal contract v3): an
+// outside tool rotates its own key on a schedule, with nobody involved.
+//
+// @route("POST /api/keys/self/rotate", summary="Rotate the calling key",
+//     tag="API keys", access=KEY_ONLY, feature="api_keys",
+//     description="Gives the calling key a new secret and answers its new credential, shown only now. The old "
+//         "secret stops working at once. The key's id, name, role, grants, lineage and expiry stay as they are, so "
+//         "the keys and links it made keep working; rotating never extends the expiry. A viewer key may call it.",
+//     mcp_http="Makes an API key's credential, which no MCP tool does.",
+// )
+func ( handlers *Handlers ) rotateSelf( c fiber.Ctx , in *apidoc.None ) ( reply *rotatedKeyReply , err error ) {
+	actor := security.ActorFrom( c )
+	credential , key , rotate_err := models.RotateAPIKey( handlers.Store , actor.KeyID() )
+	if rotate_err != nil {
+		err = refuse( fiber.StatusBadRequest , rotate_err.Error() )
+		return
+	}
+	handlers.audit( c , logs.KindAuth , "api key rotated" , fiber.Map{ "key_id": key.ID } )
+	reply = &rotatedKeyReply{ Credential: credential }
+	return
+}
+
+// rotateMyAPIKey is the owner rotating one of the owner's own keys from a
+// browser session. Someone else's key is "no such api key", as everywhere.
+//
+// @route("POST /api/keys/{key_id}/rotate", summary="Rotate one of your keys",
+//     tag="API keys", access=SESSION_ONLY, feature="api_keys", errors=(404,),
+//     description="The owner only: gives one of the owner's own keys a new secret and answers its new credential, "
+//         "shown only now. The old secret stops working at once; nothing else about the key changes.",
+// )
+func ( handlers *Handlers ) rotateMyAPIKey( c fiber.Ctx , in *keyIDPath ) ( reply *rotatedKeyReply , err error ) {
+	user := security.UserFrom( c )
+	key , get_err := models.GetAPIKey( handlers.Store , in.KeyID )
+	if get_err != nil || key.Deleted() || key.UserID != user.ID {
+		err = refuse( fiber.StatusNotFound , "no such api key" )
+		return
+	}
+	if owner_id , owner_err := models.OwnerID( handlers.Store ); owner_err != nil || owner_id != user.ID {
+		err = refuse( fiber.StatusForbidden , "only the owner rotates a key from here; any key rotates itself" ).coded( apidoc.CodeOwnerRequired )
+		return
+	}
+	credential , _ , rotate_err := models.RotateAPIKey( handlers.Store , key.ID )
+	if rotate_err != nil {
+		err = refuse( fiber.StatusBadRequest , rotate_err.Error() )
+		return
+	}
+	handlers.audit( c , logs.KindAuth , "api key rotated" , fiber.Map{ "key_id": key.ID } )
+	reply = &rotatedKeyReply{ Credential: credential }
 	return
 }

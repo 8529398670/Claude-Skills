@@ -12,6 +12,14 @@ import (
 	encryption "{{MODULE_PATH}}/server/encryption"
 )
 
+// An account's kind. A person signs in; a service account (ProjectPortal's
+// own, see portal.go) only ever has API keys. Rows written before kinds
+// existed have none, and read as a person (User.KindOrPerson).
+const (
+	KindPerson  = "person"
+	KindService = "service"
+)
+
 const (
 	RoleAdmin  = "admin"
 	RoleUser   = "user"
@@ -59,6 +67,8 @@ type User struct {
 	// housekeeping job disables it for real and revokes its access
 	// (ExpireAccounts). Set by an admin (SetUserExpiry), never on the owner.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// Kind is KindPerson or KindService; empty is a person.
+	Kind string `json:"kind,omitempty"`
 	// >>> feature:invite_links
 	// PinHash is the optional PIN asked for when someone signs back in
 	// through an invite link. It is not a password: nothing else checks it.
@@ -110,6 +120,19 @@ func ( user *User ) Disabled() ( result bool ) {
 // Expired is true once ExpiresAt has passed.
 func ( user *User ) Expired() ( result bool ) {
 	result = user.ExpiresAt != nil && time.Now().UTC().After( *user.ExpiresAt )
+	return
+}
+
+// KindOrPerson is the account's kind, a person when none was written.
+func ( user *User ) KindOrPerson() ( kind string ) {
+	kind = user.Kind
+	if kind == "" { kind = KindPerson }
+	return
+}
+
+// IsService is true for a service account: keys only, never signed into.
+func ( user *User ) IsService() ( result bool ) {
+	result = user.Kind == KindService
 	return
 }
 
@@ -274,6 +297,11 @@ func SetUserRole( store *db.Store , user_id uint64 , actor_id uint64 , role stri
 		if tx_err = refuseOwnerTx( tx , user_id ); tx_err != nil { return }
 		if user.Role == role { return }
 		if tx_err = mayActOnTx( tx , actor_id , user ); tx_err != nil { return }
+		// A service account is an admin, always (portal.go).
+		if user.IsService() {
+			tx_err = ErrServiceAccount
+			return
+		}
 		user.Role = role
 		if tx_err = tx.Put( db.BucketUsers , key , user ); tx_err != nil { return }
 		changed = true

@@ -348,12 +348,17 @@ def restore_webhook(store: Store, webhook_id: str, actor_id: int, actor_is_admin
     return Webhook.from_record(record)
 
 
-def _new_delivery(webhook_id: str, event: str, data: dict[str, Any] | None) -> Delivery:
+def _new_delivery(webhook_id: str, event: str, data: dict[str, Any] | None, actor: dict[str, Any] | None = None) -> Delivery:
     """data carries ids and names only, the same rule as a log entry's detail:
-    this leaves the server."""
+    this leaves the server. actor is who did it (portal contract v3):
+    actor_user_id, actor_name, and for a key actor_key_id and actor_key_name;
+    absent when nobody did (a job)."""
     now = utc_now()
     delivery_id = encryption.url_token(12)
-    body = json.dumps({"id": delivery_id, "event": event, "created_at": to_iso(now), "data": data}, ensure_ascii=False, separators=(",", ":"))
+    payload: dict[str, Any] = {"id": delivery_id, "event": event, "created_at": to_iso(now), "data": data}
+    if actor is not None:
+        payload["actor"] = actor
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return Delivery(id=delivery_id, webhook_id=webhook_id, event=event, body=body, created_at=now, next_attempt_at=now)
 
 
@@ -389,12 +394,12 @@ def resend_delivery(store: Store, webhook_id: str, delivery_id: str) -> bool:
     return True
 
 
-def enqueue_event(store: Store, event: str, data: dict[str, Any] | None) -> int:
+def enqueue_event(store: Store, event: str, data: dict[str, Any] | None, actor: dict[str, Any] | None = None) -> int:
     """One delivery per endpoint that wants the event, and how many."""
     queued = 0
     for hook in list_webhooks(store):
         if hook.wants(event):
-            delivery = _new_delivery(hook.id, event, data)
+            delivery = _new_delivery(hook.id, event, data, actor)
             store.put(BUCKET_WEBHOOK_DELIVERIES, delivery.id, delivery.to_record())
             queued += 1
     return queued

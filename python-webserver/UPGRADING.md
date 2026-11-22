@@ -3,6 +3,117 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After ea9f39c
+
+**Portal contract v3: ProjectPortal works through an account of its own.**
+The binding wire format is now SKILL.md's "Portal contract" (the same in both
+webserver skills), and ProjectPortal's `CROSS_PROJECT.md` points there.
+`PORTAL_CONTRACT` is 3. The fixes below land in every app. `portal-account`,
+`key-rotation` and `actor-audit` are upgrades. A v2 portal ignores the new
+fields.
+
+**Account routes keep to the ladder: an account's key list too.**
+Marks: `"list the keys of"`
+Files: `app/routes/api_keys.py`, `app/tests/test_portal_contract.py`, `SKILL.md`
+
+- `list_user_keys` refuses the owner's keys (`owner_protected`) and another
+  admin's (`owner_required`) unless the owner asks. Any other admin could list
+  them before.
+- SKILL.md, Step 3: "Don't narrow account routes to the owner", after Rook.
+  An app with an owner-only guard on an account route moves it to the ladder.
+- Tests: `AnyAdminRunsAccounts`.
+
+**`/api/me` says what this caller may do: `owner`, `kind`, and the key's grants.**
+Marks: `MeKey`, `KIND_SERVICE`, `"key_grants"`
+Files: `app/routes/account.py`, `app/models/users.py`, `app/routes/admin.py`, `app/apidocs/reflect.py`
+
+- `owner` (same as `is_owner`) and `kind` always. For an API key, `key`:
+  id, name, role, may_mint_keys, may_sign_in, expires_at (left out when it
+  never expires). Capability `key_grants`.
+- Plumbing: `User.kind` (`KIND_PERSON`/`KIND_SERVICE`, a record without one
+  reads as a person), `is_service`. Users list rows add `kind`. The schema
+  reflector keeps `x-feature` beside a `$ref` (`reflect.py`).
+- Tests: `MeSaysWhatThisCallerMayDo`.
+
+**Every 4xx carries a machine-readable `code`.**
+Marks: `CODE_OWNER_PROTECTED`, `error_body`, `decode_field`, `"error_codes"`
+Files: `app/core/error_codes.py` (new), `app/routes/helpers.py`, `app/apidocs/route.py`, `app/apidocs/__init__.py`, `app/core/security.py`, `app/core/middleware.py`, `app/routes/meta.py`, `app/mcp/protocol.py`, `app/routes/admin.py`, `app/routes/api_keys.py`, `app/routes/sessions.py`, `app/tests/test_error_codes.py` (new), tests that compare a whole error body, `config/api.json`, `config/api.md`
+
+- `"error": "<sentence>"`, ` "code": "<code>"`, plus `field` on a 400 about one
+  field. `Refused` takes `code=`. Without one, the code follows the status
+  (`status_code`). The guards, the error handler and the request decoder send
+  theirs through `error_body`.
+- `error` text is unchanged: `forbidden` (code `not_admin`), `view_only`,
+  `key_minting_off`.
+- An app's own `Refused(403, ...)` for the owner rule adds
+  `code=CODE_OWNER_PROTECTED` / `CODE_OWNER_REQUIRED`. Its own
+  `JSONResponse("error": ...)` moves to `error_body`.
+  `EveryRouteRefusesWithACode` finds what was missed. A test that compares a
+  whole error body adds `code`.
+- `ErrorReply` documents `code` (closed enum) and `field`. Capability
+  `error_codes`, always on.
+- Tests: `test_error_codes.py`.
+
+**Contract conformance in every app, and against a live one.**
+Marks: `contract_calls`, `contract_check.sh`
+Files: `app/tests/test_portal_conformance.py` (new, keep it verbatim), `scripts/contract_check.sh` (new), `app/tests/test_mcp_parity.py`
+
+- One table of contract routes, run with a portal admin key, a user key
+  (`not_admin`), a viewer key (`view_only`), and on the owner and another admin
+  (`owner_protected` / `owner_required`).
+- `scripts/contract_check.sh <base_url>` takes the key on stdin, makes GET
+  calls only, and prints a PASS, WARN or FAIL line for each part.
+  `ContractCheck` runs it against the test app, served by uvicorn.
+
+**`/api/me` says which template it came from: `skill`, `skill_commit`.**
+Marks: `skill_origin`, `SKILL_COMMIT`
+Files: `app/core/skill_origin.py` (new), `app/main.py`, `app/routes/account.py`, `docker/lib.sh`, `docker/Dockerfile`
+
+- Read at start from `.skill-origin.yaml`'s `skill` and `commit`. The image
+  has no such file, so `docker/lib.sh` passes them and the Dockerfile writes
+  them into `app/build_info.py`. Both are left out when unknown.
+- Tests: `MeSaysWhichTemplateItCameFrom`.
+
+**Upgrade `portal-account`: ProjectPortal's own service account, Connect, and `manage portal-connect`.**
+Needs: `api_keys`.
+Marks: `connect_portal`, `portal-connect`, `"service_accounts"`, `ServiceAccountError`
+Files: `app/models/portal.py`, `app/routes/portal.py`, `app/tests/test_portal_account.py`, `static/js/portal.js` (new); `app/models/users.py`, `app/models/credentials.py`, `app/models/login_tokens.py`, `app/models/sign_in.py`, `app/models/two_factor.py`, `app/models/api_keys.py`, `app/routes/__init__.py`, `app/routes/admin.py`, `app/routes/helpers.py`, `app/manage.py`, `static/index.html`, `static/js/app.js`, `config/language.yaml`
+
+- A service account is an admin, never the owner, and never signed into.
+  `start_sign_in_tx`, `issue_login_link`, `set_api_key_sign_in`, two-factor
+  setup, `transfer_owner`, role changes and create-user (`kind: "service"`)
+  refuse it with `service_account` (`service_account_refusal`).
+- `set_api_key_mint_keys` also takes a service account's admin key, from the owner.
+- `GET /api/owner/portal`, `POST /api/owner/portal/connect` (`name?`, ` days`,
+  201, the key and its credential) and `POST /api/owner/portal/disconnect`.
+  The card on `/admin/api-keys` (`portal.js`, `#portal-card`) and the
+  **Service** badge on the accounts list.
+- `manage portal-connect [--name] [--days]` (straight to the database, like
+  `create-key`).
+
+**Upgrade `key-rotation`: a key rotates its own secret.**
+Needs: `api_keys`.
+Marks: `rotate_api_key`, `/api/keys/self/rotate`, `"key_rotation"`
+Files: `app/models/api_keys.py`, `app/routes/api_keys.py`, `app/core/security.py`, `app/tests/test_key_rotation.py`, `app/tests/test_mcp_parity.py`
+
+- `POST /api/keys/self/rotate` (any key; on the viewer allow-list) and
+  `POST /api/keys/key_id/rotate` (the owner's session, the owner's own key)
+  answer `"credential": "..."`.
+- Only the secret changes. The id, grants, lineage and expiry stay, and the
+  expiry is never extended.
+
+**Upgrade `actor-audit`: every admin action says who did it.**
+Needs: `logs`.
+Marks: `actor_key_name`, `webhook_actor`, `via_named_key`
+Files: `app/core/security.py`, `app/routes/logs.py`, `app/core/webhooks.py`, `app/models/webhooks.py`, `app/routes/admin.py`, `app/routes/api_keys.py`, `app/routes/files.py`, `app/routes/invite_links.py`, `app/routes/portal.py`, `static/js/logs.js`, `config/language.yaml`, `app/tests/test_actor_audit.py`
+
+- Admin entries' detail carries `actor_user_id` and `actor_name`, and for a
+  key `actor_key_id` and `actor_key_name` (`security.actor_fields`).
+  `log_actor` adds `key_name`.
+- Webhook payloads add `"actor"` with the same four fields
+  (`emit(..., actor=webhook_actor(request))`).
+- The Logs screen shows "*name* · key *keyname*".
+
 ## After 60335af
 
 **Portal contract v2: the viewer role, account expiry, invite-link roles and key minting with lineage.**

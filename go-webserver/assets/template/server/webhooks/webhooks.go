@@ -140,9 +140,15 @@ func New( store *db.Store , settings *config.Holder ) ( dispatcher *Dispatcher )
 // only: it leaves the server. A failure here is reported and goes no further,
 // since whatever just happened did happen, and the caller's work is done.
 func ( dispatcher *Dispatcher ) Emit( event string , data map[string]any ) {
+	dispatcher.EmitAs( nil , event , data )
+}
+
+// EmitAs is Emit saying who did it (portal contract v3): actor is
+// logs.Actor.Fields, and goes in the payload as "actor".
+func ( dispatcher *Dispatcher ) EmitAs( actor map[string]any , event string , data map[string]any ) {
 	if dispatcher == nil { return }
 	if dispatcher.settings.Get().Webhooks.Enabled == false { return }
-	queued , err := models.EnqueueWebhookEvent( dispatcher.store , event , data )
+	queued , err := models.EnqueueWebhookEventAs( dispatcher.store , event , data , actor )
 	if err != nil {
 		log.Printf( "[webhooks] could not queue %s: %v" , event , err )
 		return

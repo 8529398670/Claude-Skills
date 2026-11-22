@@ -22,6 +22,7 @@ from starlette.requests import Request
 
 from app.apidocs import ADMIN, PATH, QUERY, Reply, route
 from app.apidocs import Request as RequestType
+from app.core.error_codes import CODE_OWNER_PROTECTED, CODE_OWNER_REQUIRED
 from app.core.db import Store
 from app.core.logs import KIND_ADMIN
 from app.core.security import actor_from
@@ -29,8 +30,9 @@ from app.models import credentials, from_iso, login_tokens, to_iso, users, utc_n
 from app.models import passwords  # feature:passwords
 from app.models import two_factor  # feature:two_factor
 from app.models import webhooks  # feature:webhooks
-from app.routes.helpers import DateTime, Dir, Page, Paged, Refused, act_on_refusals, get_config, get_store, sorted_page
+from app.routes.helpers import DateTime, Dir, Page, Paged, Refused, act_on_refusals, get_config, get_store, service_account_refusal, sorted_page
 from app.routes.logs import audit
+from app.routes.logs import webhook_actor  # feature:webhooks
 from app.routes.mcp_tools_accounts import with_login_url  # feature:mcp
 # >>> feature:two_factor
 from app.routes.mcp_tools_accounts import two_factor_on  # feature:mcp
@@ -89,6 +91,7 @@ class UserRow(Reply):
     expires_at: Annotated[DateTime | None, Meta(description="When the account stops working, or null for never.")]
     expired: Annotated[bool, Meta(description="Whether expires_at has passed.")]
     owner: bool
+    kind: Annotated[Literal["person", "service"], Meta(description="person, or service for an account with API keys only (ProjectPortal's own).")]
     has_password: Annotated[bool, Meta(extra_json_schema={"x-feature": "passwords"})]  # feature:passwords
     password_blocked: Annotated[bool, Meta(extra_json_schema={"x-feature": "passwords"})]  # feature:passwords
     two_factor: Annotated[bool, Meta(extra_json_schema={"x-feature": "two_factor"})]  # feature:two_factor
@@ -135,6 +138,7 @@ def user_rows(store: Store, query: str = "") -> list[UserRow]:
             expires_at=to_iso(u.expires_at),
             expired=u.expired,
             owner=u.id == owner_id,
+            kind=u.kind,  # type: ignore[arg-type]
             has_password=passwords.has_password(u),  # feature:passwords
             password_blocked=u.password_blocked,  # feature:passwords
             two_factor=two_factor.is_on(u),  # feature:two_factor
@@ -217,6 +221,7 @@ class CreateUser(RequestType):
     max_uses: MaxUses | None = None
     expires_in_minutes: ExpiresInMinutes | None = None
     account_expires_at: Annotated[AccountExpiry | None, Meta(description="When the account stops working (RFC 3339). Left out: never. expires_in_minutes is the login link's expiry, not this.")] = None
+    kind: Annotated[Literal["person", "service"], Meta(description="person, the default. service is refused (403 service_account): a service account is made by Connect on the owner's API keys screen.")] = "person"
 
 
 class CreateUserReply(LoginLinkReply):
@@ -242,6 +247,8 @@ def create_user(request: Request, body: CreateUser) -> CreateUserReply:
     browser knows the origin it is talking to, whereas the server behind a
     reverse proxy often does not, and a login link with the wrong host is
     worse than useless."""
+    if body.kind == users.KIND_SERVICE:
+        raise service_account_refusal()
     if not users.valid_display_name(body.display_name):
         raise Refused(400, "display name must be 1-80 characters")
     account_expires_at = parse_expiry(body.account_expires_at, "account_expires_at")
@@ -250,7 +257,7 @@ def create_user(request: Request, body: CreateUser) -> CreateUserReply:
     user = users.create_user(store, body.display_name, body.role, account_expires_at)
     credential, info = login_tokens.issue_login_link(store, user.id, options)
     audit(request, KIND_ADMIN, "user created", {"user_id": user.id, "name": user.display_name, "role": user.role})
-    request.app.state.webhooks.emit(webhooks.EVENT_USER_CREATED, {"user_id": user.id, "display_name": user.display_name, "role": user.role})  # feature:webhooks
+    request.app.state.webhooks.emit(webhooks.EVENT_USER_CREATED, {"user_id": user.id, "display_name": user.display_name, "role": user.role}, actor=webhook_actor(request))  # feature:webhooks
     return CreateUserReply(user_id=user.id, **link_reply(credential, info))
 
 
@@ -354,13 +361,13 @@ def set_user_disabled(request: Request, body: SetUserDisabled) -> OkReply:
     try:
         found = credentials.set_user_disabled(store, body.user_id, body.disabled, actor_id=self_id)
     except credentials.OwnerProtectedError:
-        raise Refused(403, "the owner account cannot be disabled") from None
+        raise Refused(403, "the owner account cannot be disabled", code=CODE_OWNER_PROTECTED) from None
     except credentials.OwnerRequiredError:
-        raise Refused(403, "only the owner can disable or enable an admin account") from None
+        raise Refused(403, "only the owner can disable or enable an admin account", code=CODE_OWNER_REQUIRED) from None
     if not found:
         raise Refused(404, "no such user")
     audit(request, KIND_ADMIN, "user disabled set", {"user_id": body.user_id, "disabled": body.disabled})
-    request.app.state.webhooks.emit(webhooks.EVENT_USER_DISABLED, {"user_id": body.user_id, "disabled": body.disabled})  # feature:webhooks
+    request.app.state.webhooks.emit(webhooks.EVENT_USER_DISABLED, {"user_id": body.user_id, "disabled": body.disabled}, actor=webhook_actor(request))  # feature:webhooks
     return OkReply(ok=True)
 
 
@@ -397,9 +404,9 @@ def revoke_access(request: Request, body: UserIDPath) -> RevokeAccessReply:
     try:
         revoked = credentials.revoke_all_credentials(get_store(request), body.user_id, actor_id=self_id)
     except credentials.OwnerProtectedError:
-        raise Refused(403, "the owner account's access cannot be revoked") from None
+        raise Refused(403, "the owner account's access cannot be revoked", code=CODE_OWNER_PROTECTED) from None
     except credentials.OwnerRequiredError:
-        raise Refused(403, "only the owner can revoke the access of an admin account") from None
+        raise Refused(403, "only the owner can revoke the access of an admin account", code=CODE_OWNER_REQUIRED) from None
     if revoked is None:
         raise Refused(404, "no such user")
     audit(request, KIND_ADMIN, "access revoked", {"user_id": body.user_id})
@@ -434,7 +441,7 @@ def rename_user(request: Request, body: RenameUser) -> RenameUserReply:
     except users.RenameConflictError as stale:
         raise Refused(409, str(stale), display_name=stale.current) from None
     except credentials.OwnerRequiredError:
-        raise Refused(403, "only the owner can rename an admin") from None
+        raise Refused(403, "only the owner can rename an admin", code=CODE_OWNER_REQUIRED) from None
     if not found:
         raise Refused(404, "no such user")
     name = body.display_name.strip()
@@ -469,9 +476,11 @@ def set_user_role(request: Request, body: SetUserRole) -> SetUserRoleReply:
     except credentials.SelfRoleError as refusal:
         raise Refused(400, str(refusal)) from None
     except credentials.OwnerProtectedError:
-        raise Refused(403, "the owner is always an admin") from None
+        raise Refused(403, "the owner is always an admin", code=CODE_OWNER_PROTECTED) from None
     except credentials.OwnerRequiredError:
-        raise Refused(403, "only the owner can take away an admin's rights") from None
+        raise Refused(403, "only the owner can take away an admin's rights", code=CODE_OWNER_REQUIRED) from None
+    except credentials.ServiceAccountError:
+        raise service_account_refusal() from None
     if changed is None:
         raise Refused(404, "no such user")
     if changed:
@@ -508,11 +517,11 @@ def set_user_expiry(request: Request, body: SetUserExpiry) -> SetUserExpiryReply
     except credentials.ExpiryPastError as refusal:
         raise Refused(400, str(refusal)) from None
     except credentials.OwnerExpiryError as refusal:
-        raise Refused(403, str(refusal)) from None
+        raise Refused(403, str(refusal), code=CODE_OWNER_PROTECTED) from None
     except credentials.OwnerProtectedError:
-        raise Refused(403, "the owner's account cannot expire") from None
+        raise Refused(403, "the owner's account cannot expire", code=CODE_OWNER_PROTECTED) from None
     except credentials.OwnerRequiredError:
-        raise Refused(403, "only the owner can set when an admin account expires") from None
+        raise Refused(403, "only the owner can set when an admin account expires", code=CODE_OWNER_REQUIRED) from None
     if not found:
         raise Refused(404, "no such user")
     audit(request, KIND_ADMIN, "user expiry set", {"user_id": body.user_id, "expires_at": to_iso(expires_at)})
@@ -546,13 +555,13 @@ def delete_user(request: Request, body: UserIDPath) -> DeleteUserReply:
     except credentials.SelfDeleteError:
         raise Refused(400, "you cannot delete your own account") from None
     except credentials.OwnerProtectedError:
-        raise Refused(403, "the owner account cannot be deleted") from None
+        raise Refused(403, "the owner account cannot be deleted", code=CODE_OWNER_PROTECTED) from None
     except credentials.OwnerRequiredError:
-        raise Refused(403, "only the owner can delete an admin account") from None
+        raise Refused(403, "only the owner can delete an admin account", code=CODE_OWNER_REQUIRED) from None
     if removed is None:
         raise Refused(404, "no such user")
     audit(request, KIND_ADMIN, "user deleted", {"user_id": body.user_id})
-    request.app.state.webhooks.emit(webhooks.EVENT_USER_DELETED, {"user_id": body.user_id})  # feature:webhooks
+    request.app.state.webhooks.emit(webhooks.EVENT_USER_DELETED, {"user_id": body.user_id}, actor=webhook_actor(request))  # feature:webhooks
     return DeleteUserReply(ok=True, removed=msgspec.convert(removed.to_dict(), Revoked))
 
 
@@ -574,9 +583,9 @@ def reset_two_factor(request: Request, body: UserIDPath) -> OkReply:
     except credentials.SelfResetError:
         raise Refused(400, "you cannot reset your own two-factor sign-in") from None
     except credentials.OwnerProtectedError:
-        raise Refused(403, "the owner's two-factor sign-in can only be reset from a shell") from None
+        raise Refused(403, "the owner's two-factor sign-in can only be reset from a shell", code=CODE_OWNER_PROTECTED) from None
     except credentials.OwnerRequiredError:
-        raise Refused(403, "only the owner can reset an admin's two-factor sign-in") from None
+        raise Refused(403, "only the owner can reset an admin's two-factor sign-in", code=CODE_OWNER_REQUIRED) from None
     if not found:
         raise Refused(404, "no such user")
     audit(request, KIND_ADMIN, "two-factor reset", {"user_id": body.user_id})

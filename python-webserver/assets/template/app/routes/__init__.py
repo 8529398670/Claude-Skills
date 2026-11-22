@@ -58,6 +58,7 @@ from app.routes import (
     metrics,  # feature:metrics
     openapi,  # feature:openapi
     passwords,  # feature:passwords
+    portal,  # feature:api_keys
     sessions,  # feature:sessions
     settings,  # feature:settings
     shortcuts,  # feature:shortcuts
@@ -182,6 +183,7 @@ MODULES = [
     metrics,  # feature:metrics
     openapi,  # feature:openapi
     passwords,  # feature:passwords
+    portal,  # feature:api_keys
     sessions,  # feature:sessions
     settings,  # feature:settings
     shortcuts,  # feature:shortcuts

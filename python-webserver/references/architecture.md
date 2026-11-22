@@ -548,6 +548,30 @@ else. The key records `created_by`, the person it acts as sees "Created by ..."
 in their own list, and the audit entry and the `api_key.created` webhook both
 carry it. A key from before this field, or one a person made themselves, has none.
 
+### The portal's own account, and what a key may know about itself
+
+ProjectPortal never holds the owner's key. **Connect** on the owner's API keys
+screen (or `manage portal-connect`) makes a *service account* (`kind:
+"service"`) and gives it an admin key that may make keys and never sign-in
+links (`app/models/portal.py`, `app/routes/portal.py`). A service account is an admin, so the ladder
+already keeps every admin but the owner off it. What makes it a service
+account is one rule, checked where every way in starts: it is never signed
+into. Login links, sign-in, Sign-in links on its key, two-factor setup,
+becoming the owner and role changes all refuse it (`service_account`). It
+cannot be made by hand either: create-user refuses `kind: "service"`. The
+minting switch is the owner's alone, as before, on the owner's own admin keys
+or a service account's.
+
+A key can learn about itself before it tries anything. `/api/me` answers
+`key` (role, `may_mint_keys`, `may_sign_in`, `expires_at`), `owner` and
+`kind`, and every refusal carries a `code`, so the portal branches on a code
+rather than on words. A key rotates its own secret (`POST
+/api/keys/self/rotate`). The id, grants, lineage and expiry stay the same, so
+what it made keeps working, and a leaked key that rotates still dies on
+schedule. Every admin action logs, and every webhook carries, the account and
+the key it came through. The wire format is SKILL.md's "Portal contract", and
+`app/tests/test_portal_conformance.py` holds the app to it.
+
 ### Where the code is
 
 | Concern | File |

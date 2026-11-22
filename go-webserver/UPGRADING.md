@@ -3,6 +3,115 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After ea9f39c
+
+**Portal contract v3: ProjectPortal works through an account of its own.**
+The binding wire format is now SKILL.md's "Portal contract" (the same in both
+webserver skills), and ProjectPortal's `CROSS_PROJECT.md` points there.
+`portalContract` is 3. The fixes below land in every app. `portal-account`,
+`key-rotation` and `actor-audit` are upgrades. A v2 portal ignores the new
+fields.
+
+**Account routes keep to the ladder: an account's key list too.**
+Marks: `"list the keys of"`
+Files: `server/routes/api_keys.go`, `server/routes/contract_test.go`, `SKILL.md`
+
+- `listUserAPIKeys` refuses the owner's keys (`owner_protected`) and another
+  admin's (`owner_required`) unless the owner asks. Any other admin could list
+  them before.
+- SKILL.md, Step 3: "Don't narrow account routes to the owner", after Rook.
+  An app with an owner-only guard on an account route moves it to the ladder.
+- Test: `TestASecondAdminRunsAccountsByTheLadder`.
+
+**`/api/me` says what this caller may do: `owner`, `kind`, and the key's grants.**
+Marks: `meKey`, `KindOrPerson`, `"key_grants"`
+Files: `server/routes/account.go`, `server/models/user.go`, `server/routes/admin.go`
+
+- `owner` (same as `is_owner`) and `kind` always. For an API key, `key`:
+  id, name, role, may_mint_keys, may_sign_in, expires_at (left out when it
+  never expires). Capability `key_grants`.
+- Plumbing: `User.Kind` (`KindPerson`/`KindService`, empty reads as person),
+  `IsService`. Users list rows add `kind`.
+- Test: `TestMeSaysWhatThisCallerMayDo`.
+
+**Every 4xx carries a machine-readable `code`.**
+Marks: `CodeOwnerProtected`, `ErrorBody`, `decodeField`, `"error_codes"`
+Files: `server/apidoc/codes.go` (new), `server/apidoc/route.go`, `server/apidoc/apidoc.go`, `server/routes/admin.go`, `server/routes/api_keys.go`, `server/routes/routes.go`, `server/routes/sessions.go`, `server/security/security.go`, `server/middleware/errors.go`, `server/mcp/mcp.go`, `server/routes/error_codes_test.go` (new), `config/api.json`, `config/api.md`
+
+- `"error": "<sentence>"`, ` "code": "<code>"`, plus `field` on a 400 about one
+  field. `refusal` gains `code` and `.coded( ... )`. Without one, the code
+  follows the status (`apidoc.StatusCode`). The guards, the error handler and
+  the request decoder send theirs through `apidoc.ErrorBody` / `apidoc.Refuse`.
+- `error` text is unchanged: `forbidden` (code `not_admin`), `view_only`,
+  `key_minting_off`.
+- An app's own `refuse( 403 , ... )` for the owner rule adds
+  `.coded( apidoc.CodeOwnerProtected )` / `CodeOwnerRequired`. Its own
+  `c.Status(...).JSON( fiber.Map "error": ...  )` moves to `apidoc.Refuse`.
+  `TestEveryRouteRefusesWithACode` finds what was missed.
+- `ErrorReply` documents `code` (closed enum) and `field`. Capability
+  `error_codes`, always on.
+- Tests: `error_codes_test.go`.
+
+**Contract conformance in every app, and against a live one.**
+Marks: `contractCalls`, `contract_check.sh`
+Files: `server/routes/portal_conformance_test.go` (new, keep it verbatim), `scripts/contract_check.sh` (new)
+
+- One table of contract routes, run with a portal admin key, a user key
+  (`not_admin`), a viewer key (`view_only`), and on the owner and another admin
+  (`owner_protected` / `owner_required`).
+- `scripts/contract_check.sh <base_url>` takes the key on stdin, makes GET
+  calls only, and prints a PASS, WARN or FAIL line for each part.
+  `TestTheContractCheckPassesThePortalsKey` runs it against the test app.
+
+**`/api/me` says which template it came from: `skill`, `skill_commit`.**
+Marks: `SkillCommit`, `read_skill_origin`
+Files: `main.go`, `server/routes/routes.go`, `server/routes/account.go`, `scripts/lib.sh`, `scripts/build.sh`, `docker/lib.sh`, `docker/Dockerfile`
+
+- Stamped with `-X main.skill` / `-X main.skillCommit` from
+  `.skill-origin.yaml`'s `skill` and `commit`. Both are left out when the file
+  is missing.
+- Test: `TestMeSaysWhichTemplateItCameFrom`.
+
+**Upgrade `portal-account`: ProjectPortal's own service account, Connect, and `manage portal-connect`.**
+Needs: `api_keys`, `portal-contract`, `key-minting`.
+Marks: `ConnectPortal`, `portal-connect`, `"service_accounts"`, `ErrServiceAccount`
+Files: `server/models/portal.go`, `server/routes/portal.go`, `server/routes/portal_test.go`, `static/js/portal.js` (new); `server/models/owner.go`, `server/models/login_token.go`, `server/models/sign_in.go`, `server/models/user.go`, `server/models/two_factor.go`, `server/models/api_key.go`, `server/routes/admin.go`, `server/control/control.go`, `server/control/client.go`, `server/manage/manage.go`, `static/index.html`, `static/js/app.js`, `config/language.yaml`
+
+- A service account is an admin, never the owner, and never signed into.
+  `startSignInTx`, `IssueLoginLink`, `SetAPIKeySignIn`, two-factor setup,
+  `TransferOwner`, role changes and create-user (`kind: "service"`) refuse it
+  with `service_account` (`serviceAccountRefusal`).
+- `SetAPIKeyMinting` also takes a service account's admin key, from the owner.
+- `GET /api/owner/portal`, `POST /api/owner/portal/connect` (`name?`, ` days`,
+  201, the key and its credential) and `POST /api/owner/portal/disconnect`.
+  The card on `/admin/api-keys` (`portal.js`, `#portal-card`) and the
+  **Service** badge on the accounts list.
+- `manage portal-connect [-name] [-days]`, also over the control socket
+  (`POST /v1/portal-connect`).
+
+**Upgrade `key-rotation`: a key rotates its own secret.**
+Needs: `api_keys`.
+Marks: `RotateAPIKey`, `/api/keys/self/rotate`, `"key_rotation"`
+Files: `server/models/api_key.go`, `server/routes/api_keys.go`, `server/security/security.go`, `server/routes/key_rotation_test.go`
+
+- `POST /api/keys/self/rotate` (any key; on the viewer allow-list) and
+  `POST /api/keys/key_id/rotate` (the owner's session, the owner's own key)
+  answer `"credential": "..."`.
+- Only the secret changes. The id, grants, lineage and expiry stay, and the
+  expiry is never extended.
+
+**Upgrade `actor-audit`: every admin action says who did it.**
+Needs: `logs`.
+Marks: `actor_key_name`, `EmitAs`, `via_named_key`
+Files: `server/logs/entry.go`, `server/security/security.go`, `server/routes/audit.go`, `server/webhooks/webhooks.go`, `server/models/webhook.go`, `server/routes/admin.go`, `server/routes/api_keys.go`, `server/routes/files.go`, `server/routes/invite_links.go`, `server/routes/join.go`, `server/routes/portal.go`, `server/routes/webhooks_test.go`, `static/js/logs.js`, `config/language.yaml`, `server/routes/actor_audit_test.go`
+
+- Admin entries' detail carries `actor_user_id` and `actor_name`, and for a
+  key `actor_key_id` and `actor_key_name` (`logs.Actor.Fields`).
+  `logs.Actor.KeyName`.
+- Webhook payloads add `"actor"` with the same four fields (`EmitAs`,
+  `webhookActor( c )`). `applyUserDisabled` takes the actor.
+- The Logs screen shows "*name* · key *keyname*".
+
 ## After 60335af
 
 **Portal contract v2: what ProjectPortal's Manage project screen calls.** The

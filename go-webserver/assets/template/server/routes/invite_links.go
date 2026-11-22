@@ -161,7 +161,7 @@ func ( handlers *Handlers ) createInviteLink( c fiber.Ctx , in *inviteLinkReques
 	if err != nil { return }
 	reply = &createdInviteLinkReply{ inviteLinkRow: handlers.inviteLinkRow( link ) , JoinPath: "/join/" + credential }
 	handlers.audit( c , logs.KindAdmin , "invite link created" , fiber.Map{ "link_id": link.ID , "label": link.Label , "max_uses": link.MaxUses , "role": link.JoinRole() } )
-	handlers.Webhooks.Emit( models.EventInviteLinkCreated , map[string]any{ "link_id": link.ID , "label": link.Label } ) // feature:webhooks
+	handlers.Webhooks.EmitAs( webhookActor( c ) , models.EventInviteLinkCreated , map[string]any{ "link_id": link.ID , "label": link.Label } ) // feature:webhooks
 	return
 }
 
@@ -295,7 +295,7 @@ func ( handlers *Handlers ) revokeInviteLink( c fiber.Ctx , in *linkIDPath ) ( r
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "invite link revoked" , fiber.Map{ "link_id": in.LinkID } )
-	handlers.Webhooks.Emit( models.EventInviteLinkRevoked , map[string]any{ "link_id": in.LinkID } ) // feature:webhooks
+	handlers.Webhooks.EmitAs( webhookActor( c ) , models.EventInviteLinkRevoked , map[string]any{ "link_id": in.LinkID } ) // feature:webhooks
 	reply = &okReply{ Ok: true }
 	return
 }

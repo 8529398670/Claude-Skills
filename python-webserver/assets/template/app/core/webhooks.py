@@ -210,15 +210,16 @@ class Dispatcher:
         self.registry: jobs.Registry | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
 
-    def emit(self, event: str, data: dict[str, Any] | None) -> None:
+    def emit(self, event: str, data: dict[str, Any] | None, actor: dict[str, Any] | None = None) -> None:
         """Queue an event for every endpoint that wants it. data is ids and
-        names only: it leaves the server. A failure here is reported and goes
-        no further, since whatever just happened did happen, and the caller's
-        work is done."""
+        names only: it leaves the server. actor is who did it
+        (routes.logs.webhook_actor), sent as "actor". A failure here is
+        reported and goes no further, since whatever just happened did happen,
+        and the caller's work is done."""
         if not self.settings.get().webhooks.enabled:
             return
         try:
-            queued = models.enqueue_event(self.store, event, data)
+            queued = models.enqueue_event(self.store, event, data, actor)
         except Exception as error:  # noqa: BLE001 -- see above
             print(f"[webhooks] could not queue {event}: {error!r}", flush=True)
             return

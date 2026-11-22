@@ -131,6 +131,10 @@ func StartTwoFactorSetup( store *db.Store , user_id uint64 , secret_key string )
 		func() any { return &User{} } ,
 		func( item any ) ( mutate_err error ) {
 			user := item.( *User )
+			if user.IsService() {
+				mutate_err = ErrServiceAccount
+				return
+			}
 			if user.TwoFactorOn() {
 				mutate_err = ErrTwoFactorOn
 				return

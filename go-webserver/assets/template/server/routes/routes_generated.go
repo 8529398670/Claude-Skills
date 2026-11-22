@@ -380,7 +380,7 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 	// >>> feature:api_keys
 	apidoc.Mount( app , "GET" , "/api/admin/users/{user_id}/keys" , apidoc.Op{
 		Summary: "An account's keys",
-		Description: "One account's keys, revoked and expired ones included, newest first. Each row says which key minted it (minted_by_key, empty when a person made it). Needs a browser session or a key with may_mint_keys; any other key gets 403 key_minting_off.",
+		Description: "One account's keys, revoked and expired ones included, newest first. Each row says which key minted it (minted_by_key, empty when a person made it). Needs a browser session or a key with may_mint_keys; any other key gets 403 key_minting_off. Follows the owner ladder: nobody lists the owner's keys this way, and only the owner lists another admin's.",
 		Tag: "API keys",
 		Role: apidoc.Admin,
 		Feature: "api_keys",
@@ -723,6 +723,15 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 		Status: 201,
 		Errors: []int{ 400 , 401 , 403 , 404 },
 	} , handlers.createMyAPIKey , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireLogin , handlers.Guard.RequireSession )
+	apidoc.Mount( app , "POST" , "/api/keys/self/rotate" , apidoc.Op{
+		Summary: "Rotate the calling key",
+		Description: "Gives the calling key a new secret and answers its new credential, shown only now. The old secret stops working at once. The key's id, name, role, grants, lineage and expiry stay as they are, so the keys and links it made keep working; rotating never extends the expiry. A viewer key may call it.",
+		Tag: "API keys",
+		Access: apidoc.KeyOnly,
+		Feature: "api_keys",
+		MCPHTTP: "Makes an API key's credential, which no MCP tool does.",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.rotateSelf , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireAPIKey )
 	apidoc.Mount( app , "POST" , "/api/keys/{key_id}/delete" , apidoc.Op{
 		Summary: "Delete one of your keys",
 		Tag: "API keys",
@@ -766,6 +775,14 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 		Feature: "api_keys",
 		Errors: []int{ 400 , 401 , 403 , 404 },
 	} , handlers.revokeMyAPIKey , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireLogin , handlers.Guard.RequireSession )
+	apidoc.Mount( app , "POST" , "/api/keys/{key_id}/rotate" , apidoc.Op{
+		Summary: "Rotate one of your keys",
+		Description: "The owner only: gives one of the owner's own keys a new secret and answers its new credential, shown only now. The old secret stops working at once; nothing else about the key changes.",
+		Tag: "API keys",
+		Access: apidoc.SessionOnly,
+		Feature: "api_keys",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.rotateMyAPIKey , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireLogin , handlers.Guard.RequireSession )
 	apidoc.Mount( app , "POST" , "/api/keys/{key_id}/sign-in" , apidoc.Op{
 		Summary: "Let one of your keys make sign-in links",
 		Description: "Off by default. When on, the key may ask POST /api/account/login-link for a link that signs your account in on a browser, which then can do everything you can, including what keys may not. The link works once, for at most 15 minutes.",
@@ -949,6 +966,36 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 		Errors: []int{ 400 , 404 },
 	} , handlers.streamLogs , handlers.featureGuards()[ "logs" ] , handlers.Guard.RequireOwner )
 	// <<< feature:logs
+	// >>> feature:api_keys
+	apidoc.Mount( app , "GET" , "/api/owner/portal" , apidoc.Op{
+		Summary: "ProjectPortal's accounts",
+		Description: "The service accounts ProjectPortal works through, each with its live keys and when they expire.",
+		Tag: "Owner",
+		Access: apidoc.SessionOnly,
+		Role: apidoc.Owner,
+		Feature: "api_keys",
+		Errors: []int{ 404 },
+	} , handlers.getPortal , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireOwner )
+	apidoc.Mount( app , "POST" , "/api/owner/portal/connect" , apidoc.Op{
+		Summary: "Connect ProjectPortal",
+		Description: "Makes the service account named name (ProjectPortal when left out) if there is none, and one admin key for it, lasting days (1-365), that may make keys for other accounts and never makes sign-in links. Answers with the key and its credential, shown only now: paste it into ProjectPortal as this app's admin key.",
+		Tag: "Owner",
+		Access: apidoc.SessionOnly,
+		Role: apidoc.Owner,
+		Feature: "api_keys",
+		Status: 201,
+		Errors: []int{ 400 , 403 , 404 },
+	} , handlers.connectPortal , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireOwner )
+	apidoc.Mount( app , "POST" , "/api/owner/portal/disconnect" , apidoc.Op{
+		Summary: "Disconnect ProjectPortal",
+		Description: "Revokes every key of the service account user_id, and with them every key and link those keys made. The account stays, with no way in, until Connect gives it a key again.",
+		Tag: "Owner",
+		Access: apidoc.SessionOnly,
+		Role: apidoc.Owner,
+		Feature: "api_keys",
+		Errors: []int{ 400 , 403 , 404 },
+	} , handlers.disconnectPortal , handlers.featureGuards()[ "api_keys" ] , handlers.Guard.RequireOwner )
+	// <<< feature:api_keys
 	// >>> feature:settings
 	apidoc.Mount( app , "GET" , "/api/owner/settings" , apidoc.Op{
 		Summary: "config.yaml, as a form",

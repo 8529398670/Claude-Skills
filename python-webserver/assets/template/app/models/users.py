@@ -46,6 +46,20 @@ ROLE_RANK = {ROLE_VIEWER: 0, ROLE_USER: 1, ROLE_ADMIN: 2}
 
 META_OWNER_KEY = "owner_user_id"
 
+# An account's kind. A person signs in; a service account (ProjectPortal's
+# own, see app/models/portal.py) only ever has API keys. Records written
+# before kinds existed have none, and read as a person.
+KIND_PERSON = "person"
+KIND_SERVICE = "service"
+
+
+class ServiceAccountError(Exception):
+    """Refusal for a way in, or the owner's seat, for a service account
+    (KIND_SERVICE): it has API keys only, and is never signed into."""
+
+    def __init__(self) -> None:
+        super().__init__("a service account has API keys only, and is never signed into")
+
 
 class NotAdminError(Exception):
     """Refusal for making a non-admin, or a disabled admin, the owner."""
@@ -65,6 +79,8 @@ class User:
     # counts as disabled everywhere (see disabled), and housekeeping disables
     # it for good and revokes its access (credentials.expire_due_accounts).
     expires_at: datetime | None = None
+    # KIND_PERSON or KIND_SERVICE.
+    kind: str = KIND_PERSON
     # >>> feature:invite_links
     # The optional PIN asked for when someone signs back in through an
     # invite link. It is not a password: nothing else checks it. See
@@ -117,6 +133,11 @@ class User:
         return self.disabled_at is not None or self.expired
 
     @property
+    def is_service(self) -> bool:
+        """A service account: keys only, never signed into."""
+        return self.kind == KIND_SERVICE
+
+    @property
     def is_admin(self) -> bool:
         return self.role == ROLE_ADMIN
 
@@ -128,6 +149,7 @@ class User:
             "created_at": to_iso(self.created_at),
             "disabled_at": to_iso(self.disabled_at),
             "expires_at": to_iso(self.expires_at),
+            "kind": self.kind,
             "pin_hash": self.pin_hash,  # feature:invite_links
             # >>> feature:passwords
             "username": self.username,
@@ -155,6 +177,7 @@ class User:
             created_at=from_iso(record["created_at"]),
             disabled_at=from_iso(record.get("disabled_at")),
             expires_at=from_iso(record.get("expires_at")),
+            kind=record.get("kind") or KIND_PERSON,
             pin_hash=record.get("pin_hash", ""),  # feature:invite_links
             # >>> feature:passwords
             username=record.get("username", ""),
@@ -385,6 +408,8 @@ def transfer_owner(store: Store, user_id: int) -> User | None:
         if record is None:
             return None
         user = User.from_record(record)
+        if user.is_service:
+            raise ServiceAccountError()
         if not user.is_admin or user.disabled:
             raise NotAdminError()
         # The owner never expires: an expiry set while it was an ordinary

@@ -120,7 +120,7 @@ func ( handlers *Handlers ) sessionsTarget( c fiber.Ctx , user_id uint64 ) ( by_
 	}
 	by_owner = security.UserFrom( c ).ID == owner_id
 	if user_id == owner_id && by_owner == false {
-		refused = refuse( fiber.StatusForbidden , "the owner account's sessions are the owner's own" )
+		refused = refuse( fiber.StatusForbidden , "the owner account's sessions are the owner's own" ).coded( apidoc.CodeOwnerProtected )
 	}
 	return
 }

@@ -408,7 +408,7 @@ func ( handlers *Handlers ) finishFile( c fiber.Ctx , in *fileIDPath ) ( reply *
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "file uploaded" , fiber.Map{ "file_id": finished.ID , "size": finished.Size } )
-	handlers.Webhooks.Emit( models.EventFileUploaded , map[string]any{ "file_id": finished.ID , "user_id": finished.UserID , "name": finished.Name , "size": finished.Size } ) // feature:webhooks
+	handlers.Webhooks.EmitAs( webhookActor( c ) , models.EventFileUploaded , map[string]any{ "file_id": finished.ID , "user_id": finished.UserID , "name": finished.Name , "size": finished.Size } ) // feature:webhooks
 	row := newFileRow( finished )
 	reply = &row
 	return
@@ -602,7 +602,7 @@ func ( handlers *Handlers ) deleteFile( c fiber.Ctx , file_id string , own_only 
 		return
 	}
 	handlers.audit( c , logs.KindAdmin , "file deleted" , fiber.Map{ "file_id": file.ID , "user_id": file.UserID } )
-	handlers.Webhooks.Emit( models.EventFileDeleted , map[string]any{ "file_id": file.ID , "user_id": file.UserID , "name": file.Name } ) // feature:webhooks
+	handlers.Webhooks.EmitAs( webhookActor( c ) , models.EventFileDeleted , map[string]any{ "file_id": file.ID , "user_id": file.UserID , "name": file.Name } ) // feature:webhooks
 	reply = &okReply{ Ok: true }
 	return
 }

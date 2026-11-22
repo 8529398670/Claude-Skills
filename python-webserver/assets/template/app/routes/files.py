@@ -33,6 +33,7 @@ from app.models import webhooks  # feature:webhooks
 from app.routes.admin import OkReply
 from app.routes.helpers import DateTime, Dir, Page, Paged, Refused, get_config, get_store, match_rows, not_found, restore_refusal, run, sorted_page
 from app.routes.logs import audit
+from app.routes.logs import webhook_actor  # feature:webhooks
 from app.routes.mcp_tools import files_download_url, files_on, files_start_upload  # feature:mcp
 
 LOST = "upload_lost"
@@ -364,7 +365,7 @@ def finish_file(request: Request, body: FileIDPath) -> File:
     finally:
         _locks.release(body.file_id)
     audit(request, KIND_ADMIN, "file uploaded", {"file_id": finished.id, "size": finished.size})
-    request.app.state.webhooks.emit(webhooks.EVENT_FILE_UPLOADED, {"file_id": finished.id, "user_id": finished.user_id, "name": finished.name, "size": finished.size})  # feature:webhooks
+    request.app.state.webhooks.emit(webhooks.EVENT_FILE_UPLOADED, {"file_id": finished.id, "user_id": finished.user_id, "name": finished.name, "size": finished.size}, actor=webhook_actor(request))  # feature:webhooks
     return _row(finished)
 
 
@@ -488,7 +489,7 @@ def _delete(request: Request, file_id: str, own_only: bool) -> OkReply:
     if not models.delete_file(get_store(request), file.id, actor_from(request).user.id):
         raise Refused(404, NO_SUCH_FILE)
     audit(request, KIND_ADMIN, "file deleted", {"file_id": file.id, "user_id": file.user_id})
-    request.app.state.webhooks.emit(webhooks.EVENT_FILE_DELETED, {"file_id": file.id, "user_id": file.user_id, "name": file.name})  # feature:webhooks
+    request.app.state.webhooks.emit(webhooks.EVENT_FILE_DELETED, {"file_id": file.id, "user_id": file.user_id, "name": file.name}, actor=webhook_actor(request))  # feature:webhooks
     return OkReply(ok=True)
 
 

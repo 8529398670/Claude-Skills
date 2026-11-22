@@ -545,6 +545,12 @@ func SetAPIKeySignIn( store *db.Store , key_id string , user_id uint64 , on bool
 			tx_err = ErrAPIKeyMinted
 			return
 		}
+		account := &User{}
+		if tx_err = tx.Get( db.BucketUsers , encryption.Uint64ToBytes( stored.UserID ) , account ); tx_err != nil { return }
+		if on && account.IsService() {
+			tx_err = ErrServiceAccount
+			return
+		}
 		if on && stored.Live() == false {
 			tx_err = ErrAPIKeyDead
 			return
@@ -580,7 +586,11 @@ func SetAPIKeyMinting( store *db.Store , key_id string , actor_id uint64 , on bo
 			tx_err = db.ErrNotFound
 			return
 		}
-		if stored.UserID != actor_id {
+		// The owner's own keys, or a service account's (ProjectPortal's,
+		// whose keys only the owner runs).
+		account := &User{}
+		if tx_err = tx.Get( db.BucketUsers , encryption.Uint64ToBytes( stored.UserID ) , account ); tx_err != nil { return }
+		if stored.UserID != actor_id && account.IsService() == false {
 			tx_err = ErrAPIKeyNotYours
 			return
 		}
@@ -780,5 +790,31 @@ func PurgeDeadAPIKeys( store *db.Store ) ( removed int , err error ) {
 			}
 			return stored.ExpiresAt != nil && stored.ExpiresAt.Before( cutoff )
 		} )
+	return
+}
+
+// ErrAPIKeyRotateDead is the refusal for rotating a key that no longer works.
+var ErrAPIKeyRotateDead = errors.New( "only a live API key can be rotated" )
+
+// RotateAPIKey gives a key a new secret and answers its new credential. The
+// old secret stops working at once. Everything else stays -- id, name, role,
+// grants, lineage, and expires_at, which rotation never extends -- so the keys
+// and links it made keep working, and a leaked key that rotates itself still
+// dies on schedule. ErrAPIKeyRotateDead for a key that is not live.
+func RotateAPIKey( store *db.Store , key_id string ) ( credential string , key *APIKey , err error ) {
+	secret := encryption.GenerateURLToken( 32 )
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		stored := &APIKey{}
+		if tx_err = tx.Get( db.BucketAPIKeys , []byte( key_id ) , stored ); tx_err != nil { return }
+		if stored.Deleted() || stored.Live() == false {
+			tx_err = ErrAPIKeyRotateDead
+			return
+		}
+		stored.SecretHash = encryption.Sha256Hex( secret )
+		if tx_err = tx.Put( db.BucketAPIKeys , []byte( key_id ) , stored ); tx_err != nil { return }
+		key = stored
+		return
+	} )
+	if err == nil { credential = key_id + "." + secret }
 	return
 }

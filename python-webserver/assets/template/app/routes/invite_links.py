@@ -23,6 +23,7 @@ from app.models.users import User
 from app.routes.admin import DateTime, OkReply
 from app.routes.helpers import Dir, Page, Paged, Refused, get_store, match_rows, restore_refusal, sorted_page
 from app.routes.logs import audit
+from app.routes.logs import webhook_actor  # feature:webhooks
 from app.routes.mcp_tools_accounts import invite_links_on, with_join_url  # feature:mcp
 
 
@@ -126,7 +127,7 @@ def create_invite_link(request: Request, body: CreateInviteLink) -> NewInviteLin
     actor = actor_from(request)
     credential, link = invite_links.issue_invite_link(get_store(request), body.label, body.max_uses, timedelta(days=body.days), actor.user.id, actor.key_id, body.role)
     audit(request, KIND_ADMIN, "invite link created", {"link_id": link.id, "label": link.label, "max_uses": link.max_uses, "role": link.role})
-    request.app.state.webhooks.emit(webhooks.EVENT_INVITE_LINK_CREATED, {"link_id": link.id, "label": link.label})  # feature:webhooks
+    request.app.state.webhooks.emit(webhooks.EVENT_INVITE_LINK_CREATED, {"link_id": link.id, "label": link.label}, actor=webhook_actor(request))  # feature:webhooks
     return NewInviteLink(**msgspec.structs.asdict(_row(link, actor.user)), join_path=f"/join/{credential}")
 
 
@@ -239,7 +240,7 @@ def revoke_invite_link(request: Request, body: LinkIDPath) -> OkReply:
     if not invite_links.revoke_invite_link(get_store(request), body.link_id):
         raise Refused(404, "no such invite link")
     audit(request, KIND_ADMIN, "invite link revoked", {"link_id": body.link_id})
-    request.app.state.webhooks.emit(webhooks.EVENT_INVITE_LINK_REVOKED, {"link_id": body.link_id})  # feature:webhooks
+    request.app.state.webhooks.emit(webhooks.EVENT_INVITE_LINK_REVOKED, {"link_id": body.link_id}, actor=webhook_actor(request))  # feature:webhooks
     return OkReply(ok=True)
 
 

@@ -49,9 +49,10 @@ project.
   carries the same admin/user/viewer role a person does -- one permission model, not
   two -- sent as `Authorization: Bearer <key>`. A key can never outrank the
   account that owns it. It cannot mint keys unless the owner switched that on
-  for one of the owner's own admin keys (for an outside admin hub such as
-  ProjectPortal); such a key makes keys for other accounts that record it and
-  die with it. An admin key can create accounts, set when they expire, and
+  for one of the owner's own admin keys, or for the key of a service account
+  (ProjectPortal's own, made by **Connect** on the API keys screen or
+  `manage portal-connect`); such a key makes keys for other accounts that
+  record it and die with it. Any key can rotate its own secret. An admin key can create accounts, set when they expire, and
   hand out login and invite links. A key makes a login link for
   its own account only once that account switched it on for that key, from a
   browser session ("Sign-in links" on the API keys card); its links work once,
@@ -80,8 +81,8 @@ project.
   so an app's own routes are covered too; the page shows a View only badge and
   hides every `[data-write]` control. Accounts can also be given an expiry,
   after which they count as disabled. Both are part of ProjectPortal's
-  "portal contract v2", which `GET /api/me` reports as `contract` and
-  `capabilities`.
+  portal contract (see "Portal contract" below, v3), which `GET /api/me`
+  reports as `contract` and `capabilities`.
 - **The first admin is the owner.** Any admin can permanently delete an
   ordinary user; only the owner can delete, disable, sign out, or hand a
   login link or key for another admin, and nobody can do any of that to the
@@ -453,6 +454,7 @@ ports they ran on. Do not reset either to a shared value.
     login.sh, login.bat       # the owner's login link, from whatever is live
                               # (starts the server right there if nothing is)
     api_docs.sh               # rewrites config/api.json, mcp.json, api.md and mcp.md
+    contract_check.sh         # checks a live app against the portal contract (key on stdin)
     build.sh                  # cross-compiles single-file portable binaries
     lib.sh                    # shared by run.sh and login.sh (sourced)
   docker/
@@ -621,6 +623,17 @@ but stay consistent with the patterns already there:
   reason (see above), and when a reply a test gets has a field the docs lack or lacks one they
   promise. A route that changes something must not be a GET, or `read_only` maintenance will not
   stop it. One that writes its own reply (bytes, a stream) returns only `error`, with `reply_type=`.
+- **Don't narrow account routes to the owner.** A route about one account (create, reissue a
+  login link, role, expiry, disable, revoke access, delete, its keys, or an app's own
+  per-account switch) is `role=ADMIN` and checks the ladder: `models.MayActOn` before it
+  starts, or `mayActOnTx` inside the write, mapped with `actOnRefusal`. Any admin then runs
+  ordinary and viewer accounts, nobody touches the owner's, and only the owner touches
+  another admin's. ProjectPortal works through an admin account of its own, never the
+  owner's, so an owner-only guard on these routes locks it out: Rook did that, and the
+  portal got a bare 403 until its account routes moved to a ladder guard
+  (`RequireAccountAdmin`). The owner guard (`role=OWNER`) is for what is the owner's alone,
+  across the app: settings, everyone's keys, logs, webhooks. `portal_conformance_test.go`
+  fails when an account route stops doing this.
 - **A new list route** takes `Page` (and `Direction`, after its own `sort` enum) in its request,
   answers a reply embedding `Paged`, filled by `cutPage` or `sortedPage`, and its screen
   uses `Pager.load`: a plain `forEach` would stop at the first page.
@@ -965,6 +978,118 @@ Either way, report the login link back to the user -- they need it to get in,
 it is shown once, and it is not recoverable.
 `references/docker-and-deployment.md` covers the hardening flags, the TLS
 expectations, and secret-key handling for both paths.
+
+## Portal contract
+
+ProjectPortal (`~/WORKSPACE/PROJECTS/ProjectPortal`) runs every app in its
+catalog from outside, so every app built from this template speaks one
+contract. **This section is the binding wire format.** The go-webserver and
+python-webserver skills carry the same text, and ProjectPortal's
+`CROSS_PROJECT.md` points here. Field names and codes are exact. A change is
+made in both templates at once, and the version goes up.
+
+The portal never holds the owner's key. It works through a **service account**
+of its own: the owner makes it with **Connect** on the API keys screen, or with
+`manage portal-connect`. That keeps the owner's account out of automation, and
+the logs say "ProjectPortal did this". Revoking the account's keys cuts the
+portal off and takes everything it made with it.
+
+**Version.** `GET /api/me` answers `"contract": 3`. That is
+`portalContract` / `PORTAL_CONTRACT`, and `webserver-upgrade status` reads it.
+A v2 portal ignores the new fields.
+
+**Capabilities.** `/api/me` lists `capabilities`, each only while that part is
+on. The portal turns each part on only when it is listed:
+
+| Capability | Part |
+|---|---|
+| `viewer_role` | the viewer role (v2) |
+| `account_expiry` | accounts that expire (v2) |
+| `key_minting` | a key the owner allows makes keys for other accounts (v2) |
+| `invite_links` | invite links, while switched on (v2) |
+| `key_sign_in` | `POST /api/account/login-link` takes a key with `may_sign_in` (v2) |
+| `service_accounts` | the portal's own account, Connect, `kind` on accounts |
+| `key_grants` | `/api/me` says what the calling key may do |
+| `error_codes` | every 4xx carries a `code` (always listed) |
+| `key_rotation` | `POST /api/keys/self/rotate` |
+
+**What `/api/me` says about the caller.**
+- `owner` (bool) is the same as `is_owner`.
+- `kind` is `"person"` or `"service"`.
+- `skill` and `skill_commit` say which template and commit the app came from.
+  They are read from `.skill-origin.yaml` when the app is built, and left out
+  without that file.
+- For an API key only, `/api/me` adds
+  `"key": {"id", "name", "role", "may_mint_keys", "may_sign_in", "expires_at"}`.
+  `expires_at` is left out when the key never expires.
+
+**The routes.** "Admin key" below means an admin-role key, or an admin session.
+
+| Call | Key | Answer |
+|---|---|---|
+| `GET /api/health` | none | up/down |
+| `GET /api/me` | any | as above |
+| `GET /api/admin/users` | admin | rows add `kind` |
+| `POST /api/admin/users` | admin | `user_id`, `login_path`. `kind: "service"` is refused |
+| `POST /api/admin/users/{id}/reissue-login`, `/role`, `/expiry`, `/disabled`, `/revoke-access`, `/delete` | admin, with the ladder | as in v2 |
+| `GET` / `POST /api/admin/users/{id}/keys` | admin with `may_mint_keys`, with the ladder | key rows / the new key and its `credential` |
+| `POST /api/admin/keys/{key_id}/revoke` | admin with `may_mint_keys` | `{"ok": true}` |
+| `POST /api/keys/self/rotate` | any key, viewers too | `{"credential": "..."}` |
+| `POST /api/keys/{key_id}/rotate` | the owner's session, the owner's own key | `{"credential": "..."}` |
+| `GET /api/owner/portal` | the owner's session | `{"accounts": [{"id", "display_name", "keys": [...]}]}` |
+| `POST /api/owner/portal/connect` | the owner's session | `{name?, days: 1-365}` gives `201` and the key with its `credential` |
+| `POST /api/owner/portal/disconnect` | the owner's session | `{user_id}` gives `{"ok": true, "revoked": n}` |
+
+**The ladder: account routes are any admin's.** Nobody acts on the owner's
+account. Only the owner acts on another admin's, and a service account counts
+as an admin. Any admin runs ordinary and viewer accounts. Never narrow these
+routes to the owner (see "Don't narrow account routes to the owner" in Step 3).
+
+**Service accounts.**
+- A service account is an admin, and never the owner: `transfer-owner` refuses it.
+- It is never signed into. Login links, sign-in, its key's Sign-in links switch,
+  two-factor setup and role changes all refuse it with `service_account`. It has
+  keys only.
+- The owner, from a browser session, may switch `may_mint_keys` on for one of
+  the owner's own admin keys, or for a service account's admin key.
+- A minted key is capped at its account's role, never gets `may_mint_keys` or
+  `may_sign_in`, and dies with the key that made it, down the chain.
+
+**Rotation.** The old secret stops working at once. The key's id, name, role,
+grants, lineage and `expires_at` stay as they are, so what it made keeps
+working. Rotation never extends the expiry.
+
+**Refusals.** Every 4xx answers `{"error": "<sentence>", "code": "<code>"}`,
+plus `"field"` on a 400 about one field. Show `error`, and branch on `code`.
+`error` keeps its old text where clients matched it: `view_only`,
+`key_minting_off`, and `forbidden` for a non-admin.
+
+| code | when |
+|---|---|
+| `not_authenticated` | 401: no credential, or a bad one |
+| `not_admin` | the route needs an admin |
+| `view_only` | a viewer writing |
+| `session_only` | an API key on a browser-only route |
+| `owner_required` | the ladder: only the owner does this (to an admin) |
+| `owner_protected` | the ladder: nobody does this to the owner |
+| `key_minting_off` | the calling key may not make keys |
+| `service_account` | a sign-in action on a service account |
+| `not_found` | no such account, key, link or route; and the owner's routes, to anyone else |
+| `invalid` | a bad request, 405 and 413 included |
+| `conflict` | a 409 |
+| `rate_limited` | a 429 |
+| `forbidden` | any other 403: a bad csrf token, a cross-origin call |
+
+**Who did it.** Every admin action's log entry carries `actor_user_id` and
+`actor_name` in its detail. When the action came through a key, it also carries
+`actor_key_id` and `actor_key_name`. Webhook payloads carry the same four fields
+as `"actor"`. The Logs screen shows "*name* · key *keyname*".
+
+**Keeping to it.** `server/routes/portal_conformance_test.go` runs every contract route four
+ways: with the portal's key, with a user key, with a viewer key, and on the owner
+and another admin. Keep that file as it is in every app. `server/routes/error_codes_test.go` walks the whole route table for codes. Against a live app,
+`scripts/contract_check.sh <base_url>` reads the key from stdin and makes only
+GET calls. It prints one PASS, WARN or FAIL line per part of the contract.
 
 ## Reference files
 

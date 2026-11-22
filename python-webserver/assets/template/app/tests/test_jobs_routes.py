@@ -57,11 +57,11 @@ class JobsRoutesTest(RoutesTestCase):
             )
             self.assertEqual(
                 self.call("POST", "/api/owner/jobs/slow/run", cookie=self.owner_cookie, body=body, client=client),
-                (409, {"error": "job already running"}),
+                (409, {"error": "job already running", "code": "conflict"}),
             )
             self.assertEqual(
                 self.call("POST", "/api/owner/jobs/nope/run", cookie=self.owner_cookie, body=body, client=client),
-                (404, {"error": "not found"}),
+                (404, {"error": "not found", "code": "not_found"}),
             )
             status, listing = self.call("GET", "/api/owner/jobs", cookie=self.owner_cookie, client=client)
             self.assertEqual(status, 200)
@@ -81,7 +81,7 @@ class JobsRoutesTest(RoutesTestCase):
         logger = self.app.state.logs
         entries, _ = logger.read_day(logger.today(), logs.Query("kind:admin"))
         record = next(entry for entry in entries if entry.get("msg") == "job_run")
-        self.assertEqual(record["detail"], {"name": "quick"})
+        self.assertEqual(record["detail"], {"name": "quick", "actor_user_id": self.owner.id, "actor_name": "Owner"})
 
     # <<< feature:logs
     def test_housekeeping_runs_shortly_after_boot(self) -> None:

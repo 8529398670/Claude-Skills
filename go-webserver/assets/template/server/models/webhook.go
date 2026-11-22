@@ -329,10 +329,14 @@ func RestoreWebhook( store *db.Store , webhook_id string , actor_id uint64 , act
 
 // newWebhookDelivery builds the outbox row. data carries ids and names only,
 // the same rule as a log entry's detail: this leaves the server.
-func newWebhookDelivery( webhook_id string , event string , data map[string]any ) ( delivery *WebhookDelivery , err error ) {
+func newWebhookDelivery( webhook_id string , event string , data map[string]any , actor map[string]any ) ( delivery *WebhookDelivery , err error ) {
 	now := time.Now().UTC()
 	id := encryption.GenerateURLToken( 12 )
-	body , err := json.Marshal( map[string]any{ "id": id , "event": event , "created_at": now , "data": data } )
+	payload := map[string]any{ "id": id , "event": event , "created_at": now , "data": data }
+	// Who did it (portal contract v3): actor_user_id, actor_name, and for a
+	// key actor_key_id and actor_key_name. Absent when nobody did (a job).
+	if actor != nil { payload[ "actor" ] = actor }
+	body , err := json.Marshal( payload )
 	if err != nil { return }
 	delivery = &WebhookDelivery{
 		ID:            id,
@@ -382,11 +386,18 @@ func ResendWebhookDelivery( store *db.Store , webhook_id string , delivery_id st
 // EnqueueWebhookEvent writes one delivery per endpoint that wants the event,
 // and says how many.
 func EnqueueWebhookEvent( store *db.Store , event string , data map[string]any ) ( queued int , err error ) {
+	queued , err = EnqueueWebhookEventAs( store , event , data , nil )
+	return
+}
+
+// EnqueueWebhookEventAs is EnqueueWebhookEvent saying who did it: actor goes
+// in each payload as "actor".
+func EnqueueWebhookEventAs( store *db.Store , event string , data map[string]any , actor map[string]any ) ( queued int , err error ) {
 	hooks , err := ListWebhooks( store )
 	if err != nil { return }
 	for _ , hook := range hooks {
 		if hook.Wants( event ) == false { continue }
-		delivery , build_err := newWebhookDelivery( hook.ID , event , data )
+		delivery , build_err := newWebhookDelivery( hook.ID , event , data , actor )
 		if build_err != nil {
 			err = build_err
 			return
@@ -400,7 +411,7 @@ func EnqueueWebhookEvent( store *db.Store , event string , data map[string]any )
 // EnqueueWebhookTest queues a test event for one endpoint, whatever it
 // subscribes to.
 func EnqueueWebhookTest( store *db.Store , hook *Webhook ) ( err error ) {
-	delivery , err := newWebhookDelivery( hook.ID , EventWebhookTest , map[string]any{ "webhook_id": hook.ID } )
+	delivery , err := newWebhookDelivery( hook.ID , EventWebhookTest , map[string]any{ "webhook_id": hook.ID } , nil )
 	if err != nil { return }
 	err = store.Put( db.BucketWebhookDeliveries , []byte( delivery.ID ) , delivery )
 	return

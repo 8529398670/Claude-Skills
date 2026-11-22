@@ -26,6 +26,7 @@ from app.core import backup
 from app.core import logs  # feature:logs
 from app.models import credentials, login_tokens, users
 from app.models import api_keys  # feature:api_keys
+from app.models import portal  # feature:api_keys
 from app.models import invite_links  # feature:invite_links
 
 USAGE = """manage -- account administration for {{PROJECT_NAME}}
@@ -162,6 +163,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--days", type=int, default=None,
                    help="lifetime in days; 0 never expires; omit for the server default")
 
+    p = commands.add_parser("portal-connect", help="ProjectPortal's own account and admin key, shown once")
+    p.add_argument("--name", default="ProjectPortal", help="the service account's name")
+    p.add_argument("--days", type=int, default=365, help="the key's lifetime in days, 1-365")
+
     p = commands.add_parser("revoke-key", help="kill one API key now, keep its record")
     p.add_argument("--key-id", required=True, help="id of the key to revoke (from list-keys)")
 
@@ -257,6 +262,7 @@ def run(arguments: list[str]) -> None:
         "transfer-owner": command_transfer_owner,
         "list-keys": command_list_keys,  # feature:api_keys
         "create-key": command_create_key,  # feature:api_keys
+        "portal-connect": command_portal_connect,  # feature:api_keys
         "revoke-key": command_revoke_key,  # feature:api_keys
         "delete-key": command_delete_key,  # feature:api_keys
         "create-invite": command_create_invite,  # feature:invite_links
@@ -438,6 +444,27 @@ def command_list_keys(store: db.Store, cfg: config.Config, args: argparse.Namesp
             key.id, key.name, key.role, names.get(key.user_id, f"#{key.user_id}"), key_status(key),
             format_time(key.last_used_at), format_time(key.expires_at),
         ))
+
+
+def command_portal_connect(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
+    """The owner's Connect on the API keys screen, for a headless install:
+    ProjectPortal's service account (made when there is none by that name)
+    and one admin key for it that may make keys, shown once. The shell is
+    the owner's say-so."""
+    if not cfg.api_keys_enabled:
+        raise ManageError("api keys are disabled on this server (auth.api_keys: false)")
+    if not 1 <= args.days <= 365:
+        raise ManageError("--days must be 1-365")
+    try:
+        credential, key, user = portal.connect_portal(store, None, args.name, args.days * 24 * 60 * 60)
+    except (portal.BadPortalNameError, users.OwnerRequiredError, api_keys.APIKeyError) as error:
+        raise ManageError(str(error) or "there is no owner yet") from None
+    bootstrap.print_api_key(
+        cfg,
+        f"ProjectPortal's admin key {key.name!r} for #{user.id} {user.display_name!r} -- paste it into ProjectPortal: Catalog, this app, Admin key",
+        credential,
+        format_time(key.expires_at),
+    )
 
 
 def command_create_key(store: db.Store, cfg: config.Config, args: argparse.Namespace) -> None:
