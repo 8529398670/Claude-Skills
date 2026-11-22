@@ -871,10 +871,14 @@ signs every browser out.
   get the same 404, so the answer does not say which exist.
 - **An admin can look at someone's** through `GET /api/admin/users/:user_id/sessions`
   and end one device with `POST .../:session_id/revoke`, from the **Sessions**
-  button on the Users screen, where `revoke-access` would end everything. A browser
-  session is required, as for your own. Only the owner reaches the owner's, and
-  only the owner sees addresses, as in the activity log, which keeps them from
-  other admins too.
+  button on the Users screen, where `revoke-access` would end everything. An admin key works too, and it is
+  how ProjectPortal reads an account's devices to match people across apps
+  (`admin_sessions` in the portal contract). Both follow the ladder every account
+  route follows (`models.MayActOn`): nobody reaches the owner's (`owner_protected`), only the
+  owner reaches another admin's (`owner_required`), and any admin reaches an
+  ordinary or viewer account's, or their own. Addresses go to the owner and to
+  service accounts (the owner's portal) only. The activity log keeps them from
+  other admins too, and what the owner calls an address stays the owner's.
 - **This device is refused** with a 400, because ending it here would leave the
   browser holding a dead cookie. Log out does that properly.
 - **Never undoable.** It is the button for a lost phone, so it asks first and

@@ -893,10 +893,14 @@ it out.
 - `POST /api/account/sessions/revoke-others` ends the rest.
 - `GET /api/admin/users/<id>/sessions` and `POST .../<session_id>/revoke` are an
   admin's view of someone else's, from the **Sessions** button on the Users screen,
-  for ending one device where `revoke-access` would end everything. A browser
-  session is required, as for your own. Only the owner reaches the owner's, and
-  only the owner sees addresses, as in the activity log, which keeps them from
-  other admins too.
+  for ending one device where `revoke-access` would end everything. An admin key works too, and it is
+  how ProjectPortal reads an account's devices to match people across apps
+  (`admin_sessions` in the portal contract). Both follow the ladder every account
+  route follows (`users.may_act_on`): nobody reaches the owner's (`owner_protected`), only the
+  owner reaches another admin's (`owner_required`), and any admin reaches an
+  ordinary or viewer account's, or their own. Addresses go to the owner and to
+  service accounts (the owner's portal) only. The activity log keeps them from
+  other admins too, and what the owner calls an address stays the owner's.
 
 These are revokes, so they ask first and offer no undo. The IPs and user agents
 are personal data, and unlike the activity log the sessions bucket is in every

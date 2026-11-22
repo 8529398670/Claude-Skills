@@ -2183,7 +2183,7 @@ Make an account an admin, an ordinary user, or a viewer, who may read but change
 
 An account's signed-in devices
 
-Where an account is signed in: every session, with when it started and was last seen. Addresses are shown to the owner only, and only the owner sees the owner's.
+Where an account is signed in: every session, with when it started and was last seen. Addresses are shown to the owner and service accounts only. Nobody sees the owner's, and only the owner sees another admin's.
 
 |  |  |
 |---|---|
@@ -3924,7 +3924,7 @@ One of these:
 | `api_keys_enabled` | boolean | yes |  |  |
 | `auth` | string | yes |  |  |
 | `authenticated` | boolean | yes |  |  |
-| `capabilities` | array of string | yes |  | The optional parts of that contract this app has on now: viewer_role, account_expiry, key_minting, invite_links, key_sign_in, service_accounts, key_grants, error_codes, key_rotation. |
+| `capabilities` | array of string | yes |  | The optional parts of that contract this app has on now: viewer_role, account_expiry, key_minting, invite_links, key_sign_in, service_accounts, key_grants, error_codes, key_rotation, admin_sessions. |
 | `contract` | integer | yes |  | Which version of the portal contract this app speaks: the Portal contract section of the webserver skills' SKILL.md. |
 | `csrf_token` | string | no |  | Browser sessions only. |
 | `description` | string | yes |  | app.description. Empty when there is none. |

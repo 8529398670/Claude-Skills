@@ -173,3 +173,40 @@ func TestTheShellConnectsThePortal( t *testing.T ) {
 		t.Fatalf( "an ordinary account: %v" , err )
 	}
 }
+
+// >>> feature:sessions
+// The portal reads an ordinary account's devices (admin_sessions) to tell who
+// is who across apps: its service account sees the addresses, which other
+// admins do not, and the rows carry no secret.
+func TestThePortalReadsAnAccountsDevices( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	credential , _ := connectPortal( t , fixture , owner , fiber.Map{ "days": 30 } )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	device := alice.devices( t )[ 0 ][ "id" ].( string )
+	if status , reply := alice.post( t , "/api/account/sessions/" + device + "/label" , fiber.Map{ "label": "Phone" , "csrf_token": alice.csrf( t ) } ); status != http.StatusOK {
+		t.Fatalf( "label: %d %v" , status , reply )
+	}
+
+	status , me := fixture.withKey( t , credential , http.MethodGet , "/api/me" , nil )
+	listed := false
+	for _ , name := range me[ "capabilities" ].( []any ) { listed = listed || name == "admin_sessions" }
+	if status != http.StatusOK || listed == false { t.Fatalf( "admin_sessions missing: %d %v" , status , me[ "capabilities" ] ) }
+
+	status , page := fixture.withKey( t , credential , http.MethodGet , "/api/admin/users/" + idText( fixture.alice.ID ) + "/sessions" , nil )
+	rows , _ := page[ "sessions" ].( []any )
+	if status != http.StatusOK || len( rows ) != 1 { t.Fatalf( "%d %v" , status , page ) }
+	row := rows[ 0 ].( map[ string ]any )
+	allowed := map[ string ]bool{ "id": true , "current": true , "created_at": true , "expires_at": true , "last_seen_at": true , "ip": true , "user_agent": true , "label": true }
+	for name := range row {
+		if allowed[ name ] == false { t.Errorf( "the portal's row carries %q: %v" , name , row ) }
+	}
+	if row[ "id" ] != device || row[ "label" ] != "Phone" { t.Errorf( "row: %v" , row ) }
+	if ip , _ := row[ "ip" ].( string ); ip == "" { t.Errorf( "the portal should see the address: %v" , row ) }
+	for _ , name := range []string{ "created_at" , "last_seen_at" } {
+		text , present := row[ name ].( string )
+		if present == false && name == "last_seen_at" { continue }
+		if _ , err := time.Parse( time.RFC3339 , text ); err != nil { t.Errorf( "%s is not RFC 3339: %v" , name , row[ name ] ) }
+	}
+}
+// <<< feature:sessions

@@ -50,6 +50,7 @@ func contractCalls() ( calls []contractCall ) {
 		{ http.MethodPost , "/api/admin/users/{user}/expiry" , fiber.Map{ "expires_at": soon } , fiber.StatusOK , true },
 		{ http.MethodPost , "/api/admin/users/{user}/disabled" , fiber.Map{ "disabled": true } , fiber.StatusOK , true },
 		{ http.MethodPost , "/api/admin/users/{user}/disabled" , fiber.Map{ "disabled": false } , fiber.StatusOK , true },
+		{ http.MethodGet , "/api/admin/users/{user}/sessions" , nil , fiber.StatusOK , true }, // feature:sessions
 		{ http.MethodGet , "/api/admin/users/{user}/keys" , nil , fiber.StatusOK , true },
 		{ http.MethodPost , "/api/admin/users/{user}/keys" , fiber.Map{ "name": "for the portal" , "role": "user" , "expires_in_days": 30 } , fiber.StatusCreated , true },
 		{ http.MethodPost , "/api/admin/keys/{key}/revoke" , fiber.Map{} , fiber.StatusOK , true },
@@ -185,6 +186,7 @@ func TestTheContractCheckPassesThePortalsKey( t *testing.T ) {
 	if ok == false || strings.Contains( output , "FAIL" ) || strings.Contains( output , "PASS  keys:" ) == false {
 		t.Fatalf( "the portal's key:\n%s" , output )
 	}
+	if strings.Contains( output , "s devices listed" ) == false { t.Fatalf( "the portal's key reads no devices:\n%s" , output ) } // feature:sessions
 	t.Log( output )
 	user_key , _ , err := models.IssueAPIKey( fixture.store , fixture.alice.ID , "script" , models.RoleUser , time.Hour )
 	if err != nil { t.Fatal( err ) }

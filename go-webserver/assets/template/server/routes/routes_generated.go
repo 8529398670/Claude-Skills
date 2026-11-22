@@ -439,7 +439,7 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 	// >>> feature:sessions
 	apidoc.Mount( app , "GET" , "/api/admin/users/{user_id}/sessions" , apidoc.Op{
 		Summary: "An account's signed-in devices",
-		Description: "Where an account is signed in: every session, with when it started and was last seen. Addresses are shown to the owner only, and only the owner sees the owner's.",
+		Description: "Where an account is signed in: every session, with when it started and was last seen. Addresses are shown to the owner and service accounts only. Nobody sees the owner's, and only the owner sees another admin's.",
 		Tag: "Admin",
 		Role: apidoc.Admin,
 		Feature: "sessions",
@@ -1277,7 +1277,7 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 	server.Register( mcp.ForRoute( "GET /api/admin/users/{user_id}/sessions" , handlers.listUserSessions , mcp.Tool{
 		Name: "admin_list_user_sessions",
 		Title: "An account's signed-in devices (admin)",
-		Description: "Where an account is signed in: every session, with when it started and was last seen. Addresses are shown to the owner only, and only the owner sees the owner's.",
+		Description: "Where an account is signed in: every session, with when it started and was last seen. Addresses are shown to the owner and service accounts only. Nobody sees the owner's, and only the owner sees another admin's.",
 		ReadOnly: true,
 		AdminOnly: true,
 	} , nil ) )

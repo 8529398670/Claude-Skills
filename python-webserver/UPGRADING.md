@@ -3,6 +3,34 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 917bdb0
+
+**Upgrade `admin-sessions`: ProjectPortal reads an account's signed-in devices.**
+Needs: `sessions`, `portal-account`.
+Marks: `"admin_sessions"`, `"see the sessions of"`, `shows_ip`, `seesSessions`
+- Phase 3b of the portal plan: person -> accounts -> sessions across apps.
+  `GET /api/admin/users/{user_id}/sessions` (already in the template) is now a
+  contract route, and `/api/me` lists `admin_sessions` while the `sessions`
+  feature is in. The contract stays 3.
+- `_target_of` takes the calling user and goes through `users.may_act_on`
+  (`act_on_refusals("see the sessions of")`): the owner's answers
+  `owner_protected`, another admin's `owner_required` unless the owner asks.
+  Before, any admin read another admin's. The revoke route shares it, and keeps
+  the same answers.
+- Addresses (`ip`) go to the owner and to service accounts (`is_service`), so
+  the portal can match people by them. Other admins still get none, and
+  `ip_name` stays the owner's.
+- `static/js/app.js`: the Devices button follows the ladder (`seesSessions`).
+- `test_portal_conformance.py` gains the route (`# feature:sessions`), and
+  `contract_check.sh` GETs the first non-admin account's devices when the
+  capability is listed: a PASS line for the devices, or a WARN when they come
+  back without addresses.
+- Touches: `app/routes/sessions.py`, `app/routes/account.py`, `static/js/app.js`,
+  `scripts/contract_check.sh`, `config/api.json`, `config/api.md`,
+  `config/mcp.json`, `config/mcp.md`, and the tests
+  `test_reading_follows_the_ladder` (test_sessions.py),
+  `test_the_portal_reads_an_accounts_devices` (test_portal_account.py).
+
 ## After ea9f39c
 
 **Portal contract v3: ProjectPortal works through an account of its own.**

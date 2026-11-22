@@ -993,6 +993,7 @@ on. The portal turns each part on only when it is listed:
 | `key_grants` | `/api/me` says what the calling key may do |
 | `error_codes` | every 4xx carries a `code` (always listed) |
 | `key_rotation` | `POST /api/keys/self/rotate` |
+| `admin_sessions` | `GET /api/admin/users/{id}/sessions`, while the `sessions` feature is in |
 
 **What `/api/me` says about the caller.**
 - `owner` (bool) is the same as `is_owner`.
@@ -1013,6 +1014,7 @@ on. The portal turns each part on only when it is listed:
 | `GET /api/admin/users` | admin | rows add `kind` |
 | `POST /api/admin/users` | admin | `user_id`, `login_path`. `kind: "service"` is refused |
 | `POST /api/admin/users/{id}/reissue-login`, `/role`, `/expiry`, `/disabled`, `/revoke-access`, `/delete` | admin, with the ladder | as in v2 |
+| `GET /api/admin/users/{id}/sessions` | admin, with the ladder | `{"sessions": [{"id", "created_at", "last_seen_at", "ip", "user_agent", "label"}]}`; see "Devices" |
 | `GET` / `POST /api/admin/users/{id}/keys` | admin with `may_mint_keys`, with the ladder | key rows / the new key and its `credential` |
 | `POST /api/admin/keys/{key_id}/revoke` | admin with `may_mint_keys` | `{"ok": true}` |
 | `POST /api/keys/self/rotate` | any key, viewers too | `{"credential": "..."}` |
@@ -1025,6 +1027,14 @@ on. The portal turns each part on only when it is listed:
 account. Only the owner acts on another admin's, and a service account counts
 as an admin. Any admin runs ordinary and viewer accounts. Never narrow these
 routes to the owner (see "Don't narrow account routes to the owner" in Step 3).
+
+**Devices** (`admin_sessions`). An account's signed-in sessions, newest first,
+for matching one person's accounts across apps. Times are RFC 3339.
+`last_seen_at`, `ip`, `user_agent` and `label` are left out when unknown or
+empty. Rows also carry `current` and `expires_at`, and the reply is paged like
+every list (`limit`, `offset`, `total`, `next`). Nothing secret is in a row.
+`ip` goes to the owner and to service accounts only; any other admin gets rows
+without it. A viewer key gets `not_admin`, as on every admin read.
 
 **Service accounts.**
 - A service account is an admin, and never the owner: `transfer-owner` refuses it.
