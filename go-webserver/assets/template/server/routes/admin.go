@@ -114,7 +114,7 @@ func ( handlers *Handlers ) loginLinkOptions( c fiber.Ctx , request models.Login
 		refused = refuse( fiber.StatusBadRequest , resolve_err.Error() )
 		return
 	}
-	options.MintedByKey = security.ActorFrom( c ).KeyID()
+	options.MintedByKey = security.ActorFrom( c ).LineageKey()
 	return
 }
 
@@ -233,6 +233,13 @@ func ( handlers *Handlers ) createUser( c fiber.Ctx , in *createUserRequest ) ( 
 //     mcp="admin_reissue_login", call=withLoginLinkURL,  // feature:mcp
 // )
 func ( handlers *Handlers ) reissueLogin( c fiber.Ctx , in *loginLinkRequest ) ( reply *loginLinkReply , err error ) {
+	// A key reissuing its own account's link is a key asking for a sign-in
+	// link: the same rules as POST /api/account/login-link (MaySignIn, once,
+	// 15 minutes), or this route would be the way round them.
+	if actor := security.ActorFrom( c ); actor.ViaAPIKey() && in.UserID == actor.User.ID { // feature:api_keys
+		reply , err = handlers.createMyLoginLink( c , &in.LoginLinkRequest ) // feature:api_keys
+		return // feature:api_keys
+	} // feature:api_keys
 	if _ , get_err := models.GetUser( handlers.Store , in.UserID ); get_err != nil {
 		err = refuse( fiber.StatusNotFound , "no such user" )
 		return
@@ -410,8 +417,8 @@ type setUserExpiryReply struct {
 //     description="expires_at is when the account stops working (RFC 3339), or null for never. Once it "
 //         "passes the account counts as disabled: sign-in, its sessions and its keys stop, and housekeeping "
 //         "disables it and revokes its access. A later expiry does not re-enable an account housekeeping "
-//         "already disabled. It must be in the future. The owner's account never expires; only the owner "
-//         "sets an admin's.",
+//         "already disabled. It must be in the future. The owner's account never expires, nobody sets their "
+//         "own, and only the owner sets an admin's.",
 //     mcp="admin_set_user_expiry",  // feature:mcp
 // )
 func ( handlers *Handlers ) setUserExpiry( c fiber.Ctx , in *setUserExpiryRequest ) ( reply *setUserExpiryReply , err error ) {
@@ -419,6 +426,9 @@ func ( handlers *Handlers ) setUserExpiry( c fiber.Ctx , in *setUserExpiryReques
 	switch {
 	case errors.Is( set_err , models.ErrExpiryPast ):
 		err = refuse( fiber.StatusBadRequest , set_err.Error() )
+		return
+	case errors.Is( set_err , models.ErrExpirySelf ):
+		err = refuse( fiber.StatusForbidden , set_err.Error() )
 		return
 	case errors.Is( set_err , models.ErrOwnerProtected ):
 		err = refuse( fiber.StatusForbidden , "the owner's account cannot expire" ).coded( apidoc.CodeOwnerProtected )
@@ -638,6 +648,17 @@ func refuse( status int , message string , extra ...fiber.Map ) ( refused *refus
 // (models.KindService): it has API keys only, and is never signed into.
 func serviceAccountRefusal() ( refused *refusal ) {
 	refused = refuse( fiber.StatusForbidden , models.ErrServiceAccount.Error() ).coded( apidoc.CodeServiceAccount )
+	return
+}
+
+// keyBornRefusal refuses, as session_only, a request from a browser session
+// a key's login link opened (security.Actor.KeyBorn) when it asks for a way in
+// that would not answer to that key: a password, a PIN, two-factor, or a new
+// secret for another key. Revoking the key ends the session and everything
+// else it made (LineageKey); these would outlive it. Nil for anyone else.
+func keyBornRefusal( c fiber.Ctx ) ( refused *refusal ) {
+	if actor := security.ActorFrom( c ); actor == nil || actor.KeyBorn() == false { return }
+	refused = refuse( fiber.StatusForbidden , "this needs a session you signed in to yourself, not one an API key's login link opened" ).coded( apidoc.CodeSessionOnly )
 	return
 }
 

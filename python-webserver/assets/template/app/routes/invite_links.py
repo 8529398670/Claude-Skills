@@ -125,7 +125,7 @@ def create_invite_link(request: Request, body: CreateInviteLink) -> NewInviteLin
     if not invite_links.valid_invite_link(body.label, body.max_uses, body.days):
         raise Refused(400, INVITE_LINK_LIMITS)
     actor = actor_from(request)
-    credential, link = invite_links.issue_invite_link(get_store(request), body.label, body.max_uses, timedelta(days=body.days), actor.user.id, actor.key_id, body.role)
+    credential, link = invite_links.issue_invite_link(get_store(request), body.label, body.max_uses, timedelta(days=body.days), actor.user.id, actor.lineage_key, body.role)
     audit(request, KIND_ADMIN, "invite link created", {"link_id": link.id, "label": link.label, "max_uses": link.max_uses, "role": link.role})
     request.app.state.webhooks.emit(webhooks.EVENT_INVITE_LINK_CREATED, {"link_id": link.id, "label": link.label}, actor=webhook_actor(request))  # feature:webhooks
     return NewInviteLink(**msgspec.structs.asdict(_row(link, actor.user)), join_path=f"/join/{credential}")
@@ -197,7 +197,7 @@ def set_invite_link_limits(request: Request, body: SetInviteLinkLimits) -> Invit
     store = get_store(request)
     ttl = None if body.days is None else timedelta(days=body.days)
     try:
-        link = invite_links.set_invite_link_limits(store, body.link_id, body.max_uses, ttl, actor_from(request).key_id)
+        link = invite_links.set_invite_link_limits(store, body.link_id, body.max_uses, ttl, actor_from(request).lineage_key)
     except invite_links.InvitePlacesError as refusal:
         raise Refused(400, str(refusal)) from None
     if link is None:
@@ -219,7 +219,7 @@ def switch_on_invite_link(request: Request, body: LinkIDPath) -> InviteLinkRow:
     admin_switch_on_invite_link tool. A key that switches a link on takes it
     over, so revoking that key closes it again."""
     store = get_store(request)
-    link = invite_links.switch_on_invite_link(store, body.link_id, actor_from(request).key_id)
+    link = invite_links.switch_on_invite_link(store, body.link_id, actor_from(request).lineage_key)
     if link is None:
         raise Refused(404, "no such invite link")
     audit(request, KIND_ADMIN, "invite link switched back on", {"link_id": link.id})
@@ -276,7 +276,7 @@ def restore_invite_link(request: Request, body: LinkIDPath) -> InviteLinkRow:
     uses and expiry included."""
     store, actor = get_store(request), actor_from(request)
     try:
-        link = invite_links.restore_invite_link(store, body.link_id, actor.user.id, actor.user.is_admin, actor.key_id)
+        link = invite_links.restore_invite_link(store, body.link_id, actor.user.id, actor.user.is_admin, actor.lineage_key)
     except RestoreError as refusal:
         raise restore_refusal(refusal) from None
     audit(request, KIND_ADMIN, "invite link restored", {"link_id": body.link_id})

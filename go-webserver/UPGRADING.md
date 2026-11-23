@@ -3,6 +3,76 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 608cadf
+
+**Security fixes from the fifth review (2026-11-22, ProjectPortal + TodoBoard):
+K1 to K5. Take them as one update.** Every item is a fix. Each one closes a way
+for an API key to leave behind access that outlives revoking it or letting it
+expire. Run the app's tests after. Then check by eye: the Users screen's
+"reissue" on your own row, and the API keys card.
+
+- **K1: a key reissuing its own account's login link follows the
+  `/api/account/login-link` rules.**
+  - **Was:** `reissueLogin` with `user_id` set to the caller's own account went
+    round `may_sign_in` and the once/15-minute cap. An admin key got an
+    unlimited link that never expires.
+  - **Now:** a key pointed at its own account goes through `createMyLoginLink`.
+    A browser session reissuing its own is unchanged.
+  - **File:** `server/routes/admin.go`.
+- **K2: what a key-born session makes answers to the key.**
+  - **Was:** a browser session that a key's login link opened
+    (`Session.MintedByKey`) could make keys and links that lived on after the
+    key was revoked.
+  - **New on the actor:** `security.Actor.LineageKey()` is the calling key, or
+    the key behind the session. `KeyBorn()` says whether the session came from
+    a key's link.
+  - **Recorded as `MintedByKey`, so the revoke cascade reaches them:**
+    - `loginLinkOptions`;
+    - the four invite-link calls;
+    - `mintKeyForUser`;
+    - `createMyAPIKey` and `createAPIKeyForUser`, which now go through
+      `models.IssueAPIKeyFor( store , actor_id , lineage_key , user_id , ... )`.
+      The signature changed: the self case no longer calls `IssueAPIKey`.
+  - **Refused with 403 `session_only` from a key-born session**
+    (`keyBornRefusal`, in admin.go). Each would hand out a way in that nothing
+    ties to the key:
+    - setting a password, a PIN, or two-factor (start, confirm, disable);
+    - `rotateMyAPIKey`.
+  - `rotateSelf` keeps `KeyID()`.
+  - **Files:** `server/security/security.go`, `server/models/api_key.go`,
+    `server/routes/api_keys.go`, `server/routes/invite_links.go`,
+    `server/routes/admin.go`, `server/routes/passwords.go`,
+    `server/routes/two_factor.go`, `server/routes/account.go`.
+- **K3: a key's expiry ends the sessions its links opened.**
+  - **Was:** only revoking it did.
+  - **Now:** `LoadSession` refuses a session whose `MintedByKey` key is no
+    longer live (`keyBornSessionDead`, in api_key.go).
+  - This means ProjectPortal's Open sessions end when the key that opened them
+    expires.
+  - **File:** `server/models/session.go`.
+- **K4: a minted key cannot outlive its parent.**
+  - **Now:** `capAtParentTx` brings `ExpiresAt` forward to the parent's. It runs
+    when a key with a `MintedByKey` is issued, and in `SetAPIKeyExpiry`.
+  - If the parent is gone or no longer live, the answer is
+    `ErrParentKeyDead`: 403 on the issuing routes, 400 on the expiry routes.
+  - **Was:** a 30-day portal key minted 365-day keys.
+- **K5: nobody sets their own account expiry.**
+  - **Was:** an admin cleared the expiry the owner gave them.
+  - **Now:** `models.ErrExpirySelf` gives 403 (`server/models/expiry.go`,
+    `owner.go`, `server/routes/admin.go`). The route's description says so.
+- **Afterwards:** run `go generate ./server/routes` and `scripts/api_docs.sh`.
+  App-specific key code mirrors these changes. TodoBoard's `issueAPIKey`
+  carries board access: pass the lineage through it.
+- **Tests:** `server/routes/key_lineage_test.go` (new):
+  - `TestAKeyCannotReissueItsOwnLoginLink`
+  - `TestAKeyBornSessionLeavesNothingBehind`
+  - `TestAKeyBornSessionEndsWhenTheKeyExpires`
+  - `TestAMintedKeyDiesWithItsParent`
+  - `TestAnAdminCannotChangeTheirOwnExpiry`
+
+  They are security tests, so `prune.py` keeps them in apps stamped
+  `tests: false` too.
+
 ## After 917bdb0
 
 **Upgrade `admin-sessions`: ProjectPortal reads an account's signed-in devices.**

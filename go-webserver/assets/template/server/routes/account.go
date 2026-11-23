@@ -271,6 +271,10 @@ type pinReply struct {
 //     tag="Account", access=SESSION_ONLY, feature="invite_links",
 // )
 func ( handlers *Handlers ) setPin( c fiber.Ctx , in *pinRequest ) ( reply *pinReply , err error ) {
+	if refused := keyBornRefusal( c ); refused != nil {
+		err = refused
+		return
+	}
 	set_err := models.SetUserPin( handlers.Store , security.UserFrom( c ).ID , in.Pin )
 	if errors.Is( set_err , models.ErrBadPin ) {
 		err = refuse( fiber.StatusBadRequest , "bad_pin" )

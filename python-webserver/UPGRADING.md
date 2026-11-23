@@ -3,6 +3,59 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 608cadf
+
+**Security fixes from the fifth review (2026-11-22, ProjectPortal + TodoBoard):
+K1 to K5. Take them as one update.** Every item is a fix, and go-webserver has
+the same five. Each one closes a way for an API key to leave behind access
+that outlives revoking it or letting it expire. Run the app's tests after, then
+check by eye the Users screen's "reissue" on your own row and the API keys card.
+
+- **K1: a key reissuing its own account's login link follows the
+  `/api/account/login-link` rules.**
+  - Was: `reissue_login` with `user_id` set to the caller's own account got
+    round `may_sign_in` and the once/15-minute cap, so an admin key got an
+    unlimited link that never expires.
+  - Now: those rules live in `key_login_link_options` (`app/routes/admin.py`),
+    which `create_my_login_link` (`account.py`) shares. A browser session
+    reissuing its own link is unchanged.
+- **K2: whatever a key-born session makes answers to the key.**
+  - Was: a session opened by a key's login link (`minted_by_key`) could make
+    keys and links that survived revoking the key.
+  - `Actor.lineage_key` (`app/core/security.py`) is the calling key, or the
+    key behind the session. `Actor.key_born` says whether the session came
+    from a key's link.
+  - These record `lineage_key` as `minted_by_key`:
+    - `link_options`
+    - the four invite-link calls
+    - minting keys
+    - creating your own key and creating a key for a user. Both go through
+      `issue_api_key_for(store, actor_id, lineage_key, user_id, ...)`, which
+      has a new parameter.
+  - `refuse_key_born` (`app/routes/helpers.py`) answers 403 `session_only`
+    from a key-born session for:
+    - setting a password or PIN
+    - two-factor start, confirm and disable
+    - `rotate_my_key`
+  - Rotating its own key keeps `key_id`.
+- **K3: a key's expiry ends the sessions its links opened.**
+  - `load_session` (`app/models/sessions.py`) refuses a session once its
+    `minted_by_key` key is no longer live (`key_born_session_dead`).
+  - Before, only revoking the key did this.
+- **K4: a minted key cannot outlive its parent.**
+  - `cap_at_parent_tx` (`app/models/api_keys.py`) brings a key's `expires_at`
+    forward to its parent's, at issue time and in `set_api_key_expiry`.
+  - If the parent is gone or dead, it raises `ParentKeyDeadError`: 403 on the
+    issuing routes, 400 on the expiry routes.
+- **K5: nobody sets their own account expiry.**
+  - `ExpirySelfError` (`app/models/credentials.py`) is answered with 403, and
+    the route description says so.
+  - Was: an admin could clear the expiry the owner gave them.
+  - `test_portal_contract` now expects 403 there.
+- **Afterwards:** regenerate the API docs.
+- **Tests:** `app/tests/test_key_lineage.py` (new). They are security tests, so
+  `prune.py` keeps them in apps stamped `tests: false` too.
+
 ## After 917bdb0
 
 **Upgrade `admin-sessions`: ProjectPortal reads an account's signed-in devices.**

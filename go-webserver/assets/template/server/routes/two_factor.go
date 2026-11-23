@@ -105,6 +105,10 @@ func ( handlers *Handlers ) finishSignIn( c fiber.Ctx , in *finishSignInRequest 
 //     tag="Account", access=SESSION_ONLY, feature="two_factor", errors=(409,),
 // )
 func ( handlers *Handlers ) startTwoFactor( c fiber.Ctx , in *apidoc.None ) ( reply *startTwoFactorReply , err error ) {
+	if refused := keyBornRefusal( c ); refused != nil {
+		err = refused
+		return
+	}
 	secret , start_err := models.StartTwoFactorSetup( handlers.Store , security.UserFrom( c ).ID , handlers.cfg().SecretKey )
 	if errors.Is( start_err , models.ErrTwoFactorOn ) {
 		err = refuse( fiber.StatusConflict , "two_factor_on" )
@@ -125,6 +129,10 @@ func ( handlers *Handlers ) startTwoFactor( c fiber.Ctx , in *apidoc.None ) ( re
 //     tag="Account", access=SESSION_ONLY, feature="two_factor", errors=(409,),
 // )
 func ( handlers *Handlers ) confirmTwoFactor( c fiber.Ctx , in *codeRequest ) ( reply *recoveryCodesReply , err error ) {
+	if refused := keyBornRefusal( c ); refused != nil {
+		err = refused
+		return
+	}
 	user_id := security.UserFrom( c ).ID
 	if handlers.Codes.Reserve( user_id ) == false {
 		err = refuse( fiber.StatusTooManyRequests , "two_factor_locked" )
@@ -160,6 +168,10 @@ func ( handlers *Handlers ) confirmTwoFactor( c fiber.Ctx , in *codeRequest ) ( 
 //     tag="Account", access=SESSION_ONLY, feature="two_factor", errors=(409,),
 // )
 func ( handlers *Handlers ) disableTwoFactor( c fiber.Ctx , in *codeRequest ) ( reply *okReply , err error ) {
+	if refused := keyBornRefusal( c ); refused != nil {
+		err = refused
+		return
+	}
 	user_id := security.UserFrom( c ).ID
 	if handlers.Codes.Reserve( user_id ) == false {
 		err = refuse( fiber.StatusTooManyRequests , "two_factor_locked" )

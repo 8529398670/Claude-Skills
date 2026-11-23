@@ -1044,7 +1044,16 @@ without it. A viewer key gets `not_admin`, as on every admin read.
 - The owner, from a browser session, may switch `may_mint_keys` on for one of
   the owner's own admin keys, or for a service account's admin key.
 - A minted key is capped at its account's role, never gets `may_mint_keys` or
-  `may_sign_in`, and dies with the key that made it, down the chain.
+  `may_sign_in`, and dies with the key that made it, down the chain. It never
+  outlives that key either: its `expires_at` is brought forward to the
+  parent's, at minting and on any later expiry change.
+- A browser session opened by a key's login link answers to that key. It ends
+  when the key is revoked or expires. Every key, login link and invite link it
+  makes records the key as `minted_by_key`. It is refused with `session_only`
+  when it tries to set a password, a PIN or two-factor, or to rotate a key.
+- `reissue-login` on the caller's own account, through a key, follows
+  `POST /api/account/login-link`'s rules. Nobody sets their own account
+  expiry.
 
 **Rotation.** The old secret stops working at once. The key's id, name, role,
 grants, lineage and `expires_at` stay as they are, so what it made keeps

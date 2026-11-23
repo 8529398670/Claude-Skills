@@ -26,6 +26,8 @@ from app.models import two_factor  # feature:two_factor
 from app.routes.api_docs_md import api_doc_url  # feature:openapi
 from app.routes.api_docs_md import mcp_doc_url  # feature:mcp
 from app.routes.admin import CancelLoginLinkReply, DisplayName, ExpiresInMinutes, LoginLink, LoginLinkReply, MaxUses, OkReply, RenameUserReply, link_options, link_reply
+from app.routes.admin import key_login_link_options  # feature:api_keys
+from app.routes.helpers import refuse_key_born
 from app.routes.helpers import Refused, get_config, get_store, run
 from app.routes.helpers import DateTime  # feature:api_keys
 from app.routes.logs import audit
@@ -298,6 +300,7 @@ class SetPINReply(Reply):
 def set_pin(request: Request, body: SetPIN) -> SetPINReply:
     """Set, or with an empty pin clear, the PIN asked for when this account
     signs back in through an invite link (see app/models/pins.py)."""
+    refuse_key_born(request)
     try:
         if not pins.set_user_pin(get_store(request), actor_from(request).user.id, body.pin):
             raise Refused.internal("set pin: the signed-in account has no record")
@@ -340,18 +343,8 @@ def create_my_login_link(request: Request, body: MyLoginLink) -> LoginLinkReply:
     minutes, whatever it asked for, and revoking the key voids it while it is
     unused."""
     actor = actor_from(request)
-    # >>> feature:api_keys
-    if actor.api_key is not None and not actor.api_key.may_sign_in:
-        raise Refused(403, "this key may not make sign-in links: turn that on for it on the API keys card")
-    # <<< feature:api_keys
     options = link_options(request, body)
-    # >>> feature:api_keys
-    if actor.api_key is not None:
-        ttl = options.ttl_seconds
-        if ttl <= 0 or ttl > api_keys.KEY_LOGIN_LINK_TTL_SECONDS:
-            ttl = api_keys.KEY_LOGIN_LINK_TTL_SECONDS
-        options = replace(options, max_uses=1, unlimited=False, ttl_seconds=ttl)
-    # <<< feature:api_keys
+    options = key_login_link_options(request, options)  # feature:api_keys
     credential, info = login_tokens.issue_login_link(get_store(request), actor.user.id, options)
     audit(request, KIND_AUTH, "own login link created", {"max_uses": info["max_uses"], "expires_at": info["expires_at"]})
     return LoginLinkReply(**link_reply(credential, info))

@@ -69,6 +69,27 @@ func ( actor *Actor ) KeyID() ( result string ) {
 	return
 }
 
+// LineageKey is the key whatever this request makes is answerable to: the
+// calling key, or for a browser session that a key's login link opened, that
+// key (models.Session.MintedByKey). Every key, login link and invite link a
+// request makes records it, so revoking the key -- or its expiry, for a key --
+// ends what it made through a session too. KeyID stays the calling key alone,
+// for what only a key does to itself (rotating).
+func ( actor *Actor ) LineageKey() ( result string ) {
+	result = actor.KeyID()
+	if result == "" && actor.Session != nil { result = actor.Session.MintedByKey }
+	return
+}
+
+// KeyBorn is true for a browser session a key's login link opened. It may do
+// what any session does, except what would hand out a way in that nothing ties
+// to the key: a password, a PIN, two-factor, or a fresh secret for another key.
+// Those need a session the person signed in to themselves.
+func ( actor *Actor ) KeyBorn() ( result bool ) {
+	result = actor.KeyID() == "" && actor.Session != nil && actor.Session.MintedByKey != ""
+	return
+}
+
 func ( actor *Actor ) Method() ( result string ) {
 	result = MethodSession
 	// >>> feature:api_keys

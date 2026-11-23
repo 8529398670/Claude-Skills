@@ -372,7 +372,7 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 	} , handlers.setUserDisabled , handlers.Guard.RequireAdmin )
 	apidoc.Mount( app , "POST" , "/api/admin/users/{user_id}/expiry" , apidoc.Op{
 		Summary: "Set when an account expires",
-		Description: "expires_at is when the account stops working (RFC 3339), or null for never. Once it passes the account counts as disabled: sign-in, its sessions and its keys stop, and housekeeping disables it and revokes its access. A later expiry does not re-enable an account housekeeping already disabled. It must be in the future. The owner's account never expires; only the owner sets an admin's.",
+		Description: "expires_at is when the account stops working (RFC 3339), or null for never. Once it passes the account counts as disabled: sign-in, its sessions and its keys stop, and housekeeping disables it and revokes its access. A later expiry does not re-enable an account housekeeping already disabled. It must be in the future. The owner's account never expires, nobody sets their own, and only the owner sets an admin's.",
 		Tag: "Admin",
 		Role: apidoc.Admin,
 		Errors: []int{ 400 , 401 , 403 , 404 },
@@ -1424,7 +1424,7 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 	server.Register( mcp.ForRoute( "POST /api/admin/users/{user_id}/expiry" , handlers.setUserExpiry , mcp.Tool{
 		Name: "admin_set_user_expiry",
 		Title: "Set when an account expires (admin)",
-		Description: "expires_at is when the account stops working (RFC 3339), or null for never. Once it passes the account counts as disabled: sign-in, its sessions and its keys stop, and housekeeping disables it and revokes its access. A later expiry does not re-enable an account housekeeping already disabled. It must be in the future. The owner's account never expires; only the owner sets an admin's.",
+		Description: "expires_at is when the account stops working (RFC 3339), or null for never. Once it passes the account counts as disabled: sign-in, its sessions and its keys stop, and housekeeping disables it and revokes its access. A later expiry does not re-enable an account housekeeping already disabled. It must be in the future. The owner's account never expires, nobody sets their own, and only the owner sets an admin's.",
 		AdminOnly: true,
 	} , nil ) )
 	server.Register( mcp.ForRoute( "POST /api/admin/users/{user_id}/role" , handlers.setUserRole , mcp.Tool{

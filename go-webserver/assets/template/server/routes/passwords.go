@@ -152,6 +152,10 @@ func ( handlers *Handlers ) sessionID( c fiber.Ctx ) ( session_id string ) {
 //     tag="Account", access=SESSION_ONLY, feature="passwords", errors=(409,),
 // )
 func ( handlers *Handlers ) setPassword( c fiber.Ctx , in *setPasswordRequest ) ( reply *setPasswordReply , err error ) {
+	if refused := keyBornRefusal( c ); refused != nil {
+		err = refused
+		return
+	}
 	user_id := security.UserFrom( c ).ID
 	// >>> feature:two_factor
 	cfg := handlers.cfg()

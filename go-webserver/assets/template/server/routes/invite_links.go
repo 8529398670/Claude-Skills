@@ -157,7 +157,7 @@ func ( handlers *Handlers ) createInviteLink( c fiber.Ctx , in *inviteLinkReques
 		err = refuse( fiber.StatusBadRequest , "role must be user or viewer" )
 		return
 	}
-	credential , link , err := models.IssueInviteLinkRole( handlers.Store , in.Label , in.MaxUses , ttl , actor.User.ID , actor.KeyID() , role )
+	credential , link , err := models.IssueInviteLinkRole( handlers.Store , in.Label , in.MaxUses , ttl , actor.User.ID , actor.LineageKey() , role )
 	if err != nil { return }
 	reply = &createdInviteLinkReply{ inviteLinkRow: handlers.inviteLinkRow( link ) , JoinPath: "/join/" + credential }
 	handlers.audit( c , logs.KindAdmin , "invite link created" , fiber.Map{ "link_id": link.ID , "label": link.Label , "max_uses": link.MaxUses , "role": link.JoinRole() } )
@@ -236,7 +236,7 @@ func ( handlers *Handlers ) setInviteLinkLimits( c fiber.Ctx , in *inviteLimitsR
 	}
 	var ttl time.Duration
 	if in.Days != nil { ttl = time.Duration( *in.Days ) * 24 * time.Hour }
-	link , set_err := models.SetInviteLinkLimits( handlers.Store , in.LinkID , in.MaxUses , ttl , security.ActorFrom( c ).KeyID() )
+	link , set_err := models.SetInviteLinkLimits( handlers.Store , in.LinkID , in.MaxUses , ttl , security.ActorFrom( c ).LineageKey() )
 	switch {
 	case errors.Is( set_err , db.ErrNotFound ):
 		err = refuse( fiber.StatusNotFound , "no such invite link" )
@@ -265,7 +265,7 @@ func ( handlers *Handlers ) setInviteLinkLimits( c fiber.Ctx , in *inviteLimitsR
 //     mcp="admin_switch_on_invite_link", enabled=handlers.inviteLinksOn,  // feature:mcp
 // )
 func ( handlers *Handlers ) switchOnInviteLink( c fiber.Ctx , in *linkIDPath ) ( reply *inviteLinkRow , err error ) {
-	link , switch_err := models.SwitchOnInviteLink( handlers.Store , in.LinkID , security.ActorFrom( c ).KeyID() )
+	link , switch_err := models.SwitchOnInviteLink( handlers.Store , in.LinkID , security.ActorFrom( c ).LineageKey() )
 	if errors.Is( switch_err , db.ErrNotFound ) {
 		err = refuse( fiber.StatusNotFound , "no such invite link" )
 		return
@@ -333,7 +333,7 @@ func ( handlers *Handlers ) deleteInviteLink( c fiber.Ctx , in *linkIDPath ) ( r
 // )
 func ( handlers *Handlers ) restoreInviteLink( c fiber.Ctx , in *linkIDPath ) ( reply *inviteLinkRow , err error ) {
 	actor := security.ActorFrom( c )
-	link , restore_err := models.RestoreInviteLink( handlers.Store , in.LinkID , actor.User.ID , actor.User.IsAdmin() , actor.KeyID() )
+	link , restore_err := models.RestoreInviteLink( handlers.Store , in.LinkID , actor.User.ID , actor.User.IsAdmin() , actor.LineageKey() )
 	if restore_err != nil {
 		err = restoreRefusal( restore_err )
 		return
