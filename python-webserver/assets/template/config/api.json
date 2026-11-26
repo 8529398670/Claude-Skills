@@ -623,7 +623,7 @@
             "type": "boolean"
           },
           "capabilities": {
-            "description": "The optional parts of that contract this app has on now: viewer_role, account_expiry, key_minting, invite_links, key_sign_in, service_accounts, key_grants, error_codes, key_rotation, admin_sessions.",
+            "description": "The optional parts of that contract this app has on now: viewer_role, account_expiry, key_minting, invite_links, key_sign_in, service_accounts, key_grants, error_codes, key_rotation, admin_sessions, user_theme.",
             "items": {
               "type": "string"
             },
@@ -6911,6 +6911,105 @@
         "x-required-role": "admin"
       },
       "x-feature": "sessions"
+    },
+    "/api/admin/users/{user_id}/theme": {
+      "post": {
+        "description": "Put one theme (the Theme schema) on another account and make it the one it uses. It starts from the list the account sees now (its own, else the defaults, else the built-in ones), replaces the theme with the same id or adds it at the end (at most 40), and saves that as the account's own list. Only the owner does this to an admin, and nobody to the owner.",
+        "operationId": "post_api_admin_users_user_id_theme",
+        "parameters": [
+          {
+            "description": "The account's id, from GET /api/admin/users (admin_list_users over MCP).",
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "csrf_token": {
+                    "description": "From GET /api/me. Browser sessions only.",
+                    "type": "string"
+                  },
+                  "theme": {
+                    "$ref": "#/components/schemas/Theme",
+                    "description": "The theme to put on the account and make its pick, in the Theme schema. One with the same id replaces it."
+                  }
+                },
+                "required": [
+                  "theme"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "theme_id": {
+                      "description": "The theme the account now uses.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "theme_id"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "503": {
+            "$ref": "#/components/responses/E503"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Give an account a theme",
+        "tags": [
+          "Admin"
+        ],
+        "x-required-role": "admin"
+      },
+      "x-feature": "appearance"
     },
     "/api/api.json": {
       "get": {

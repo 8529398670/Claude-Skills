@@ -58,6 +58,7 @@ def contract_calls() -> list[ContractCall]:
         ContractCall("GET", "/api/admin/users/{user}/keys", None, 200, True),
         ContractCall("POST", "/api/admin/users/{user}/keys", {"name": "for the portal", "role": "user", "expires_in_days": 30}, 201, True),
         ContractCall("POST", "/api/admin/keys/{key}/revoke", {}, 200, True),
+        ContractCall("POST", "/api/admin/users/{user}/theme", {"theme": {"id": "portal", "name": "Portal", "mode": "light", "accent": "#1f5fd6", "second": "#0b7a75"}}, 200, True),  # feature:appearance
         ContractCall("POST", "/api/admin/users/{user}/revoke-access", {}, 200, True),
         ContractCall("POST", "/api/admin/users/{user}/delete", {}, 200, True),
     ]

@@ -1772,6 +1772,7 @@ Bring back a file you deleted, while it is still in the bin and your storage quo
 | POST | [`/api/admin/users/{user_id}/role`](#post-apiadminusersuser_idrole) | Change an account's role | browser session or API key, admins |
 | GET | [`/api/admin/users/{user_id}/sessions`](#get-apiadminusersuser_idsessions) | An account's signed-in devices | browser session or API key, admins |
 | POST | [`/api/admin/users/{user_id}/sessions/{session_id}/revoke`](#post-apiadminusersuser_idsessionssession_idrevoke) | Sign out one of an account's devices | browser session or API key, admins |
+| POST | [`/api/admin/users/{user_id}/theme`](#post-apiadminusersuser_idtheme) | Give an account a theme | browser session or API key, admins |
 | POST | [`/api/bulk/admin/users/cancel-login-link`](#post-apibulkadminuserscancel-login-link) | Stop an account's login link working, for many at once | browser session or API key, admins |
 | POST | [`/api/bulk/admin/users/delete`](#post-apibulkadminusersdelete) | Delete an account, for many at once | browser session or API key, admins |
 | POST | [`/api/bulk/admin/users/disabled`](#post-apibulkadminusersdisabled) | Disable or enable a user, for many at once | browser session or API key, admins |
@@ -2235,6 +2236,38 @@ Sign out one of an account's devices
 | Field | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `ok` | boolean | yes |  |  |
+
+### POST /api/admin/users/{user_id}/theme
+
+Give an account a theme
+
+Put one theme (the Theme schema) on another account and make it the one it uses. It starts from the list the account sees now (its own, else the defaults, else the built-in ones), replaces the theme with the same id or adds it at the end (at most 40), and saves that as the account's own list. Only the owner does this to an admin, and nobody to the owner.
+
+|  |  |
+|---|---|
+| Who may call | browser session or API key, admins |
+| MCP tool | [`admin_set_user_theme`](mcp.md#admin_set_user_theme) |
+| Errors | 400, 401, 403, 404, 429, 503 |
+
+**Parameters**
+
+| Name | In | Type | Required | Limits | Description |
+|---|---|---|---|---|---|
+| `user_id` | path | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
+
+**Request body**
+
+| Field | Type | Required | Limits | Description |
+|---|---|---|---|---|
+| `csrf_token` | string | no |  | From GET /api/me. Browser sessions only. |
+| `theme` | [`Theme`](#theme) | yes |  | The theme to put on the account and make its pick, in the Theme schema. One with the same id replaces it. |
+
+**Reply 200**: Success
+
+| Field | Type | Required | Limits | Description |
+|---|---|---|---|---|
+| `ok` | boolean | yes |  |  |
+| `theme_id` | string | yes |  | The theme the account now uses. |
 
 ### POST /api/bulk/admin/users/cancel-login-link
 
@@ -3924,7 +3957,7 @@ One of these:
 | `api_keys_enabled` | boolean | yes |  |  |
 | `auth` | string | yes |  |  |
 | `authenticated` | boolean | yes |  |  |
-| `capabilities` | array of string | yes |  | The optional parts of that contract this app has on now: viewer_role, account_expiry, key_minting, invite_links, key_sign_in, service_accounts, key_grants, error_codes, key_rotation, admin_sessions. |
+| `capabilities` | array of string | yes |  | The optional parts of that contract this app has on now: viewer_role, account_expiry, key_minting, invite_links, key_sign_in, service_accounts, key_grants, error_codes, key_rotation, admin_sessions, user_theme. |
 | `contract` | integer | yes |  | Which version of the portal contract this app speaks: the Portal contract section of the webserver skills' SKILL.md. |
 | `csrf_token` | string | no |  | Browser sessions only. |
 | `description` | string | yes |  | app.description. Empty when there is none. |

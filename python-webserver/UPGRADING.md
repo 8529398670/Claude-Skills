@@ -3,6 +3,36 @@
 Read by the `webserver-upgrade` skill. Add an entry whenever
 `assets/template/` changes.
 
+## After 1337779
+
+**Upgrade `user-theme`: ProjectPortal puts a person's shared theme on their account.**
+Needs: `appearance`.
+Marks: `"user_theme"`, `admin_set_user_theme`, `"change the theme of"`
+- `POST /api/admin/users/{user_id}/theme`, body `{"theme": Theme}`, answers
+  `{"ok": true, "theme_id": "..."}`. Admin key or admin session, with the
+  ladder. It is a contract route, and `/api/me` lists `user_theme` while the
+  `appearance` feature is in. The contract stays 3.
+- It starts from the list the account sees (its own, else the admin's
+  defaults, else the built-in themes), replaces the theme with the same id or
+  adds it at the end (400 at 40), saves that as the account's own list, and
+  makes it the pick. Audit-logged as "gave an account a theme".
+- An account that followed the built-in themes gets the one theme with
+  `themes_builtins: -1`. `theme.js` needs no change: `withNewBuiltIns` adds
+  every built-in theme to a list that has seen fewer than all of them, and -1
+  is fewer than the first ones (0). Callers of `POST /api/account/themes`
+  still cannot send -1.
+- `themes.set_user_theme_as` (with `ThemesFullError`, `THEME_BUILTINS_NONE`,
+  `_defaults_seen_tx`) runs in one transaction behind `users.may_act_on_tx`;
+  `set_user_theme` in `app/routes/themes.py` maps refusals through
+  `act_on_refusals("change the theme of")`. `app/models/themes.py` now imports
+  `may_act_on_tx` from `app.models.users`.
+- `test_portal_conformance.py` gains the route (`# feature:appearance`).
+- Touches: `app/models/themes.py`, `app/routes/themes.py`,
+  `app/routes/account.py`, `config/api.json`, `config/api.md`,
+  `config/mcp.json`, `config/mcp.md`, and the tests
+  `test_an_admin_gives_an_account_a_theme` (test_theme_routes.py) and
+  `test_portal_conformance.py`.
+
 ## After 608cadf
 
 **Security fixes from the fifth review (2026-11-22, ProjectPortal + TodoBoard):

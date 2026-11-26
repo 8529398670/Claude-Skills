@@ -2,6 +2,8 @@
 package routes
 
 import (
+	errors "errors"
+
 	fiber "github.com/gofiber/fiber/v3"
 
 	apidoc "{{MODULE_PATH}}/server/apidoc"
@@ -54,6 +56,16 @@ type setThemeDefaultsReply struct {
 	Ok     bool           `json:"ok"`
 	Themes []models.Theme `json:"themes" jsonschema:"nullable"`
 	BuiltIns int          `json:"builtins" jsonschema_description:"Which built-in themes that list has seen (see builtins on POST /api/account/themes)."`
+}
+
+type setUserThemeRequest struct {
+	userIDPath
+	Theme models.Theme `json:"theme" jsonschema_description:"The theme to put on the account and make its pick, in the Theme schema. One with the same id replaces it."`
+}
+
+type setUserThemeReply struct {
+	Ok      bool   `json:"ok"`
+	ThemeID string `json:"theme_id" jsonschema_description:"The theme the account now uses."`
 }
 
 // myThemes is what /api/me says about themes. themes is null when neither the
@@ -144,5 +156,36 @@ func ( handlers *Handlers ) setThemeDefaults( c fiber.Ctx , in *setThemeDefaults
 	if err != nil { return }
 	handlers.audit( c , logs.KindAdmin , "changed the default themes" , fiber.Map{ "count": len( themes ) , "built_in": themes == nil } )
 	reply = &setThemeDefaultsReply{ Ok: true , Themes: themes , BuiltIns: builtins }
+	return
+}
+
+// setUserTheme puts one theme on someone else's account and makes it their
+// pick: ProjectPortal's shared theme (portal contract capability user_theme).
+// The list rules live in models.SetUserThemeAs, the ladder in mayActOnTx.
+//
+// @route("POST /api/admin/users/{user_id}/theme", summary="Give an account a theme",
+//     tag="Admin", role=ADMIN, feature="appearance", errors=(404,),
+//     description="Put one theme (the Theme schema) on another account and make it the one it uses. It starts "
+//         "from the list the account sees now (its own, else the defaults, else the built-in ones), replaces "
+//         "the theme with the same id or adds it at the end (at most 40), and saves that as the account's own "
+//         "list. Only the owner does this to an admin, and nobody to the owner.",
+//     mcp="admin_set_user_theme",  // feature:mcp
+// )
+func ( handlers *Handlers ) setUserTheme( c fiber.Ctx , in *setUserThemeRequest ) ( reply *setUserThemeReply , err error ) {
+	if _ , clean_err := models.CleanThemes( []models.Theme{ in.Theme } ); clean_err != nil {
+		err = refuse( fiber.StatusBadRequest , clean_err.Error() )
+		return
+	}
+	theme_id , set_err := models.SetUserThemeAs( handlers.Store , security.UserFrom( c ).ID , in.UserID , in.Theme )
+	if errors.Is( set_err , models.ErrThemesFull ) {
+		err = refuse( fiber.StatusBadRequest , set_err.Error() )
+		return
+	}
+	if refused := actOnRefusal( set_err , "change the theme of" ); refused != nil {
+		err = refused
+		return
+	}
+	handlers.audit( c , logs.KindAdmin , "gave an account a theme" , fiber.Map{ "user_id": in.UserID , "theme_id": theme_id } )
+	reply = &setUserThemeReply{ Ok: true , ThemeID: theme_id }
 	return
 }

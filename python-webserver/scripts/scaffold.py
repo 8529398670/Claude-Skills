@@ -227,21 +227,31 @@ DATA_FILES: dict[str, tuple[str, ...]] = {
     # What the /docs pages render api.md and mcp.md with (static/docs.html).
     "openapi|mcp": ("static/vendor/marked/marked.min.js", "static/vendor/dompurify/purify.min.js"),
 }
+# Features every project gets whatever --features says: ProjectPortal reaches
+# each app through an API key (SKILL.md, "Portal contract").
+ALWAYS_ON: tuple[str, ...] = ("api_keys",)
 TOP_LEVEL_KEY = re.compile(r"^[a-z_]+:")
 SWITCH_VALUE = re.compile(r"\b(true|false)\b( *)")
 
 
 def parse_features(value: str) -> tuple[set[str], list[str]]:
     """--features' value as the set to switch on, plus any feature added because
-    another needs it. "none" is the core alone."""
+    another needs it. "none" is the core alone, plus what every app needs.
+
+    `api_keys` is always added (ALWAYS_ON): ProjectPortal runs every app
+    through a key of its own service account (SKILL.md, "Portal contract"),
+    and its Connect card, models and routes are all `feature:api_keys`. An app
+    scaffolded without it cannot be connected to the portal."""
     names = [name.strip() for name in value.split(",") if name.strip()]
     if names == ["none"]:
-        return set(), []
-    unknown = sorted(set(names) - set(FEATURES))
-    if unknown or not names:
-        raise SystemExit(f"Unknown feature(s): {', '.join(unknown) or '(empty)'}. Choose from: {', '.join(FEATURES)}, or none.")
+        names = []
+    else:
+        unknown = sorted(set(names) - set(FEATURES))
+        if unknown or not names:
+            raise SystemExit(f"Unknown feature(s): {', '.join(unknown) or '(empty)'}. Choose from: {', '.join(FEATURES)}, or none.")
     chosen = set(names)
-    added = sorted({need for name in chosen for need in FEATURES[name][2]} - chosen)
+    needs = {need for name in chosen for need in FEATURES[name][2]} | set(ALWAYS_ON)
+    added = sorted(needs - chosen)
     return chosen | set(added), added
 
 

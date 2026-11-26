@@ -54,6 +54,7 @@ func contractCalls() ( calls []contractCall ) {
 		{ http.MethodGet , "/api/admin/users/{user}/keys" , nil , fiber.StatusOK , true },
 		{ http.MethodPost , "/api/admin/users/{user}/keys" , fiber.Map{ "name": "for the portal" , "role": "user" , "expires_in_days": 30 } , fiber.StatusCreated , true },
 		{ http.MethodPost , "/api/admin/keys/{key}/revoke" , fiber.Map{} , fiber.StatusOK , true },
+		{ http.MethodPost , "/api/admin/users/{user}/theme" , fiber.Map{ "theme": fiber.Map{ "id": "portal" , "name": "Portal" , "mode": "light" , "accent": "#1f5fd6" , "second": "#0b7a75" } } , fiber.StatusOK , true }, // feature:appearance
 		{ http.MethodPost , "/api/admin/users/{user}/revoke-access" , fiber.Map{} , fiber.StatusOK , true },
 		{ http.MethodPost , "/api/admin/users/{user}/delete" , fiber.Map{} , fiber.StatusOK , true },
 	}

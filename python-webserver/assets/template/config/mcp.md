@@ -45,6 +45,7 @@ Every tool POST /mcp offers. Written by scripts/api_docs.sh from the registered 
 | [`admin_set_user_expiry`](#admin_set_user_expiry) | [`POST /api/admin/users/{user_id}/expiry`](api.md#post-apiadminusersuser_idexpiry) | admin keys | Set when an account expires (admin) |
 | [`admin_set_user_role`](#admin_set_user_role) | [`POST /api/admin/users/{user_id}/role`](api.md#post-apiadminusersuser_idrole) | admin keys | Change an account's role (admin) |
 | [`admin_set_user_role_bulk`](#admin_set_user_role_bulk) | [`POST /api/bulk/admin/users/role`](api.md#post-apibulkadminusersrole) | admin keys | Change an account's role, for many at once (admin) |
+| [`admin_set_user_theme`](#admin_set_user_theme) | [`POST /api/admin/users/{user_id}/theme`](api.md#post-apiadminusersuser_idtheme) | admin keys | Give an account a theme (admin) |
 | [`admin_storage`](#admin_storage) | [`GET /api/admin/storage`](api.md#get-apiadminstorage) | admin keys | Storage for everyone (admin) |
 | [`admin_switch_on_invite_link`](#admin_switch_on_invite_link) | [`POST /api/admin/invite-links/{link_id}/switch-on`](api.md#post-apiadmininvite-linkslink_idswitch-on) | admin keys | Switch an invite link back on (admin) |
 | [`admin_switch_on_invite_link_bulk`](#admin_switch_on_invite_link_bulk) | [`POST /api/bulk/admin/invite-links/switch-on`](api.md#post-apibulkadmininvite-linksswitch-on) | admin keys | Switch an invite link back on, for many at once (admin) |
@@ -684,6 +685,48 @@ Runs admin_set_user_role once per item: items holds each call's arguments, share
 | `items[].user_id` | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 | `shared` | object | no |  | Fields every item gets, unless the item sets its own. |
 | `shared.role` | string | no | one of `admin`, `user`, `viewer` |  |
+
+## admin_set_user_theme
+
+Put one theme (the Theme schema) on another account and make it the one it uses. It starts from the list the account sees now (its own, else the defaults, else the built-in ones), replaces the theme with the same id or adds it at the end (at most 40), and saves that as the account's own list. Only the owner does this to an admin, and nobody to the owner.
+
+|  |  |
+|---|---|
+| Route | [`POST /api/admin/users/{user_id}/theme`](api.md#post-apiadminusersuser_idtheme) |
+| Read only | no |
+| Destructive | no |
+
+**Arguments**
+
+| Field | Type | Required | Limits | Description |
+|---|---|---|---|---|
+| `theme` | object | yes |  | The theme to put on the account and make its pick, in the Theme schema. One with the same id replaces it. |
+| `theme.accent` | string | yes |  | The main color: what you can press. |
+| `theme.background` | string | no |  | The page. Left out: the mode's own. |
+| `theme.button` | object or null | no |  | How the theme's buttons look. A choice left out is the default (rounded, normal, raised, normal). |
+| `theme.button.case` | string | no | one of `normal`, `upper` |  |
+| `theme.button.depth` | string | no | one of `flat`, `raised`, `glossy` |  |
+| `theme.button.shape` | string | no | one of `square`, `soft`, `rounded`, `pill` |  |
+| `theme.button.weight` | string | no | one of `normal`, `medium`, `bold` |  |
+| `theme.dark` | object or null | no |  | A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped. |
+| `theme.dark.accent` | string | yes |  | The main color: what you can press. |
+| `theme.dark.background` | string | no |  | The page. Left out: the mode's own. |
+| `theme.dark.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, bar (the bar across the top), barText, info, infoBorder, border, rowOdd and rowEven (alternating table rows), and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `theme.dark.second` | string | yes |  | Says where you are: active nav item, headings, info. |
+| `theme.dark.surface` | string | no |  | Cards. Left out: the mode's own. |
+| `theme.id` | string | yes |  | Lower-case letters, digits, - and _, up to 32. |
+| `theme.light` | object or null | no |  | A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in. |
+| `theme.light.accent` | string | yes |  | The main color: what you can press. |
+| `theme.light.background` | string | no |  | The page. Left out: the mode's own. |
+| `theme.light.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, bar (the bar across the top), barText, info, infoBorder, border, rowOdd and rowEven (alternating table rows), and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `theme.light.second` | string | yes |  | Says where you are: active nav item, headings, info. |
+| `theme.light.surface` | string | no |  | Cards. Left out: the mode's own. |
+| `theme.mode` | string | yes | one of `light`, `dark` |  |
+| `theme.name` | string | yes |  | 1 to 60 characters. |
+| `theme.overrides` | map of string | no |  | Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, bar (the bar across the top), barText, info, infoBorder, border, rowOdd and rowEven (alternating table rows), and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back. |
+| `theme.second` | string | yes |  | Says where you are: active nav item, headings, info. |
+| `theme.surface` | string | no |  | Cards. Left out: the mode's own. |
+| `user_id` | integer | yes | at least 1 | The account's id, from GET /api/admin/users (admin_list_users over MCP). |
 
 ## admin_storage
 

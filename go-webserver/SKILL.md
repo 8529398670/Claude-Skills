@@ -255,7 +255,7 @@ Pass exactly the features with a reason to be on:
 | Feature | Switch it on when the app... |
 |---|---|
 | `files` | lets people upload, attach, or share documents, images, or data |
-| `api_keys` | is called by a script, cron job, CI, or another service |
+| `api_keys` | **always on**: ProjectPortal manages every app through a key (see "Portal contract"); also what scripts, cron, CI and other services use |
 | `mcp` | should be usable by Claude or another agent (brings `api_keys`) |
 | `webhooks` | has to tell another system when something happens |
 | `invite_links` | is joined by a group: "a link for our chat", a class, a team, a club (includes PINs) |
@@ -264,8 +264,12 @@ Pass exactly the features with a reason to be on:
 | `metrics` | is watched by Prometheus, Grafana, or similar (brings `api_keys`) |
 | `backups` | holds data worth keeping in a long-lived deployment and should back itself up on a schedule |
 
-A feature the description gives no reason for stays off. `two_factor` is the
-one exception: it stays on unless the app is plainly a one-person tool on the
+A feature the description gives no reason for stays off, with two exceptions.
+`api_keys` is never off: every app sits in ProjectPortal's catalog, and the
+portal's Connect card, service account and contract routes are all part of
+`api_keys`, so `scaffold.py` adds it even to `--features none`. Leaving it
+out is how an app ends up with no way to connect to the portal. `two_factor` is the
+other exception: it stays on unless the app is plainly a one-person tool on the
 owner's own machine (that is `--features none`), because it costs people nothing
 until they choose it. If it is unclear who will use the app, it stays on.
 
@@ -1013,6 +1017,7 @@ on. The portal turns each part on only when it is listed:
 | `error_codes` | every 4xx carries a `code` (always listed) |
 | `key_rotation` | `POST /api/keys/self/rotate` |
 | `admin_sessions` | `GET /api/admin/users/{id}/sessions`, while the `sessions` feature is in |
+| `user_theme` | `POST /api/admin/users/{id}/theme`, while the `appearance` feature is in |
 
 **What `/api/me` says about the caller.**
 - `owner` (bool) is the same as `is_owner`.
@@ -1034,6 +1039,7 @@ on. The portal turns each part on only when it is listed:
 | `POST /api/admin/users` | admin | `user_id`, `login_path`. `kind: "service"` is refused |
 | `POST /api/admin/users/{id}/reissue-login`, `/role`, `/expiry`, `/disabled`, `/revoke-access`, `/delete` | admin, with the ladder | as in v2 |
 | `GET /api/admin/users/{id}/sessions` | admin, with the ladder | `{"sessions": [{"id", "created_at", "last_seen_at", "ip", "user_agent", "label"}]}`; see "Devices" |
+| `POST /api/admin/users/{id}/theme` | admin, with the ladder | `{"theme": Theme}` gives `{"ok": true, "theme_id": "..."}`; see "Shared theme" |
 | `GET` / `POST /api/admin/users/{id}/keys` | admin with `may_mint_keys`, with the ladder | key rows / the new key and its `credential` |
 | `POST /api/admin/keys/{key_id}/revoke` | admin with `may_mint_keys` | `{"ok": true}` |
 | `POST /api/keys/self/rotate` | any key, viewers too | `{"credential": "..."}` |
@@ -1054,6 +1060,18 @@ empty. Rows also carry `current` and `expires_at`, and the reply is paged like
 every list (`limit`, `offset`, `total`, `next`). Nothing secret is in a row.
 `ip` goes to the owner and to service accounts only; any other admin gets rows
 without it. A viewer key gets `not_admin`, as on every admin read.
+
+**Shared theme** (`user_theme`). The portal puts the theme a person picked
+there on their account in each app. `theme` is the `Theme` schema in
+`config/api.json`, checked as `POST /api/account/themes` checks a list's
+themes (`400` otherwise). The app starts from the list the account sees now:
+its own, else the admin's defaults, else the built-in themes. It replaces the
+theme with the same `id` or adds it at the end (`400` once there are 40),
+saves that as the account's own list, and makes it the account's pick. The
+server does not know the built-in themes, so for an account that followed
+them it saves the one theme with `themes_builtins: -1`, and the browser adds
+every built-in theme to it. The audit log names the actor, as on every admin
+action.
 
 **Service accounts.**
 - A service account is an admin, and never the owner: `transfer-owner` refuses it.

@@ -57,7 +57,7 @@ class Me(Reply, kw_only=True):
     api_name: ClassVar[str] = "Me"
     authenticated: bool
     contract: Annotated[int, Meta(description="Which version of the portal contract this app speaks: the Portal contract section of the webserver skills' SKILL.md.")]
-    capabilities: Annotated[list[str], Meta(description="The optional parts of that contract this app has on now: viewer_role, account_expiry, key_minting, invite_links, key_sign_in, service_accounts, key_grants, error_codes, key_rotation, admin_sessions.")]
+    capabilities: Annotated[list[str], Meta(description="The optional parts of that contract this app has on now: viewer_role, account_expiry, key_minting, invite_links, key_sign_in, service_accounts, key_grants, error_codes, key_rotation, admin_sessions, user_theme.")]
     id: int
     display_name: str
     role: Annotated[Literal["admin", "user", "viewer"], Meta(description="The effective role: never higher than an API key's own. A viewer may read, and change nothing.")]
@@ -233,6 +233,7 @@ def capabilities(cfg: Config) -> list[str]:
         found.append("key_rotation")
     # <<< feature:api_keys
     found.append("admin_sessions")  # feature:sessions
+    found.append("user_theme")  # feature:appearance
     return found
 
 

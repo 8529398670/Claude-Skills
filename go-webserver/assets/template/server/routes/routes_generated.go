@@ -453,6 +453,16 @@ func ( handlers *Handlers ) mountDeclared( app *fiber.App ) {
 		Errors: []int{ 400 , 401 , 403 , 404 },
 	} , handlers.revokeUserSession , handlers.Guard.RequireAdmin )
 	// <<< feature:sessions
+	// >>> feature:appearance
+	apidoc.Mount( app , "POST" , "/api/admin/users/{user_id}/theme" , apidoc.Op{
+		Summary: "Give an account a theme",
+		Description: "Put one theme (the Theme schema) on another account and make it the one it uses. It starts from the list the account sees now (its own, else the defaults, else the built-in ones), replaces the theme with the same id or adds it at the end (at most 40), and saves that as the account's own list. Only the owner does this to an admin, and nobody to the owner.",
+		Tag: "Admin",
+		Role: apidoc.Admin,
+		Feature: "appearance",
+		Errors: []int{ 400 , 401 , 403 , 404 },
+	} , handlers.setUserTheme , handlers.Guard.RequireAdmin )
+	// <<< feature:appearance
 	// >>> feature:openapi
 	apidoc.MountStream( app , "GET" , "/api/api.json" , apidoc.Op{
 		Summary: "This document",
@@ -1439,6 +1449,14 @@ func ( handlers *Handlers ) registerDeclaredTools( server *mcp.Server ) {
 		Description: "Runs admin_set_user_role once per item: items holds each call's arguments, shared the arguments they have in common (an item's own win). In order; one failing does not stop the rest, and the reply says how each went. At most 100 items.",
 		AdminOnly: true,
 	} ) )
+	// >>> feature:appearance
+	server.Register( mcp.ForRoute( "POST /api/admin/users/{user_id}/theme" , handlers.setUserTheme , mcp.Tool{
+		Name: "admin_set_user_theme",
+		Title: "Give an account a theme (admin)",
+		Description: "Put one theme (the Theme schema) on another account and make it the one it uses. It starts from the list the account sees now (its own, else the defaults, else the built-in ones), replaces the theme with the same id or adds it at the end (at most 40), and saves that as the account's own list. Only the owner does this to an admin, and nobody to the owner.",
+		AdminOnly: true,
+	} , nil ) )
+	// <<< feature:appearance
 	// >>> feature:files
 	server.Register( mcp.ForRoute( "GET /api/admin/storage" , handlers.allStorage , mcp.Tool{
 		Name: "admin_storage",

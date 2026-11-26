@@ -16,7 +16,8 @@ from app.apidocs import Request as RequestType
 from app.core.logs import KIND_ADMIN, KIND_AUTH
 from app.core.security import actor_from
 from app.models import themes, users
-from app.routes.helpers import Refused, get_store
+from app.routes.admin import UserIDPath
+from app.routes.helpers import Refused, act_on_refusals, get_store
 from app.routes.logs import audit
 
 OVERRIDES = "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, bar (the bar across the top), barText, info, infoBorder, border, rowOdd and rowEven (alternating table rows), and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back."
@@ -183,3 +184,37 @@ def set_theme_defaults(request: Request, body: SetThemeDefaults) -> SetThemeDefa
         raise Refused(400, str(invalid)) from None
     audit(request, KIND_ADMIN, "changed the default themes", {"count": len(saved or []), "built_in": saved is None})
     return SetThemeDefaultsReply(ok=True, themes=theme_list(saved), builtins=themes.get_defaults_seen(get_store(request))[1])
+
+
+class SetUserTheme(UserIDPath):
+    theme: Annotated[Theme, Meta(description="The theme to put on the account and make its pick, in the Theme schema. One with the same id replaces it.")]
+
+
+class SetUserThemeReply(Reply):
+    ok: bool
+    theme_id: Annotated[str, Meta(description="The theme the account now uses.")]
+
+
+@route(
+    "POST /api/admin/users/{user_id}/theme", summary="Give an account a theme",
+    tag="Admin", role=ADMIN, feature="appearance", errors=(404,),
+    description="Put one theme (the Theme schema) on another account and make it the one it uses. It starts "
+    "from the list the account sees now (its own, else the defaults, else the built-in ones), replaces the "
+    "theme with the same id or adds it at the end (at most 40), and saves that as the account's own list. "
+    "Only the owner does this to an admin, and nobody to the owner.",
+    mcp="admin_set_user_theme",  # feature:mcp
+)
+def set_user_theme(request: Request, body: SetUserTheme) -> SetUserThemeReply:
+    """Puts one theme on someone else's account and makes it their pick:
+    ProjectPortal's shared theme (portal contract capability user_theme), over
+    HTTP or the MCP admin_set_user_theme tool. The list rules live in
+    themes.set_user_theme_as, the ladder in users.may_act_on_tx."""
+    try:
+        with act_on_refusals("change the theme of"):
+            theme_id = themes.set_user_theme_as(get_store(request), actor_from(request).user.id, body.user_id, msgspec.to_builtins(body.theme))
+    except themes.ThemesError as invalid:
+        raise Refused(400, str(invalid)) from None
+    if theme_id is None:
+        raise Refused(404, "no such user")
+    audit(request, KIND_ADMIN, "gave an account a theme", {"user_id": body.user_id, "theme_id": theme_id})
+    return SetUserThemeReply(ok=True, theme_id=theme_id)

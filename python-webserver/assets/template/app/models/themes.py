@@ -27,13 +27,20 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.core.db import BUCKET_META, BUCKET_USERS, Record, Store
+from app.core.db import BUCKET_META, BUCKET_USERS, Record, Store, Transaction
+from app.models.users import may_act_on_tx
 
 MAX_THEMES = 40
 MAX_THEME_NAME = 60
 META_THEME_DEFAULTS_KEY = "theme_defaults"
 # Bounds "builtins": far above any real count of built-in themes.
 MAX_THEME_BUILTINS = 1000
+# The "builtins" of a list that has seen no built-in theme yet, so the browser
+# adds every one of them to it. Only set_user_theme_as saves it, for an account
+# that followed the built-in themes: the server does not know them, so it
+# saves the one theme and leaves the rest to theme.js (withNewBuiltIns).
+# Callers cannot send it.
+THEME_BUILTINS_NONE = -1
 
 _ID = re.compile(r"[a-z0-9_-]{1,32}")
 _COLOR = re.compile(r"#[0-9a-f]{6}")
@@ -59,6 +66,13 @@ BUTTON_CHOICES = {
 
 class ThemesError(ValueError):
     """What is wrong with a list of themes, worded for the caller."""
+
+
+class ThemesFullError(ThemesError):
+    """set_user_theme_as would add a theme to a list already at MAX_THEMES."""
+
+    def __init__(self) -> None:
+        super().__init__(f"the account already has {MAX_THEMES} themes, the most it can have")
 
 
 def valid_id(theme_id: object) -> bool:
@@ -169,6 +183,14 @@ def get_defaults(store: Store) -> list[dict[str, Any]] | None:
     return get_defaults_seen(store)[0]
 
 
+def _defaults_seen_tx(tx: Transaction) -> tuple[list[dict[str, Any]] | None, int]:
+    """get_defaults_seen inside the caller's transaction."""
+    record = tx.get(BUCKET_META, META_THEME_DEFAULTS_KEY)
+    if record is None:
+        return None, 0
+    return record.get("themes"), record.get("builtins", 0)
+
+
 def get_defaults_seen(store: Store) -> tuple[list[dict[str, Any]] | None, int]:
     """The admin's list (None: the built-in themes) and which built-in themes
     it has seen. A list saved before builtins existed has 0, the first ones."""
@@ -238,3 +260,37 @@ def mine(store: Store, user_themes: list[dict[str, Any]] | None, user_builtins: 
         return user_themes, True, user_builtins
     listed, seen = get_defaults_seen(store)
     return listed, False, seen
+
+
+def set_user_theme_as(store: Store, actor_id: int | None, user_id: int, theme: object) -> str | None:
+    """An admin (ProjectPortal's shared theme, portal contract capability
+    user_theme) putting one theme on someone's account and making it their
+    pick. It starts from the list they see today -- their own, else the admin's
+    defaults, else the built-in themes -- replaces the theme with the same id or
+    adds it at the end, and saves that as their own list. The built-in themes
+    are not known here, so for an account that followed them the saved list is
+    the one theme with THEME_BUILTINS_NONE, and the browser adds every built-in
+    theme to it. Held to users.may_act_on_tx. Returns the theme's id, or None
+    if there is no such account; ThemesError for a bad theme, ThemesFullError
+    for a full list."""
+    cleaned = check([theme])[0]
+    with store.transaction() as tx:
+        record = tx.get(BUCKET_USERS, user_id)
+        if record is None:
+            return None
+        may_act_on_tx(tx, actor_id, record)
+        listed, seen = record.get("themes"), record.get("themes_builtins", 0)
+        if listed is None:
+            listed, seen = _defaults_seen_tx(tx)
+        if listed is None:
+            seen = THEME_BUILTINS_NONE
+        merged = [cleaned if each.get("id") == cleaned["id"] else each for each in listed or []]
+        if not any(each.get("id") == cleaned["id"] for each in listed or []):
+            if len(merged) >= MAX_THEMES:
+                raise ThemesFullError()
+            merged.append(cleaned)
+        record["themes"] = merged
+        record["themes_builtins"] = seen
+        record["theme_id"] = cleaned["id"]
+        tx.put(BUCKET_USERS, user_id, record)
+    return cleaned["id"]

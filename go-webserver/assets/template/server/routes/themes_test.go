@@ -206,3 +206,60 @@ func TestThemesRefuseBadShapes( t *testing.T ) {
 	if dark[ "accent" ] != "#cba052" || dark[ "background" ] != "#101820" || dark[ "overrides" ].( map[string]any )[ "link" ] != "#ffffff" { t.Fatalf( "%v" , dark ) }
 	if _ , there := first[ "light" ]; there { t.Fatalf( "light kept on a light theme: %v" , first ) }
 }
+
+// An admin (ProjectPortal's shared theme) puts one theme on an account: onto
+// the list it sees, replacing the same id, and makes it the pick.
+func TestAnAdminGivesAnAccountATheme( t *testing.T ) {
+	fixture := newAuthFixture( t )
+	alice := fixture.signIn( t , fixture.alice.ID )
+	owner := fixture.signIn( t , fixture.owner.ID )
+	path := "/api/admin/users/" + idText( fixture.alice.ID ) + "/theme"
+	give := func( name string , accent string ) ( status int , reply map[string]any ) {
+		status , reply = send( t , owner , path , fiber.Map{ "theme": fiber.Map{ "id": name , "name": name , "mode": "dark" , "accent": accent , "second": "#0b7a75" } } )
+		return
+	}
+	builtins := func() ( seen float64 ) {
+		_ , reply := alice.do( t , http.MethodGet , "/api/me" , nil )
+		seen , _ = reply[ "themes_builtins" ].( float64 )
+		return
+	}
+
+	// Following the built-in themes: the one theme, and every built-in joins it in the browser.
+	status , reply := give( "shared" , "#AA0000" )
+	if status != fiber.StatusOK || reply[ "ok" ] != true || reply[ "theme_id" ] != "shared" { t.Fatalf( "%d %v" , status , reply ) }
+	themes , custom , theme_id := meThemes( t , alice )
+	if len( themes ) != 1 || custom == false || theme_id != "shared" || builtins() != -1 { t.Fatalf( "%v %v %q %v" , themes , custom , theme_id , builtins() ) }
+
+	// Her own list: the same id is replaced in place, a new one goes at the end.
+	send( t , alice , "/api/account/themes" , fiber.Map{ "themes": themeList( "a" , "shared" , "b" ) , "theme_id": "a" , "builtins": 3 } )
+	give( "shared" , "#00aa00" )
+	themes , _ , theme_id = meThemes( t , alice )
+	if names := themeNames( themes ); len( names ) != 3 || names[ 1 ] != "shared" || theme_id != "shared" || builtins() != 3 { t.Fatalf( "%v %q" , names , theme_id ) }
+	if accent := themes[ 1 ].( map[string]any )[ "accent" ]; accent != "#00aa00" { t.Fatalf( "accent %v" , accent ) }
+	give( "new" , "#0000aa" )
+	if names := themeNames( onlyThemes( meThemes( t , alice ) ) ); len( names ) != 4 || names[ 3 ] != "new" { t.Fatalf( "%v" , names ) }
+
+	// Following the admin's defaults: those, plus the theme, become hers.
+	send( t , alice , "/api/account/themes" , fiber.Map{ "themes": nil } )
+	send( t , owner , "/api/admin/theme-defaults" , fiber.Map{ "themes": themeList( "d1" , "d2" ) , "builtins": 2 } )
+	give( "shared" , "#aa0000" )
+	themes , custom , _ = meThemes( t , alice )
+	if names := themeNames( themes ); len( names ) != 3 || custom == false || names[ 2 ] != "shared" || builtins() != 2 { t.Fatalf( "%v %v" , names , custom ) }
+
+	// At most 40; replacing one in a full list still works.
+	full := []string{}
+	for index := 0; index < 40; index++ { full = append( full , "t" + idText( uint64( index ) ) ) }
+	send( t , alice , "/api/account/themes" , fiber.Map{ "themes": themeList( full... ) } )
+	if status , reply := give( "one-more" , "#aa0000" ); status != fiber.StatusBadRequest { t.Fatalf( "a 41st theme: %d %v" , status , reply ) }
+	if status , reply := give( "t5" , "#aa0000" ); status != fiber.StatusOK { t.Fatalf( "replacing in a full list: %d %v" , status , reply ) }
+
+	// A bad theme is refused like on POST /api/account/themes; a missing account is 404.
+	if status , reply := give( "Bad Id" , "#aa0000" ); status != fiber.StatusBadRequest { t.Fatalf( "bad id: %d %v" , status , reply ) }
+	if status , reply := give( "x" , "red" ); status != fiber.StatusBadRequest { t.Fatalf( "bad color: %d %v" , status , reply ) }
+	if status , reply := send( t , owner , "/api/admin/users/99999/theme" , fiber.Map{ "theme": themeList( "x" )[ 0 ] } ); status != fiber.StatusNotFound { t.Fatalf( "missing account: %d %v" , status , reply ) }
+
+	// Not for ordinary users.
+	if status , reply := send( t , alice , "/api/admin/users/" + idText( fixture.owner.ID ) + "/theme" , fiber.Map{ "theme": themeList( "x" )[ 0 ] } ); status != fiber.StatusForbidden { t.Fatalf( "a user: %d %v" , status , reply ) }
+}
+
+func onlyThemes( themes []any , _ bool , _ string ) ( result []any ) { result = themes; return }

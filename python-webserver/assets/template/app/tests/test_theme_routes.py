@@ -149,3 +149,51 @@ class ThemeRoutesTest(RoutesTestCase):
         self.assertEqual(listed[0]["dark"], {"accent": "#cba052", "second": "#f8e08e", "background": "#101820",
                                              "overrides": {"link": "#ffffff"}})
         self.assertNotIn("light", listed[0])
+
+    def test_an_admin_gives_an_account_a_theme(self) -> None:
+        """ProjectPortal's shared theme: one theme onto the list the account
+        sees, replacing the same id, made its pick."""
+        path = f"/api/admin/users/{self.user.id}/theme"
+
+        def give(theme_id: str, accent: str = "#aa0000") -> tuple[int, object]:
+            theme = {"id": theme_id, "name": theme_id, "mode": "dark", "accent": accent, "second": "#0b7a75"}
+            return self.post(self.owner_cookie, path, {"theme": theme})
+
+        def builtins() -> object:
+            return self.call("GET", "/api/me", cookie=self.user_cookie)[1]["themes_builtins"]
+
+        # Following the built-in themes: the one theme, and every built-in joins it in the browser.
+        status, reply = give("shared", "#AA0000")
+        self.assertEqual((status, reply), (200, {"ok": True, "theme_id": "shared"}))
+        listed, custom, theme_id = self.mine(self.user_cookie)
+        self.assertEqual(([theme["id"] for theme in listed], custom, theme_id, builtins()), (["shared"], True, "shared", -1))
+        self.assertEqual(listed[0]["accent"], "#aa0000")
+
+        # Their own list: the same id is replaced in place, a new one goes at the end.
+        self.post(self.user_cookie, "/api/account/themes", {"themes": theme_list("a", "shared", "b"), "theme_id": "a", "builtins": 3})
+        give("shared", "#00aa00")
+        listed, _, theme_id = self.mine(self.user_cookie)
+        self.assertEqual(([theme["id"] for theme in listed], theme_id, builtins()), (["a", "shared", "b"], "shared", 3))
+        self.assertEqual(listed[1]["accent"], "#00aa00")
+        give("new")
+        self.assertEqual([theme["id"] for theme in self.mine(self.user_cookie)[0]], ["a", "shared", "b", "new"])
+
+        # Following the admin's defaults: those, plus the theme, become theirs.
+        self.post(self.user_cookie, "/api/account/themes", {"themes": None})
+        self.post(self.owner_cookie, "/api/admin/theme-defaults", {"themes": theme_list("d1", "d2"), "builtins": 2})
+        give("shared")
+        listed, custom, _ = self.mine(self.user_cookie)
+        self.assertEqual(([theme["id"] for theme in listed], custom, builtins()), (["d1", "d2", "shared"], True, 2))
+
+        # At most 40; replacing one in a full list still works.
+        self.post(self.user_cookie, "/api/account/themes", {"themes": theme_list(*(f"t{index}" for index in range(40)))})
+        self.assertEqual(give("one-more")[0], 400)
+        self.assertEqual(give("t5")[0], 200)
+
+        # A bad theme is refused like on POST /api/account/themes; a missing account is 404.
+        self.assertEqual(give("Bad Id")[0], 400)
+        self.assertEqual(give("x", "red")[0], 400)
+        self.assertEqual(self.post(self.owner_cookie, "/api/admin/users/99999/theme", {"theme": theme_list("x")[0]})[0], 404)
+
+        # Not for ordinary users.
+        self.assertEqual(self.post(self.user_cookie, f"/api/admin/users/{self.owner.id}/theme", {"theme": theme_list("x")[0]})[0], 403)

@@ -21,7 +21,7 @@ type meReply struct {
 	Role               string                `json:"role" jsonschema:"enum=admin,enum=user,enum=viewer" jsonschema_description:"The effective role: never higher than an API key's own. A viewer may read, and change nothing."`
 	AccountRole        string                `json:"account_role" jsonschema:"enum=admin,enum=user,enum=viewer"`
 	Contract           int                   `json:"contract" jsonschema_description:"Which version of the portal contract this app speaks: the Portal contract section of the webserver skills' SKILL.md."`
-	Capabilities       []string              `json:"capabilities" jsonschema_description:"The optional parts of that contract this app has on now: viewer_role, account_expiry, key_minting, invite_links, key_sign_in, service_accounts, key_grants, error_codes, key_rotation, admin_sessions."`
+	Capabilities       []string              `json:"capabilities" jsonschema_description:"The optional parts of that contract this app has on now: viewer_role, account_expiry, key_minting, invite_links, key_sign_in, service_accounts, key_grants, error_codes, key_rotation, admin_sessions, user_theme."`
 	MayMintKeys        bool                  `json:"may_mint_keys,omitempty" jsonschema_description:"API keys only: whether this key may make keys for other accounts." jsonschema_extras:"x-feature=api_keys"` // feature:api_keys
 	IsOwner            bool                  `json:"is_owner"`
 	Owner              bool                  `json:"owner" jsonschema_description:"Whether this is the owner's account: the same as is_owner, under portal contract v3's name."`
@@ -204,6 +204,7 @@ func ( handlers *Handlers ) capabilities() ( result []string ) {
 	result = append( result , "error_codes" )
 	if keys { result = append( result , "key_rotation" ) }
 	result = append( result , "admin_sessions" ) // feature:sessions
+	result = append( result , "user_theme" ) // feature:appearance
 	return
 }
 

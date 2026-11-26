@@ -40,6 +40,12 @@ const (
 	metaThemeDefaultsBuiltInsKey = "theme_defaults_builtins"
 	// MaxThemeBuiltIns bounds "builtins": far above any real count of built-in themes.
 	MaxThemeBuiltIns = 1000
+	// ThemeBuiltInsNone is the "builtins" of a list that has seen no built-in
+	// theme yet, so the browser adds every one of them to it. Only
+	// SetUserThemeAs saves it, for an account that followed the built-in
+	// themes: the server does not know them, so it saves the one theme and
+	// leaves the rest to theme.js (withNewBuiltIns). Callers cannot send it.
+	ThemeBuiltInsNone = -1
 )
 
 // Theme is one of them, as stored and as the API carries it (the Theme schema
@@ -238,6 +244,23 @@ func ThemeDefaults( store *db.Store ) ( themes []Theme , builtins int , err erro
 	return
 }
 
+// ErrThemesFull: SetUserThemeAs would add a theme to a list already at MaxThemes.
+var ErrThemesFull = fmt.Errorf( "the account already has %d themes, the most it can have" , MaxThemes )
+
+// themeDefaultsTx is ThemeDefaults inside the caller's transaction.
+func themeDefaultsTx( tx *db.Tx ) ( themes []Theme , builtins int , err error ) {
+	err = tx.Get( db.BucketMeta , []byte( metaThemeDefaultsKey ) , &themes )
+	if errors.Is( err , db.ErrNotFound ) {
+		themes = nil
+		err = nil
+		return
+	}
+	if err != nil { return }
+	err = tx.Get( db.BucketMeta , []byte( metaThemeDefaultsBuiltInsKey ) , &builtins )
+	if errors.Is( err , db.ErrNotFound ) { err = nil }
+	return
+}
+
 // SetThemeDefaults replaces the admin's list and which built-in themes it has
 // seen. nil goes back to the built-in themes.
 func SetThemeDefaults( store *db.Store , themes []Theme , builtins int ) ( err error ) {
@@ -292,5 +315,54 @@ func SetUserThemeID( store *db.Store , user_id uint64 , theme_id string ) ( err 
 			item.( *User ).ThemeID = theme_id
 			return
 		} )
+	return
+}
+
+// SetUserThemeAs is an admin (ProjectPortal's shared theme, portal contract
+// capability user_theme) putting one theme on someone's account and making it
+// their pick. It starts from the list they see today -- their own, else the
+// admin's defaults, else the built-in themes -- replaces the theme with the
+// same id or adds it at the end, and saves that as their own list. The
+// built-in themes are not known here, so for an account that followed them the
+// saved list is the one theme with ThemeBuiltInsNone, and the browser adds
+// every built-in theme to it. Held to mayActOnTx; a missing account is
+// db.ErrNotFound, a full list ErrThemesFull, and a bad theme CleanThemes' error.
+func SetUserThemeAs( store *db.Store , actor_id uint64 , user_id uint64 , theme Theme ) ( theme_id string , err error ) {
+	cleaned , err := CleanThemes( []Theme{ theme } )
+	if err != nil { return }
+	theme = cleaned[ 0 ]
+	err = store.Write( func( tx *db.Tx ) ( tx_err error ) {
+		key := encryption.Uint64ToBytes( user_id )
+		user := &User{}
+		if tx_err = tx.Get( db.BucketUsers , key , user ); tx_err != nil { return }
+		if tx_err = mayActOnTx( tx , actor_id , user ); tx_err != nil { return }
+		list , builtins := user.Themes , user.ThemesBuiltIns
+		if list == nil {
+			if list , builtins , tx_err = themeDefaultsTx( tx ); tx_err != nil { return }
+		}
+		if list == nil { builtins = ThemeBuiltInsNone }
+		merged := make( []Theme , 0 , len( list ) + 1 )
+		replaced := false
+		for _ , each := range list {
+			if each.ID == theme.ID {
+				each = theme
+				replaced = true
+			}
+			merged = append( merged , each )
+		}
+		if replaced == false {
+			if len( merged ) >= MaxThemes {
+				tx_err = ErrThemesFull
+				return
+			}
+			merged = append( merged , theme )
+		}
+		user.Themes = merged
+		user.ThemesBuiltIns = builtins
+		user.ThemeID = theme.ID
+		tx_err = tx.Put( db.BucketUsers , key , user )
+		return
+	} )
+	if err == nil { theme_id = theme.ID }
 	return
 }

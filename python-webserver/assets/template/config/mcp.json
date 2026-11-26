@@ -1606,6 +1606,210 @@
       "annotations": {
         "destructiveHint": false,
         "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Give an account a theme (admin)"
+      },
+      "description": "Put one theme (the Theme schema) on another account and make it the one it uses. It starts from the list the account sees now (its own, else the defaults, else the built-in ones), replaces the theme with the same id or adds it at the end (at most 40), and saves that as the account's own list. Only the owner does this to an admin, and nobody to the owner.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "theme": {
+            "description": "The theme to put on the account and make its pick, in the Theme schema. One with the same id replaces it.",
+            "properties": {
+              "accent": {
+                "description": "The main color: what you can press.",
+                "type": "string"
+              },
+              "background": {
+                "description": "The page. Left out: the mode's own.",
+                "type": "string"
+              },
+              "button": {
+                "description": "How the theme's buttons look. A choice left out is the default (rounded, normal, raised, normal).",
+                "oneOf": [
+                  {
+                    "properties": {
+                      "case": {
+                        "enum": [
+                          "normal",
+                          "upper"
+                        ],
+                        "type": "string"
+                      },
+                      "depth": {
+                        "enum": [
+                          "flat",
+                          "raised",
+                          "glossy"
+                        ],
+                        "type": "string"
+                      },
+                      "shape": {
+                        "enum": [
+                          "square",
+                          "soft",
+                          "rounded",
+                          "pill"
+                        ],
+                        "type": "string"
+                      },
+                      "weight": {
+                        "enum": [
+                          "normal",
+                          "medium",
+                          "bold"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "dark": {
+                "description": "A light theme's colors for dark mode, kept while it is light. Switching the theme to dark swaps them in. A light theme's light (or a dark theme's dark) is dropped.",
+                "oneOf": [
+                  {
+                    "properties": {
+                      "accent": {
+                        "description": "The main color: what you can press.",
+                        "type": "string"
+                      },
+                      "background": {
+                        "description": "The page. Left out: the mode's own.",
+                        "type": "string"
+                      },
+                      "overrides": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, bar (the bar across the top), barText, info, infoBorder, border, rowOdd and rowEven (alternating table rows), and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                        "type": "object"
+                      },
+                      "second": {
+                        "description": "Says where you are: active nav item, headings, info.",
+                        "type": "string"
+                      },
+                      "surface": {
+                        "description": "Cards. Left out: the mode's own.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "accent",
+                      "second"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "description": "Lower-case letters, digits, - and _, up to 32.",
+                "type": "string"
+              },
+              "light": {
+                "description": "A dark theme's colors for light mode, kept while it is dark. Switching the theme to light swaps them in.",
+                "oneOf": [
+                  {
+                    "properties": {
+                      "accent": {
+                        "description": "The main color: what you can press.",
+                        "type": "string"
+                      },
+                      "background": {
+                        "description": "The page. Left out: the mode's own.",
+                        "type": "string"
+                      },
+                      "overrides": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, bar (the bar across the top), barText, info, infoBorder, border, rowOdd and rowEven (alternating table rows), and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                        "type": "object"
+                      },
+                      "second": {
+                        "description": "Says where you are: active nav item, headings, info.",
+                        "type": "string"
+                      },
+                      "surface": {
+                        "description": "Cards. Left out: the mode's own.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "accent",
+                      "second"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "mode": {
+                "enum": [
+                  "light",
+                  "dark"
+                ],
+                "type": "string"
+              },
+              "name": {
+                "description": "1 to 60 characters.",
+                "type": "string"
+              },
+              "overrides": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Worked-out colors replaced by name: text, accent, accentFg, accentText, second, secondFg, secondText, link, navLink, background, surface, nested, chrome, bar (the bar across the top), barText, info, infoBorder, border, rowOdd and rowEven (alternating table rows), and for each button variant V (Secondary, Success, Danger, Warning, Info, Light, Dark) btnV, btnVFg and btnVText. Leaving one out puts the readable color back.",
+                "type": "object"
+              },
+              "second": {
+                "description": "Says where you are: active nav item, headings, info.",
+                "type": "string"
+              },
+              "surface": {
+                "description": "Cards. Left out: the mode's own.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accent",
+              "id",
+              "mode",
+              "name",
+              "second"
+            ],
+            "type": "object"
+          },
+          "user_id": {
+            "description": "The account's id, from GET /api/admin/users (admin_list_users over MCP).",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "theme",
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "name": "admin_set_user_theme",
+      "route": "POST /api/admin/users/{user_id}/theme",
+      "title": "Give an account a theme (admin)"
+    },
+    {
+      "adminOnly": true,
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
         "readOnlyHint": true,
         "title": "Storage for everyone (admin)"
       },
